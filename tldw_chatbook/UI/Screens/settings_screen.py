@@ -3775,7 +3775,11 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="Model name",
                 )
-            yield Static("Selected model defaults", classes="destination-section")
+            yield Static(
+                "Selected model defaults",
+                id="settings-selected-model-defaults-title",
+                classes="destination-section",
+            )
             yield Static(
                 "Global fallbacks live under Console Defaults; these values apply only "
                 "to the provider+model above.",
@@ -3784,7 +3788,7 @@ class SettingsScreen(BaseAppScreen):
             with Horizontal(classes="settings-input-row"):
                 yield Static("Temperature", classes="settings-input-label")
                 yield Input(
-                    value=str(values["model_profile_temperature"]),
+                    value=self._profile_input_value(values["model_profile_temperature"]),
                     id="settings-model-profile-temperature",
                     classes="settings-compact-input",
                     placeholder="0.0 - 2.0",
@@ -3792,7 +3796,7 @@ class SettingsScreen(BaseAppScreen):
             with Horizontal(classes="settings-input-row"):
                 yield Static("Top P", classes="settings-input-label")
                 yield Input(
-                    value=str(values["model_profile_top_p"]),
+                    value=self._profile_input_value(values["model_profile_top_p"]),
                     id="settings-model-profile-top-p",
                     classes="settings-compact-input",
                     placeholder="0.0 - 1.0",
@@ -3800,9 +3804,7 @@ class SettingsScreen(BaseAppScreen):
             with Horizontal(classes="settings-input-row"):
                 yield Static("Streaming", classes="settings-input-label")
                 yield Input(
-                    value=str(values["model_profile_streaming"]).lower()
-                    if isinstance(values["model_profile_streaming"], bool)
-                    else str(values["model_profile_streaming"]),
+                    value=self._profile_input_value(values["model_profile_streaming"]),
                     id="settings-model-profile-streaming",
                     classes="settings-compact-input",
                     placeholder="true or false",

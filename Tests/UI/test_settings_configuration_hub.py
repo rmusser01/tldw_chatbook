@@ -1042,12 +1042,15 @@ async def test_settings_provider_model_defaults_appear_before_reference_copy():
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.click("#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        text = _visible_text(screen)
+        card = screen.query_one("#settings-providers-models-card")
+        title = card.query_one("#settings-selected-model-defaults-title", Static)
+        temperature = card.query_one("#settings-model-profile-temperature", Input)
+        catalog = card.query_one("#settings-provider-catalog", Static)
+        widgets = list(card.query("*"))
 
-        assert "Selected model defaults" in text
-        assert "Provider catalog" in text
-        assert text.index("Selected model defaults") < text.index("Provider catalog")
-        assert text.index("Temperature") < text.index("Provider catalog")
+        assert str(title.renderable) == "Selected model defaults"
+        assert widgets.index(title) < widgets.index(catalog)
+        assert widgets.index(temperature) < widgets.index(catalog)
 
 
 @pytest.mark.asyncio
@@ -2594,6 +2597,28 @@ async def test_settings_provider_model_switch_loads_selected_model_profile():
         assert screen.query_one("#settings-model-profile-temperature", Input).value == "0.45"
         assert screen.query_one("#settings-model-profile-top-p", Input).value == "0.9"
         assert screen.query_one("#settings-model-profile-streaming", Input).value == "false"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_model_profile_none_values_render_as_blank_inputs():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {
+            "model_defaults": {
+                "gpt-4.1": {"temperature": None, "top_p": None, "streaming": None},
+            },
+        },
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        assert screen.query_one("#settings-model-profile-temperature", Input).value == ""
+        assert screen.query_one("#settings-model-profile-top-p", Input).value == ""
+        assert screen.query_one("#settings-model-profile-streaming", Input).value == ""
 
 
 @pytest.mark.asyncio
