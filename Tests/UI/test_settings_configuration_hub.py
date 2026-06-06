@@ -1034,6 +1034,23 @@ async def test_settings_provider_category_lists_console_supported_catalog():
 
 
 @pytest.mark.asyncio
+async def test_settings_provider_model_defaults_appear_before_reference_copy():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Selected model defaults" in text
+        assert "Provider catalog" in text
+        assert text.index("Selected model defaults") < text.index("Provider catalog")
+        assert text.index("Temperature") < text.index("Provider catalog")
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}

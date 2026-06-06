@@ -3775,6 +3775,38 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="Model name",
                 )
+            yield Static("Selected model defaults", classes="destination-section")
+            yield Static(
+                "Global fallbacks live under Console Defaults; these values apply only "
+                "to the provider+model above.",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Temperature", classes="settings-input-label")
+                yield Input(
+                    value=str(values["model_profile_temperature"]),
+                    id="settings-model-profile-temperature",
+                    classes="settings-compact-input",
+                    placeholder="0.0 - 2.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Top P", classes="settings-input-label")
+                yield Input(
+                    value=str(values["model_profile_top_p"]),
+                    id="settings-model-profile-top-p",
+                    classes="settings-compact-input",
+                    placeholder="0.0 - 1.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Streaming", classes="settings-input-label")
+                yield Input(
+                    value=str(values["model_profile_streaming"]).lower()
+                    if isinstance(values["model_profile_streaming"], bool)
+                    else str(values["model_profile_streaming"]),
+                    id="settings-model-profile-streaming",
+                    classes="settings-compact-input",
+                    placeholder="true or false",
+                )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Endpoint", classes="settings-input-label")
                 yield SettingsURLInput(
@@ -3816,38 +3848,6 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_endpoint_row(str(values["provider"])).removeprefix("Endpoint key: "),
                 identifier="settings-provider-endpoint-key",
             )
-            yield Static("Selected model defaults", classes="destination-section")
-            yield Static(
-                "Global fallbacks live under Console Defaults; this panel saves only "
-                "the selected provider+model profile.",
-                classes="settings-detail-row",
-            )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Temperature", classes="settings-input-label")
-                yield Input(
-                    value=str(values["model_profile_temperature"]),
-                    id="settings-model-profile-temperature",
-                    classes="settings-compact-input",
-                    placeholder="0.0 - 2.0",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Top P", classes="settings-input-label")
-                yield Input(
-                    value=str(values["model_profile_top_p"]),
-                    id="settings-model-profile-top-p",
-                    classes="settings-compact-input",
-                    placeholder="0.0 - 1.0",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Streaming", classes="settings-input-label")
-                yield Input(
-                    value=str(values["model_profile_streaming"]).lower()
-                    if isinstance(values["model_profile_streaming"], bool)
-                    else str(values["model_profile_streaming"]),
-                    id="settings-model-profile-streaming",
-                    classes="settings-compact-input",
-                    placeholder="true or false",
-                )
             yield Static("Provider readiness", classes="destination-section")
             yield self._detail_row(
                 "Readiness",
