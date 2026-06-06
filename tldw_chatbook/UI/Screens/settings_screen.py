@@ -61,7 +61,7 @@ from ...Utils.console_background_effects import (
 )
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
-from .provider_model_resolution import resolve_effective_provider_model
+from .provider_model_resolution import EffectiveProviderModel, resolve_effective_provider_model
 from .settings_config_adapter import SettingsConfigAdapter, redact_secret_text
 from .settings_config_models import (
     SettingsCategoryId,
@@ -2613,11 +2613,30 @@ class SettingsScreen(BaseAppScreen):
         return draft.values.get(key) if draft is not None and key in draft.values else None
 
     def _resolve_provider_model_for_settings(self):
-        return resolve_effective_provider_model(
-            self.app_instance,
-            settings_provider=self._provider_draft_value("provider"),
-            settings_model=self._provider_draft_value("model"),
+        draft = self._provider_draft()
+        settings_provider = (
+            draft.values["provider"] if draft is not None and "provider" in draft.values else None
         )
+        settings_model = (
+            draft.values["model"] if draft is not None and "model" in draft.values else None
+        )
+        resolved = resolve_effective_provider_model(
+            self.app_instance,
+            settings_provider=settings_provider,
+            settings_model=settings_model,
+        )
+        if (
+            draft is not None
+            and "model" in draft.values
+            and not str(draft.values.get("model") or "").strip()
+        ):
+            return EffectiveProviderModel(
+                provider=resolved.provider,
+                model="",
+                provider_source=resolved.provider_source,
+                model_source="settings_draft",
+            )
+        return resolved
 
     def _provider_loaded_setting_values(self) -> dict[str, object]:
         resolved = resolve_effective_provider_model(self.app_instance)
@@ -2636,10 +2655,9 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_setting_values(self) -> dict[str, object]:
         loaded = self._provider_loaded_setting_values()
+        draft = self._provider_draft()
         return {
-            key: self._provider_draft_value(key)
-            if self._provider_draft_value(key) is not None
-            else value
+            key: draft.values[key] if draft is not None and key in draft.values else value
             for key, value in loaded.items()
         }
 
@@ -4739,9 +4757,10 @@ class SettingsScreen(BaseAppScreen):
 
     def _apply_provider_value_change(self, provider: str) -> None:
         loaded_provider = str(self._provider_loaded_setting_values().get("provider") or "")
+        previous_provider = str(self._provider_setting_values().get("provider") or "")
         provider_changed = (
             bool(provider)
-            and provider_config_key(provider) != provider_config_key(loaded_provider)
+            and provider_config_key(provider) != provider_config_key(previous_provider)
         )
         staged_provider = (
             loaded_provider
@@ -4768,8 +4787,8 @@ class SettingsScreen(BaseAppScreen):
         provider_default_model = (
             self._provider_model_default(staged_provider) if provider_changed else ""
         )
-        if provider_default_model:
-            self._stage_provider_value("model", provider_default_model)
+        if provider_changed:
+            self._stage_provider_value("model", provider_default_model or None)
             try:
                 self.query_one("#settings-model-value", Input).value = provider_default_model
             except QueryError:
