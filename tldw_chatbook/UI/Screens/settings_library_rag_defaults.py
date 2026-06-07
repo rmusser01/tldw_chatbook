@@ -84,9 +84,12 @@ def _strict_int(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
     try:
-        parsed = float(str(value).strip())
+        f = float(str(value).strip())
+        if f.is_integer():
+            return int(f)
     except (TypeError, ValueError):
-        return None
+        pass
+    return None
     if not parsed.is_integer():
         return None
     return int(parsed)
