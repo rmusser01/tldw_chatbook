@@ -16,6 +16,18 @@ from loguru import logger
 from tldw_chatbook.config import get_cli_setting, load_cli_config_and_ensure_existence, get_user_data_dir
 
 
+def _coerce_int_setting(value: Any, default: int) -> int:
+    """Coerce user-editable integer settings without raising on bad config."""
+    if isinstance(value, bool):
+        return default
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    if not parsed.is_integer():
+        return default
+    return int(parsed)
+
 
 @dataclass
 class EmbeddingConfig:
@@ -73,6 +85,8 @@ class SearchConfig:
     default_top_k: int = 10
     score_threshold: float = 0.0
     include_citations: bool = True
+    citation_style: str = "inline"  # "inline", "footnote", or "none"
+    snippet_max_chars: int = 240
     # Search mode
     default_search_mode: str = "semantic"  # "plain", "semantic", or "hybrid"
     # Search-specific settings
@@ -407,6 +421,20 @@ class RAGConfig:
         config.search.include_citations = (
             search_section.get('include_citations', config.search.include_citations)
         )
+
+        config.search.citation_style = (
+            search_section.get('citation_style', config.search.citation_style)
+        )
+
+        config.search.snippet_max_chars = _coerce_int_setting(
+            search_section.get('snippet_max_chars', config.search.snippet_max_chars),
+            config.search.snippet_max_chars,
+        )
+
+        config.search.max_context_size = _coerce_int_setting(
+            search_section.get('max_context_size', config.search.max_context_size),
+            config.search.max_context_size,
+        )
         
         # Search mode configuration
         config.search.default_search_mode = (
@@ -691,7 +719,10 @@ method = "words"  # or "sentences", "paragraphs"
 default_top_k = 10
 score_threshold = 0.0
 include_citations = true
+citation_style = "inline"  # "inline", "footnote", or "none"
+snippet_max_chars = 240
 default_search_mode = "semantic"  # "plain", "semantic", or "hybrid"
+max_context_size = 16000
 fts_top_k = 10
 vector_top_k = 10
 hybrid_alpha = 0.5

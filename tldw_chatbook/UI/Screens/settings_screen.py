@@ -2,6 +2,7 @@
 
 import copy
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 import logging
 import os
 from pathlib import Path
@@ -69,6 +70,14 @@ from .settings_config_models import (
     SettingsDomainCategoryContract,
     SettingsDraft,
     SettingsOwnershipRecord,
+)
+from .settings_library_rag_defaults import (
+    SettingsLibraryRagDefaults,
+    build_library_rag_save_sections,
+    load_library_rag_defaults,
+    normalise_library_rag_citation_style,
+    normalise_library_rag_search_mode,
+    validate_library_rag_defaults,
 )
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -227,6 +236,7 @@ GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
     {
         SettingsCategoryId.PROVIDERS_MODELS,
         SettingsCategoryId.CONSOLE_BEHAVIOR,
+        SettingsCategoryId.LIBRARY_RAG,
     }
 )
 SETTINGS_OVERVIEW_BOUNDARY_ROWS = (
@@ -279,12 +289,17 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
         rows=(
             ("Browse/search visibility", "global Library browse/search remains visible across workspaces"),
             ("Console eligibility", "staging source evidence is limited to the active workspace"),
+            ("Retrieval defaults", "AppRAGSearchConfig.rag.search and .retriever own result limits and blend defaults"),
             (
                 "Citation/snippet defaults",
-                "follow-up: add persisted citations and snippets display defaults after Library exposes a source contract",
+                "AppRAGSearchConfig.rag.search owns citations, snippets, and context budget defaults",
             ),
         ),
-        follow_up="Follow-up: add Library/RAG mutation controls only after citations/snippets and retrieval defaults have a persisted config source.",
+        settings_can_mutate=True,
+        follow_up=(
+            "Settings may edit persisted retrieval/display defaults only; Library owns indexing, "
+            "query execution, source browse, Collections, and Console staging actions."
+        ),
     ),
     SettingsDomainCategoryContract(
         category=SettingsCategoryId.ARTIFACTS,
@@ -550,6 +565,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_threshold = False
         self._syncing_console_defaults = False
         self._syncing_console_background_effects = False
+        self._syncing_library_rag_defaults = False
         self._active_settings_field_id: str | None = None
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
@@ -563,6 +579,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self._console_behavior_result = "Console behavior settings have not been saved this session."
         self._console_behavior_saved_this_session = False
+        self._library_rag_result = "Library/RAG defaults have not been saved this session."
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
@@ -657,7 +674,7 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.LIBRARY_RAG,
                 "Library & RAG",
                 "Source search, retrieval, citations, snippets, and Console evidence defaults.",
-                "Read-only",
+                "Guided",
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.ARTIFACTS,
@@ -779,22 +796,53 @@ class SettingsScreen(BaseAppScreen):
             ) from exc
 
     def _domain_category_ownership_records(self) -> tuple[SettingsOwnershipRecord, ...]:
-        return tuple(
-            SettingsOwnershipRecord(
-                category=contract.category,
-                owns_config_sections=(),
-                reads_runtime_state_from=contract.source_of_truth,
-                writes_allowed=contract.settings_can_mutate,
-                runtime_owner=contract.owner_destination,
-                boundary_copy=(
-                    f"{contract.owner_destination} owns the live workflow; Settings shows "
-                    "read-only defaults/status until a persisted source contract exists."
-                ),
-                recovery_copy=f"Open {contract.owner_destination} for workflow actions and setup.",
-                read_only_reason=contract.follow_up,
+        records = []
+        for contract in self._domain_category_contracts():
+            if contract.category is SettingsCategoryId.LIBRARY_RAG:
+                records.append(
+                    SettingsOwnershipRecord(
+                        category=contract.category,
+                        owns_config_sections=(
+                            "AppRAGSearchConfig.rag.search.default_search_mode",
+                            "AppRAGSearchConfig.rag.search.default_top_k",
+                            "AppRAGSearchConfig.rag.search.score_threshold",
+                            "AppRAGSearchConfig.rag.search.include_citations",
+                            "AppRAGSearchConfig.rag.search.citation_style",
+                            "AppRAGSearchConfig.rag.search.snippet_max_chars",
+                            "AppRAGSearchConfig.rag.search.max_context_size",
+                            "AppRAGSearchConfig.rag.retriever.fts_top_k",
+                            "AppRAGSearchConfig.rag.retriever.vector_top_k",
+                            "AppRAGSearchConfig.rag.retriever.hybrid_alpha",
+                        ),
+                        reads_runtime_state_from=contract.source_of_truth,
+                        writes_allowed=True,
+                        runtime_owner="Settings persisted defaults; Library runtime actions",
+                        boundary_copy=(
+                            "Settings owns persisted retrieval and display defaults; Library owns "
+                            "indexing, query execution, source browse, Collections, and staging."
+                        ),
+                        recovery_copy=(
+                            "Revert unsaved defaults or open Library to validate query behavior."
+                        ),
+                    )
+                )
+                continue
+            records.append(
+                SettingsOwnershipRecord(
+                    category=contract.category,
+                    owns_config_sections=(),
+                    reads_runtime_state_from=contract.source_of_truth,
+                    writes_allowed=contract.settings_can_mutate,
+                    runtime_owner=contract.owner_destination,
+                    boundary_copy=(
+                        f"{contract.owner_destination} owns the live workflow; Settings shows "
+                        "read-only defaults/status until a persisted source contract exists."
+                    ),
+                    recovery_copy=f"Open {contract.owner_destination} for workflow actions and setup.",
+                    read_only_reason=contract.follow_up,
+                )
             )
-            for contract in self._domain_category_contracts()
-        )
+        return tuple(records)
 
     def _category_ownership_records(self) -> tuple[SettingsOwnershipRecord, ...]:
         return (
@@ -941,11 +989,18 @@ class SettingsScreen(BaseAppScreen):
                 return summary
         return self._category_summaries()[0]
 
-    def _console_settings(self) -> dict:
+    def _app_config_section_target(self):
         app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            self.app_instance.app_config = {}
-            app_config = self.app_instance.app_config
+        if (
+            callable(getattr(app_config, "setdefault", None))
+            and hasattr(app_config, "__setitem__")
+        ):
+            return app_config
+        self.app_instance.app_config = {}
+        return self.app_instance.app_config
+
+    def _console_settings(self) -> dict:
+        app_config = self._app_config_section_target()
         console_settings = app_config.setdefault("console", {})
         if not isinstance(console_settings, dict):
             console_settings = {}
@@ -953,10 +1008,7 @@ class SettingsScreen(BaseAppScreen):
         return console_settings
 
     def _chat_defaults(self) -> dict:
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            self.app_instance.app_config = {}
-            app_config = self.app_instance.app_config
+        app_config = self._app_config_section_target()
         chat_defaults = app_config.setdefault("chat_defaults", {})
         if not isinstance(chat_defaults, dict):
             chat_defaults = {}
@@ -1167,11 +1219,50 @@ class SettingsScreen(BaseAppScreen):
             f"{self._collapse_large_pastes_label()} | Threshold: {self._paste_collapse_threshold_label()}"
         )
 
+    def _app_config_mapping(self) -> Mapping[str, object]:
+        app_config = getattr(self.app_instance, "app_config", {})
+        return app_config if isinstance(app_config, Mapping) else {}
+
+    def _library_rag_loaded_defaults(self) -> SettingsLibraryRagDefaults:
+        return load_library_rag_defaults(self._app_config_mapping())
+
+    def _library_rag_loaded_values(self) -> dict[str, object]:
+        return asdict(self._library_rag_loaded_defaults())
+
+    def _library_rag_draft(self) -> SettingsDraft | None:
+        return self._settings_drafts.get(SettingsCategoryId.LIBRARY_RAG)
+
+    def _library_rag_setting_values(self) -> dict[str, object]:
+        loaded = self._library_rag_loaded_values()
+        draft = self._library_rag_draft()
+        return {
+            key: draft.values[key] if draft is not None and key in draft.values else value
+            for key, value in loaded.items()
+        }
+
+    def _library_rag_current_defaults(self) -> SettingsLibraryRagDefaults:
+        return SettingsLibraryRagDefaults(**self._library_rag_setting_values())
+
+    def _library_rag_validation_result(self):
+        return validate_library_rag_defaults(self._library_rag_current_defaults())
+
+    def _library_rag_save_enabled(self) -> bool:
+        if not self._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG):
+            return False
+        return self._library_rag_validation_result().valid
+
     def _category_has_unsaved_changes(self, category: SettingsCategoryId) -> bool:
         draft = self._settings_drafts.get(category)
         return bool(draft and draft.is_dirty)
 
     def _guided_action_message(self, category: SettingsCategoryId) -> str:
+        if category is SettingsCategoryId.LIBRARY_RAG:
+            if self._category_has_unsaved_changes(category):
+                validation = self._library_rag_validation_result()
+                if not validation.valid:
+                    return f"Guided edits: {validation.message}"
+                return "Guided edits: Save or Revert Library/RAG defaults."
+            return "Guided edits: change a Library/RAG default first."
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             if self._category_has_unsaved_changes(category):
                 return "Guided edits: Save or Revert changes."
@@ -1190,6 +1281,8 @@ class SettingsScreen(BaseAppScreen):
         return messages.get(category, "Guided edits: read-only.")
 
     def _guided_actions_enabled(self, category: SettingsCategoryId) -> bool:
+        if category is SettingsCategoryId.LIBRARY_RAG:
+            return self._library_rag_save_enabled()
         return (
             category in GUIDED_SETTINGS_MUTATION_CATEGORIES
             and self._category_has_unsaved_changes(category)
@@ -1400,6 +1493,12 @@ class SettingsScreen(BaseAppScreen):
             return "State: Shared with Console"
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             return "State: Console scoped | Changes affect global Console fallbacks after save."
+        if category is SettingsCategoryId.LIBRARY_RAG:
+            if self._category_has_unsaved_changes(category):
+                validation = self._library_rag_validation_result()
+                if not validation.valid:
+                    return f"State: Needs correction | {validation.message}"
+            return "State: Library scoped | Defaults affect future Library/RAG retrieval and display."
         if category is SettingsCategoryId.DIAGNOSTICS:
             return "State: Safe to run | Validation and reload expose status without writing raw TOML."
         if category is SettingsCategoryId.APPEARANCE:
@@ -1489,6 +1588,177 @@ class SettingsScreen(BaseAppScreen):
         )
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
+
+    @staticmethod
+    def _normalise_library_rag_int(value: object) -> int | str:
+        text_value = str(value).strip()
+        return int(text_value) if text_value.isdigit() else text_value
+
+    @staticmethod
+    def _normalise_library_rag_float(value: object) -> float | str:
+        text_value = str(value).strip()
+        if not text_value:
+            return text_value
+        try:
+            return float(text_value)
+        except ValueError:
+            return text_value
+
+    def _stage_library_rag_value(self, key: str, value: object) -> None:
+        category = SettingsCategoryId.LIBRARY_RAG
+        draft = self._settings_drafts.setdefault(category, SettingsDraft(category=category))
+        draft.set_value(
+            key,
+            self._library_rag_loaded_values().get(key),
+            value,
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    def _mark_library_rag_settings_staged(self) -> None:
+        if self._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG):
+            validation = self._library_rag_validation_result()
+            self._library_rag_result = (
+                "Library/RAG defaults staged." if validation.valid else validation.message
+            )
+        else:
+            self._library_rag_result = "Library/RAG defaults match last loaded values."
+        self._set_static_text("#settings-library-rag-save-result", self._library_rag_result)
+        self._update_library_rag_preview()
+        self._update_library_rag_validation_classes()
+        self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+
+    def _sync_library_rag_widgets(self) -> None:
+        values = self._library_rag_loaded_values()
+        self._syncing_library_rag_defaults = True
+        try:
+            try:
+                self.query_one("#settings-library-rag-search-mode", Select).value = (
+                    normalise_library_rag_search_mode(values["default_search_mode"])
+                )
+                self.query_one("#settings-library-rag-citation-style", Select).value = (
+                    normalise_library_rag_citation_style(values["citation_style"])
+                )
+                self.query_one("#settings-library-rag-include-citations", Button).label = (
+                    "Enabled" if bool(values["include_citations"]) else "Disabled"
+                )
+                for selector, key in (
+                    ("#settings-library-rag-default-top-k", "default_top_k"),
+                    ("#settings-library-rag-fts-top-k", "fts_top_k"),
+                    ("#settings-library-rag-vector-top-k", "vector_top_k"),
+                    ("#settings-library-rag-hybrid-alpha", "hybrid_alpha"),
+                    ("#settings-library-rag-score-threshold", "score_threshold"),
+                    ("#settings-library-rag-snippet-max-chars", "snippet_max_chars"),
+                    ("#settings-library-rag-max-context-size", "max_context_size"),
+                ):
+                    self.query_one(selector, Input).value = str(values[key])
+            except QueryError:
+                pass
+        finally:
+            self._syncing_library_rag_defaults = False
+        self._set_static_text("#settings-library-rag-save-result", self._library_rag_result)
+        self._update_library_rag_preview()
+        self._update_library_rag_validation_classes()
+
+    def _library_rag_invalid_field_key(self) -> str | None:
+        validation = self._library_rag_validation_result()
+        if validation.valid:
+            return None
+        message = validation.message
+        if message.startswith("Default results"):
+            return "default_top_k"
+        if message.startswith("Keyword results"):
+            return "fts_top_k"
+        if message.startswith("Vector results"):
+            return "vector_top_k"
+        if message.startswith("Hybrid balance"):
+            return "hybrid_alpha"
+        if message.startswith("Score threshold"):
+            return "score_threshold"
+        if message.startswith("Snippet characters"):
+            return "snippet_max_chars"
+        if message.startswith("Context budget"):
+            return "max_context_size"
+        if message.startswith("Search mode"):
+            return "default_search_mode"
+        if message.startswith("Citation style"):
+            return "citation_style"
+        return None
+
+    def _library_rag_field_selector(self, key: str) -> str | None:
+        return {
+            "default_search_mode": "#settings-library-rag-search-mode",
+            "default_top_k": "#settings-library-rag-default-top-k",
+            "fts_top_k": "#settings-library-rag-fts-top-k",
+            "vector_top_k": "#settings-library-rag-vector-top-k",
+            "hybrid_alpha": "#settings-library-rag-hybrid-alpha",
+            "score_threshold": "#settings-library-rag-score-threshold",
+            "citation_style": "#settings-library-rag-citation-style",
+            "snippet_max_chars": "#settings-library-rag-snippet-max-chars",
+            "max_context_size": "#settings-library-rag-max-context-size",
+        }.get(key)
+
+    def _update_library_rag_validation_classes(self) -> None:
+        invalid_key = self._library_rag_invalid_field_key()
+        for key in (
+            "default_search_mode",
+            "default_top_k",
+            "fts_top_k",
+            "vector_top_k",
+            "hybrid_alpha",
+            "score_threshold",
+            "citation_style",
+            "snippet_max_chars",
+            "max_context_size",
+        ):
+            selector = self._library_rag_field_selector(key)
+            if selector is None:
+                continue
+            try:
+                widget = self.query_one(selector)
+            except QueryError:
+                continue
+            widget.set_class(key == invalid_key, "settings-invalid-input")
+
+    def _library_rag_preview_rows(self) -> tuple[str, str, str]:
+        values = self._library_rag_setting_values()
+        search_mode = normalise_library_rag_search_mode(values["default_search_mode"])
+        mode_label = {
+            "plain": "Plain keyword",
+            "semantic": "Semantic",
+            "hybrid": "Hybrid",
+        }[search_mode]
+        citation_label = "No citations"
+        if bool(values["include_citations"]):
+            citation_style = normalise_library_rag_citation_style(values["citation_style"])
+            citation_label = {
+                "inline": "Inline citations",
+                "footnote": "Footnote citations",
+                "none": "No citations",
+            }[citation_style]
+        return (
+            f"{mode_label} search | {values['default_top_k']} results | {citation_label}",
+            (
+                f"Keyword {values['fts_top_k']} | Vector {values['vector_top_k']} | "
+                f"Hybrid alpha {values['hybrid_alpha']} | Min score {values['score_threshold']}"
+            ),
+            (
+                f"Snippet: {values['snippet_max_chars']} chars | "
+                f"Context budget: {values['max_context_size']} chars"
+            ),
+        )
+
+    def _update_library_rag_preview(self) -> None:
+        for selector, text in zip(
+            (
+                "#settings-library-rag-preview-summary",
+                "#settings-library-rag-preview-retrieval",
+                "#settings-library-rag-preview-context",
+            ),
+            self._library_rag_preview_rows(),
+            strict=True,
+        ):
+            self._set_static_text(selector, text)
 
     def _normalise_console_default_streaming(self, value: object) -> bool:
         normalized = self._normalise_optional_bool(value)
@@ -3602,6 +3872,20 @@ class SettingsScreen(BaseAppScreen):
                 ("Recovery", "revert unsaved changes or disable paste collapse if composer flow is disrupted"),
                 ("Boundary", "active sessions and provider+model profiles override these global fallbacks"),
             ),
+            SettingsCategoryId.LIBRARY_RAG: (
+                (
+                    "Affected config",
+                    "AppRAGSearchConfig.rag.search and AppRAGSearchConfig.rag.retriever defaults",
+                ),
+                (
+                    "Recovery",
+                    "revert unsaved defaults or open Library to validate retrieval behavior",
+                ),
+                (
+                    "Boundary",
+                    "Library owns indexing, query execution, source browse, Collections, and staging",
+                ),
+            ),
             SettingsCategoryId.DIAGNOSTICS: (
                 ("Affected config", "read-only validation, reload status, and troubleshooting output"),
                 ("Recovery", "validate first, reload only after confirming the config source is correct"),
@@ -4086,6 +4370,144 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
 
+    def _library_rag_include_citations_label(self) -> str:
+        return "Enabled" if bool(self._library_rag_setting_values()["include_citations"]) else "Disabled"
+
+    def _render_library_rag_detail(self) -> ComposeResult:
+        values = self._library_rag_setting_values()
+        search_mode = normalise_library_rag_search_mode(values["default_search_mode"])
+        citation_style = normalise_library_rag_citation_style(values["citation_style"])
+
+        yield Static("Library & RAG", classes="destination-section settings-column-title")
+        with Vertical(id="settings-library-rag-card", classes="settings-focus-card"):
+            yield self._render_category_state_banner(SettingsCategoryId.LIBRARY_RAG)
+            yield Static("Search defaults", classes="destination-section")
+            yield Static(
+                "Used by future Library-native Search/RAG and Console evidence handoff defaults.",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Search mode", classes="settings-input-label")
+                yield Select(
+                    [
+                        ("Plain keyword", "plain"),
+                        ("Semantic", "semantic"),
+                        ("Hybrid", "hybrid"),
+                    ],
+                    value=search_mode,
+                    id="settings-library-rag-search-mode",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Default results", classes="settings-input-label")
+                yield Input(
+                    value=str(values["default_top_k"]),
+                    id="settings-library-rag-default-top-k",
+                    classes="settings-compact-input",
+                    placeholder="1 - 100",
+                    restrict=r"^[0-9]*$",
+                )
+            yield Static("Retriever balance", classes="destination-section")
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Keyword results", classes="settings-input-label")
+                yield Input(
+                    value=str(values["fts_top_k"]),
+                    id="settings-library-rag-fts-top-k",
+                    classes="settings-compact-input",
+                    placeholder="1 - 100",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Vector results", classes="settings-input-label")
+                yield Input(
+                    value=str(values["vector_top_k"]),
+                    id="settings-library-rag-vector-top-k",
+                    classes="settings-compact-input",
+                    placeholder="1 - 100",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Hybrid alpha", classes="settings-input-label")
+                yield Input(
+                    value=str(values["hybrid_alpha"]),
+                    id="settings-library-rag-hybrid-alpha",
+                    classes="settings-compact-input",
+                    placeholder="0.0 - 1.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Min score", classes="settings-input-label")
+                yield Input(
+                    value=str(values["score_threshold"]),
+                    id="settings-library-rag-score-threshold",
+                    classes="settings-compact-input",
+                    placeholder="0.0 - 1.0",
+                )
+            yield Static("Citation and snippets", classes="destination-section")
+            yield Button(
+                self._library_rag_include_citations_label(),
+                id="settings-library-rag-include-citations",
+                tooltip="Toggle citation metadata in future RAG answers where supported.",
+            )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Citation style", classes="settings-input-label")
+                yield Select(
+                    [
+                        ("Inline", "inline"),
+                        ("Footnote", "footnote"),
+                        ("None", "none"),
+                    ],
+                    value=citation_style,
+                    id="settings-library-rag-citation-style",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Snippet chars", classes="settings-input-label")
+                yield Input(
+                    value=str(values["snippet_max_chars"]),
+                    id="settings-library-rag-snippet-max-chars",
+                    classes="settings-compact-input",
+                    placeholder="50 - 10000",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Context budget", classes="settings-input-label")
+                yield Input(
+                    value=str(values["max_context_size"]),
+                    id="settings-library-rag-max-context-size",
+                    classes="settings-compact-input",
+                    placeholder="1000 - 1000000",
+                    restrict=r"^[0-9]*$",
+                )
+            yield Static("Preview defaults", classes="destination-section")
+            preview_summary, preview_retrieval, preview_context = self._library_rag_preview_rows()
+            yield Static(
+                preview_summary,
+                id="settings-library-rag-preview-summary",
+                classes="settings-detail-row",
+            )
+            yield Static(
+                preview_retrieval,
+                id="settings-library-rag-preview-retrieval",
+                classes="settings-detail-row",
+            )
+            yield Static(
+                preview_context,
+                id="settings-library-rag-preview-context",
+                classes="settings-detail-row",
+            )
+            yield Static("Save targets", classes="destination-section")
+            yield self._detail_row("Search", "AppRAGSearchConfig.rag.search")
+            yield self._detail_row("Retriever", "AppRAGSearchConfig.rag.retriever")
+            yield Static(
+                self._library_rag_result,
+                id="settings-library-rag-save-result",
+                classes="settings-status-row",
+            )
+
     def _render_domain_category_detail(self, category: SettingsCategoryId) -> ComposeResult:
         contract = self._domain_category_contract(category)
         yield Static(contract.title, classes="destination-section settings-column-title")
@@ -4149,6 +4571,8 @@ class SettingsScreen(BaseAppScreen):
                     "Console impact",
                     "new/default sessions use these only when no narrower override applies",
                 )
+        elif category is SettingsCategoryId.LIBRARY_RAG:
+            yield from self._render_library_rag_detail()
         elif category is SettingsCategoryId.APPEARANCE:
             yield Static("Appearance", classes="destination-section settings-column-title")
             with Vertical(id="settings-appearance-card", classes="settings-focus-card"):
@@ -4396,6 +4820,42 @@ class SettingsScreen(BaseAppScreen):
                     value,
                     identifier=f"settings-provider-field-guide-{index}",
                 )
+        elif summary.category is SettingsCategoryId.LIBRARY_RAG:
+            yield Static("Affects Library search defaults and future RAG answers.", classes="destination-section")
+            yield Static("Control guide", classes="destination-section")
+            yield self._detail_row(
+                "Search mode",
+                "plain uses keyword search, semantic uses embeddings, hybrid blends both",
+            )
+            yield self._detail_row(
+                "Result limits",
+                "default, keyword, and vector result counts bound retrieval fan-out",
+            )
+            yield self._detail_row(
+                "Hybrid balance",
+                "0.0 favors keyword results; 1.0 favors semantic results",
+            )
+            yield self._detail_row(
+                "Citations",
+                "sets whether future RAG answers include source markers when supported",
+            )
+            yield self._detail_row(
+                "Snippet/context",
+                "snippet length controls preview text; context budget limits staged evidence",
+            )
+            yield Static("Boundary", classes="destination-section")
+            yield self._detail_row(
+                "Library owns",
+                "indexing, query execution, source browse, Collections, and Console staging",
+            )
+            yield self._detail_row("Runtime owner", ownership.runtime_owner)
+            yield self._detail_row("Writes allowed", "Yes")
+            yield self._detail_row(
+                "Config keys",
+                "10 editable defaults under AppRAGSearchConfig",
+            )
+            yield self._detail_row("Recovery", ownership.recovery_copy)
+            return
         elif summary.category is SettingsCategoryId.APPEARANCE:
             yield Static("Affects visual presentation only.", classes="destination-section")
             yield Button(
@@ -4761,6 +5221,100 @@ class SettingsScreen(BaseAppScreen):
         value: object = int(event.value) if str(event.value).isdigit() else event.value
         self._stage_console_background_effect_value("fps", value)
         self._mark_console_behavior_settings_staged()
+
+    @on(Select.Changed, "#settings-library-rag-search-mode")
+    def handle_library_rag_search_mode_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value("default_search_mode", str(event.value or "semantic"))
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-default-top-k")
+    def handle_library_rag_default_top_k_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "default_top_k",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-fts-top-k")
+    def handle_library_rag_fts_top_k_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "fts_top_k",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-vector-top-k")
+    def handle_library_rag_vector_top_k_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "vector_top_k",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-hybrid-alpha")
+    def handle_library_rag_hybrid_alpha_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "hybrid_alpha",
+            self._normalise_library_rag_float(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-score-threshold")
+    def handle_library_rag_score_threshold_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "score_threshold",
+            self._normalise_library_rag_float(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Button.Pressed, "#settings-library-rag-include-citations")
+    def handle_library_rag_include_citations_changed(self, event: Button.Pressed) -> None:
+        event.stop()
+        next_value = not bool(self._library_rag_setting_values()["include_citations"])
+        self._stage_library_rag_value("include_citations", next_value)
+        event.button.label = "Enabled" if next_value else "Disabled"
+        self._mark_library_rag_settings_staged()
+
+    @on(Select.Changed, "#settings-library-rag-citation-style")
+    def handle_library_rag_citation_style_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value("citation_style", str(event.value or "inline"))
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-snippet-max-chars")
+    def handle_library_rag_snippet_max_chars_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "snippet_max_chars",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-library-rag-max-context-size")
+    def handle_library_rag_max_context_size_changed(self, event: Input.Changed) -> None:
+        if self._syncing_library_rag_defaults:
+            return
+        self._stage_library_rag_value(
+            "max_context_size",
+            self._normalise_library_rag_int(event.value),
+        )
+        self._mark_library_rag_settings_staged()
 
     def _apply_provider_value_change(self, provider: str) -> None:
         loaded_provider = str(self._provider_loaded_setting_values().get("provider") or "")
@@ -5152,6 +5706,27 @@ class SettingsScreen(BaseAppScreen):
                 self.app.notify("Failed to save provider and model settings.", severity="error")
             return
 
+        if category is SettingsCategoryId.LIBRARY_RAG:
+            if not self._category_has_unsaved_changes(category):
+                self.app.notify("No Settings changes to save.", severity="information")
+                return
+            values = self._library_rag_current_defaults()
+            validation = validate_library_rag_defaults(values)
+            if not validation.valid:
+                self._library_rag_result = validation.message
+                self._set_static_text("#settings-library-rag-save-result", self._library_rag_result)
+                self._update_draft_status_widgets(category)
+                self.app.notify(validation.message, severity="error")
+                return
+            section_values = build_library_rag_save_sections(
+                self._app_config_mapping(),
+                values,
+            )
+            self._library_rag_result = "Saving Library/RAG defaults..."
+            self._set_static_text("#settings-library-rag-save-result", self._library_rag_result)
+            self._settings_save_library_rag_worker(section_values)
+            return
+
         draft = self._settings_drafts.get(category)
         if not draft or not draft.is_dirty:
             self.app.notify("No Settings changes to save.", severity="information")
@@ -5259,6 +5834,10 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             self._console_behavior_result = "Console behavior settings reverted to last loaded values."
             self._sync_console_behavior_widgets()
+        elif category is SettingsCategoryId.LIBRARY_RAG:
+            self._library_rag_result = "Library/RAG defaults reverted to last loaded values."
+            self._sync_library_rag_widgets()
+            self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
             values = self._provider_setting_values()
             try:
@@ -5353,6 +5932,43 @@ class SettingsScreen(BaseAppScreen):
         if not section_values:
             return True
         return SettingsConfigAdapter().save_sections(section_values)
+
+    @staticmethod
+    def _save_library_rag_sections(section_values: Mapping[str, object]) -> bool:
+        return SettingsConfigAdapter().save_sections(section_values)
+
+    def _app_config_update_target(self):
+        app_config = getattr(self.app_instance, "app_config", None)
+        if callable(getattr(app_config, "update", None)):
+            return app_config
+        self.app_instance.app_config = {}
+        return self.app_instance.app_config
+
+    def _apply_library_rag_save_result(
+        self,
+        saved: bool,
+        section_values: Mapping[str, object],
+    ) -> None:
+        if saved:
+            self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
+            self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
+            self._library_rag_result = "Library/RAG defaults saved."
+            self._set_static_text("#settings-library-rag-save-result", self._library_rag_result)
+            self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+            self.app.notify("Library/RAG defaults saved.", severity="information")
+            return
+        self._library_rag_result = "Failed to save Library/RAG defaults."
+        self._set_static_text("#settings-library-rag-save-result", self._library_rag_result)
+        self.app.notify(self._library_rag_result, severity="error")
+
+    @work(exclusive=True, thread=True)
+    def _settings_save_library_rag_worker(self, section_values: Mapping[str, object]) -> None:
+        saved = self._save_library_rag_sections(section_values)
+        self.app.call_from_thread(
+            self._apply_library_rag_save_result,
+            saved,
+            dict(section_values),
+        )
 
     def _apply_console_behavior_save_result(
         self,

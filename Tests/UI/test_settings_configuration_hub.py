@@ -2,6 +2,7 @@ import inspect
 import re
 import time
 import builtins
+from collections import UserDict
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -469,7 +470,7 @@ def test_settings_server_sync_workspace_source_contracts_are_explicit():
     assert "ACP_Interop.runtime_session.ACPRuntimeSessionState" in contracts["ACP handoff readiness"]
 
 
-def test_settings_domain_category_contracts_are_explicit_and_read_only():
+def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
     app = _build_test_app()
     screen = SettingsScreen(app)
     contracts = {contract.category: contract for contract in screen._domain_category_contracts()}
@@ -490,8 +491,11 @@ def test_settings_domain_category_contracts_are_explicit_and_read_only():
         contract = contracts[category]
         assert contract.owner_destination
         assert contract.source_of_truth
-        assert contract.settings_can_mutate is False
         assert contract.follow_up
+        if category is SettingsCategoryId.LIBRARY_RAG:
+            assert contract.settings_can_mutate is True
+        else:
+            assert contract.settings_can_mutate is False
 
     library_contract = contracts[SettingsCategoryId.LIBRARY_RAG]
     library_copy = " ".join(
@@ -502,6 +506,7 @@ def test_settings_domain_category_contracts_are_explicit_and_read_only():
     )
     assert "citations" in library_copy
     assert "snippets" in library_copy
+    assert "AppRAGSearchConfig.rag.search" in library_copy
 
 
 def test_settings_domain_category_ids_are_derived_from_contract_mapping():
@@ -543,15 +548,45 @@ def test_settings_domain_categories_are_grouped_and_have_ownership_records():
     assert domain_categories <= set(records)
     for category in domain_categories:
         record = records[category]
-        assert not record.writes_allowed
-        assert record.read_only_reason
-        assert "Open" in record.recovery_copy
+        if category is SettingsCategoryId.LIBRARY_RAG:
+            assert record.writes_allowed
+            assert "AppRAGSearchConfig.rag.search" in " ".join(record.owns_config_sections)
+        else:
+            assert not record.writes_allowed
+            assert record.read_only_reason
+        assert record.recovery_copy
         assert record.runtime_owner
 
 
 @pytest.mark.asyncio
-async def test_settings_domain_category_renders_read_only_owner_contract():
+async def test_settings_library_rag_renders_guided_defaults_and_validates(monkeypatch):
     app = _build_test_app()
+    app.app_config["AppRAGSearchConfig"] = {
+        "rag": {
+            "search": {
+                "default_search_mode": "semantic",
+                "default_top_k": 10,
+                "score_threshold": 0.0,
+                "include_citations": True,
+                "citation_style": "inline",
+                "snippet_max_chars": 240,
+                "max_context_size": 16000,
+            },
+            "retriever": {
+                "fts_top_k": 10,
+                "vector_top_k": 10,
+                "hybrid_alpha": 0.5,
+            },
+        }
+    }
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
@@ -560,13 +595,124 @@ async def test_settings_domain_category_renders_read_only_owner_contract():
         text = _visible_text(screen)
 
         assert "Library & RAG" in text
-        assert "Owner destination: Library" in text
-        assert "Settings mode: read-only defaults/status contract" in text
-        assert "Citation/snippet defaults" in text
-        assert "follow-up" in text
+        assert "Search defaults" in text
+        assert "Citation and snippets" in text
+        assert "Preview defaults" in text
+        assert "Semantic search | 10 results | Inline citations" in text
+        assert "Context budget: 16000 chars" in text
+        assert "Config keys" in text
+        assert "10 editable defaults under AppRAGSearchConfig" in text
+        assert "AppRAGSearchConfig.rag.search.default_search_mode" not in text
+        assert screen.query_one("#settings-library-rag-search-mode", Select).value == "semantic"
+        assert screen.query_one("#settings-library-rag-default-top-k", Input).value == "10"
+        assert screen.query_one("#settings-library-rag-snippet-max-chars", Input).value == "240"
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
 
+        top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
+        top_k.value = "12"
+        screen.handle_library_rag_default_top_k_changed(Input.Changed(top_k, top_k.value))
+        assert screen.query_one("#settings-save-category", Button).disabled is False
+        assert "Unsaved" in _visible_text(screen)
+
+        snippet = screen.query_one("#settings-library-rag-snippet-max-chars", Input)
+        snippet.value = "20"
+        screen.handle_library_rag_snippet_max_chars_changed(Input.Changed(snippet, snippet.value))
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert "Snippet characters" in _visible_text(screen)
+        assert snippet.has_class("settings-invalid-input")
+
+        snippet.value = "360"
+        screen.handle_library_rag_snippet_max_chars_changed(Input.Changed(snippet, snippet.value))
+        assert not snippet.has_class("settings-invalid-input")
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Library/RAG defaults saved.")
+
+    assert saved
+    rag = saved[-1]["AppRAGSearchConfig"]["rag"]
+    assert rag["search"]["default_top_k"] == 12
+    assert rag["search"]["snippet_max_chars"] == 360
+
+
+@pytest.mark.asyncio
+async def test_settings_library_rag_sync_clamps_invalid_select_values():
+    app = _build_test_app()
+    app.app_config["AppRAGSearchConfig"] = {
+        "rag": {
+            "search": {
+                "default_search_mode": "not-a-mode",
+                "citation_style": "not-a-style",
+            },
+        }
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await pilot.click("#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        screen._sync_library_rag_widgets()
+
+        assert screen.query_one("#settings-library-rag-search-mode", Select).value == "semantic"
+        assert screen.query_one("#settings-library-rag-citation-style", Select).value == "inline"
+
+
+def test_settings_library_rag_save_uses_exclusive_thread_worker():
+    worker = SettingsScreen.__dict__["_settings_save_library_rag_worker"]
+    source = inspect.getsource(SettingsScreen)
+
+    assert getattr(worker, "__wrapped__", None) is not None
+    assert (
+        "@work(exclusive=True, thread=True)\n"
+        "    def _settings_save_library_rag_worker"
+    ) in source
+
+
+@pytest.mark.asyncio
+async def test_settings_library_rag_save_preserves_mapping_like_app_config(monkeypatch):
+    app = _build_test_app()
+    app.app_config = UserDict(
+        {
+            "AppRAGSearchConfig": {
+                "rag": {
+                    "search": {"default_top_k": 10},
+                    "retriever": {},
+                }
+            }
+        }
+    )
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await pilot.click("#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
+        top_k.value = "12"
+        screen.handle_library_rag_default_top_k_changed(Input.Changed(top_k, top_k.value))
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Library/RAG defaults saved.")
+
+    assert saved
+    assert isinstance(app.app_config, UserDict)
+    assert app.app_config["AppRAGSearchConfig"]["rag"]["search"]["default_top_k"] == 12
+
+
+@pytest.mark.asyncio
+async def test_settings_domain_category_renders_read_only_owner_contract():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        screen = _active_destination_screen(host)
         search = screen.query_one("#settings-category-search", Input)
         search.value = "mcp"
         search.focus()
@@ -1228,6 +1374,28 @@ def test_settings_shell_button_focus_does_not_use_heavy_outline():
     body = match.group("body")
     assert "outline: none;" in body
     assert "text-style: bold underline;" in body
+
+
+def test_settings_invalid_compact_fields_keep_focused_text_readable():
+    css_path = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+    )
+    css = css_path.read_text()
+    match = re.search(
+        r"\.settings-compact-input\.settings-invalid-input:focus,\s*"
+        r"\.settings-compact-select\.settings-invalid-input:focus\s*\{(?P<body>[^}]*)\}",
+        css,
+        flags=re.DOTALL,
+    )
+
+    assert match
+    body = match.group("body")
+    assert "color: $ds-text-primary;" in body
+    assert "text-opacity: 1;" in body
+    assert "background: $ds-surface-raised;" in body
+    assert "outline: none;" in body
+    assert "outline: heavy" not in body
 
 
 @pytest.mark.asyncio
