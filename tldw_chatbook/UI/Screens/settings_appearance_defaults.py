@@ -19,7 +19,7 @@ DEFAULT_SMOOTH_SCROLLING = True
 SUPPORTED_DENSITIES = frozenset({"compact", "normal", "comfortable"})
 MIN_PALETTE_THEME_LIMIT = 0
 MAX_PALETTE_THEME_LIMIT = 100
-MIN_FONT_SIZE = 8
+MIN_FONT_SIZE = 6
 MAX_FONT_SIZE = 32
 MAX_THEME_NAME_LENGTH = 128
 
@@ -46,8 +46,8 @@ def _coerce_bool(value: Any, default: bool) -> bool:
     """Coerce common config boolean values."""
     if isinstance(value, bool):
         return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
+    if isinstance(value, (int, str)):
+        normalized = str(value).strip().lower()
         if normalized in {"1", "true", "yes", "on", "enabled"}:
             return True
         if normalized in {"0", "false", "no", "off", "disabled"}:

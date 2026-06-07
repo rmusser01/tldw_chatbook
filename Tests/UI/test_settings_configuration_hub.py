@@ -826,6 +826,14 @@ def test_settings_appearance_save_uses_exclusive_thread_worker():
     ) in source
 
 
+def test_settings_appearance_theme_options_use_specific_import_fallback():
+    source = inspect.getsource(SettingsScreen._appearance_theme_options)
+
+    assert "from tldw_chatbook.css.Themes.themes import ALL_THEMES" in source
+    assert "except (ImportError, ModuleNotFoundError):" in source
+    assert "except Exception:" not in source
+
+
 @pytest.mark.asyncio
 async def test_settings_library_rag_save_preserves_mapping_like_app_config(monkeypatch):
     app = _build_test_app()

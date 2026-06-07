@@ -47,6 +47,20 @@ def test_load_appearance_defaults_reads_general_web_and_appearance_sections():
     )
 
 
+def test_load_appearance_defaults_coerces_integer_boolean_values():
+    defaults = load_appearance_defaults(
+        {
+            "appearance": {
+                "animations_enabled": 0,
+                "smooth_scrolling": 1,
+            },
+        }
+    )
+
+    assert defaults.animations_enabled is False
+    assert defaults.smooth_scrolling is True
+
+
 def test_load_appearance_defaults_falls_back_for_malformed_values():
     defaults = load_appearance_defaults(
         {
@@ -84,12 +98,20 @@ def test_validate_appearance_defaults_accepts_valid_values():
     assert "valid" in result.message.lower()
 
 
+def test_validate_appearance_defaults_accepts_web_runtime_minimum_font_size():
+    result = validate_appearance_defaults(
+        SettingsAppearanceDefaults(font_size=6)
+    )
+
+    assert result.valid is True
+
+
 def test_validate_appearance_defaults_rejects_invalid_values():
     invalid_values = (
         ({"default_theme": ""}, "Theme"),
         ({"palette_theme_limit": -1}, "Palette theme limit"),
         ({"palette_theme_limit": 101}, "Palette theme limit"),
-        ({"font_size": 7}, "Font size"),
+        ({"font_size": 5}, "Font size"),
         ({"font_size": 33}, "Font size"),
         ({"density": "spacious"}, "Density"),
         ({"animations_enabled": "yes"}, "Animations"),

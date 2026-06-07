@@ -1681,8 +1681,8 @@ class SettingsScreen(BaseAppScreen):
         ]
         seen = {value for _label, value in options}
         try:
-            from ...css.Themes.themes import ALL_THEMES
-        except Exception:
+            from tldw_chatbook.css.Themes.themes import ALL_THEMES
+        except (ImportError, ModuleNotFoundError):
             ALL_THEMES = ()
         for theme in ALL_THEMES:
             theme_name = str(getattr(theme, "name", "") or "").strip()
@@ -4015,7 +4015,7 @@ class SettingsScreen(BaseAppScreen):
                 ("Focused setting", "Web font size"),
                 ("Purpose", "Controls Textual-web terminal cell density."),
                 ("Saved as", "web_server.font_size"),
-                ("Validation", "whole number from 8 to 32"),
+                ("Validation", "whole number from 6 to 32"),
             )
         if field_id == "settings-appearance-density":
             return (
@@ -4841,7 +4841,7 @@ class SettingsScreen(BaseAppScreen):
                         value=str(values["font_size"]),
                         id="settings-appearance-font-size",
                         classes="settings-compact-input",
-                        placeholder="8 - 32",
+                        placeholder="6 - 32",
                         restrict=r"^[0-9]*$",
                     )
                 with Horizontal(classes="settings-input-row settings-select-row"):
