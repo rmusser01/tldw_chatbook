@@ -46,7 +46,7 @@ def _coerce_bool(value: Any, default: bool) -> bool:
     """Coerce common config boolean values."""
     if isinstance(value, bool):
         return value
-    if isinstance(value, (int, str)):
+    if isinstance(value, (str, int)):
         normalized = str(value).strip().lower()
         if normalized in {"1", "true", "yes", "on", "enabled"}:
             return True
