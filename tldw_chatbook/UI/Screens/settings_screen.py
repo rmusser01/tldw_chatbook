@@ -4287,10 +4287,6 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-advanced-config-validation-status",
                     classes="settings-status-row settings-advanced-safety-status",
                 )
-                yield TextArea(
-                    raw_config_text,
-                    id="settings-advanced-config-editor",
-                )
                 with Horizontal(id="settings-advanced-config-actions", classes="settings-action-row"):
                     yield Button(
                         "Validate Raw TOML",
@@ -4313,6 +4309,10 @@ class SettingsScreen(BaseAppScreen):
                     self._advanced_config_result,
                     id="settings-advanced-config-result",
                     classes="settings-status-row",
+                )
+                yield TextArea(
+                    raw_config_text,
+                    id="settings-advanced-config-editor",
                 )
 
     def _render_impact_pane(self) -> ComposeResult:
@@ -4472,7 +4472,12 @@ class SettingsScreen(BaseAppScreen):
                     )
                     yield from self._render_category_buttons()
                 yield self._column_divider("settings-category-detail-divider")
-                with VerticalScroll(id="settings-detail-pane", classes="destination-workbench-pane"):
+                detail_pane_container = (
+                    Vertical
+                    if active_summary.category is SettingsCategoryId.ADVANCED_CONFIG
+                    else VerticalScroll
+                )
+                with detail_pane_container(id="settings-detail-pane", classes="destination-workbench-pane"):
                     yield Static("Preference Detail", classes="destination-section settings-column-title")
                     yield from self._render_detail_pane()
                 yield self._column_divider("settings-detail-impact-divider")

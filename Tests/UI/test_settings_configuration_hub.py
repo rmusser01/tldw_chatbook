@@ -15,6 +15,7 @@ from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _build_test_app,
     _visible_text,
+    _wait_for_selector,
 )
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
@@ -4104,6 +4105,64 @@ async def test_settings_advanced_config_shows_raw_editor_and_safety_actions():
         assert save_button.disabled
         assert "Last validated: not validated" in text
         assert "Save blocked until the current text validates" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_keeps_safety_actions_before_raw_editor():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-advanced-config-actions")
+        await _wait_for_selector(screen, pilot, "#settings-advanced-config-editor")
+        actions = screen.query_one("#settings-advanced-config-actions")
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+
+        assert actions.region.height > 0
+        assert actions.region.width > 0
+        assert actions.region.y < editor.region.y
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_uses_editor_owned_scroll_region():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-advanced-config-editor")
+        detail_pane = screen.query_one("#settings-detail-pane")
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+
+        assert not isinstance(detail_pane, VerticalScroll)
+        assert editor.region.height > 0
+
+
+def test_settings_pane_widths_are_owned_by_stylesheet_not_inline_python():
+    source = inspect.getsource(SettingsScreen.compose_content)
+    css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(encoding="utf-8")
+
+    assert ".styles.width" not in source
+    for selector, expected_width in (
+        ("#settings-category-pane", "3fr"),
+        ("#settings-detail-pane", "6fr"),
+        ("#settings-impact-pane", "2fr"),
+    ):
+        marker = f"{selector} {{"
+        block_start = css.index(marker)
+        block_end = css.index("}", block_start)
+        block = css[block_start:block_end]
+
+        assert f"width: {expected_width};" in block
+
+    card_start = css.index("#settings-advanced-config-card {")
+    card_end = css.index("}", card_start)
+    card_block = css[card_start:card_end]
+    assert "height: 1fr;" in card_block
+    assert "min-height: 0;" in card_block
 
 
 @pytest.mark.asyncio
