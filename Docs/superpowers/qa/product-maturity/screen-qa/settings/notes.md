@@ -139,3 +139,37 @@ Screenshot method: Playwright browser screenshot of textual-web through CDP.
 
 - `python -m pytest -q Tests/UI/test_destination_shells.py::test_settings_destination_uses_three_column_workbench_contract Tests/UI/test_settings_configuration_hub.py::test_settings_advanced_config_keeps_safety_actions_before_raw_editor Tests/UI/test_settings_configuration_hub.py::test_settings_advanced_config_shows_raw_editor_and_safety_actions --tb=short`
 - Result: `3 passed, 1 warning`.
+
+## Settings Actual-Use Corrective QA Closeout
+
+Date: 2026-06-06
+Branch: `codex/settings-actual-use-closeout`
+Backlog task: TASK-77
+Screen: Settings
+Viewport: 2050x1240 textual-web browser capture
+Launch method: `tldw-serve --host 127.0.0.1 --port 8910` with isolated HOME/XDG config, `PYTHONPATH` pinned to this worktree, `default_tab = "settings"`, and splash disabled.
+Screenshot method: Playwright browser automation against textual-web through CDP.
+Fallback reason: initial browser navigation waited on page lifecycle past timeout, but the server returned the page and assets; the existing open page was then driven directly through Playwright after disabling textual-web overlay pointer events.
+
+### Screenshots
+
+- Baseline overview: `Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-closeout-baseline-2026-06-06.png`
+- Console Behavior saved edit state: `Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-closeout-console-max-tokens-saved-2026-06-06.png`
+- Provider dropdown open: `Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-closeout-provider-dropdown-open-actual-2026-06-06.png`
+- Provider selection applied: `Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-closeout-provider-selection-mistral-2026-06-06.png`
+
+### Verification Scope
+
+- Confirmed actual rendered category navigation works through mouse selection and keyboard slash-search plus Enter.
+- Confirmed Providers & Models renders provider, model, endpoint, credential, and selected model-default controls without clipped leading characters.
+- Confirmed the provider dropdown opens without clipping and selecting `Mistral` updates the selected provider, marks the category unsaved, enables Save/Revert, and avoids blank-provider persistence.
+- Confirmed Console Behavior numeric entry remains visible while typed, footer shortcuts do not leak while the input owns focus, and moving focus then pressing `s` saves with visible no-unsaved and saved-status feedback.
+- Confirmed the narrowed inspector provides category-specific guidance for both Providers & Models and Console Behavior.
+- User approval: approved in the Codex thread after actual screenshot review.
+
+### Verification
+
+- `python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/UI/test_destination_shells.py::test_settings_destination_uses_three_column_workbench_contract --tb=short`
+- Result: `177 passed, 1 warning`.
+- `file Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-closeout-baseline-2026-06-06.png Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-closeout-console-max-tokens-saved-2026-06-06.png Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-closeout-provider-dropdown-open-actual-2026-06-06.png Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-closeout-provider-selection-mistral-2026-06-06.png`
+- Result: all four files are `PNG image data, 2050 x 1240, 8-bit/color RGB, non-interlaced`.
