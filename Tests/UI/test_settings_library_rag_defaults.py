@@ -1,3 +1,4 @@
+import inspect
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,23 @@ def test_rag_config_loads_settings_controlled_display_defaults(monkeypatch):
     assert config.search.max_context_size == 64000
 
 
+def test_rag_config_uses_fallbacks_for_invalid_display_default_ints(monkeypatch):
+    _patch_rag_settings(
+        monkeypatch,
+        {
+            "search": {
+                "snippet_max_chars": "not-an-int",
+                "max_context_size": "also-not-an-int",
+            }
+        },
+    )
+
+    config = RAGConfig.from_settings()
+
+    assert config.search.snippet_max_chars == 240
+    assert config.search.max_context_size == 16000
+
+
 def test_load_library_rag_defaults_uses_safe_defaults():
     defaults = load_library_rag_defaults({})
 
@@ -57,6 +75,32 @@ def test_load_library_rag_defaults_uses_safe_defaults():
     assert defaults.citation_style == "inline"
     assert defaults.snippet_max_chars == 240
     assert defaults.max_context_size == 16000
+
+
+def test_load_library_rag_defaults_accepts_float_like_integer_values():
+    defaults = load_library_rag_defaults(
+        {
+            "AppRAGSearchConfig": {
+                "rag": {
+                    "search": {
+                        "default_top_k": "12.0",
+                        "snippet_max_chars": 512.0,
+                        "max_context_size": "64000.0",
+                    },
+                    "retriever": {
+                        "fts_top_k": "18.0",
+                        "vector_top_k": 19.0,
+                    },
+                }
+            }
+        }
+    )
+
+    assert defaults.default_top_k == 12
+    assert defaults.fts_top_k == 18
+    assert defaults.vector_top_k == 19
+    assert defaults.snippet_max_chars == 512
+    assert defaults.max_context_size == 64000
 
 
 def test_load_library_rag_defaults_reads_nested_search_and_retriever_sections():
@@ -143,6 +187,20 @@ def test_validate_library_rag_defaults_accepts_valid_values():
     assert "valid" in result.message.lower()
 
 
+def test_validate_library_rag_defaults_accepts_float_like_integer_values():
+    result = validate_library_rag_defaults(
+        SettingsLibraryRagDefaults(
+            default_top_k="12.0",
+            fts_top_k=18.0,
+            vector_top_k="19.0",
+            snippet_max_chars="512.0",
+            max_context_size=64000.0,
+        )
+    )
+
+    assert result.valid is True
+
+
 def test_build_library_rag_save_sections_deep_merges_without_dropping_unrelated_rag_config():
     app_config = {
         "AppRAGSearchConfig": {
@@ -194,3 +252,15 @@ def test_build_library_rag_save_sections_deep_merges_without_dropping_unrelated_
         "hybrid_alpha": 0.4,
     }
     assert rag["chunking"] == {"chunk_size": 400}
+
+
+def test_library_rag_public_functions_use_google_style_docstrings():
+    for function in (
+        load_library_rag_defaults,
+        validate_library_rag_defaults,
+        build_library_rag_save_sections,
+    ):
+        doc = inspect.getdoc(function)
+        assert doc is not None
+        assert "Args:" in doc
+        assert "Returns:" in doc

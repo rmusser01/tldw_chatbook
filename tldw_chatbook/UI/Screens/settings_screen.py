@@ -75,6 +75,8 @@ from .settings_library_rag_defaults import (
     SettingsLibraryRagDefaults,
     build_library_rag_save_sections,
     load_library_rag_defaults,
+    normalise_library_rag_citation_style,
+    normalise_library_rag_search_mode,
     validate_library_rag_defaults,
 )
 from ..Navigation.main_navigation import NavigateToScreen
@@ -987,11 +989,18 @@ class SettingsScreen(BaseAppScreen):
                 return summary
         return self._category_summaries()[0]
 
-    def _console_settings(self) -> dict:
+    def _app_config_section_target(self):
         app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            self.app_instance.app_config = {}
-            app_config = self.app_instance.app_config
+        if (
+            callable(getattr(app_config, "setdefault", None))
+            and hasattr(app_config, "__setitem__")
+        ):
+            return app_config
+        self.app_instance.app_config = {}
+        return self.app_instance.app_config
+
+    def _console_settings(self) -> dict:
+        app_config = self._app_config_section_target()
         console_settings = app_config.setdefault("console", {})
         if not isinstance(console_settings, dict):
             console_settings = {}
@@ -999,10 +1008,7 @@ class SettingsScreen(BaseAppScreen):
         return console_settings
 
     def _chat_defaults(self) -> dict:
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            self.app_instance.app_config = {}
-            app_config = self.app_instance.app_config
+        app_config = self._app_config_section_target()
         chat_defaults = app_config.setdefault("chat_defaults", {})
         if not isinstance(chat_defaults, dict):
             chat_defaults = {}
@@ -1627,11 +1633,11 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_library_rag_defaults = True
         try:
             try:
-                self.query_one("#settings-library-rag-search-mode", Select).value = str(
-                    values["default_search_mode"]
+                self.query_one("#settings-library-rag-search-mode", Select).value = (
+                    normalise_library_rag_search_mode(values["default_search_mode"])
                 )
-                self.query_one("#settings-library-rag-citation-style", Select).value = str(
-                    values["citation_style"]
+                self.query_one("#settings-library-rag-citation-style", Select).value = (
+                    normalise_library_rag_citation_style(values["citation_style"])
                 )
                 self.query_one("#settings-library-rag-include-citations", Button).label = (
                     "Enabled" if bool(values["include_citations"]) else "Disabled"
@@ -1716,18 +1722,20 @@ class SettingsScreen(BaseAppScreen):
 
     def _library_rag_preview_rows(self) -> tuple[str, str, str]:
         values = self._library_rag_setting_values()
+        search_mode = normalise_library_rag_search_mode(values["default_search_mode"])
         mode_label = {
             "plain": "Plain keyword",
             "semantic": "Semantic",
             "hybrid": "Hybrid",
-        }.get(str(values["default_search_mode"]), str(values["default_search_mode"]).title())
+        }[search_mode]
         citation_label = "No citations"
         if bool(values["include_citations"]):
+            citation_style = normalise_library_rag_citation_style(values["citation_style"])
             citation_label = {
                 "inline": "Inline citations",
                 "footnote": "Footnote citations",
                 "none": "No citations",
-            }.get(str(values["citation_style"]), f"{values['citation_style']} citations")
+            }[citation_style]
         return (
             f"{mode_label} search | {values['default_top_k']} results | {citation_label}",
             (
@@ -4367,12 +4375,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _render_library_rag_detail(self) -> ComposeResult:
         values = self._library_rag_setting_values()
-        search_mode = str(values["default_search_mode"])
-        if search_mode not in {"plain", "semantic", "hybrid"}:
-            search_mode = "semantic"
-        citation_style = str(values["citation_style"])
-        if citation_style not in {"inline", "footnote", "none"}:
-            citation_style = "inline"
+        search_mode = normalise_library_rag_search_mode(values["default_search_mode"])
+        citation_style = normalise_library_rag_citation_style(values["citation_style"])
 
         yield Static("Library & RAG", classes="destination-section settings-column-title")
         with Vertical(id="settings-library-rag-card", classes="settings-focus-card"):
@@ -5718,20 +5722,9 @@ class SettingsScreen(BaseAppScreen):
                 self._app_config_mapping(),
                 values,
             )
-            saved = SettingsConfigAdapter().save_sections(section_values)
-            if saved:
-                if not isinstance(getattr(self.app_instance, "app_config", None), dict):
-                    self.app_instance.app_config = {}
-                self.app_instance.app_config.update(copy.deepcopy(section_values))
-                self._settings_drafts.pop(category, None)
-                self._library_rag_result = "Library/RAG defaults saved."
-                self._set_static_text("#settings-library-rag-save-result", self._library_rag_result)
-                self._update_draft_status_widgets(category)
-                self.app.notify("Library/RAG defaults saved.", severity="information")
-            else:
-                self._library_rag_result = "Failed to save Library/RAG defaults."
-                self._set_static_text("#settings-library-rag-save-result", self._library_rag_result)
-                self.app.notify(self._library_rag_result, severity="error")
+            self._library_rag_result = "Saving Library/RAG defaults..."
+            self._set_static_text("#settings-library-rag-save-result", self._library_rag_result)
+            self._settings_save_library_rag_worker(section_values)
             return
 
         draft = self._settings_drafts.get(category)
@@ -5939,6 +5932,43 @@ class SettingsScreen(BaseAppScreen):
         if not section_values:
             return True
         return SettingsConfigAdapter().save_sections(section_values)
+
+    @staticmethod
+    def _save_library_rag_sections(section_values: Mapping[str, object]) -> bool:
+        return SettingsConfigAdapter().save_sections(section_values)
+
+    def _app_config_update_target(self):
+        app_config = getattr(self.app_instance, "app_config", None)
+        if callable(getattr(app_config, "update", None)):
+            return app_config
+        self.app_instance.app_config = {}
+        return self.app_instance.app_config
+
+    def _apply_library_rag_save_result(
+        self,
+        saved: bool,
+        section_values: Mapping[str, object],
+    ) -> None:
+        if saved:
+            self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
+            self._settings_drafts.pop(SettingsCategoryId.LIBRARY_RAG, None)
+            self._library_rag_result = "Library/RAG defaults saved."
+            self._set_static_text("#settings-library-rag-save-result", self._library_rag_result)
+            self._update_draft_status_widgets(SettingsCategoryId.LIBRARY_RAG)
+            self.app.notify("Library/RAG defaults saved.", severity="information")
+            return
+        self._library_rag_result = "Failed to save Library/RAG defaults."
+        self._set_static_text("#settings-library-rag-save-result", self._library_rag_result)
+        self.app.notify(self._library_rag_result, severity="error")
+
+    @work(exclusive=True, thread=True)
+    def _settings_save_library_rag_worker(self, section_values: Mapping[str, object]) -> None:
+        saved = self._save_library_rag_sections(section_values)
+        self.app.call_from_thread(
+            self._apply_library_rag_save_result,
+            saved,
+            dict(section_values),
+        )
 
     def _apply_console_behavior_save_result(
         self,

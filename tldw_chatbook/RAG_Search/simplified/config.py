@@ -16,6 +16,18 @@ from loguru import logger
 from tldw_chatbook.config import get_cli_setting, load_cli_config_and_ensure_existence, get_user_data_dir
 
 
+def _coerce_int_setting(value: Any, default: int) -> int:
+    """Coerce user-editable integer settings without raising on bad config."""
+    if isinstance(value, bool):
+        return default
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    if not parsed.is_integer():
+        return default
+    return int(parsed)
+
 
 @dataclass
 class EmbeddingConfig:
@@ -414,12 +426,14 @@ class RAGConfig:
             search_section.get('citation_style', config.search.citation_style)
         )
 
-        config.search.snippet_max_chars = int(
-            search_section.get('snippet_max_chars', config.search.snippet_max_chars)
+        config.search.snippet_max_chars = _coerce_int_setting(
+            search_section.get('snippet_max_chars', config.search.snippet_max_chars),
+            config.search.snippet_max_chars,
         )
 
-        config.search.max_context_size = int(
-            search_section.get('max_context_size', config.search.max_context_size)
+        config.search.max_context_size = _coerce_int_setting(
+            search_section.get('max_context_size', config.search.max_context_size),
+            config.search.max_context_size,
         )
         
         # Search mode configuration

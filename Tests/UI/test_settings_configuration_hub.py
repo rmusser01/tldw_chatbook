@@ -2,6 +2,7 @@ import inspect
 import re
 import time
 import builtins
+from collections import UserDict
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -631,6 +632,78 @@ async def test_settings_library_rag_renders_guided_defaults_and_validates(monkey
     rag = saved[-1]["AppRAGSearchConfig"]["rag"]
     assert rag["search"]["default_top_k"] == 12
     assert rag["search"]["snippet_max_chars"] == 360
+
+
+@pytest.mark.asyncio
+async def test_settings_library_rag_sync_clamps_invalid_select_values():
+    app = _build_test_app()
+    app.app_config["AppRAGSearchConfig"] = {
+        "rag": {
+            "search": {
+                "default_search_mode": "not-a-mode",
+                "citation_style": "not-a-style",
+            },
+        }
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await pilot.click("#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+
+        screen._sync_library_rag_widgets()
+
+        assert screen.query_one("#settings-library-rag-search-mode", Select).value == "semantic"
+        assert screen.query_one("#settings-library-rag-citation-style", Select).value == "inline"
+
+
+def test_settings_library_rag_save_uses_exclusive_thread_worker():
+    worker = SettingsScreen.__dict__["_settings_save_library_rag_worker"]
+    source = inspect.getsource(SettingsScreen)
+
+    assert getattr(worker, "__wrapped__", None) is not None
+    assert (
+        "@work(exclusive=True, thread=True)\n"
+        "    def _settings_save_library_rag_worker"
+    ) in source
+
+
+@pytest.mark.asyncio
+async def test_settings_library_rag_save_preserves_mapping_like_app_config(monkeypatch):
+    app = _build_test_app()
+    app.app_config = UserDict(
+        {
+            "AppRAGSearchConfig": {
+                "rag": {
+                    "search": {"default_top_k": 10},
+                    "retriever": {},
+                }
+            }
+        }
+    )
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await pilot.click("#settings-category-library-rag")
+        screen = _active_destination_screen(host)
+        top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
+        top_k.value = "12"
+        screen.handle_library_rag_default_top_k_changed(Input.Changed(top_k, top_k.value))
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Library/RAG defaults saved.")
+
+    assert saved
+    assert isinstance(app.app_config, UserDict)
+    assert app.app_config["AppRAGSearchConfig"]["rag"]["search"]["default_top_k"] == 12
 
 
 @pytest.mark.asyncio
