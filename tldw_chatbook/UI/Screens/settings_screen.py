@@ -71,6 +71,12 @@ from .settings_config_models import (
     SettingsDraft,
     SettingsOwnershipRecord,
 )
+from .settings_appearance_defaults import (
+    SettingsAppearanceDefaults,
+    build_appearance_save_sections,
+    load_appearance_defaults,
+    validate_appearance_defaults,
+)
 from .settings_library_rag_defaults import (
     SettingsLibraryRagDefaults,
     build_library_rag_save_sections,
@@ -235,6 +241,7 @@ SENSITIVE_CONFIG_KEY_PATTERNS = (
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
     {
         SettingsCategoryId.PROVIDERS_MODELS,
+        SettingsCategoryId.APPEARANCE,
         SettingsCategoryId.CONSOLE_BEHAVIOR,
         SettingsCategoryId.LIBRARY_RAG,
     }
@@ -566,6 +573,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_defaults = False
         self._syncing_console_background_effects = False
         self._syncing_library_rag_defaults = False
+        self._syncing_appearance_defaults = False
         self._active_settings_field_id: str | None = None
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
@@ -580,6 +588,7 @@ class SettingsScreen(BaseAppScreen):
         self._console_behavior_result = "Console behavior settings have not been saved this session."
         self._console_behavior_saved_this_session = False
         self._library_rag_result = "Library/RAG defaults have not been saved this session."
+        self._appearance_result = "Appearance defaults have not been saved this session."
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
@@ -649,8 +658,8 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategorySummary(
                 SettingsCategoryId.APPEARANCE,
                 "Appearance",
-                "Theme, density, and visual customization surface.",
-                "Customize",
+                "Theme, density, and visual defaults shared with the app shell.",
+                "Guided",
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.STORAGE,
@@ -887,13 +896,25 @@ class SettingsScreen(BaseAppScreen):
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.APPEARANCE,
-                owns_config_sections=("appearance", "ui", "theme"),
-                reads_runtime_state_from=("Appearance destination",),
-                writes_allowed=False,
-                runtime_owner="Appearance",
-                boundary_copy="Settings routes visual preferences to Appearance.",
-                recovery_copy="Open Appearance for the full editor and preview flow.",
-                read_only_reason="Appearance editing remains destination-owned in this slice.",
+                owns_config_sections=(
+                    "general.default_theme",
+                    "general.palette_theme_limit",
+                    "web_server.font_size",
+                    "appearance.density",
+                    "appearance.animations_enabled",
+                    "appearance.smooth_scrolling",
+                ),
+                reads_runtime_state_from=("app theme", "Customize destination"),
+                writes_allowed=True,
+                runtime_owner="Settings persisted defaults; Customize full theme editor",
+                boundary_copy=(
+                    "Settings owns launch/web visual defaults; Customize owns full "
+                    "theme editing and deeper visual preview."
+                ),
+                recovery_copy=(
+                    "Preview applies runtime-safe values for this session only; Save persists "
+                    "defaults, Revert restores loaded values."
+                ),
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.STORAGE,
@@ -1223,6 +1244,34 @@ class SettingsScreen(BaseAppScreen):
         app_config = getattr(self.app_instance, "app_config", {})
         return app_config if isinstance(app_config, Mapping) else {}
 
+    def _appearance_loaded_defaults(self) -> SettingsAppearanceDefaults:
+        return load_appearance_defaults(self._app_config_mapping())
+
+    def _appearance_loaded_values(self) -> dict[str, object]:
+        return asdict(self._appearance_loaded_defaults())
+
+    def _appearance_draft(self) -> SettingsDraft | None:
+        return self._settings_drafts.get(SettingsCategoryId.APPEARANCE)
+
+    def _appearance_setting_values(self) -> dict[str, object]:
+        loaded = self._appearance_loaded_values()
+        draft = self._appearance_draft()
+        return {
+            key: draft.values[key] if draft is not None and key in draft.values else value
+            for key, value in loaded.items()
+        }
+
+    def _appearance_current_defaults(self) -> SettingsAppearanceDefaults:
+        return SettingsAppearanceDefaults(**self._appearance_setting_values())
+
+    def _appearance_validation_result(self):
+        return validate_appearance_defaults(self._appearance_current_defaults())
+
+    def _appearance_save_enabled(self) -> bool:
+        if not self._category_has_unsaved_changes(SettingsCategoryId.APPEARANCE):
+            return False
+        return self._appearance_validation_result().valid
+
     def _library_rag_loaded_defaults(self) -> SettingsLibraryRagDefaults:
         return load_library_rag_defaults(self._app_config_mapping())
 
@@ -1256,6 +1305,13 @@ class SettingsScreen(BaseAppScreen):
         return bool(draft and draft.is_dirty)
 
     def _guided_action_message(self, category: SettingsCategoryId) -> str:
+        if category is SettingsCategoryId.APPEARANCE:
+            if self._category_has_unsaved_changes(category):
+                validation = self._appearance_validation_result()
+                if not validation.valid:
+                    return f"Guided edits: {validation.message}"
+                return "Guided edits: Preview, Save, or Revert Appearance defaults."
+            return "Guided edits: change an Appearance default first."
         if category is SettingsCategoryId.LIBRARY_RAG:
             if self._category_has_unsaved_changes(category):
                 validation = self._library_rag_validation_result()
@@ -1269,7 +1325,6 @@ class SettingsScreen(BaseAppScreen):
             return "Guided edits: change a field first."
         messages = {
             SettingsCategoryId.OVERVIEW: "Guided edits: choose Providers or Console.",
-            SettingsCategoryId.APPEARANCE: "Guided edits: use Open Appearance.",
             SettingsCategoryId.STORAGE: "Guided edits: Storage is read-only.",
             SettingsCategoryId.PRIVACY_SECURITY: "Guided edits: use Check Privacy.",
             SettingsCategoryId.DIAGNOSTICS: "Guided edits: use Validate/Reload.",
@@ -1281,6 +1336,8 @@ class SettingsScreen(BaseAppScreen):
         return messages.get(category, "Guided edits: read-only.")
 
     def _guided_actions_enabled(self, category: SettingsCategoryId) -> bool:
+        if category is SettingsCategoryId.APPEARANCE:
+            return self._appearance_save_enabled()
         if category is SettingsCategoryId.LIBRARY_RAG:
             return self._library_rag_save_enabled()
         return (
@@ -1485,6 +1542,14 @@ class SettingsScreen(BaseAppScreen):
             self._select_category(category_values[0], restore_focus=True)
 
     def _category_state_banner_text(self, category: SettingsCategoryId) -> str:
+        if category is SettingsCategoryId.APPEARANCE and self._category_has_unsaved_changes(category):
+            validation = self._appearance_validation_result()
+            if not validation.valid:
+                return f"State: Needs correction | {validation.message}"
+        if category is SettingsCategoryId.LIBRARY_RAG and self._category_has_unsaved_changes(category):
+            validation = self._library_rag_validation_result()
+            if not validation.valid:
+                return f"State: Needs correction | {validation.message}"
         if self._category_has_unsaved_changes(category):
             return "State: Unsaved changes | Save or Revert before leaving this category."
         if category is SettingsCategoryId.ADVANCED_CONFIG:
@@ -1494,15 +1559,11 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             return "State: Console scoped | Changes affect global Console fallbacks after save."
         if category is SettingsCategoryId.LIBRARY_RAG:
-            if self._category_has_unsaved_changes(category):
-                validation = self._library_rag_validation_result()
-                if not validation.valid:
-                    return f"State: Needs correction | {validation.message}"
             return "State: Library scoped | Defaults affect future Library/RAG retrieval and display."
         if category is SettingsCategoryId.DIAGNOSTICS:
             return "State: Safe to run | Validation and reload expose status without writing raw TOML."
         if category is SettingsCategoryId.APPEARANCE:
-            return "State: Routed | Open Appearance for theme and density controls."
+            return "State: Visual defaults | Settings owns launch and web display defaults."
         if category is SettingsCategoryId.STORAGE:
             return "State: Local paths | Verify write access before changing storage locations."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
@@ -1535,6 +1596,114 @@ class SettingsScreen(BaseAppScreen):
             banner.add_class("settings-dirty-category")
         else:
             banner.remove_class("settings-dirty-category")
+
+    @staticmethod
+    def _normalise_appearance_int(value: object) -> int | str:
+        text_value = str(value).strip()
+        return int(text_value) if text_value.isdigit() else text_value
+
+    def _stage_appearance_value(self, key: str, value: object) -> None:
+        category = SettingsCategoryId.APPEARANCE
+        draft = self._settings_drafts.setdefault(category, SettingsDraft(category=category))
+        draft.set_value(
+            key,
+            self._appearance_loaded_values().get(key),
+            value,
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    def _appearance_invalid_field_key(self) -> str | None:
+        validation = self._appearance_validation_result()
+        if validation.valid:
+            return None
+        message = validation.message
+        if message.startswith("Theme"):
+            return "default_theme"
+        if message.startswith("Palette theme limit"):
+            return "palette_theme_limit"
+        if message.startswith("Font size"):
+            return "font_size"
+        if message.startswith("Density"):
+            return "density"
+        if message.startswith("Animations"):
+            return "animations_enabled"
+        if message.startswith("Smooth scrolling"):
+            return "smooth_scrolling"
+        return None
+
+    def _appearance_field_selector(self, key: str) -> str | None:
+        return {
+            "default_theme": "#settings-appearance-theme",
+            "palette_theme_limit": "#settings-appearance-palette-theme-limit",
+            "font_size": "#settings-appearance-font-size",
+            "density": "#settings-appearance-density",
+            "animations_enabled": "#settings-appearance-animations-enabled",
+            "smooth_scrolling": "#settings-appearance-smooth-scrolling",
+        }.get(key)
+
+    def _update_appearance_validation_classes(self) -> None:
+        invalid_key = self._appearance_invalid_field_key()
+        for key in (
+            "default_theme",
+            "palette_theme_limit",
+            "font_size",
+            "density",
+            "animations_enabled",
+            "smooth_scrolling",
+        ):
+            selector = self._appearance_field_selector(key)
+            if selector is None:
+                continue
+            try:
+                widget = self.query_one(selector)
+            except QueryError:
+                continue
+            widget.set_class(key == invalid_key, "settings-invalid-input")
+
+    def _mark_appearance_settings_staged(self) -> None:
+        category = SettingsCategoryId.APPEARANCE
+        if self._category_has_unsaved_changes(category):
+            validation = self._appearance_validation_result()
+            self._appearance_result = (
+                "Appearance defaults staged." if validation.valid else validation.message
+            )
+        else:
+            self._appearance_result = "Appearance defaults match loaded values."
+        self._set_static_text("#settings-appearance-save-result", self._appearance_result)
+        self._update_appearance_validation_classes()
+        self._update_draft_status_widgets(category)
+
+    def _appearance_theme_options(self) -> list[tuple[str, str]]:
+        options: list[tuple[str, str]] = [
+            ("Textual Dark", "textual-dark"),
+            ("Textual Light", "textual-light"),
+        ]
+        seen = {value for _label, value in options}
+        try:
+            from tldw_chatbook.css.Themes.themes import ALL_THEMES
+        except (ImportError, ModuleNotFoundError):
+            ALL_THEMES = ()
+        for theme in ALL_THEMES:
+            theme_name = str(getattr(theme, "name", "") or "").strip()
+            if not theme_name or theme_name in seen:
+                continue
+            seen.add(theme_name)
+            options.append((theme_name.replace("_", " ").replace("-", " ").title(), theme_name))
+        current_theme = str(self._appearance_setting_values()["default_theme"])
+        if current_theme and current_theme not in seen:
+            options.append((f"Current: {current_theme}", current_theme))
+        return options
+
+    def _appearance_bool_label(self, key: str) -> str:
+        return "Enabled" if bool(self._appearance_setting_values()[key]) else "Disabled"
+
+    def _appearance_summary_text(self) -> str:
+        values = self._appearance_setting_values()
+        return (
+            f"Theme {values['default_theme']} | Density {values['density']} | "
+            f"Font {values['font_size']} | Palette limit {values['palette_theme_limit']}"
+        )
 
     def _stage_console_large_paste_value(self, value: bool) -> None:
         category = SettingsCategoryId.CONSOLE_BEHAVIOR
@@ -3825,6 +3994,66 @@ class SettingsScreen(BaseAppScreen):
                 f"{label}: {value}",
             )
 
+    def _appearance_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
+        field_id = self._active_settings_field_id
+        if field_id == "settings-appearance-theme":
+            return (
+                ("Focused setting", "Theme"),
+                ("Purpose", "Sets the launch/default app theme."),
+                ("Saved as", "general.default_theme"),
+                ("Validation", "choose a known theme or keep the loaded custom theme"),
+            )
+        if field_id == "settings-appearance-palette-theme-limit":
+            return (
+                ("Focused setting", "Palette limit"),
+                ("Purpose", "Limits how many themes appear in the command palette; 0 shows all."),
+                ("Saved as", "general.palette_theme_limit"),
+                ("Validation", "whole number from 0 to 100"),
+            )
+        if field_id == "settings-appearance-font-size":
+            return (
+                ("Focused setting", "Web font size"),
+                ("Purpose", "Controls Textual-web terminal cell density."),
+                ("Saved as", "web_server.font_size"),
+                ("Validation", "whole number from 6 to 32"),
+            )
+        if field_id == "settings-appearance-density":
+            return (
+                ("Focused setting", "Density"),
+                ("Purpose", "Sets the global compact/normal/comfortable UI density default."),
+                ("Saved as", "appearance.density"),
+                ("Validation", "compact, normal, or comfortable"),
+            )
+        if field_id == "settings-appearance-animations-enabled":
+            return (
+                ("Focused setting", "Animations"),
+                ("Purpose", "Controls whether optional UI motion is enabled by default."),
+                ("Saved as", "appearance.animations_enabled"),
+                ("Validation", "enabled or disabled"),
+            )
+        if field_id == "settings-appearance-smooth-scrolling":
+            return (
+                ("Focused setting", "Smooth scrolling"),
+                ("Purpose", "Controls smooth scroll behavior where supported."),
+                ("Saved as", "appearance.smooth_scrolling"),
+                ("Validation", "enabled or disabled"),
+            )
+        return (
+            ("Focused setting", "Appearance defaults"),
+            ("Purpose", "Configure global visual defaults without replacing Customize."),
+            ("Saved as", "general, web_server, and appearance config sections"),
+            ("Validation", "preview safely, then save or revert"),
+        )
+
+    def _refresh_appearance_field_guidance(self) -> None:
+        if self._active_category_id() is not SettingsCategoryId.APPEARANCE:
+            return
+        for index, (label, value) in enumerate(self._appearance_field_guidance_rows()):
+            self._set_static_text(
+                f"#settings-appearance-field-guide-{index}",
+                f"{label}: {value}",
+            )
+
     def _split_detail_row(self, text: str) -> Static:
         label, separator, value = text.partition(":")
         if not separator:
@@ -3853,8 +4082,11 @@ class SettingsScreen(BaseAppScreen):
                 ),
             ),
             SettingsCategoryId.APPEARANCE: (
-                ("Affected config", "theme, density, and visual customization values"),
-                ("Recovery", "open Appearance, preview changes, then return to Settings if needed"),
+                ("Affected config", "theme, density, font size, and motion defaults"),
+                (
+                    "Recovery",
+                    "open Customize for full theme editing; use Settings for persisted defaults",
+                ),
                 ("Boundary", "visual preferences do not change runtime or data access"),
             ),
             SettingsCategoryId.STORAGE: (
@@ -4574,15 +4806,92 @@ class SettingsScreen(BaseAppScreen):
         elif category is SettingsCategoryId.LIBRARY_RAG:
             yield from self._render_library_rag_detail()
         elif category is SettingsCategoryId.APPEARANCE:
+            values = self._appearance_setting_values()
             yield Static("Appearance", classes="destination-section settings-column-title")
             with Vertical(id="settings-appearance-card", classes="settings-focus-card"):
                 yield self._render_category_state_banner(SettingsCategoryId.APPEARANCE)
-                yield Static("Visual configuration", classes="destination-section")
-                yield self._split_detail_row(self._appearance_theme_summary())
-                yield self._detail_row("Surface", "dedicated Appearance customization screen")
-                yield self._detail_row("Scope", "theme, density, visual polish")
-                yield self._detail_row("Settings role", "routing and status, not the full editor")
-                yield self._detail_row("Next action", "open Appearance from the inspector")
+                yield Static("Global visual defaults", classes="destination-section")
+                yield Static(
+                    "Settings owns launch and web display defaults. "
+                    "Customize owns full theme editing and deeper visual preview.",
+                    classes="settings-detail-row",
+                )
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static("Theme", classes="settings-input-label")
+                    yield Select(
+                        self._appearance_theme_options(),
+                        value=str(values["default_theme"]),
+                        id="settings-appearance-theme",
+                        classes="settings-compact-select",
+                        allow_blank=False,
+                        compact=True,
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Palette limit", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["palette_theme_limit"]),
+                        id="settings-appearance-palette-theme-limit",
+                        classes="settings-compact-input",
+                        placeholder="0 - 100",
+                        restrict=r"^[0-9]*$",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Web font size", classes="settings-input-label")
+                    yield Input(
+                        value=str(values["font_size"]),
+                        id="settings-appearance-font-size",
+                        classes="settings-compact-input",
+                        placeholder="6 - 32",
+                        restrict=r"^[0-9]*$",
+                    )
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static("Density", classes="settings-input-label")
+                    yield Select(
+                        [
+                            ("Compact", "compact"),
+                            ("Normal", "normal"),
+                            ("Comfortable", "comfortable"),
+                        ],
+                        value=str(values["density"]),
+                        id="settings-appearance-density",
+                        classes="settings-compact-select",
+                        allow_blank=False,
+                        compact=True,
+                    )
+                yield Static("Motion and scrolling", classes="destination-section")
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Animations", classes="settings-input-label")
+                    yield Button(
+                        self._appearance_bool_label("animations_enabled"),
+                        id="settings-appearance-animations-enabled",
+                        tooltip="Toggle optional UI animation defaults.",
+                    )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static("Smooth scroll", classes="settings-input-label")
+                    yield Button(
+                        self._appearance_bool_label("smooth_scrolling"),
+                        id="settings-appearance-smooth-scrolling",
+                        tooltip="Toggle smooth scrolling defaults where supported.",
+                    )
+                yield Static("Preview and boundary", classes="destination-section")
+                yield self._detail_row("Current summary", self._appearance_summary_text())
+                yield self._detail_row("Runtime preview", "applies safe values for this session only")
+                yield self._detail_row(
+                    "Open Customize",
+                    "full theme editor, custom colors, and deeper visual preview",
+                )
+                yield self._detail_row("Save targets", "general, web_server, and appearance")
+                with Horizontal(id="settings-appearance-actions", classes="settings-action-row"):
+                    yield Button(
+                        "Preview",
+                        id="settings-preview-appearance",
+                        tooltip="Apply runtime-safe Appearance values for this session only.",
+                    )
+                yield Static(
+                    self._appearance_result,
+                    id="settings-appearance-save-result",
+                    classes="settings-status-row",
+                )
         elif category is SettingsCategoryId.STORAGE:
             yield Static("Storage", classes="destination-section settings-column-title")
             with Vertical(id="settings-storage-card", classes="settings-focus-card"):
@@ -4857,11 +5166,27 @@ class SettingsScreen(BaseAppScreen):
             yield self._detail_row("Recovery", ownership.recovery_copy)
             return
         elif summary.category is SettingsCategoryId.APPEARANCE:
-            yield Static("Affects visual presentation only.", classes="destination-section")
+            yield Static("Affects launch theme, web density, and visual defaults.", classes="destination-section")
+            yield Static("Focused field guide", classes="destination-section")
+            for index, (label, value) in enumerate(self._appearance_field_guidance_rows()):
+                yield self._detail_row(
+                    label,
+                    value,
+                    identifier=f"settings-appearance-field-guide-{index}",
+                )
+            yield Static("Boundary", classes="destination-section")
+            yield self._detail_row(
+                "Settings owns",
+                "global defaults and validation before saving",
+            )
+            yield self._detail_row(
+                "Customize owns",
+                "full theme editing, custom colors, and deeper preview",
+            )
             yield Button(
-                "Open Appearance",
+                "Open Customize",
                 id="settings-open-appearance",
-                tooltip="Open appearance customization settings.",
+                tooltip="Open the dedicated Customize theme editor.",
             )
         else:
             yield Static("Impact and boundaries", classes="destination-section")
@@ -4891,9 +5216,9 @@ class SettingsScreen(BaseAppScreen):
         )
         if summary.category is SettingsCategoryId.OVERVIEW:
             yield Button(
-                "Open Appearance",
+                "Open Customize",
                 id="settings-open-appearance",
-                tooltip="Open appearance customization settings.",
+                tooltip="Open the dedicated Customize theme editor.",
             )
 
     def compose_content(self) -> ComposeResult:
@@ -5013,9 +5338,25 @@ class SettingsScreen(BaseAppScreen):
 
     @on(DescendantFocus)
     def handle_descendant_focus(self, event: DescendantFocus) -> None:
-        if self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS:
-            return
+        active_category = self._active_category_id()
         widget_id = str(getattr(event.widget, "id", "") or "")
+        if active_category is SettingsCategoryId.APPEARANCE:
+            appearance_field_ids = {
+                "settings-appearance-theme",
+                "settings-appearance-palette-theme-limit",
+                "settings-appearance-font-size",
+                "settings-appearance-density",
+                "settings-appearance-animations-enabled",
+                "settings-appearance-smooth-scrolling",
+            }
+            self._active_settings_field_id = (
+                widget_id if widget_id in appearance_field_ids else None
+            )
+            self._refresh_appearance_field_guidance()
+            return
+        if active_category is not SettingsCategoryId.PROVIDERS_MODELS:
+            self._active_settings_field_id = None
+            return
         provider_field_ids = {
             "settings-provider-value",
             "settings-provider-manual-value",
@@ -5034,6 +5375,63 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:
         self.post_message(NavigateToScreen("customize"))
+
+    @on(Select.Changed, "#settings-appearance-theme")
+    def handle_appearance_theme_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if self._syncing_appearance_defaults:
+            return
+        self._stage_appearance_value("default_theme", str(event.value or "textual-dark"))
+        self._mark_appearance_settings_staged()
+
+    @on(Input.Changed, "#settings-appearance-palette-theme-limit")
+    def handle_appearance_palette_theme_limit_changed(self, event: Input.Changed) -> None:
+        if self._syncing_appearance_defaults:
+            return
+        self._stage_appearance_value(
+            "palette_theme_limit",
+            self._normalise_appearance_int(event.value),
+        )
+        self._mark_appearance_settings_staged()
+
+    @on(Input.Changed, "#settings-appearance-font-size")
+    def handle_appearance_font_size_changed(self, event: Input.Changed) -> None:
+        if self._syncing_appearance_defaults:
+            return
+        self._stage_appearance_value(
+            "font_size",
+            self._normalise_appearance_int(event.value),
+        )
+        self._mark_appearance_settings_staged()
+
+    @on(Select.Changed, "#settings-appearance-density")
+    def handle_appearance_density_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if self._syncing_appearance_defaults:
+            return
+        self._stage_appearance_value("density", str(event.value or "normal"))
+        self._mark_appearance_settings_staged()
+
+    @on(Button.Pressed, "#settings-appearance-animations-enabled")
+    def handle_appearance_animations_enabled_changed(self, event: Button.Pressed) -> None:
+        event.stop()
+        next_value = not bool(self._appearance_setting_values()["animations_enabled"])
+        self._stage_appearance_value("animations_enabled", next_value)
+        event.button.label = self._appearance_bool_label("animations_enabled")
+        self._mark_appearance_settings_staged()
+
+    @on(Button.Pressed, "#settings-appearance-smooth-scrolling")
+    def handle_appearance_smooth_scrolling_changed(self, event: Button.Pressed) -> None:
+        event.stop()
+        next_value = not bool(self._appearance_setting_values()["smooth_scrolling"])
+        self._stage_appearance_value("smooth_scrolling", next_value)
+        event.button.label = self._appearance_bool_label("smooth_scrolling")
+        self._mark_appearance_settings_staged()
+
+    @on(Button.Pressed, "#settings-preview-appearance")
+    def handle_preview_appearance(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_settings_test_category()
 
     @on(Button.Pressed, "#settings-manual-sync-preview")
     def handle_manual_sync_preview(self, event: Button.Pressed) -> None:
@@ -5727,6 +6125,28 @@ class SettingsScreen(BaseAppScreen):
             self._settings_save_library_rag_worker(section_values)
             return
 
+        if category is SettingsCategoryId.APPEARANCE:
+            if not self._category_has_unsaved_changes(category):
+                self.app.notify("No Settings changes to save.", severity="information")
+                return
+            values = self._appearance_current_defaults()
+            validation = validate_appearance_defaults(values)
+            if not validation.valid:
+                self._appearance_result = validation.message
+                self._set_static_text("#settings-appearance-save-result", self._appearance_result)
+                self._update_appearance_validation_classes()
+                self._update_draft_status_widgets(category)
+                self.app.notify(validation.message, severity="error")
+                return
+            section_values = build_appearance_save_sections(
+                self._app_config_mapping(),
+                values,
+            )
+            self._appearance_result = "Appearance defaults saving..."
+            self._set_static_text("#settings-appearance-save-result", self._appearance_result)
+            self._settings_save_appearance_worker(section_values)
+            return
+
         draft = self._settings_drafts.get(category)
         if not draft or not draft.is_dirty:
             self.app.notify("No Settings changes to save.", severity="information")
@@ -5834,6 +6254,10 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             self._console_behavior_result = "Console behavior settings reverted to last loaded values."
             self._sync_console_behavior_widgets()
+        elif category is SettingsCategoryId.APPEARANCE:
+            self._appearance_result = "Appearance defaults reverted to last loaded values."
+            self._sync_appearance_widgets()
+            self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.LIBRARY_RAG:
             self._library_rag_result = "Library/RAG defaults reverted to last loaded values."
             self._sync_library_rag_widgets()
@@ -5917,6 +6341,30 @@ class SettingsScreen(BaseAppScreen):
             self._privacy_check_worker(app_config)
             self.app.notify("Privacy check started.", severity="information")
             return
+        if self._active_category_id() is SettingsCategoryId.APPEARANCE:
+            validation = self._appearance_validation_result()
+            if not validation.valid:
+                self._appearance_result = validation.message
+                self._set_static_text("#settings-appearance-save-result", self._appearance_result)
+                self._update_appearance_validation_classes()
+                self._update_draft_status_widgets(SettingsCategoryId.APPEARANCE)
+                self.app.notify(validation.message, severity="error")
+                return
+            values = self._appearance_current_defaults()
+            preview_applied = False
+            try:
+                setattr(self.app_instance, "theme", str(values.default_theme))
+                preview_applied = True
+            except Exception:
+                preview_applied = False
+            self._appearance_result = (
+                "Appearance preview applied for this session only."
+                if preview_applied
+                else "Appearance preview unavailable in this runtime; Save persists defaults."
+            )
+            self._set_static_text("#settings-appearance-save-result", self._appearance_result)
+            self.app.notify("Appearance preview complete.", severity="information")
+            return
         self.app.notify("No test action is available for this Settings category yet.", severity="warning")
 
     @staticmethod
@@ -5934,6 +6382,10 @@ class SettingsScreen(BaseAppScreen):
         return SettingsConfigAdapter().save_sections(section_values)
 
     @staticmethod
+    def _save_appearance_sections(section_values: Mapping[str, object]) -> bool:
+        return SettingsConfigAdapter().save_sections(section_values)
+
+    @staticmethod
     def _save_library_rag_sections(section_values: Mapping[str, object]) -> bool:
         return SettingsConfigAdapter().save_sections(section_values)
 
@@ -5943,6 +6395,32 @@ class SettingsScreen(BaseAppScreen):
             return app_config
         self.app_instance.app_config = {}
         return self.app_instance.app_config
+
+    def _apply_appearance_save_result(
+        self,
+        saved: bool,
+        section_values: Mapping[str, object],
+    ) -> None:
+        if saved:
+            self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
+            self._settings_drafts.pop(SettingsCategoryId.APPEARANCE, None)
+            self._appearance_result = "Appearance defaults saved."
+            self._set_static_text("#settings-appearance-save-result", self._appearance_result)
+            self._sync_appearance_widgets()
+            self.app.notify("Appearance defaults saved.", severity="information")
+            return
+        self._appearance_result = "Failed to save Appearance defaults."
+        self._set_static_text("#settings-appearance-save-result", self._appearance_result)
+        self.app.notify(self._appearance_result, severity="error")
+
+    @work(exclusive=True, thread=True)
+    def _settings_save_appearance_worker(self, section_values: Mapping[str, object]) -> None:
+        saved = self._save_appearance_sections(section_values)
+        self.app.call_from_thread(
+            self._apply_appearance_save_result,
+            saved,
+            dict(section_values),
+        )
 
     def _apply_library_rag_save_result(
         self,
@@ -6087,6 +6565,52 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text("#settings-console-behavior-result", self._console_behavior_result_text())
         self._update_console_paste_summary()
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
+
+    def _sync_appearance_widgets(self) -> None:
+        values = self._appearance_setting_values()
+        self._syncing_appearance_defaults = True
+        try:
+            try:
+                self.query_one("#settings-appearance-theme", Select).value = str(
+                    values["default_theme"]
+                )
+            except QueryError:
+                pass
+            try:
+                self.query_one("#settings-appearance-palette-theme-limit", Input).value = str(
+                    values["palette_theme_limit"]
+                )
+            except QueryError:
+                pass
+            try:
+                self.query_one("#settings-appearance-font-size", Input).value = str(
+                    values["font_size"]
+                )
+            except QueryError:
+                pass
+            try:
+                self.query_one("#settings-appearance-density", Select).value = str(
+                    values["density"]
+                )
+            except QueryError:
+                pass
+            try:
+                self.query_one("#settings-appearance-animations-enabled", Button).label = (
+                    self._appearance_bool_label("animations_enabled")
+                )
+            except QueryError:
+                pass
+            try:
+                self.query_one("#settings-appearance-smooth-scrolling", Button).label = (
+                    self._appearance_bool_label("smooth_scrolling")
+                )
+            except QueryError:
+                pass
+        finally:
+            self._syncing_appearance_defaults = False
+        self._set_static_text("#settings-appearance-save-result", self._appearance_result)
+        self._update_appearance_validation_classes()
+        self._update_draft_status_widgets(SettingsCategoryId.APPEARANCE)
 
     def on_key(self, event: Key) -> None:
         focused = self._focused_widget()
