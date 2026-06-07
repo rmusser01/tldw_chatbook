@@ -1620,6 +1620,23 @@ Button.settings-category-button.settings-secondary-search-match {
     outline: none;
 }
 
+.settings-compact-input.settings-invalid-input,
+.settings-compact-select.settings-invalid-input {
+    background: $ds-status-error 18%;
+    color: $ds-text-primary;
+    text-style: bold;
+    outline: none;
+}
+
+.settings-compact-input.settings-invalid-input:focus,
+.settings-compact-select.settings-invalid-input:focus {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-opacity: 1;
+    text-style: bold;
+    outline: none;
+}
+
 .settings-compact-select {
     width: 1fr;
     height: 3;

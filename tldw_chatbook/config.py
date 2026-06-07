@@ -91,6 +91,15 @@ DEFAULT_RAG_SEARCH_CONFIG = {
         "notes_collection": "notes_embeddings",
         "character_collection": "character_embeddings"
     },
+    "search": {
+        "default_search_mode": "semantic",
+        "default_top_k": 10,
+        "score_threshold": 0.0,
+        "include_citations": True,
+        "citation_style": "inline",
+        "snippet_max_chars": 240,
+        "max_context_size": 16000
+    },
     "processor": {
         "enable_reranking": True,
         "reranker_model": None,
