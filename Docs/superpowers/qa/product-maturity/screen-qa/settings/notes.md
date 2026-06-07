@@ -114,3 +114,28 @@ Fallback reason: npm Playwright CLI wrapper could not be used because restricted
 - Result: `3 passed, 1 warning`.
 - `python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short`
 - Result: `161 passed, 1 warning`.
+
+## Advanced Config Action Reachability QA
+
+Date: 2026-06-06
+Branch: `codex/settings-category-actions-qa`
+Backlog task: TASK-77
+Screen: Settings Advanced Config
+Viewport: textual-web browser capture
+Launch method: `tldw-serve --host 127.0.0.1 --port 8123` with isolated HOME/config.
+Screenshot method: Playwright browser screenshot of textual-web through CDP.
+
+### Screenshot
+
+- Advanced Config action reachability and narrowed inspector: `Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-advanced-actions-narrow-inspector-2026-06-06.png`
+
+### Verification Scope
+
+- Confirmed Advanced Config renders `Validate Raw TOML`, `Load Backup`, and `Save Raw TOML` above the raw editor so safety controls remain reachable before a large TOML body.
+- Confirmed Settings workbench column weights now favor the center detail pane and reduce the inspector width: sections `3fr`, detail `6fr`, inspector `2fr`.
+- User approval: continued after actual textual-web screenshot review.
+
+### Verification
+
+- `python -m pytest -q Tests/UI/test_destination_shells.py::test_settings_destination_uses_three_column_workbench_contract Tests/UI/test_settings_configuration_hub.py::test_settings_advanced_config_keeps_safety_actions_before_raw_editor Tests/UI/test_settings_configuration_hub.py::test_settings_advanced_config_shows_raw_editor_and_safety_actions --tb=short`
+- Result: `3 passed, 1 warning`.

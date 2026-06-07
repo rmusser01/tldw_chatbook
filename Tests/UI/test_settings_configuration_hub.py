@@ -4107,6 +4107,22 @@ async def test_settings_advanced_config_shows_raw_editor_and_safety_actions():
 
 
 @pytest.mark.asyncio
+async def test_settings_advanced_config_keeps_safety_actions_before_raw_editor():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        actions = screen.query_one("#settings-advanced-config-actions")
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+
+        assert actions.region.height > 0
+        assert actions.region.width > 0
+        assert actions.region.y < editor.region.y
+
+
+@pytest.mark.asyncio
 async def test_settings_advanced_config_blocks_invalid_toml_and_redacts_secret():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
