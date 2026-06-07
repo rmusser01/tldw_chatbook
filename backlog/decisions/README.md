@@ -10,6 +10,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | --- | --- | --- |
 | [ADR-001](001-adopt-backlog-decisions-as-canonical-adrs.md) | Accepted | Use `backlog/decisions/` as the canonical ADR location and require ADR checks for significant architectural choices. |
 | [ADR-002](002-openai-compatible-model-discovery.md) | Accepted | Keep OpenAI-compatible model discovery local, manual, and scoped to configured providers with explicit user persistence. |
+| [ADR-003](003-settings-library-rag-defaults.md) | Accepted | Keep Library/RAG Settings scoped to persisted global defaults while Library owns active search and Console owns staged context. |
 
 ## Historical Decision Material
 

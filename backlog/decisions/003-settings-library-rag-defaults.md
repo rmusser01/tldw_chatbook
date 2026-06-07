@@ -26,7 +26,7 @@ Library remains the owner of active search/query execution, source browsing, sou
 
 The current Settings `Library & RAG` category is a read-only ownership contract. Users can see that Library and RAG exist, but they cannot configure basic search/RAG defaults from the application configuration hub.
 
-The RAG service already reads most `AppRAGSearchConfig.rag.search` and `AppRAGSearchConfig.rag.retriever` values through `RAG_Search.simplified.config.RAGConfig.from_settings()`. `citation_style` and `snippet_max_chars` are new display defaults added under the existing `rag.search` boundary; they must be represented in the RAG config model before Settings exposes them. Library-native Search/RAG already renders snippets and citation labels, so Settings can expose durable defaults without inventing a second runtime owner.
+The RAG service already reads most `AppRAGSearchConfig.rag.search` and `AppRAGSearchConfig.rag.retriever` values through `RAG_Search.simplified.config.RAGConfig.from_settings()`. `citation_style` and `snippet_max_chars` are new display defaults added under the existing `rag.search` boundary; they must be represented in the RAG config model before Settings exposes them. `max_context_size` already exists on the simplified RAG search config, but the implementation task must verify that it is loaded from persisted settings before treating it as user-editable. Library-native Search/RAG already renders snippets and citation labels, so Settings can expose durable defaults without inventing a second runtime owner.
 
 ## Alternatives Considered
 

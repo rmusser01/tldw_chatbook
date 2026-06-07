@@ -47,6 +47,7 @@ Reason: This task defines the persisted Settings/Library/RAG configuration bound
 
 - `tldw_chatbook/RAG_Search/simplified/config.py`
   - Add explicit `SearchConfig` fields and `from_settings()` reads for `citation_style` and `snippet_max_chars`.
+  - Add a `from_settings()` read for existing `SearchConfig.max_context_size` so the Settings-controlled default has runtime effect.
   - Preserve existing retrieval defaults and do not move indexing or embedding ownership into Settings.
 - `tldw_chatbook/config.py`
   - Add defaults/template entries for `rag.search.citation_style` and `rag.search.snippet_max_chars` if the default config template does not already define them.
@@ -84,7 +85,7 @@ Read and write through the existing `AppRAGSearchConfig` section, nested under `
     "AppRAGSearchConfig": {
         "rag": {
             "search": {
-                "default_search_mode": "hybrid",
+                "default_search_mode": "semantic",
                 "default_top_k": 10,
                 "score_threshold": 0.0,
                 "include_citations": True,
@@ -124,10 +125,11 @@ Validation rules:
 
 - [ ] **Step 1: Write failing RAG config/default tests**
 
-Add tests that prove `RAGConfig.from_settings()` loads display defaults from `AppRAGSearchConfig.rag.search`:
+Add tests that prove `RAGConfig.from_settings()` loads Settings-controlled defaults from `AppRAGSearchConfig.rag.search`:
 
 - `citation_style`
 - `snippet_max_chars`
+- `max_context_size`
 
 Run:
 
@@ -135,11 +137,11 @@ Run:
 python -m pytest -q Tests/UI/test_settings_library_rag_defaults.py --tb=short
 ```
 
-Expected: fail because those fields are not represented in the simplified RAG config model yet.
+Expected: fail because `citation_style` and `snippet_max_chars` are not represented in the simplified RAG config model yet, and `max_context_size` is represented but not loaded from settings.
 
-- [ ] **Step 2: Add config-model support for display defaults**
+- [ ] **Step 2: Add config-model and loader support for Settings-controlled defaults**
 
-Add `citation_style` and `snippet_max_chars` to `SearchConfig`, load them in `RAGConfig.from_settings()`, and update default config/template values where needed.
+Add `citation_style` and `snippet_max_chars` to `SearchConfig`, load them in `RAGConfig.from_settings()`, load existing `max_context_size` from `rag.search`, and update default config/template values where needed.
 
 - [ ] **Step 3: Write failing pure load/default tests**
 
