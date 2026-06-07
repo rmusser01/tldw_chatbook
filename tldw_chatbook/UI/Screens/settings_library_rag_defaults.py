@@ -57,12 +57,15 @@ def _coerce_bool(value: Any, default: bool) -> bool:
 
 def _coerce_int(value: Any, default: int) -> int:
     """Coerce a Settings field to int, falling back on parse failures."""
-    if isinstance(value, bool):
-        return default
+def _coerce_int(value: Any, default: int) -> int:
+    """Coerce a Settings field to int, falling back on parse failures."""
     try:
-        parsed = float(str(value).strip())
+        return int(value)
     except (TypeError, ValueError):
-        return default
+        try:
+            return int(float(str(value).strip()))
+        except (TypeError, ValueError):
+            return default
     if not parsed.is_integer():
         return default
     return int(parsed)
