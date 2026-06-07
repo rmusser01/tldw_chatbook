@@ -1449,6 +1449,11 @@ scope = "transcript"  # transcript, workbench
 intensity = "low"  # low, medium, high
 fps = 6  # 1-12
 
+[appearance]
+density = "normal"  # compact, normal, or comfortable default control density
+animations_enabled = true  # Enable optional UI animations where supported
+smooth_scrolling = true  # Enable smooth scrolling where supported
+
 [acp.runtime]
 # ACP owns runtime launch/setup. Leave command empty to keep ACP honestly blocked.
 command = ""

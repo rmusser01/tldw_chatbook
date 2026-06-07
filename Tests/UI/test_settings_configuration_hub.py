@@ -669,6 +669,164 @@ def test_settings_library_rag_save_uses_exclusive_thread_worker():
 
 
 @pytest.mark.asyncio
+async def test_settings_appearance_renders_guided_defaults_and_validates(monkeypatch):
+    app = _build_test_app()
+    app.app_config["general"] = {
+        "default_theme": "textual-dark",
+        "palette_theme_limit": 1,
+    }
+    app.app_config["web_server"] = {"font_size": 12}
+    app.app_config["appearance"] = {
+        "density": "normal",
+        "animations_enabled": True,
+        "smooth_scrolling": True,
+    }
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await pilot.click("#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Appearance" in text
+        assert "Global visual defaults" in text
+        assert "Customize owns full theme editing" in text
+        assert "Save targets: general, web_server, and appearance" in text
+        assert "Open Customize" in text
+        assert screen.query_one("#settings-appearance-theme", Select).value == "textual-dark"
+        assert screen.query_one("#settings-appearance-palette-theme-limit", Input).value == "1"
+        assert screen.query_one("#settings-appearance-font-size", Input).value == "12"
+        assert screen.query_one("#settings-appearance-density", Select).value == "normal"
+        assert str(screen.query_one("#settings-appearance-animations-enabled", Button).label) == "Enabled"
+        assert str(screen.query_one("#settings-appearance-smooth-scrolling", Button).label) == "Enabled"
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+
+        palette_limit = screen.query_one("#settings-appearance-palette-theme-limit", Input)
+        palette_limit.value = "5"
+        screen.handle_appearance_palette_theme_limit_changed(
+            Input.Changed(palette_limit, palette_limit.value)
+        )
+
+        assert screen.query_one("#settings-save-category", Button).disabled is False
+        assert "Unsaved" in _visible_text(screen)
+
+        font_size = screen.query_one("#settings-appearance-font-size", Input)
+        font_size.value = "99"
+        screen.handle_appearance_font_size_changed(Input.Changed(font_size, font_size.value))
+
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert "Font size" in _visible_text(screen)
+        assert font_size.has_class("settings-invalid-input")
+
+        font_size.value = "14"
+        screen.handle_appearance_font_size_changed(Input.Changed(font_size, font_size.value))
+        assert not font_size.has_class("settings-invalid-input")
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
+
+    assert saved
+    assert saved[-1]["general"]["default_theme"] == "textual-dark"
+    assert saved[-1]["general"]["palette_theme_limit"] == 5
+    assert saved[-1]["web_server"]["font_size"] == 14
+    assert saved[-1]["appearance"]["density"] == "normal"
+
+
+@pytest.mark.asyncio
+async def test_settings_appearance_revert_restores_loaded_values():
+    app = _build_test_app()
+    app.app_config["general"] = {"palette_theme_limit": 1}
+    app.app_config["web_server"] = {"font_size": 12}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        font_size = screen.query_one("#settings-appearance-font-size", Input)
+        font_size.value = "16"
+        screen.handle_appearance_font_size_changed(Input.Changed(font_size, font_size.value))
+
+        assert "Unsaved" in _visible_text(screen)
+
+        screen.action_settings_revert_category()
+        text = _visible_text(screen)
+
+        assert font_size.value == "12"
+        assert "Appearance defaults reverted to last loaded values." in text
+        assert "No unsaved changes" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_appearance_preview_updates_runtime_without_saving(monkeypatch):
+    app = _build_test_app()
+    app.app_config["general"] = {"default_theme": "textual-dark"}
+    app.theme = "textual-dark"
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        theme = screen.query_one("#settings-appearance-theme", Select)
+        theme.value = "textual-light"
+        screen.handle_appearance_theme_changed(Select.Changed(theme, theme.value))
+
+        await pilot.click("#settings-preview-appearance")
+        text = _visible_text(screen)
+
+        assert app.theme == "textual-light"
+        assert saved == []
+        assert "Appearance preview applied for this session only." in text
+        assert "Unsaved" in text
+
+
+@pytest.mark.asyncio
+async def test_settings_appearance_focused_input_keeps_typed_text_visible():
+    app = _build_test_app()
+    app.app_config["general"] = {"palette_theme_limit": 1}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-appearance")
+        screen = _active_destination_screen(host)
+        palette_limit = screen.query_one("#settings-appearance-palette-theme-limit", Input)
+        palette_limit.focus()
+
+        await pilot.press("2")
+
+        assert palette_limit.value.endswith("2")
+        assert palette_limit.region.width > 10
+        assert screen.app.focused is palette_limit
+
+
+def test_settings_appearance_save_uses_exclusive_thread_worker():
+    worker = SettingsScreen.__dict__["_settings_save_appearance_worker"]
+    source = inspect.getsource(SettingsScreen)
+
+    assert getattr(worker, "__wrapped__", None) is not None
+    assert (
+        "@work(exclusive=True, thread=True)\n"
+        "    def _settings_save_appearance_worker"
+    ) in source
+
+
+@pytest.mark.asyncio
 async def test_settings_library_rag_save_preserves_mapping_like_app_config(monkeypatch):
     app = _build_test_app()
     app.app_config = UserDict(
@@ -3721,7 +3879,7 @@ def test_settings_provider_catalog_entries_do_not_import_chat_functions(monkeypa
 @pytest.mark.parametrize(
     ("button_id", "expected"),
     [
-        ("#settings-category-appearance", "Open Appearance"),
+        ("#settings-category-appearance", "Global visual defaults"),
         ("#settings-category-storage", "Config path"),
         ("#settings-category-privacy-security", "Encryption"),
         ("#settings-category-diagnostics", "Validate config"),
