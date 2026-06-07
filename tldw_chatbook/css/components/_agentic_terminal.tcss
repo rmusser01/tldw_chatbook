@@ -1719,6 +1719,11 @@ Button.settings-category-button.settings-secondary-search-match {
     background: $ds-surface-panel;
 }
 
+#settings-advanced-config-card {
+    height: 1fr;
+    min-height: 0;
+}
+
 .settings-secondary-card {
     width: 100%;
     height: auto;
