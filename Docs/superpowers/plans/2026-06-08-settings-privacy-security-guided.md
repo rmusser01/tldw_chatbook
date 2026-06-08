@@ -206,7 +206,7 @@ Update `TASK-82` with:
 - verification commands and screenshot evidence
 - ADR check result
 
-- [ ] **Step 5: Commit and open PR against `dev`**
+- [x] **Step 5: Commit and open PR against `dev`**
 
 Create a small PR titled:
 
