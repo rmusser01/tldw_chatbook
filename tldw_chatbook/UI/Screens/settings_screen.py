@@ -121,7 +121,7 @@ PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_thinking_budget_tokens": "thinking_budget_tokens",
     "model_profile_streaming": "streaming",
 }
-REASONING_EFFORT_OPTIONS = frozenset({"", "minimal", "low", "medium", "high", "xhigh"})
+REASONING_EFFORT_OPTIONS = frozenset({"", "none", "minimal", "low", "medium", "high", "xhigh"})
 REASONING_SUMMARY_OPTIONS = frozenset({"", "auto", "concise", "detailed", "none"})
 VERBOSITY_OPTIONS = frozenset({"", "low", "medium", "high"})
 THINKING_EFFORT_OPTIONS = frozenset({"", "off", "low", "medium", "high", "xhigh"})
@@ -149,7 +149,7 @@ MODEL_PROFILE_INPUT_PLACEHOLDERS = {
     "model_profile_seed": "optional whole number",
     "model_profile_presence_penalty": "-2.0 - 2.0",
     "model_profile_frequency_penalty": "-2.0 - 2.0",
-    "model_profile_reasoning_effort": "minimal, low, medium, high, xhigh",
+    "model_profile_reasoning_effort": "none, minimal, low, medium, high, xhigh",
     "model_profile_reasoning_summary": "auto, concise, detailed, none",
     "model_profile_verbosity": "low, medium, high",
     "model_profile_thinking_effort": "off, low, medium, high, xhigh",

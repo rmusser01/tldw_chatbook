@@ -3227,6 +3227,18 @@ async def test_settings_provider_category_saves_openai_generation_profile(monkey
     ]
 
 
+def test_settings_generation_controls_allow_openai_none_reasoning_effort():
+    screen = SettingsScreen(_build_test_app())
+
+    assert screen._normalise_model_profile_reasoning_effort("none") == "none"
+    assert (
+        "none"
+        in settings_screen_module.MODEL_PROFILE_INPUT_PLACEHOLDERS[
+            "model_profile_reasoning_effort"
+        ]
+    )
+
+
 @pytest.mark.asyncio
 async def test_settings_provider_category_saves_anthropic_thinking_profile(monkeypatch):
     app = _build_test_app()

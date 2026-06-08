@@ -20,5 +20,9 @@ Branch: `codex/settings-generation-controls`
 
 - `python -m pytest -q Tests/UI/test_console_session_settings.py Tests/Chat/test_console_provider_gateway.py Tests/Chat/test_chat_functions.py::TestChatApiCall Tests/Chat/test_chat_functions.py::TestProviderRequestPayloads Tests/UI/test_settings_configuration_hub.py --tb=short`
 - Result: `317 passed, 8 warnings`.
+- Added provider API contract regressions for OpenAI `none` reasoning and Anthropic thinking payload compatibility.
+- Added opt-in live provider validation: `python -m pytest -q Tests/Chat/test_live_thinking_provider_apis.py --tb=short`
+- Local result: `2 skipped` because `OPENAI_API_KEY`, `TLDW_LIVE_OPENAI_REASONING_MODEL`, `ANTHROPIC_API_KEY`, and `TLDW_LIVE_ANTHROPIC_THINKING_MODEL` are not exposed in this shell.
+- To run against live APIs, set the required provider API key and model env vars above. Optional overrides: `TLDW_LIVE_OPENAI_API_BASE_URL`, `TLDW_LIVE_OPENAI_REASONING_EFFORT`, `TLDW_LIVE_OPENAI_REASONING_SUMMARY`, `TLDW_LIVE_OPENAI_VERBOSITY`, `TLDW_LIVE_ANTHROPIC_API_BASE_URL`, `TLDW_LIVE_ANTHROPIC_THINKING_EFFORT`, and `TLDW_LIVE_ANTHROPIC_THINKING_BUDGET_TOKENS`.
 - `python -m py_compile tldw_chatbook/LLM_Calls/LLM_API_Calls.py tldw_chatbook/UI/Screens/settings_screen.py tldw_chatbook/Chat/console_provider_gateway.py tldw_chatbook/Chat/console_session_settings.py`
 - `git diff --check`

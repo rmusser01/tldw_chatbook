@@ -115,6 +115,8 @@ _ANTHROPIC_THINKING_BUDGETS_BY_EFFORT = {
     "xhigh": 16384,
 }
 _ANTHROPIC_ADAPTIVE_THINKING_MODEL_MARKERS = (
+    "opus-4-8",
+    "opus-4.8",
     "opus-4-7",
     "opus-4.7",
     "sonnet-4-6",
@@ -721,9 +723,14 @@ def chat_with_anthropic(
         "stream": current_streaming,
     }
     if system_prompt is not None: data["system"] = system_prompt # Anthropic uses 'system' at the top level
-    if current_temp is not None: data["temperature"] = current_temp
-    if current_top_p is not None: data["top_p"] = current_top_p
-    if current_top_k is not None: data["top_k"] = current_top_k
+    if thinking_config is None:
+        if current_temp is not None: data["temperature"] = current_temp
+        if current_top_p is not None: data["top_p"] = current_top_p
+        if current_top_k is not None: data["top_k"] = current_top_k
+    elif any(value is not None for value in (current_temp, current_top_p, current_top_k)):
+        logger.warning(
+            "Anthropic: omitting temperature/top_p/top_k because thinking is enabled."
+        )
     if stop_sequences is not None: data["stop_sequences"] = stop_sequences
     if tools is not None: data["tools"] = tools # Assuming 'tools' is already in Anthropic's required format
     if thinking_config is not None: data["thinking"] = thinking_config

@@ -386,6 +386,47 @@ class TestProviderRequestPayloads:
         assert "response.output_text.delta" not in combined
         assert chunks[-1] == "data: [DONE]\n\n"
 
+    def test_anthropic_thinking_omits_incompatible_sampling_params(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-4-20250514",
+                    "content": [{"type": "text", "text": "thinking answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="sk-ant-test",
+            model="claude-sonnet-4-20250514",
+            streaming=False,
+            temp=0.2,
+            topp=0.8,
+            topk=40,
+            max_tokens=4096,
+            thinking_budget_tokens=1024,
+        )
+
+        assert captured["json"]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+        assert "temperature" not in captured["json"]
+        assert "top_p" not in captured["json"]
+        assert "top_k" not in captured["json"]
+
     def test_anthropic_thinking_effort_maps_to_budget_tokens(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
@@ -459,6 +500,41 @@ class TestProviderRequestPayloads:
         )
 
         assert captured["json"]["thinking"] == {"type": "adaptive", "effort": "xhigh"}
+
+    def test_anthropic_current_opus_uses_adaptive_thinking_effort(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-opus-4-8",
+                    "content": [{"type": "text", "text": "adaptive answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="sk-ant-test",
+            model="claude-opus-4-8",
+            streaming=False,
+            max_tokens=12000,
+            thinking_effort="high",
+        )
+
+        assert captured["json"]["thinking"] == {"type": "adaptive", "effort": "high"}
 
 
 @pytest.mark.integration
