@@ -579,6 +579,8 @@ def test_store_persists_default_workspace_chat_without_runtime_access(tmp_path):
         conversation = db.get_conversation_by_id(conversation_id)
         persisted_message = db.get_message_by_id(message.persisted_message_id)
         workspace_conversations = registry.list_workspace_conversations(DEFAULT_WORKSPACE_ID)
+        assert conversation is not None
+        assert persisted_message is not None
         assert conversation["scope_type"] == "workspace"
         assert conversation["workspace_id"] == DEFAULT_WORKSPACE_ID
         assert persisted_message["content"] == "default workspace chat remains usable"
