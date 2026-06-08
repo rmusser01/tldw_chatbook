@@ -1254,6 +1254,40 @@ async def test_console_settings_modal_provider_round_trip_ignores_none_model_sen
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_existing_none_model_sentinel_is_not_saved() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="None",
+        base_url="http://127.0.0.1:9099",
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "Llama_cpp": ["None"],
+                    "llama_cpp": ["model-a"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.value == "model-a"
+        assert "None" not in _select_values(model_select)
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.model == "model-a"
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_provider_change_does_not_carry_base_url_to_non_url_provider() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(

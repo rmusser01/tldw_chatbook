@@ -955,10 +955,10 @@ class ChatScreen(BaseAppScreen):
 
     def _console_composer_or_none(self) -> ConsoleComposerBar | None:
         """Return the native Console composer when it is mounted."""
-        try:
-            return self.query_one("#console-native-composer", ConsoleComposerBar)
-        except QueryError:
-            return None
+        composers = list(self.query("#console-native-composer"))
+        if composers and isinstance(composers[0], ConsoleComposerBar):
+            return composers[0]
+        return None
 
     def _save_active_console_session_draft(self) -> None:
         """Persist the visible draft into the active runtime Console session."""

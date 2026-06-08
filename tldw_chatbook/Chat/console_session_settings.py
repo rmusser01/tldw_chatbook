@@ -223,7 +223,7 @@ def build_console_model_options(
     provider_key = provider_config_key(provider)
     model_values: list[str] = []
 
-    current_model_value = _model_option_value(current_model)
+    current_model_value = normalize_console_model_value(current_model)
     if current_model_value and current_model_value not in model_values:
         model_values.append(current_model_value)
 
@@ -231,7 +231,7 @@ def build_console_model_options(
         if provider_config_key(configured_provider) != provider_key:
             continue
         for configured_model in configured_models:
-            configured_model_value = _model_option_value(configured_model)
+            configured_model_value = normalize_console_model_value(configured_model)
             if configured_model_value and configured_model_value not in model_values:
                 model_values.append(configured_model_value)
 
@@ -871,7 +871,8 @@ def _string_value(value: object) -> str | None:
     return stripped or None
 
 
-def _model_option_value(value: object) -> str | None:
+def normalize_console_model_value(value: object) -> str | None:
+    """Return a model value unless it is blank or a placeholder sentinel."""
     text = _string_value(value)
     if text is None or text.lower() in MODEL_OPTION_PLACEHOLDER_VALUES:
         return None

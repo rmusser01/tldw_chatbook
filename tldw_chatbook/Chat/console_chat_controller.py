@@ -261,9 +261,10 @@ class ConsoleChatController:
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_through_message(session_id, message_id)
-        provider_messages.append(
-            {"role": ConsoleMessageRole.USER.value, "content": CONSOLE_CONTINUE_INSTRUCTION}
-        )
+        if provider_messages and provider_messages[-1].get("role") == ConsoleMessageRole.ASSISTANT.value:
+            provider_messages.append(
+                {"role": ConsoleMessageRole.USER.value, "content": CONSOLE_CONTINUE_INSTRUCTION}
+            )
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,

@@ -80,6 +80,10 @@ Additional regression added before the keyboard fix:
 
 Workspace context check: the Console left rail already exposes a `Convos & Workspaces` section, a local registry status, active workspace label, conversation rows, and a `Change workspace` modal when two or more local workspaces exist. In the isolated CDP profile there are no local workspace records, so the rendered `Workspace switching: locked` state is expected and matches existing empty-state tests. Syncing/server-backed workspace switching is not implemented in this UAT slice and is not claimed as verified. The follow-up should remain a server-readiness/contracts task until `tldw_server` exposes the required workspace and ACP handoff APIs.
 
+PR review remediation added two more regressions:
+- `test_continue_from_user_message_preserves_user_final_payload` verifies Continue does not append the synthetic assistant-continuation instruction when the selected turn already ends with a user message.
+- `test_console_settings_modal_existing_none_model_sentinel_is_not_saved` verifies existing `"None"`/`"null"` placeholder model sentinels are normalized out before modal selection or save.
+
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
