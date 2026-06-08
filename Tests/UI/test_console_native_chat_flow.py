@@ -9,7 +9,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 
 
 class _ReadyResolutionGateway:
@@ -91,6 +92,34 @@ class CapturingGateway(_ReadyResolutionGateway):
         self.sent_messages.append(list(messages))
         for chunk in self.chunks:
             yield chunk
+
+
+class WorkspaceLinkingPersistence:
+    def __init__(self, registry_service) -> None:
+        self.registry_service = registry_service
+        self.conversation_count = 0
+        self.message_count = 0
+
+    def create_conversation(self, **kwargs):
+        self.conversation_count += 1
+        conversation_id = f"persisted-conversation-{self.conversation_count}"
+        workspace_id = kwargs.get("workspace_id")
+        if kwargs.get("scope_type") == "workspace" and workspace_id:
+            self.registry_service.link_membership(
+                workspace_id,
+                item_type="conversation",
+                item_id=conversation_id,
+                role="workspace-thread",
+                title=kwargs.get("conversation_title") or "Chat 1",
+            )
+        return conversation_id
+
+    def create_message(self, **kwargs):
+        self.message_count += 1
+        return f"persisted-message-{self.message_count}"
+
+    def update_message_content(self, **kwargs):
+        return True
 
 
 class FailThenRecoverGateway(_ReadyResolutionGateway):
@@ -316,7 +345,7 @@ def test_console_provider_selection_reads_local_llamacpp_configured_model():
     assert selection.base_url == "http://127.0.0.1:9099"
     assert selection.explicit_model == "runtime-model"
     assert selection.configured_model == "configured-model"
-    assert selection.workspace_context.active_workspace_id == "global"
+    assert selection.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
 
 
 def test_console_configured_llamacpp_override_wins_over_provider_api_url():
@@ -656,6 +685,36 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
         messages = store.messages_for_session(store.active_session_id)
         assert messages[-2].content == "hello"
         assert messages[-1].content == "hello"
+
+
+@pytest.mark.asyncio
+async def test_console_send_refreshes_workspace_conversation_rail_after_persistence():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("accepted",))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        assert len(console.query("#console-workspace-empty-conversations")) == 1
+        store = console._ensure_console_chat_store()
+        store.persistence = WorkspaceLinkingPersistence(app.workspace_registry_service)
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-0")
+
+        row = console.query_one("#console-workspace-conversation-0", Static)
+        row_text = getattr(row.renderable, "plain", str(row.renderable))
+        assert row_text.startswith("> ")
+        assert "Chat 1" in row_text
+        assert "workspace-thread" in row_text
+        assert len(console.query("#console-workspace-empty-conversations")) == 0
 
 
 @pytest.mark.asyncio
