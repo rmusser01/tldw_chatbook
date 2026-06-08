@@ -92,6 +92,15 @@ class ConsoleTranscriptMessage(Static):
             transcript.select_message(self.message_id)
 
 
+class ConsoleTranscriptActionButton(Button):
+    """Message action button that supports Enter activation in transcript focus mode."""
+
+    def on_key(self, event: Key) -> None:
+        if event.key == "enter":
+            self.press()
+            event.stop()
+
+
 class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
@@ -430,7 +439,7 @@ class ConsoleTranscript(VerticalScroll):
 
     @staticmethod
     def _action_button(message: ConsoleChatMessage, action: ConsoleMessageAction) -> Button:
-        button = Button(
+        button = ConsoleTranscriptActionButton(
             action.label,
             id=f"console-message-action-{action.action_id}-{message.id}",
             classes="console-transcript-action-button",

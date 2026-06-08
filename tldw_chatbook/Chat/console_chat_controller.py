@@ -18,6 +18,7 @@ from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_
 
 
 MAX_CONSOLE_DRAFT_LENGTH = 100_000
+CONSOLE_CONTINUE_INSTRUCTION = "Continue and extend the selected message."
 
 
 class ConsoleProviderGatewayProtocol(Protocol):
@@ -260,6 +261,10 @@ class ConsoleChatController:
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_through_message(session_id, message_id)
+        if provider_messages and provider_messages[-1].get("role") == ConsoleMessageRole.ASSISTANT.value:
+            provider_messages.append(
+                {"role": ConsoleMessageRole.USER.value, "content": CONSOLE_CONTINUE_INSTRUCTION}
+            )
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,

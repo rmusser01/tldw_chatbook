@@ -736,6 +736,51 @@ async def test_continue_from_message_streams_new_assistant_turn_after_selected_m
 
 
 @pytest.mark.asyncio
+async def test_continue_from_assistant_message_ends_provider_payload_with_user_instruction():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Prompt",
+    )
+    source = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Seed",
+    )
+
+    result = await controller.continue_from_message(source.id)
+
+    assert result.accepted is True
+    assert gateway.messages_seen == [
+        {"role": "user", "content": "Prompt"},
+        {"role": "assistant", "content": "Seed"},
+        {"role": "user", "content": "Continue and extend the selected message."},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_continue_from_user_message_preserves_user_final_payload():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.ensure_session()
+    source = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Tell me more",
+    )
+
+    result = await controller.continue_from_message(source.id)
+
+    assert result.accepted is True
+    assert gateway.messages_seen == [{"role": "user", "content": "Tell me more"}]
+
+
+@pytest.mark.asyncio
 async def test_regenerate_message_streams_new_selected_variant():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())

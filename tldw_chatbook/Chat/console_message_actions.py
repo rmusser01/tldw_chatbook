@@ -50,11 +50,11 @@ class ConsoleMessageActionService:
     _COMPLETED_ACTIONS: tuple[tuple[str, str], ...] = (
         ("copy", "Copy"),
         ("edit", "Edit"),
-        ("save-as", "Save"),
+        ("save-as", "Save as..."),
         ("regenerate", "Regen"),
-        ("continue", "Cont"),
+        ("continue", "--->"),
         ("feedback", "Feedback"),
-        ("delete", "X"),
+        ("delete", "Del"),
     )
 
     def __init__(self, *, available_save_destinations: set[str] | None = None) -> None:
@@ -68,24 +68,24 @@ class ConsoleMessageActionService:
             completed_actions = [
                 ("copy", "Copy"),
                 ("edit", "Edit"),
-                ("save-as", "Save"),
+                ("save-as", "Save as..."),
                 ("variant-previous", "<"),
                 ("variant-next", ">"),
                 ("regenerate", "Regen"),
-                ("continue", "Cont"),
+                ("continue", "--->"),
                 ("feedback", "Feedback"),
-                ("delete", "X"),
+                ("delete", "Del"),
             ]
         if message.status == "failed":
             return [
                 ConsoleMessageAction("copy", "Copy"),
                 ConsoleMessageAction("edit", "Edit"),
-                ConsoleMessageAction("save-as", "Save"),
+                ConsoleMessageAction("save-as", "Save as..."),
                 ConsoleMessageAction("retry", "Try"),
                 ConsoleMessageAction("regenerate", "Regen"),
-                ConsoleMessageAction("continue", "Cont"),
+                ConsoleMessageAction("continue", "--->"),
                 ConsoleMessageAction("feedback", "Feedback"),
-                ConsoleMessageAction("delete", "X"),
+                ConsoleMessageAction("delete", "Del"),
             ]
         return [
             ConsoleMessageAction(

@@ -113,6 +113,18 @@ async def _wait_for_text(screen, pilot, expected: str, *, attempts: int = 80) ->
     raise AssertionError(f"Text not found: {expected!r}. Visible text: {_visible_text(screen)!r}")
 
 
+async def _wait_for_focus(app, pilot, widget, *, attempts: int = 40) -> None:
+    for _ in range(attempts):
+        if getattr(app, "focused", None) is widget:
+            return
+        await pilot.pause(0.05)
+    focused = getattr(app, "focused", None)
+    raise AssertionError(
+        f"Focus did not reach {getattr(widget, 'id', widget)!r}; "
+        f"focused={getattr(focused, 'id', focused)!r}"
+    )
+
+
 async def _wait_for_console_rename_modal(host: ConsoleHarness, pilot):
     for _ in range(40):
         if (
@@ -705,6 +717,47 @@ async def test_console_selected_message_copy_action_uses_app_clipboard():
 
 
 @pytest.mark.asyncio
+async def test_console_selected_message_copy_action_works_from_keyboard():
+    app = _build_test_app()
+    app.copy_to_clipboard = Mock()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.focus()
+        await _wait_for_focus(console.app, pilot, transcript)
+        await pilot.press("down")
+        await pilot.press("enter")
+        await _wait_for_selector(console, pilot, f"#console-message-action-copy-{message.id}")
+
+        copy_selector = f"console-message-action-copy-{message.id}"
+        for _ in range(16):
+            focused = getattr(console.app, "focused", None)
+            if getattr(focused, "id", None) == copy_selector:
+                break
+            await pilot.press("tab")
+        else:
+            raise AssertionError("Keyboard focus did not reach the selected-message Copy action")
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+    app.copy_to_clipboard.assert_called_once_with("answer")
+    assert console._last_console_action.action_id == "copy"
+
+
+@pytest.mark.asyncio
 async def test_console_sync_skips_transcript_refresh_when_messages_unchanged(monkeypatch):
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -896,6 +949,38 @@ async def test_console_native_tab_strip_creates_and_switches_sessions():
 
         assert store.active_session_id == first.id
         assert "Chat 1" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_native_tab_strip_isolates_composer_drafts():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("first tab draft")
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+
+        assert composer.draft_text() == ""
+
+        composer.load_draft("second tab draft")
+        await pilot.click(f"#console-session-tab-{first.id}")
+        assert store.active_session_id == first.id
+        assert composer.draft_text() == "first tab draft"
+
+        await pilot.click(f"#console-session-tab-{second}")
+        assert store.active_session_id == second
+        assert composer.draft_text() == "second tab draft"
 
 
 @pytest.mark.asyncio

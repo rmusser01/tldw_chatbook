@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_model_options,
     build_console_provider_options,
     build_console_settings_readiness,
+    normalize_console_model_value,
     normalize_llamacpp_base_url,
     validate_console_session_settings,
 )
@@ -48,12 +49,13 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._can_save = can_save
         self._focus_model = focus_model
         self._active_provider = settings.provider
-        self._provider_model_drafts: dict[str, str] = {
-            settings.provider: settings.model or "",
-        }
-        self._provider_base_url_drafts: dict[str, str] = {
-            settings.provider: settings.base_url or "",
-        }
+        self._provider_model_drafts: dict[str, str] = {}
+        settings_model = normalize_console_model_value(settings.model)
+        if settings_model:
+            self._provider_model_drafts[settings.provider] = settings_model
+        self._provider_base_url_drafts: dict[str, str] = {}
+        if settings.base_url:
+            self._provider_base_url_drafts[settings.provider] = settings.base_url
 
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
@@ -327,10 +329,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _sync_model_controls(self, provider: str, current_model: str | None) -> None:
         model_select = self.query_one("#console-settings-model-select", Select)
         model_input = self.query_one("#console-settings-model-input", Input)
+        current_model = normalize_console_model_value(current_model)
         model_options = self._model_select_options(provider, current_model)
         if model_options:
             model_select.set_options(model_options)
-            selected = current_model or str(model_options[0][1])
+            option_values = {str(value) for _, value in model_options}
+            selected = current_model if current_model in option_values else str(model_options[0][1])
             model_select.value = selected
             model_select.disabled = False
             model_select.display = True
@@ -376,7 +380,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
 
     def _store_current_model_for_provider(self, provider: str) -> None:
         if provider:
-            self._provider_model_drafts[provider] = self._current_model_value() or ""
+            self._provider_model_drafts[provider] = normalize_console_model_value(
+                self._current_model_value()
+            ) or ""
 
     def _store_current_base_url_for_provider(self, provider: str) -> None:
         if provider and self._provider_uses_base_url(provider):
@@ -387,16 +393,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _model_for_provider(self, provider: str) -> str | None:
         configured_model_options = self._configured_model_select_options(provider)
         if configured_model_options:
-            configured_model_values = [value for _, value in configured_model_options]
-            stored_model = self._provider_model_drafts.get(provider, "")
+            stored_model = normalize_console_model_value(self._provider_model_drafts.get(provider, ""))
             if stored_model:
                 return stored_model
-            return configured_model_values[0]
+            return configured_model_options[0][1]
 
         if provider in self._provider_model_drafts:
-            return self._provider_model_drafts[provider] or None
+            return normalize_console_model_value(self._provider_model_drafts[provider])
         if provider == self._settings.provider:
-            return self._settings.model or None
+            return normalize_console_model_value(self._settings.model)
         return None
 
     def _sync_base_url_control(self, provider: str, base_url: str | None) -> None:
@@ -416,8 +421,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             return None
         if provider in self._provider_base_url_drafts:
             return self._provider_base_url_drafts[provider] or None
-        if provider == self._settings.provider:
-            return self._settings.base_url or None
+        if provider == self._settings.provider and self._settings.base_url:
+            return self._settings.base_url
         return self._default_base_url_for_provider(provider)
 
     def _provider_uses_base_url(self, provider: str) -> bool:
@@ -462,8 +467,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         model_select = self.query_one("#console-settings-model-select", Select)
         model_input = self.query_one("#console-settings-model-input", Input)
         if model_select.display and not model_select.disabled:
-            return str(model_select.value or "").strip() or None
-        return model_input.value.strip() or None
+            return normalize_console_model_value(model_select.value)
+        return normalize_console_model_value(model_input.value)
 
     def _context_label(self) -> str:
         label = self._context_estimate.label.strip() or "unknown"

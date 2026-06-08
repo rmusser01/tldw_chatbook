@@ -240,7 +240,7 @@ def test_console_transcript_selected_message_shows_action_row():
 
     plain = transcript.to_plain_text(width=80)
 
-    assert "Copy Edit Save Regen Cont Good Bad X" in plain
+    assert "Copy Edit Save as... Regen ---> Good Bad Del" in plain
     assert "|" not in plain
 
 
@@ -274,8 +274,8 @@ def test_console_transcript_action_row_stays_within_terminal_width_budget():
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save Regen Cont Good Bad X"
-    assert len(action_row) <= 40
+    assert action_row == "Copy Edit Save as... Regen ---> Good Bad Del"
+    assert len(action_row) <= 48
 
 
 def test_console_transcript_variant_navigation_changes_displayed_content():
@@ -315,8 +315,8 @@ def test_console_transcript_variant_action_row_stays_within_terminal_width_budge
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save < > Regen Cont Good Bad X"
-    assert len(action_row) <= 40
+    assert action_row == "Copy Edit Save as... < > Regen ---> Good Bad Del"
+    assert len(action_row) <= 52
 
 
 def test_console_transcript_failed_action_row_includes_retry_without_exceeding_budget():
@@ -336,8 +336,8 @@ def test_console_transcript_failed_action_row_includes_retry_without_exceeding_b
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save Try Regen Cont Good Bad X"
-    assert len(action_row) <= 40
+    assert action_row == "Copy Edit Save as... Try Regen ---> Good Bad Del"
+    assert len(action_row) <= 52
 
 
 @pytest.mark.asyncio
@@ -351,7 +351,7 @@ async def test_console_transcript_keyboard_selects_messages_and_enter_shows_acti
         text = _visible_text(app)
 
     assert "Copy" in text
-    assert "Save" in text
+    assert "Save as..." in text
     assert "Regen" in text
     assert "|" not in text
 
@@ -365,7 +365,7 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
         text = _visible_text(app)
 
     assert "Copy" in text
-    assert "Save" in text
+    assert "Save as..." in text
     assert "Regen" in text
     assert "|" not in text
 
@@ -395,7 +395,7 @@ async def test_console_transcript_action_buttons_have_stable_ids():
         text = _visible_text(app)
 
     assert "Copy" in text
-    assert "Save" in text
+    assert "Save as..." in text
     assert "Regen" in text
     assert "|" not in text
 
@@ -420,11 +420,11 @@ async def test_console_transcript_escape_collapses_selected_action_row():
 
     async with app.run_test(size=(100, 32)) as pilot:
         await pilot.click("#console-message-m2")
-        assert "Save" in _visible_text(app)
+        assert "Save as..." in _visible_text(app)
 
         await pilot.press("escape")
 
-        assert "Save" not in _visible_text(app)
+        assert "Save as..." not in _visible_text(app)
 
 
 @pytest.mark.asyncio

@@ -154,6 +154,29 @@ def test_model_options_use_normalized_provider_keys() -> None:
     assert [option.value for option in options] == ["local-model"]
 
 
+def test_model_options_ignore_none_sentinel_values() -> None:
+    options = build_console_model_options(
+        provider="llama_cpp",
+        providers_models={
+            "Llama_cpp": ["None", "", " "],
+            "llama_cpp": ["gemma-model"],
+        },
+        current_model=None,
+    )
+
+    assert [option.value for option in options] == ["gemma-model"]
+
+
+def test_model_options_preserve_current_model_even_when_registry_has_none_sentinel() -> None:
+    options = build_console_model_options(
+        provider="llama_cpp",
+        providers_models={"Llama_cpp": ["None"], "llama_cpp": ["gemma-model"]},
+        current_model="manual-model",
+    )
+
+    assert [option.value for option in options] == ["manual-model", "gemma-model"]
+
+
 def test_provider_options_include_all_configured_providers() -> None:
     options = build_console_provider_options(
         providers_models={
