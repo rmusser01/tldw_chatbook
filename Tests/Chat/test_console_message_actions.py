@@ -15,11 +15,11 @@ def test_assistant_message_actions_include_required_order():
     assert [action.label for action in actions] == [
         "Copy",
         "Edit",
-        "Save",
+        "Save as...",
         "Regen",
-        "Cont",
+        "--->",
         "Feedback",
-        "X",
+        "Del",
     ]
 
 
@@ -36,11 +36,11 @@ def test_streaming_assistant_message_shows_completed_actions_disabled_with_reaso
     assert [action.label for action in actions] == [
         "Copy",
         "Edit",
-        "Save",
+        "Save as...",
         "Regen",
-        "Cont",
+        "--->",
         "Feedback",
-        "X",
+        "Del",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -63,11 +63,11 @@ def test_pending_assistant_message_shows_completed_actions_disabled_with_reasons
     assert [action.label for action in actions] == [
         "Copy",
         "Edit",
-        "Save",
+        "Save as...",
         "Regen",
-        "Cont",
+        "--->",
         "Feedback",
-        "X",
+        "Del",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -90,8 +90,8 @@ def test_action_labels_fit_compact_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save Regen Cont Good Bad X"
-    assert len(" ".join(labels)) <= 40
+    assert " ".join(labels) == "Copy Edit Save as... Regen ---> Good Bad Del"
+    assert len(" ".join(labels)) <= 48
 
 
 def test_variant_action_labels_use_symbolic_navigation():
@@ -108,13 +108,13 @@ def test_variant_action_labels_use_symbolic_navigation():
     assert [action.label for action in actions] == [
         "Copy",
         "Edit",
-        "Save",
+        "Save as...",
         "<",
         ">",
         "Regen",
-        "Cont",
+        "--->",
         "Feedback",
-        "X",
+        "Del",
     ]
 
 
@@ -129,8 +129,8 @@ def test_variant_action_labels_fit_compact_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save < > Regen Cont Good Bad X"
-    assert len(" ".join(labels)) <= 40
+    assert " ".join(labels) == "Copy Edit Save as... < > Regen ---> Good Bad Del"
+    assert len(" ".join(labels)) <= 52
 
 
 def test_failed_action_labels_include_retry_inside_terminal_width_budget():
@@ -143,8 +143,8 @@ def test_failed_action_labels_include_retry_inside_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save Try Regen Cont Good Bad X"
-    assert len(" ".join(labels)) <= 40
+    assert " ".join(labels) == "Copy Edit Save as... Try Regen ---> Good Bad Del"
+    assert len(" ".join(labels)) <= 52
 
 
 def test_copy_action_returns_clipboard_text():

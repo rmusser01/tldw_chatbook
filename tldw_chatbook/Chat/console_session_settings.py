@@ -66,6 +66,7 @@ INVALID_LLAMACPP_BASE_URL_COPY = (
     "Provider blocked: invalid llama.cpp base URL. "
     "Use an http(s) URL such as http://127.0.0.1:9099."
 )
+MODEL_OPTION_PLACEHOLDER_VALUES = frozenset({"none", "null"})
 TokenCounter = Callable[[Sequence[Mapping[str, str]], str, str], int]
 TokenLimitResolver = Callable[[str, str], int]
 CONSOLE_MODEL_TOKEN_LIMITS = {
@@ -222,7 +223,7 @@ def build_console_model_options(
     provider_key = provider_config_key(provider)
     model_values: list[str] = []
 
-    current_model_value = _string_value(current_model)
+    current_model_value = _model_option_value(current_model)
     if current_model_value and current_model_value not in model_values:
         model_values.append(current_model_value)
 
@@ -230,7 +231,7 @@ def build_console_model_options(
         if provider_config_key(configured_provider) != provider_key:
             continue
         for configured_model in configured_models:
-            configured_model_value = _string_value(configured_model)
+            configured_model_value = _model_option_value(configured_model)
             if configured_model_value and configured_model_value not in model_values:
                 model_values.append(configured_model_value)
 
@@ -868,6 +869,13 @@ def _string_value(value: object) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _model_option_value(value: object) -> str | None:
+    text = _string_value(value)
+    if text is None or text.lower() in MODEL_OPTION_PLACEHOLDER_VALUES:
+        return None
+    return text
 
 
 def _format_summary_float(value: float) -> str:

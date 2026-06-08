@@ -708,6 +708,30 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_shows_inherited_provider_endpoint() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a", base_url=None)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        base_url_input = app.screen.query_one("#console-settings-base-url", Input)
+        assert base_url_input.display is True
+        assert base_url_input.disabled is False
+        assert base_url_input.value == "http://127.0.0.1:9099"
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_focus_mode_uses_ready_copy_when_model_selected() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
@@ -1188,6 +1212,45 @@ async def test_console_settings_modal_provider_change_uses_target_provider_model
     assert app.saved_settings is not None
     assert app.saved_settings.provider == "openai"
     assert app.saved_settings.model == "gpt-4.1"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_round_trip_ignores_none_model_sentinel() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="koboldcpp",
+        model=None,
+        base_url="http://localhost:5001/api/v1/generate",
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "koboldcpp": ["None"],
+                    "Llama_cpp": ["None"],
+                    "llama_cpp": ["model-a"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.disabled is False
+        assert model_select.value == "model-a"
+        assert "None" not in _select_values(model_select)
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "llama_cpp"
+    assert app.saved_settings.model == "model-a"
 
 
 @pytest.mark.asyncio

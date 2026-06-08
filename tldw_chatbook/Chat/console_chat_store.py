@@ -70,6 +70,7 @@ class ConsoleChatSession:
     id: str = field(default_factory=lambda: str(uuid4()))
     persisted_conversation_id: str | None = None
     settings: ConsoleSessionSettings | None = None
+    draft: str = ""
 
 
 class ConsoleChatStore:
@@ -209,6 +210,16 @@ class ConsoleChatStore:
         """Replace in-memory settings for a native Console session."""
         session = self._session_or_raise(session_id)
         session.settings = settings
+        return session
+
+    def session_draft(self, session_id: str) -> str:
+        """Return the in-memory composer draft for a native Console session."""
+        return self._session_or_raise(session_id).draft
+
+    def set_session_draft(self, session_id: str, draft: str) -> ConsoleChatSession:
+        """Replace the in-memory composer draft for a native Console session."""
+        session = self._session_or_raise(session_id)
+        session.draft = draft
         return session
 
     def set_workspace_context(self, workspace_context: ConsoleWorkspaceContext) -> None:

@@ -953,6 +953,45 @@ class ChatScreen(BaseAppScreen):
                 self._console_chat_controller.streaming = selection.streaming
         return selection
 
+    def _console_composer_or_none(self) -> ConsoleComposerBar | None:
+        """Return the native Console composer when it is mounted."""
+        try:
+            return self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return None
+
+    def _save_active_console_session_draft(self) -> None:
+        """Persist the visible draft into the active runtime Console session."""
+        store = self._console_chat_store
+        if store is None or store.active_session_id is None:
+            return
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        try:
+            store.set_session_draft(store.active_session_id, composer.draft_text())
+        except KeyError:
+            return
+
+    def _restore_active_console_session_draft_if_needed(self) -> None:
+        """Restore the active runtime Console session draft after tab changes."""
+        store = self._ensure_console_chat_store()
+        session = store.ensure_session(
+            workspace_id=store.workspace_context.active_workspace_id,
+            settings=self._default_console_session_settings(),
+        )
+        active_session_id = session.id
+        if getattr(self, "_console_visible_draft_session_id", None) == active_session_id:
+            return
+        composer = self._console_composer_or_none()
+        if composer is None:
+            return
+        try:
+            composer.load_draft(store.session_draft(active_session_id))
+        except KeyError:
+            composer.clear_draft()
+        self._console_visible_draft_session_id = active_session_id
+
     def _build_console_control_state(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
@@ -2349,7 +2388,7 @@ class ChatScreen(BaseAppScreen):
         self._focus_console_composer_if_needed(force=True)
         self.call_after_refresh(self._sync_native_console_chat_ui)
         self.call_after_refresh(lambda: self._focus_console_composer_if_needed(force=True))
-        self.set_timer(0.2, lambda: self._focus_console_composer_if_needed(force=True))
+        self.set_timer(0.2, self._focus_console_composer_if_needed)
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
@@ -2814,6 +2853,7 @@ class ChatScreen(BaseAppScreen):
         self._console_sync_in_progress = True
         try:
             self._sync_console_chat_core_state()
+            self._restore_active_console_session_draft_if_needed()
             self._sync_console_control_bar()
             self._sync_console_settings_summary()
             self._sync_console_mode_bar()
@@ -2888,6 +2928,12 @@ class ChatScreen(BaseAppScreen):
             composer = None
         if result.should_clear_draft and composer is not None:
             composer.clear_draft()
+            store = self._console_chat_store
+            if store is not None and store.active_session_id is not None:
+                try:
+                    store.set_session_draft(store.active_session_id, "")
+                except KeyError:
+                    pass
         await self._sync_native_console_chat_ui()
 
     def _console_send_blocked_reason(self) -> str:
@@ -4283,6 +4329,7 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-new-chat-tab":
             event.stop()
+            self._save_active_console_session_draft()
             self._ensure_console_chat_controller().new_session(
                 settings=self._default_console_session_settings(),
             )
@@ -4290,6 +4337,7 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id and button_id.startswith("console-close-session-tab-"):
             event.stop()
+            self._save_active_console_session_draft()
             session_id = button_id.removeprefix("console-close-session-tab-")
             store = self._ensure_console_chat_store()
             try:
@@ -4322,6 +4370,7 @@ class ChatScreen(BaseAppScreen):
             if controller.store.active_session_id == session_id:
                 self._open_console_session_rename_modal(session_id)
                 return
+            self._save_active_console_session_draft()
             controller.switch_session(session_id)
             await self._sync_native_console_chat_ui()
             return

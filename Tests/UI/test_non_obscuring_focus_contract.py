@@ -679,6 +679,27 @@ def test_console_settings_modal_controls_use_compact_focus_outline(
 
 
 @pytest.mark.unit
+def test_console_settings_modal_select_current_preserves_visible_value_row():
+    for _, text in (
+        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        current = css_block(text, "ConsoleSettingsModal Select > SelectCurrent")
+        current_focus = css_block(text, "ConsoleSettingsModal Select:focus > SelectCurrent")
+
+        assert "height: 1;" in current
+        assert "min-height: 1;" in current
+        assert "border: none;" in current
+        assert "padding: 0 1;" in current
+        assert "background: $ds-surface-raised;" in current
+        assert "color: $ds-text-primary;" in current
+        assert "color: $ds-text-primary;" in current_focus
+        assert "background: $ds-input-focus-bg;" in current_focus
+        assert "text-style: bold;" in current_focus
+        assert "reverse" not in current_focus
+
+
+@pytest.mark.unit
 def test_console_transcript_focus_uses_stable_border_geometry():
     for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),

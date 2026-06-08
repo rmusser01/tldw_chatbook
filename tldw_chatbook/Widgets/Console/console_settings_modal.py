@@ -48,12 +48,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._can_save = can_save
         self._focus_model = focus_model
         self._active_provider = settings.provider
-        self._provider_model_drafts: dict[str, str] = {
-            settings.provider: settings.model or "",
-        }
-        self._provider_base_url_drafts: dict[str, str] = {
-            settings.provider: settings.base_url or "",
-        }
+        self._provider_model_drafts: dict[str, str] = {}
+        if settings.model:
+            self._provider_model_drafts[settings.provider] = settings.model
+        self._provider_base_url_drafts: dict[str, str] = {}
+        if settings.base_url:
+            self._provider_base_url_drafts[settings.provider] = settings.base_url
 
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
@@ -416,8 +416,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             return None
         if provider in self._provider_base_url_drafts:
             return self._provider_base_url_drafts[provider] or None
-        if provider == self._settings.provider:
-            return self._settings.base_url or None
+        if provider == self._settings.provider and self._settings.base_url:
+            return self._settings.base_url
         return self._default_base_url_for_provider(provider)
 
     def _provider_uses_base_url(self, provider: str) -> bool:

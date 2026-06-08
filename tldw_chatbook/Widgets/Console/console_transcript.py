@@ -92,6 +92,15 @@ class ConsoleTranscriptMessage(Static):
             transcript.select_message(self.message_id)
 
 
+class ConsoleTranscriptActionButton(Button):
+    """Message action button that supports Enter activation in transcript focus mode."""
+
+    def on_key(self, event: Key) -> None:
+        if event.key == "enter":
+            self.press()
+            event.stop()
+
+
 class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
@@ -218,6 +227,11 @@ class ConsoleTranscript(VerticalScroll):
             self.call_later(self.refresh_messages)
 
     def on_key(self, event: Key) -> None:
+        focused_action = self._focused_action_button()
+        if event.key == "enter" and focused_action is not None:
+            focused_action.press()
+            event.stop()
+            return
         if event.key in {"down", "j"}:
             self.action_select_next()
             event.stop()
@@ -250,6 +264,20 @@ class ConsoleTranscript(VerticalScroll):
 
     def _message_by_id(self, message_id: str) -> ConsoleChatMessage | None:
         return next((message for message in self._messages if message.id == message_id), None)
+
+    def _focused_action_button(self) -> Button | None:
+        """Return the focused selected-message action button, if focus is inside this transcript."""
+        focused = getattr(self.app, "focused", None) if self.app is not None else None
+        if not isinstance(focused, Button):
+            return None
+        if not str(focused.id or "").startswith("console-message-action-"):
+            return None
+        ancestor = focused.parent
+        while ancestor is not None:
+            if ancestor is self:
+                return focused
+            ancestor = ancestor.parent
+        return None
 
     def _transcript_rows(self) -> list[_TranscriptRow]:
         rows: list[_TranscriptRow] = []
@@ -430,7 +458,7 @@ class ConsoleTranscript(VerticalScroll):
 
     @staticmethod
     def _action_button(message: ConsoleChatMessage, action: ConsoleMessageAction) -> Button:
-        button = Button(
+        button = ConsoleTranscriptActionButton(
             action.label,
             id=f"console-message-action-{action.action_id}-{message.id}",
             classes="console-transcript-action-button",
