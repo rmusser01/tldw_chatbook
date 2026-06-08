@@ -176,6 +176,18 @@ async def _wait_for_console_screen(host: ConsoleHarness, console, pilot) -> None
     raise AssertionError("Console modal did not dismiss")
 
 
+async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
+    for _ in range(40):
+        if (
+            host.screen_stack
+            and host.screen_stack[-1].query("#console-workspace-switcher-modal")
+        ):
+            await pilot.pause()
+            return host.screen_stack[-1]
+        await pilot.pause(0.05)
+    raise AssertionError("Console workspace switcher modal did not open")
+
+
 def _select_llamacpp_console(console: ChatScreen) -> None:
     """Select the native llama.cpp path after mounted controls initialize."""
     app_config = console.app_instance.app_config
@@ -715,6 +727,86 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         assert "Chat 1" in row_text
         assert "workspace-thread" in row_text
         assert len(console.query("#console-workspace-empty-conversations")) == 0
+
+
+@pytest.mark.asyncio
+async def test_console_send_after_workspace_switch_persists_to_selected_workspace():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("accepted",))
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-change-workspace")
+        store = console._ensure_console_chat_store()
+        store.persistence = WorkspaceLinkingPersistence(service)
+        _select_llamacpp_console(console)
+        first_session = store.ensure_session()
+        store.replace_session_settings(
+            first_session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="test-model"),
+        )
+        assert first_session.workspace_id == "ws-a"
+
+        console.query_one("#console-change-workspace", Button).press()
+        modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
+        switch_button = next(
+            button
+            for button in modal_screen.query(Button)
+            if str(button.label) == "Workspace B"
+        )
+        switch_button.press()
+        await _wait_for_console_screen(host, console, pilot)
+        assert service.get_active_workspace().workspace_id == "ws-b"
+
+        active_session = store.switch_session(store.active_session_id)
+        assert active_session.workspace_id == "ws-b"
+        assert active_session.title == "Workspace B Chat"
+        assert active_session.settings.provider == "llama_cpp"
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello from b")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "accepted")
+
+        workspace_a_conversations = service.list_workspace_conversations("ws-a")
+        workspace_b_conversations = service.list_workspace_conversations("ws-b")
+        assert workspace_a_conversations == ()
+        assert [row.title for row in workspace_b_conversations] == [active_session.title]
+
+
+@pytest.mark.asyncio
+async def test_console_tab_switch_aligns_active_workspace_context():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Workspace A Chat", workspace_id="ws-a")
+        second = store.create_session(title="Workspace B Chat", workspace_id="ws-b")
+        service.set_active_workspace("ws-b")
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{first.id}")
+        assert store.active_session_id == second.id
+        assert service.get_active_workspace().workspace_id == "ws-b"
+
+        await pilot.click(f"#console-session-tab-{first.id}")
+
+        assert store.active_session_id == first.id
+        assert service.get_active_workspace().workspace_id == "ws-a"
+        await _wait_for_text(console, pilot, "Workspace A")
 
 
 @pytest.mark.asyncio
