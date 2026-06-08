@@ -9,10 +9,14 @@ import pytest
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import (
+    DEFAULT_WORKSPACE_ID,
+    DEFAULT_WORKSPACE_NAME,
     LocalWorkspaceRegistryService,
     RuntimeBindingKind,
     RuntimeBindingStatus,
+    WorkspaceAuthority,
     WorkspaceRuntimeBinding,
+    WorkspaceSyncStatus,
 )
 from tldw_chatbook.Workspaces.registry_service import (
     WorkspaceNotFound,
@@ -38,6 +42,95 @@ def test_registry_persists_active_workspace(tmp_path: Path) -> None:
     assert active is not None
     assert active.workspace_id == "ws-a"
     assert active.active is True
+
+
+def test_registry_ensures_default_workspace_when_none_is_configured(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+
+    active = service.ensure_default_workspace()
+
+    assert active.workspace_id == DEFAULT_WORKSPACE_ID
+    assert active.name == DEFAULT_WORKSPACE_NAME
+    assert active.active is True
+    assert active.authority is WorkspaceAuthority.LOCAL_ONLY
+    assert active.sync_status is WorkspaceSyncStatus.NOT_CONFIGURED
+    assert service.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
+
+
+def test_registry_does_not_replace_user_active_workspace_with_default(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.set_active_workspace("ws-a")
+
+    active = service.ensure_default_workspace()
+
+    assert active.workspace_id == "ws-a"
+    assert service.get_workspace(DEFAULT_WORKSPACE_ID) is None
+
+
+def test_registry_rejects_runtime_binding_for_default_workspace(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+
+    with pytest.raises(WorkspaceRegistryServiceError, match="Default workspace"):
+        service.save_runtime_binding(
+            WorkspaceRuntimeBinding(
+                workspace_id=DEFAULT_WORKSPACE_ID,
+                binding_id="binding-1",
+                binding_kind=RuntimeBindingKind.LOCAL_FILESYSTEM,
+                label="Local files",
+                locator="/tmp",
+                status=RuntimeBindingStatus.READY,
+            )
+        )
+
+
+def test_registry_never_exposes_runtime_bindings_for_default_workspace(
+    tmp_path: Path,
+) -> None:
+    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
+    service = LocalWorkspaceRegistryService(db)
+    service.ensure_default_workspace()
+
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO workspace_runtime_bindings (
+                binding_id,
+                workspace_id,
+                binding_kind,
+                label,
+                locator,
+                status,
+                metadata_json,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "stale-default-binding",
+                DEFAULT_WORKSPACE_ID,
+                RuntimeBindingKind.LOCAL_FILESYSTEM.value,
+                "Unsafe local files",
+                "/tmp",
+                RuntimeBindingStatus.READY.value,
+                "{}",
+                "2026-06-08T00:00:00Z",
+                "2026-06-08T00:00:00Z",
+            ),
+        )
+
+    service.ensure_default_workspace()
+
+    assert service.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
+    assert service.get_runtime_binding("stale-default-binding") is None
 
 
 def test_registry_links_note_without_hiding_other_workspaces(tmp_path: Path) -> None:

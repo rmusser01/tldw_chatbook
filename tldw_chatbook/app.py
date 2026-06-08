@@ -1925,6 +1925,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.workspace_registry_service = LocalWorkspaceRegistryService(
                 self.local_workspace_db,
             )
+            self.workspace_registry_service.ensure_default_workspace()
         except Exception:
             logger.warning(
                 "Local workspace registry service unavailable during app wiring",

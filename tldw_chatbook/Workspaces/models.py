@@ -83,6 +83,13 @@ _SECRET_METADATA_PARTS = (
     "token",
 )
 
+DEFAULT_WORKSPACE_ID = "workspace-default"
+DEFAULT_WORKSPACE_NAME = "Default"
+DEFAULT_WORKSPACE_DESCRIPTION = (
+    "Built-in local chat workspace. Filesystem and runtime bindings are disabled "
+    "until the user creates an explicit workspace."
+)
+
 
 def utc_now_iso() -> str:
     """Return a stable UTC timestamp string for registry records."""

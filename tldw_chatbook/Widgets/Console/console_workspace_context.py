@@ -107,6 +107,51 @@ class ConsoleWorkspaceContextTray(Vertical):
             id="console-workspace-runtime",
             classes="console-workspace-status-row",
         )
+        yield self._static(
+            self.state.server_readiness_label,
+            id="console-workspace-server-readiness",
+            classes="console-workspace-status-row",
+        )
+        yield self._static(
+            self.state.server_readiness_detail,
+            id="console-workspace-server-readiness-detail",
+            classes="console-workspace-recovery",
+        )
+        yield self._static(
+            "Handoff readiness",
+            id="console-workspace-handoff-title",
+            classes="destination-section",
+        )
+        with Vertical(id="console-workspace-handoff-rows"):
+            if self.state.handoff_rows:
+                for index, row in enumerate(self.state.handoff_rows):
+                    portability = "" if row.portable else " (not portable)"
+                    yield self._static(
+                        f"{row.title} - {row.transfer_policy.value}{portability}",
+                        id=f"console-workspace-handoff-{index}",
+                        classes="console-workspace-status-row",
+                    )
+            else:
+                yield self._static(
+                    "No workspace items ready for handoff preflight.",
+                    id="console-workspace-handoff-empty",
+                    classes="console-workspace-empty-copy",
+                )
+        yield self._static(
+            self.state.acp_handoff_label,
+            id="console-workspace-acp-handoff",
+            classes="console-workspace-status-row",
+        )
+        yield self._static(
+            self.state.acp_handoff_detail,
+            id="console-workspace-acp-handoff-detail",
+            classes="console-workspace-recovery",
+        )
+        yield self._static(
+            self.state.acp_handoff_audit,
+            id="console-workspace-acp-handoff-audit",
+            classes="console-workspace-recovery",
+        )
 
     def _workspace_selector_label(self) -> str:
         """Return the visible active-workspace selector affordance."""

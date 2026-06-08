@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_rail_state import (
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TabState
+from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 
 
 def _is_displayed(widget) -> bool:
@@ -479,7 +480,7 @@ async def test_console_rail_state_persists_by_workspace_session_key(monkeypatch)
         await _wait_for_saved_settings(pilot, saved_settings, 2)
 
     rail_state = app.app_config["console"]["rail_state"]
-    expected_key = f"console_rail_state:global:{session.id}"
+    expected_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:{session.id}"
     assert rail_state[expected_key] == {
         "left_open": False,
         "right_open": True,
@@ -602,7 +603,7 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
     app.app_config = {
         "console": {
             "rail_state": {
-                "console_rail_state:global:session-1": {
+                f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-1": {
                     "left_open": False,
                     "right_open": True,
                 }
@@ -632,11 +633,11 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
 
     rail_state = app.app_config["console"]["rail_state"]
-    assert rail_state["console_rail_state:global:session-1"] == {
+    assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-1"] == {
         "left_open": False,
         "right_open": True,
     }
-    assert rail_state["console_rail_state:global:conv-1"] == {
+    assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-1"] == {
         "left_open": False,
         "right_open": True,
     }
@@ -678,21 +679,21 @@ async def test_console_rail_key_prefers_native_session_over_legacy_conversation(
         await _wait_for_hidden(console, pilot, "#console-left-rail")
 
         rail_state = app.app_config["console"]["rail_state"]
-        assert rail_state["console_rail_state:global:session-native"] == {
+        assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-native"] == {
             "left_open": False,
             "right_open": False,
         }
-        assert "console_rail_state:global:legacy-conv" not in rail_state
+        assert f"console_rail_state:{DEFAULT_WORKSPACE_ID}:legacy-conv" not in rail_state
 
         session.persisted_conversation_id = "native-conv"
         console._sync_console_rail_visibility(console._current_console_rail_state())
 
     rail_state = app.app_config["console"]["rail_state"]
-    assert rail_state["console_rail_state:global:native-conv"] == {
+    assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:native-conv"] == {
         "left_open": False,
         "right_open": False,
     }
-    assert "console_rail_state:global:legacy-conv" not in rail_state
+    assert f"console_rail_state:{DEFAULT_WORKSPACE_ID}:legacy-conv" not in rail_state
 
 
 @pytest.mark.asyncio
@@ -727,7 +728,7 @@ async def test_console_provider_blocked_badge_does_not_auto_open_inspector():
         "api_settings": {"openai": {"api_key": ""}},
         "console": {
             "rail_state": {
-                "console_rail_state:global:global": {
+                f"console_rail_state:{DEFAULT_WORKSPACE_ID}:global": {
                     "left_open": True,
                     "right_open": False,
                 }
@@ -764,7 +765,7 @@ async def test_console_provider_ready_with_missing_model_uses_model_recovery_cop
         "chat_defaults": {"provider": "llama_cpp", "model": ""},
         "console": {
             "rail_state": {
-                "console_rail_state:global:global": {
+                f"console_rail_state:{DEFAULT_WORKSPACE_ID}:global": {
                     "left_open": True,
                     "right_open": False,
                 }
@@ -801,7 +802,7 @@ async def test_console_failed_badge_takes_priority_over_provider_blocked():
         "api_settings": {"openai": {"api_key": ""}},
         "console": {
             "rail_state": {
-                "console_rail_state:global:global": {
+                f"console_rail_state:{DEFAULT_WORKSPACE_ID}:global": {
                     "left_open": True,
                     "right_open": False,
                 }
@@ -834,7 +835,7 @@ async def test_console_pending_approval_badge_does_not_auto_open_inspector():
         "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
         "console": {
             "rail_state": {
-                "console_rail_state:global:global": {
+                f"console_rail_state:{DEFAULT_WORKSPACE_ID}:global": {
                     "left_open": True,
                     "right_open": False,
                 }
@@ -866,7 +867,7 @@ async def test_console_tool_badge_when_no_higher_priority_inspector_badge():
         "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
         "console": {
             "rail_state": {
-                "console_rail_state:global:global": {
+                f"console_rail_state:{DEFAULT_WORKSPACE_ID}:global": {
                     "left_open": True,
                     "right_open": False,
                 }
@@ -898,7 +899,7 @@ async def test_console_left_staged_context_badge_does_not_auto_open_context():
     app.app_config = {
         "console": {
             "rail_state": {
-                "console_rail_state:global:badge-session": {
+                f"console_rail_state:{DEFAULT_WORKSPACE_ID}:badge-session": {
                     "left_open": False,
                     "right_open": False,
                 }
@@ -934,7 +935,7 @@ async def test_console_badge_state_update_after_mount_does_not_auto_open_inspect
         "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
         "console": {
             "rail_state": {
-                "console_rail_state:global:global": {
+                f"console_rail_state:{DEFAULT_WORKSPACE_ID}:global": {
                     "left_open": True,
                     "right_open": False,
                 }
@@ -971,7 +972,7 @@ async def test_console_compact_width_preserves_main_column_and_forces_right_coll
 ):
     assert columns < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS
     session_id = f"compact-{columns}"
-    preference_key = f"console_rail_state:global:{session_id}"
+    preference_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:{session_id}"
     app = _build_test_app()
     app.console_rail_session_id = session_id
     app.app_config = {

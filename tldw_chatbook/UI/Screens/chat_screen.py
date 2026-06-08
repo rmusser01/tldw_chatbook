@@ -1084,6 +1084,16 @@ class ChatScreen(BaseAppScreen):
         return build_console_workspace_state(
             registry_service=getattr(self.app_instance, "workspace_registry_service", None),
             current_conversation=self._current_console_conversation_id(session_data),
+            server_adapter_state=getattr(
+                self.app_instance,
+                "workspace_server_adapter_state",
+                None,
+            ),
+            acp_handoff_state=getattr(
+                self.app_instance,
+                "workspace_acp_handoff_state",
+                None,
+            ),
         )
 
     def _console_config(self) -> dict[str, Any]:
@@ -1912,7 +1922,12 @@ class ChatScreen(BaseAppScreen):
     def _workspace_context_frame_variant(state: ConsoleWorkspaceContextState) -> str:
         """Use quiet framing when workspace context has no actionable content."""
         has_actions = state.change_workspace_enabled or state.new_conversation_enabled
-        return "solid" if state.conversation_rows or has_actions else "quiet"
+        has_readiness = bool(
+            state.handoff_rows
+            or state.server_readiness_label != "Server: local fallback"
+            or state.acp_handoff_label != "ACP task/run: unavailable"
+        )
+        return "solid" if state.conversation_rows or has_actions or has_readiness else "quiet"
 
     def _render_console_live_work_source_readiness(self) -> ComposeResult:
         """Render Console source readiness when no live-work item is staged."""

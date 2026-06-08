@@ -12,6 +12,9 @@ from loguru import logger
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
 from .models import (
+    DEFAULT_WORKSPACE_DESCRIPTION,
+    DEFAULT_WORKSPACE_ID,
+    DEFAULT_WORKSPACE_NAME,
     RuntimeBindingKind,
     RuntimeBindingStatus,
     WorkspaceAuthority,
@@ -201,6 +204,35 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return _workspace_from_row(row) if row is not None else None
 
+    def ensure_default_workspace(self) -> WorkspaceRecord:
+        """Ensure there is an active safe workspace for normal Console chat.
+
+        The built-in Default workspace gives users a concrete active workspace
+        without granting filesystem/runtime capabilities. Users can still browse
+        and chat normally, but tool/file access requires an explicit workspace.
+        """
+
+        active_workspace = self.get_active_workspace()
+        if active_workspace is not None:
+            if active_workspace.workspace_id == DEFAULT_WORKSPACE_ID:
+                self._delete_default_runtime_bindings()
+            return active_workspace
+
+        default_workspace = self.get_workspace(DEFAULT_WORKSPACE_ID)
+        if default_workspace is None:
+            self.create_workspace(
+                workspace_id=DEFAULT_WORKSPACE_ID,
+                name=DEFAULT_WORKSPACE_NAME,
+                description=DEFAULT_WORKSPACE_DESCRIPTION,
+                authority=WorkspaceAuthority.LOCAL_ONLY,
+                sync_status=WorkspaceSyncStatus.NOT_CONFIGURED,
+            )
+        elif default_workspace.archived:
+            self._restore_default_workspace()
+
+        self._delete_default_runtime_bindings()
+        return self.set_active_workspace(DEFAULT_WORKSPACE_ID)
+
     def link_membership(
         self,
         workspace_id: str,
@@ -355,6 +387,10 @@ class LocalWorkspaceRegistryService:
     ) -> WorkspaceRuntimeBinding:
         """Create or update a workspace runtime binding."""
 
+        if binding.workspace_id == DEFAULT_WORKSPACE_ID:
+            raise WorkspaceRegistryServiceError(
+                "Default workspace does not allow runtime bindings."
+            )
         if self.get_workspace(binding.workspace_id) is None:
             raise WorkspaceNotFound(binding.workspace_id)
         safe_binding = WorkspaceRuntimeBinding(
@@ -429,7 +465,13 @@ class LocalWorkspaceRegistryService:
                 ).fetchone()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        return _runtime_binding_from_row(row) if row is not None else None
+        if row is None:
+            return None
+        binding = _runtime_binding_from_row(row)
+        if binding.workspace_id == DEFAULT_WORKSPACE_ID:
+            self._delete_default_runtime_bindings()
+            return None
+        return binding
 
     def list_runtime_bindings(
         self,
@@ -438,6 +480,9 @@ class LocalWorkspaceRegistryService:
         """Return runtime bindings for a workspace."""
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        if safe_workspace_id == DEFAULT_WORKSPACE_ID:
+            self._delete_default_runtime_bindings()
+            return ()
         try:
             with self.db.connection() as conn:
                 rows = conn.execute(
@@ -452,6 +497,50 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_runtime_binding_from_row(row) for row in rows)
+
+    def _delete_default_runtime_bindings(self) -> None:
+        """Remove stale runtime bindings from the safe built-in Default workspace."""
+
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    DELETE FROM workspace_runtime_bindings
+                    WHERE workspace_id = ?
+                    """,
+                    (DEFAULT_WORKSPACE_ID,),
+                )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+
+    def _restore_default_workspace(self) -> None:
+        """Restore the built-in Default workspace when it is the only safe active fallback."""
+
+        now = self._now_factory()
+        try:
+            with self.db.transaction() as conn:
+                conn.execute(
+                    """
+                    UPDATE workspace_records
+                    SET name = ?,
+                        description = ?,
+                        authority = ?,
+                        sync_status = ?,
+                        archived = 0,
+                        updated_at = ?
+                    WHERE workspace_id = ?
+                    """,
+                    (
+                        DEFAULT_WORKSPACE_NAME,
+                        DEFAULT_WORKSPACE_DESCRIPTION,
+                        WorkspaceAuthority.LOCAL_ONLY.value,
+                        WorkspaceSyncStatus.NOT_CONFIGURED.value,
+                        now,
+                        DEFAULT_WORKSPACE_ID,
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
 
 
 def _workspace_from_row(row: sqlite3.Row) -> WorkspaceRecord:
