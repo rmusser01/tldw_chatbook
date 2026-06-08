@@ -173,3 +173,35 @@ Fallback reason: initial browser navigation waited on page lifecycle past timeou
 - Result: `177 passed, 1 warning`.
 - `file Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-closeout-baseline-2026-06-06.png Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-closeout-console-max-tokens-saved-2026-06-06.png Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-closeout-provider-dropdown-open-actual-2026-06-06.png Docs/superpowers/qa/product-maturity/screen-qa/settings/settings-closeout-provider-selection-mistral-2026-06-06.png`
 - Result: all four files are `PNG image data, 2050 x 1240, 8-bit/color RGB, non-interlaced`.
+
+## Storage Defaults QA
+
+Date: 2026-06-08
+Branch: `codex/settings-config-hub-next-work`
+Backlog task: TASK-81
+Screen: Settings Storage
+Viewport: 2050x1280 textual-web browser capture
+Launch method: `tldw-serve --host 127.0.0.1 --port 8881` with isolated HOME/XDG config, `PYTHONPATH` pinned to this worktree, `default_tab = "settings"`, and splash disabled.
+Screenshot method: Codex in-app Browser/CDP screenshot of textual-web.
+Fallback reason: none for screenshots. Text entry through browser automation hit the textual-web virtual clipboard limitation, so the invalid recovery screenshot uses deterministic keypress clearing through the terminal textbox, and the saved restart-required screenshot uses a fresh app session loaded from an isolated persisted temp config. The actual Save/Revert behavior is covered by mounted regression tests.
+
+### Screenshots
+
+- Baseline Storage defaults: `Docs/superpowers/qa/product-maturity/screen-qa/settings/storage-defaults-2026-06-07/settings-storage-baseline.jpg`
+- Focused path input: `Docs/superpowers/qa/product-maturity/screen-qa/settings/storage-defaults-2026-06-07/settings-storage-focused-path-input.jpg`
+- Invalid recovery state: `Docs/superpowers/qa/product-maturity/screen-qa/settings/storage-defaults-2026-06-07/settings-storage-invalid-path-recovery.jpg`
+- Saved restart-required persisted state: `Docs/superpowers/qa/product-maturity/screen-qa/settings/storage-defaults-2026-06-07/settings-storage-saved-restart-required.jpg`
+
+### Verification Scope
+
+- Confirmed Storage renders editable database path defaults in the destination-native Settings three-column shell.
+- Confirmed focused input text remains visible and the inspector switches to field-specific guidance.
+- Confirmed invalid path state blocks Save and shows visible recovery copy in the state banner, inspector, and detail pane.
+- Confirmed persisted Storage defaults reload as saved values while copy states that changes apply on next launch and active database handles stay unchanged.
+- Confirmed the Storage check copy remains non-mutating: no files are created, moved, or reconnected.
+- User approval: approved in Codex thread after actual textual-web screenshot review.
+
+### Verification
+
+- `python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short`
+- Result: `191 passed, 1 warning`.

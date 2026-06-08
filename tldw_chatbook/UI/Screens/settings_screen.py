@@ -85,6 +85,14 @@ from .settings_library_rag_defaults import (
     normalise_library_rag_search_mode,
     validate_library_rag_defaults,
 )
+from .settings_storage_defaults import (
+    STORAGE_FIELD_LABELS,
+    SettingsStorageDefaults,
+    build_storage_check_rows,
+    build_storage_save_sections,
+    load_storage_defaults,
+    validate_storage_defaults,
+)
 from ..Navigation.main_navigation import NavigateToScreen
 
 
@@ -244,6 +252,7 @@ GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
         SettingsCategoryId.APPEARANCE,
         SettingsCategoryId.CONSOLE_BEHAVIOR,
         SettingsCategoryId.LIBRARY_RAG,
+        SettingsCategoryId.STORAGE,
     }
 )
 SETTINGS_OVERVIEW_BOUNDARY_ROWS = (
@@ -574,6 +583,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_background_effects = False
         self._syncing_library_rag_defaults = False
         self._syncing_appearance_defaults = False
+        self._syncing_storage_defaults = False
         self._active_settings_field_id: str | None = None
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
@@ -589,6 +599,7 @@ class SettingsScreen(BaseAppScreen):
         self._console_behavior_saved_this_session = False
         self._library_rag_result = "Library/RAG defaults have not been saved this session."
         self._appearance_result = "Appearance defaults have not been saved this session."
+        self._storage_result = "Storage defaults have not been saved this session."
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
@@ -665,7 +676,7 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.STORAGE,
                 "Storage",
                 "Config path, local databases, and file locations.",
-                "Local",
+                "Guided",
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.PRIVACY_SECURITY,
@@ -918,13 +929,27 @@ class SettingsScreen(BaseAppScreen):
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.STORAGE,
-                owns_config_sections=("paths", "database"),
+                owns_config_sections=(
+                    "database.USER_DB_BASE_DIR",
+                    "database.chachanotes_db_path",
+                    "database.prompts_db_path",
+                    "database.media_db_path",
+                    "database.research_db_path",
+                    "database.writing_db_path",
+                    "database.library_collections_db_path",
+                    "database.workspaces_db_path",
+                ),
                 reads_runtime_state_from=("local filesystem", "configured database paths"),
-                writes_allowed=False,
-                runtime_owner="Storage services",
-                boundary_copy="Settings observes local paths and writability without moving data.",
-                recovery_copy="Verify paths before changing storage roots outside this slice.",
-                read_only_reason="Storage edits require a dedicated source-of-truth and migration task.",
+                writes_allowed=True,
+                runtime_owner="Settings persisted defaults; storage services active handles",
+                boundary_copy=(
+                    "Settings edits persisted database path defaults only; active database "
+                    "handles keep their current paths until restart."
+                ),
+                recovery_copy=(
+                    "Validate paths, save the config-only change, then restart Chatbook to "
+                    "activate new storage defaults."
+                ),
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.PRIVACY_SECURITY,
@@ -1300,6 +1325,34 @@ class SettingsScreen(BaseAppScreen):
             return False
         return self._library_rag_validation_result().valid
 
+    def _storage_loaded_defaults(self) -> SettingsStorageDefaults:
+        return load_storage_defaults(self._app_config_mapping())
+
+    def _storage_loaded_values(self) -> dict[str, object]:
+        return asdict(self._storage_loaded_defaults())
+
+    def _storage_draft(self) -> SettingsDraft | None:
+        return self._settings_drafts.get(SettingsCategoryId.STORAGE)
+
+    def _storage_setting_values(self) -> dict[str, object]:
+        loaded = self._storage_loaded_values()
+        draft = self._storage_draft()
+        return {
+            key: draft.values[key] if draft is not None and key in draft.values else value
+            for key, value in loaded.items()
+        }
+
+    def _storage_current_defaults(self) -> SettingsStorageDefaults:
+        return SettingsStorageDefaults(**self._storage_setting_values())
+
+    def _storage_validation_result(self):
+        return validate_storage_defaults(self._storage_current_defaults())
+
+    def _storage_save_enabled(self) -> bool:
+        if not self._category_has_unsaved_changes(SettingsCategoryId.STORAGE):
+            return False
+        return self._storage_validation_result().valid
+
     def _category_has_unsaved_changes(self, category: SettingsCategoryId) -> bool:
         draft = self._settings_drafts.get(category)
         return bool(draft and draft.is_dirty)
@@ -1319,13 +1372,19 @@ class SettingsScreen(BaseAppScreen):
                     return f"Guided edits: {validation.message}"
                 return "Guided edits: Save or Revert Library/RAG defaults."
             return "Guided edits: change a Library/RAG default first."
+        if category is SettingsCategoryId.STORAGE:
+            if self._category_has_unsaved_changes(category):
+                validation = self._storage_validation_result()
+                if not validation.valid:
+                    return f"Guided edits: {validation.message}"
+                return "Guided edits: Save or Revert Storage defaults."
+            return "Guided edits: change a Storage default first."
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             if self._category_has_unsaved_changes(category):
                 return "Guided edits: Save or Revert changes."
             return "Guided edits: change a field first."
         messages = {
             SettingsCategoryId.OVERVIEW: "Guided edits: choose Providers or Console.",
-            SettingsCategoryId.STORAGE: "Guided edits: Storage is read-only.",
             SettingsCategoryId.PRIVACY_SECURITY: "Guided edits: use Check Privacy.",
             SettingsCategoryId.DIAGNOSTICS: "Guided edits: use Validate/Reload.",
             SettingsCategoryId.ADVANCED_CONFIG: "Guided edits: use Raw TOML controls.",
@@ -1340,6 +1399,8 @@ class SettingsScreen(BaseAppScreen):
             return self._appearance_save_enabled()
         if category is SettingsCategoryId.LIBRARY_RAG:
             return self._library_rag_save_enabled()
+        if category is SettingsCategoryId.STORAGE:
+            return self._storage_save_enabled()
         return (
             category in GUIDED_SETTINGS_MUTATION_CATEGORIES
             and self._category_has_unsaved_changes(category)
@@ -1550,6 +1611,10 @@ class SettingsScreen(BaseAppScreen):
             validation = self._library_rag_validation_result()
             if not validation.valid:
                 return f"State: Needs correction | {validation.message}"
+        if category is SettingsCategoryId.STORAGE and self._category_has_unsaved_changes(category):
+            validation = self._storage_validation_result()
+            if not validation.valid:
+                return f"State: Needs correction | {validation.message}"
         if self._category_has_unsaved_changes(category):
             return "State: Unsaved changes | Save or Revert before leaving this category."
         if category is SettingsCategoryId.ADVANCED_CONFIG:
@@ -1565,7 +1630,10 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.APPEARANCE:
             return "State: Visual defaults | Settings owns launch and web display defaults."
         if category is SettingsCategoryId.STORAGE:
-            return "State: Local paths | Verify write access before changing storage locations."
+            return (
+                "State: Storage defaults | Changes apply on next launch; "
+                "active handles stay unchanged."
+            )
         if category is SettingsCategoryId.PRIVACY_SECURITY:
             return "State: Local privacy | Secrets stay redacted in validation and diagnostics."
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
@@ -1888,6 +1956,84 @@ class SettingsScreen(BaseAppScreen):
             except QueryError:
                 continue
             widget.set_class(key == invalid_key, "settings-invalid-input")
+
+    def _stage_storage_value(self, key: str, value: object) -> None:
+        category = SettingsCategoryId.STORAGE
+        draft = self._settings_drafts.setdefault(category, SettingsDraft(category=category))
+        draft.set_value(
+            key,
+            self._storage_loaded_values().get(key),
+            str(value if value is not None else ""),
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    def _storage_field_selector(self, key: str) -> str | None:
+        return {
+            "user_db_base_dir": "#settings-storage-user-db-base-dir",
+            "chachanotes_db_path": "#settings-storage-chachanotes-db-path",
+            "prompts_db_path": "#settings-storage-prompts-db-path",
+            "media_db_path": "#settings-storage-media-db-path",
+            "research_db_path": "#settings-storage-research-db-path",
+            "writing_db_path": "#settings-storage-writing-db-path",
+            "library_collections_db_path": "#settings-storage-library-collections-db-path",
+            "workspaces_db_path": "#settings-storage-workspaces-db-path",
+        }.get(key)
+
+    def _storage_invalid_field_key(self) -> str | None:
+        validation = self._storage_validation_result()
+        if validation.valid:
+            return None
+        message = validation.message
+        for key, label in STORAGE_FIELD_LABELS.items():
+            if message.startswith(str(label)):
+                return key
+        return None
+
+    def _update_storage_validation_classes(self) -> None:
+        invalid_key = self._storage_invalid_field_key()
+        for key in STORAGE_FIELD_LABELS:
+            selector = self._storage_field_selector(key)
+            if selector is None:
+                continue
+            try:
+                widget = self.query_one(selector)
+            except QueryError:
+                continue
+            widget.set_class(key == invalid_key, "settings-invalid-input")
+
+    def _mark_storage_settings_staged(self) -> None:
+        category = SettingsCategoryId.STORAGE
+        if self._category_has_unsaved_changes(category):
+            validation = self._storage_validation_result()
+            self._storage_result = (
+                "Storage defaults staged. Restart Chatbook to use saved paths."
+                if validation.valid
+                else validation.message
+            )
+        else:
+            self._storage_result = "Storage defaults match last loaded values."
+        self._set_static_text("#settings-storage-save-result", self._storage_result)
+        self._update_storage_validation_classes()
+        self._update_draft_status_widgets(category)
+
+    def _sync_storage_widgets(self) -> None:
+        values = self._storage_setting_values()
+        self._syncing_storage_defaults = True
+        try:
+            for key, value in values.items():
+                selector = self._storage_field_selector(key)
+                if selector is None:
+                    continue
+                try:
+                    self.query_one(selector, Input).value = str(value)
+                except QueryError:
+                    pass
+        finally:
+            self._syncing_storage_defaults = False
+        self._set_static_text("#settings-storage-save-result", self._storage_result)
+        self._update_storage_validation_classes()
+        self._update_draft_status_widgets(SettingsCategoryId.STORAGE)
 
     def _library_rag_preview_rows(self) -> tuple[str, str, str]:
         values = self._library_rag_setting_values()
@@ -2604,8 +2750,12 @@ class SettingsScreen(BaseAppScreen):
         self.app.notify("Storage check finished.", severity="information")
 
     @work(exclusive=True, thread=True)
-    def _storage_check_worker(self) -> None:
-        rows = self._storage_check_results()
+    def _storage_check_worker(self, values: SettingsStorageDefaults | None = None) -> None:
+        rows = (
+            build_storage_check_rows(values)
+            if values is not None
+            else self._storage_check_results()
+        )
         self.app.call_from_thread(self._apply_storage_check_result, rows)
 
     @staticmethod
@@ -4054,6 +4204,47 @@ class SettingsScreen(BaseAppScreen):
                 f"{label}: {value}",
             )
 
+    def _storage_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
+        field_id = self._active_settings_field_id
+        field_by_id = {
+            (self._storage_field_selector(key) or "").removeprefix("#"): key
+            for key in STORAGE_FIELD_LABELS
+        }
+        key = field_by_id.get(field_id or "")
+        if key is None:
+            return (
+                ("Focused setting", "Storage defaults"),
+                ("Purpose", "Configure persisted database path defaults for the next launch."),
+                ("Saved as", "database.*"),
+                ("Validation", "path text only; no files are moved, created, or reconnected"),
+            )
+        label = STORAGE_FIELD_LABELS[key]
+        saved_key = (
+            "database.USER_DB_BASE_DIR"
+            if key == "user_db_base_dir"
+            else f"database.{key}"
+        )
+        purpose = (
+            "Base directory fallback for local Chatbook data."
+            if key == "user_db_base_dir"
+            else f"Path to the local {label} file used after restart."
+        )
+        return (
+            ("Focused setting", label),
+            ("Purpose", purpose),
+            ("Saved as", saved_key),
+            ("Validation", "must be a safe path; database paths must end in .db, .sqlite, or .sqlite3"),
+        )
+
+    def _refresh_storage_field_guidance(self) -> None:
+        if self._active_category_id() is not SettingsCategoryId.STORAGE:
+            return
+        for index, (label, value) in enumerate(self._storage_field_guidance_rows()):
+            self._set_static_text(
+                f"#settings-storage-field-guide-{index}",
+                f"{label}: {value}",
+            )
+
     def _split_detail_row(self, text: str) -> Static:
         label, separator, value = text.partition(":")
         if not separator:
@@ -4893,10 +5084,43 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-status-row",
                 )
         elif category is SettingsCategoryId.STORAGE:
+            values = self._storage_setting_values()
+            try:
+                config_path: object = self._config_path()
+            except (OSError, RuntimeError, ValueError) as exc:
+                config_path = f"invalid - {redact_secret_text(str(exc))}"
             yield Static("Storage", classes="destination-section settings-column-title")
             with Vertical(id="settings-storage-card", classes="settings-focus-card"):
                 yield self._render_category_state_banner(SettingsCategoryId.STORAGE)
-                yield self._detail_row("Safety check", "verify write access before changing storage roots")
+                yield Static("Storage defaults", classes="destination-section")
+                yield self._detail_row("Scope", "persisted local database path defaults")
+                yield self._detail_row(
+                    "Activation",
+                    "Changes apply on next launch; active database handles keep current paths",
+                )
+                yield self._detail_row(
+                    "Safety",
+                    "Save writes config only; no files are moved or reconnected",
+                )
+                yield self._detail_row("Config path", config_path)
+                yield Static("Database paths", classes="destination-section")
+                for key, label in STORAGE_FIELD_LABELS.items():
+                    selector = self._storage_field_selector(key)
+                    if selector is None:
+                        continue
+                    with Horizontal(classes="settings-input-row"):
+                        yield Static(label, classes="settings-input-label")
+                        yield Input(
+                            value=str(values[key]),
+                            id=selector.removeprefix("#"),
+                            classes="settings-compact-input",
+                            placeholder="~/path/to/database.db",
+                        )
+                yield Static("Draft path check", classes="destination-section")
+                yield self._detail_row(
+                    "Check mode",
+                    "non-mutating; reports parent readiness for the current config runtime",
+                )
                 with Horizontal(id="settings-storage-actions", classes="settings-action-row"):
                     yield Button(
                         "Check Storage",
@@ -4908,17 +5132,18 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-storage-check-result",
                     classes="settings-status-row settings-storage-check-result",
                 )
-                yield Static("Local paths", classes="destination-section")
+                yield Static(
+                    self._storage_result,
+                    id="settings-storage-save-result",
+                    classes="settings-status-row",
+                )
+                yield Static("Runtime local paths", classes="destination-section")
                 for path_summary in self._known_storage_paths():
                     yield self._split_detail_row(path_summary)
                 yield self._detail_row("Config directory status", self._config_writable_status())
                 yield self._detail_row(
                     "Handoff boundary",
                     "database and media paths remain local unless a server handoff is explicit",
-                )
-                yield self._detail_row(
-                    "Storage mutation",
-                    "unavailable/WIP - validation only; no files are moved or rewritten",
                 )
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
             yield Static("Privacy & Security", classes="destination-section settings-column-title")
@@ -5188,6 +5413,32 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-open-appearance",
                 tooltip="Open the dedicated Customize theme editor.",
             )
+        elif summary.category is SettingsCategoryId.STORAGE:
+            yield Static("Affects local database path defaults after restart.", classes="destination-section")
+            yield self._detail_row(
+                "Affected config",
+                "config file path, local database paths, media storage roots",
+            )
+            yield Static("Focused field guide", classes="destination-section")
+            for index, (label, value) in enumerate(self._storage_field_guidance_rows()):
+                yield self._detail_row(
+                    label,
+                    value,
+                    identifier=f"settings-storage-field-guide-{index}",
+                )
+            yield Static("Boundary", classes="destination-section")
+            yield self._detail_row(
+                "Restart required",
+                "saved paths are picked up on next launch; active handles stay unchanged",
+            )
+            yield self._detail_row(
+                "No migration",
+                "Settings does not move files, create directories, or reconnect databases",
+            )
+            yield self._detail_row("Runtime owner", ownership.runtime_owner)
+            yield self._detail_row("Writes allowed", "Yes")
+            yield self._detail_row("Recovery", ownership.recovery_copy)
+            return
         else:
             yield Static("Impact and boundaries", classes="destination-section")
             yield Static(summary.description)
@@ -5353,6 +5604,22 @@ class SettingsScreen(BaseAppScreen):
                 widget_id if widget_id in appearance_field_ids else None
             )
             self._refresh_appearance_field_guidance()
+            return
+        if active_category is SettingsCategoryId.STORAGE:
+            storage_field_ids = {
+                "settings-storage-user-db-base-dir",
+                "settings-storage-chachanotes-db-path",
+                "settings-storage-prompts-db-path",
+                "settings-storage-media-db-path",
+                "settings-storage-research-db-path",
+                "settings-storage-writing-db-path",
+                "settings-storage-library-collections-db-path",
+                "settings-storage-workspaces-db-path",
+            }
+            self._active_settings_field_id = (
+                widget_id if widget_id in storage_field_ids else None
+            )
+            self._refresh_storage_field_guidance()
             return
         if active_category is not SettingsCategoryId.PROVIDERS_MODELS:
             self._active_settings_field_id = None
@@ -5713,6 +5980,62 @@ class SettingsScreen(BaseAppScreen):
             self._normalise_library_rag_int(event.value),
         )
         self._mark_library_rag_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-user-db-base-dir")
+    def handle_storage_user_db_base_dir_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("user_db_base_dir", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-chachanotes-db-path")
+    def handle_storage_chachanotes_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("chachanotes_db_path", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-prompts-db-path")
+    def handle_storage_prompts_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("prompts_db_path", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-media-db-path")
+    def handle_storage_media_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("media_db_path", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-research-db-path")
+    def handle_storage_research_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("research_db_path", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-writing-db-path")
+    def handle_storage_writing_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("writing_db_path", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-library-collections-db-path")
+    def handle_storage_library_collections_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("library_collections_db_path", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-workspaces-db-path")
+    def handle_storage_workspaces_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("workspaces_db_path", event.value)
+        self._mark_storage_settings_staged()
 
     def _apply_provider_value_change(self, provider: str) -> None:
         loaded_provider = str(self._provider_loaded_setting_values().get("provider") or "")
@@ -6104,6 +6427,28 @@ class SettingsScreen(BaseAppScreen):
                 self.app.notify("Failed to save provider and model settings.", severity="error")
             return
 
+        if category is SettingsCategoryId.STORAGE:
+            if not self._category_has_unsaved_changes(category):
+                self.app.notify("No Settings changes to save.", severity="information")
+                return
+            values = self._storage_current_defaults()
+            validation = validate_storage_defaults(values)
+            if not validation.valid:
+                self._storage_result = validation.message
+                self._set_static_text("#settings-storage-save-result", self._storage_result)
+                self._update_storage_validation_classes()
+                self._update_draft_status_widgets(category)
+                self.app.notify(validation.message, severity="error")
+                return
+            section_values = build_storage_save_sections(
+                self._app_config_mapping(),
+                values,
+            )
+            self._storage_result = "Storage defaults saving..."
+            self._set_static_text("#settings-storage-save-result", self._storage_result)
+            self._settings_save_storage_worker(section_values)
+            return
+
         if category is SettingsCategoryId.LIBRARY_RAG:
             if not self._category_has_unsaved_changes(category):
                 self.app.notify("No Settings changes to save.", severity="information")
@@ -6262,6 +6607,10 @@ class SettingsScreen(BaseAppScreen):
             self._library_rag_result = "Library/RAG defaults reverted to last loaded values."
             self._sync_library_rag_widgets()
             self._update_draft_status_widgets(category)
+        elif category is SettingsCategoryId.STORAGE:
+            self._storage_result = "Storage defaults reverted to last loaded values."
+            self._sync_storage_widgets()
+            self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
             values = self._provider_setting_values()
             try:
@@ -6331,7 +6680,7 @@ class SettingsScreen(BaseAppScreen):
         if self._active_category_id() is SettingsCategoryId.STORAGE:
             self._storage_check_rows = ("Storage check: running",)
             self._update_storage_check_widgets()
-            self._storage_check_worker()
+            self._storage_check_worker(self._storage_current_defaults())
             self.app.notify("Storage check started.", severity="information")
             return
         if self._active_category_id() is SettingsCategoryId.PRIVACY_SECURITY:
@@ -6389,6 +6738,10 @@ class SettingsScreen(BaseAppScreen):
     def _save_library_rag_sections(section_values: Mapping[str, object]) -> bool:
         return SettingsConfigAdapter().save_sections(section_values)
 
+    @staticmethod
+    def _save_storage_sections(section_values: Mapping[str, object]) -> bool:
+        return SettingsConfigAdapter().save_sections(section_values)
+
     def _app_config_update_target(self):
         app_config = getattr(self.app_instance, "app_config", None)
         if callable(getattr(app_config, "update", None)):
@@ -6444,6 +6797,32 @@ class SettingsScreen(BaseAppScreen):
         saved = self._save_library_rag_sections(section_values)
         self.app.call_from_thread(
             self._apply_library_rag_save_result,
+            saved,
+            dict(section_values),
+        )
+
+    def _apply_storage_save_result(
+        self,
+        saved: bool,
+        section_values: Mapping[str, object],
+    ) -> None:
+        if saved:
+            self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
+            self._settings_drafts.pop(SettingsCategoryId.STORAGE, None)
+            self._storage_result = "Storage defaults saved. Restart Chatbook to use saved paths."
+            self._set_static_text("#settings-storage-save-result", self._storage_result)
+            self._sync_storage_widgets()
+            self.app.notify("Storage defaults saved.", severity="information")
+            return
+        self._storage_result = "Failed to save Storage defaults."
+        self._set_static_text("#settings-storage-save-result", self._storage_result)
+        self.app.notify(self._storage_result, severity="error")
+
+    @work(exclusive=True, thread=True)
+    def _settings_save_storage_worker(self, section_values: Mapping[str, object]) -> None:
+        saved = self._save_storage_sections(section_values)
+        self.app.call_from_thread(
+            self._apply_storage_save_result,
             saved,
             dict(section_values),
         )
