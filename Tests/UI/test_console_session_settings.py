@@ -320,6 +320,12 @@ def test_default_console_session_settings_prefers_provider_model_profile() -> No
                         "min_p": 0.04,
                         "top_k": 40,
                         "max_tokens": 1234,
+                        "seed": 101,
+                        "presence_penalty": 0.2,
+                        "frequency_penalty": 0.3,
+                        "reasoning_effort": "high",
+                        "reasoning_summary": "auto",
+                        "verbosity": "high",
                         "streaming": True,
                     },
                 },
@@ -340,6 +346,12 @@ def test_default_console_session_settings_prefers_provider_model_profile() -> No
     assert settings.min_p == 0.04
     assert settings.top_k == 40
     assert settings.max_tokens == 1234
+    assert settings.seed == 101
+    assert settings.presence_penalty == 0.2
+    assert settings.frequency_penalty == 0.3
+    assert settings.reasoning_effort == "high"
+    assert settings.reasoning_summary == "auto"
+    assert settings.verbosity == "high"
     assert settings.streaming is True
 
 

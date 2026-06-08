@@ -92,6 +92,14 @@ class ConsoleProviderSelection:
     min_p: float | None = None
     top_k: int | None = None
     max_tokens: int | None = None
+    seed: int | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    reasoning_effort: str | None = None
+    reasoning_summary: str | None = None
+    verbosity: str | None = None
+    thinking_effort: str | None = None
+    thinking_budget_tokens: int | None = None
     streaming: bool = True
     workspace_context: ConsoleWorkspaceContext = field(default_factory=ConsoleWorkspaceContext)
 

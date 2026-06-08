@@ -788,8 +788,15 @@ async def test_stream_chat_generic_non_streaming_yields_completion_once() -> Non
             streaming=False,
             temperature=0.2,
             top_p=0.9,
+            min_p=0.05,
             top_k=40,
             max_tokens=256,
+            seed=123,
+            presence_penalty=0.4,
+            frequency_penalty=0.5,
+            reasoning_effort="high",
+            reasoning_summary="auto",
+            verbosity="medium",
         )
     )
 
@@ -806,8 +813,15 @@ async def test_stream_chat_generic_non_streaming_yields_completion_once() -> Non
             "temp": 0.2,
             "topp": 0.9,
             "maxp": 0.9,
+            "minp": 0.05,
             "topk": 40,
             "max_tokens": 256,
+            "seed": 123,
+            "presence_penalty": 0.4,
+            "frequency_penalty": 0.5,
+            "reasoning_effort": "high",
+            "reasoning_summary": "auto",
+            "verbosity": "medium",
         }
     ]
 

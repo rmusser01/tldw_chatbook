@@ -108,7 +108,53 @@ PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "en
 PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_temperature": "temperature",
     "model_profile_top_p": "top_p",
+    "model_profile_min_p": "min_p",
+    "model_profile_top_k": "top_k",
+    "model_profile_max_tokens": "max_tokens",
+    "model_profile_seed": "seed",
+    "model_profile_presence_penalty": "presence_penalty",
+    "model_profile_frequency_penalty": "frequency_penalty",
+    "model_profile_reasoning_effort": "reasoning_effort",
+    "model_profile_reasoning_summary": "reasoning_summary",
+    "model_profile_verbosity": "verbosity",
+    "model_profile_thinking_effort": "thinking_effort",
+    "model_profile_thinking_budget_tokens": "thinking_budget_tokens",
     "model_profile_streaming": "streaming",
+}
+REASONING_EFFORT_OPTIONS = frozenset({"", "minimal", "low", "medium", "high", "xhigh"})
+REASONING_SUMMARY_OPTIONS = frozenset({"", "auto", "concise", "detailed", "none"})
+VERBOSITY_OPTIONS = frozenset({"", "low", "medium", "high"})
+THINKING_EFFORT_OPTIONS = frozenset({"", "off", "low", "medium", "high", "xhigh"})
+OPENAI_REASONING_PROVIDER_KEYS = frozenset({"openai"})
+ANTHROPIC_THINKING_PROVIDER_KEYS = frozenset({"anthropic"})
+OPENAI_REASONING_PROFILE_FIELD_KEYS = frozenset(
+    {
+        "model_profile_reasoning_effort",
+        "model_profile_reasoning_summary",
+        "model_profile_verbosity",
+    }
+)
+ANTHROPIC_THINKING_PROFILE_FIELD_KEYS = frozenset(
+    {
+        "model_profile_thinking_effort",
+        "model_profile_thinking_budget_tokens",
+    }
+)
+MODEL_PROFILE_INPUT_PLACEHOLDERS = {
+    "model_profile_temperature": "0.0 - 2.0",
+    "model_profile_top_p": "0.0 - 1.0",
+    "model_profile_min_p": "optional 0.0 - 1.0",
+    "model_profile_top_k": "optional whole number",
+    "model_profile_max_tokens": "optional whole number",
+    "model_profile_seed": "optional whole number",
+    "model_profile_presence_penalty": "-2.0 - 2.0",
+    "model_profile_frequency_penalty": "-2.0 - 2.0",
+    "model_profile_reasoning_effort": "minimal, low, medium, high, xhigh",
+    "model_profile_reasoning_summary": "auto, concise, detailed, none",
+    "model_profile_verbosity": "low, medium, high",
+    "model_profile_thinking_effort": "off, low, medium, high, xhigh",
+    "model_profile_thinking_budget_tokens": "optional >= 1024",
+    "model_profile_streaming": "true or false",
 }
 PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
@@ -159,7 +205,17 @@ CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
         "streaming",
         "temperature",
         "top_p",
+        "min_p",
+        "top_k",
         "max_tokens",
+        "seed",
+        "presence_penalty",
+        "frequency_penalty",
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+        "thinking_budget_tokens",
     }
 )
 CONSOLE_BEHAVIOR_SAVE_ORDER = (
@@ -168,7 +224,17 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "streaming",
     "temperature",
     "top_p",
+    "min_p",
+    "top_k",
     "max_tokens",
+    "seed",
+    "presence_penalty",
+    "frequency_penalty",
+    "reasoning_effort",
+    "reasoning_summary",
+    "verbosity",
+    "thinking_effort",
+    "thinking_budget_tokens",
     *CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER,
 )
 ADVANCED_CONFIG_GUIDED_PATHS = (
@@ -1100,12 +1166,61 @@ class SettingsScreen(BaseAppScreen):
             maximum=1.0,
         )
 
+    def _loaded_console_default_min_p(self) -> float | str:
+        return self._loaded_optional_float_default("min_p", minimum=0.0, maximum=1.0)
+
+    def _loaded_console_default_top_k(self) -> int | str:
+        return self._loaded_optional_int_default("top_k", minimum=0)
+
     def _loaded_console_default_max_tokens(self) -> int | str:
-        chat_defaults = self._chat_defaults()
-        value = chat_defaults.get("max_tokens", "")
+        return self._loaded_optional_int_default("max_tokens", minimum=1)
+
+    def _loaded_console_default_seed(self) -> int | str:
+        return self._loaded_optional_int_default("seed", minimum=0)
+
+    def _loaded_console_default_presence_penalty(self) -> float | str:
+        return self._loaded_optional_float_default(
+            "presence_penalty",
+            minimum=-2.0,
+            maximum=2.0,
+        )
+
+    def _loaded_console_default_frequency_penalty(self) -> float | str:
+        return self._loaded_optional_float_default(
+            "frequency_penalty",
+            minimum=-2.0,
+            maximum=2.0,
+        )
+
+    def _loaded_console_default_choice(self, key: str, allowed: frozenset[str]) -> str:
+        value = str(self._chat_defaults().get(key, "") or "").strip().lower()
+        return value if value in allowed else ""
+
+    def _loaded_console_default_thinking_budget_tokens(self) -> int | str:
+        return self._loaded_optional_int_default("thinking_budget_tokens", minimum=1024)
+
+    def _loaded_optional_float_default(
+        self,
+        key: str,
+        *,
+        minimum: float,
+        maximum: float,
+    ) -> float | str:
+        value = self._chat_defaults().get(key, "")
         if value is None or str(value).strip() == "":
             return ""
-        return coerce_int_setting(value, 0, minimum=1) or ""
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return ""
+        return number if minimum <= number <= maximum else ""
+
+    def _loaded_optional_int_default(self, key: str, *, minimum: int) -> int | str:
+        value = self._chat_defaults().get(key, "")
+        if value is None or str(value).strip() == "":
+            return ""
+        coerced = coerce_int_setting(value, 0, minimum=minimum)
+        return coerced if minimum <= coerced else ""
 
     def _console_behavior_loaded_values(self) -> dict[str, object]:
         return {
@@ -1114,7 +1229,29 @@ class SettingsScreen(BaseAppScreen):
             "streaming": self._loaded_console_default_streaming(),
             "temperature": self._loaded_console_default_temperature(),
             "top_p": self._loaded_console_default_top_p(),
+            "min_p": self._loaded_console_default_min_p(),
+            "top_k": self._loaded_console_default_top_k(),
             "max_tokens": self._loaded_console_default_max_tokens(),
+            "seed": self._loaded_console_default_seed(),
+            "presence_penalty": self._loaded_console_default_presence_penalty(),
+            "frequency_penalty": self._loaded_console_default_frequency_penalty(),
+            "reasoning_effort": self._loaded_console_default_choice(
+                "reasoning_effort",
+                REASONING_EFFORT_OPTIONS,
+            ),
+            "reasoning_summary": self._loaded_console_default_choice(
+                "reasoning_summary",
+                REASONING_SUMMARY_OPTIONS,
+            ),
+            "verbosity": self._loaded_console_default_choice(
+                "verbosity",
+                VERBOSITY_OPTIONS,
+            ),
+            "thinking_effort": self._loaded_console_default_choice(
+                "thinking_effort",
+                THINKING_EFFORT_OPTIONS,
+            ),
+            "thinking_budget_tokens": self._loaded_console_default_thinking_budget_tokens(),
         }
 
     def _loaded_console_background_effects(self) -> dict[str, object]:
@@ -3133,6 +3270,17 @@ class SettingsScreen(BaseAppScreen):
             "credential_env_var": self._provider_credential_env_var(provider),
             "model_profile_temperature": profile.get("temperature", ""),
             "model_profile_top_p": profile.get("top_p", ""),
+            "model_profile_min_p": profile.get("min_p", ""),
+            "model_profile_top_k": profile.get("top_k", ""),
+            "model_profile_max_tokens": profile.get("max_tokens", ""),
+            "model_profile_seed": profile.get("seed", ""),
+            "model_profile_presence_penalty": profile.get("presence_penalty", ""),
+            "model_profile_frequency_penalty": profile.get("frequency_penalty", ""),
+            "model_profile_reasoning_effort": profile.get("reasoning_effort", ""),
+            "model_profile_reasoning_summary": profile.get("reasoning_summary", ""),
+            "model_profile_verbosity": profile.get("verbosity", ""),
+            "model_profile_thinking_effort": profile.get("thinking_effort", ""),
+            "model_profile_thinking_budget_tokens": profile.get("thinking_budget_tokens", ""),
             "model_profile_streaming": profile.get("streaming", ""),
         }
 
@@ -3175,6 +3323,101 @@ class SettingsScreen(BaseAppScreen):
             label="Top P",
         )
 
+    def _normalise_model_profile_min_p(self, value: object) -> float | str:
+        return self._normalise_optional_float(
+            value,
+            min_value=0.0,
+            max_value=1.0,
+            label="Min P",
+        )
+
+    def _normalise_optional_int(
+        self,
+        value: object,
+        *,
+        min_value: int,
+        label: str,
+    ) -> int | str:
+        text = "" if value is None else str(value).strip()
+        if not text:
+            return ""
+        if not text.isdecimal() or int(text) < min_value:
+            raise ValueError(f"{label} must be a whole number of at least {min_value}.")
+        return int(text)
+
+    def _normalise_model_profile_top_k(self, value: object) -> int | str:
+        return self._normalise_optional_int(value, min_value=0, label="Top K")
+
+    def _normalise_model_profile_max_tokens(self, value: object) -> int | str:
+        return self._normalise_optional_int(value, min_value=1, label="Max tokens")
+
+    def _normalise_model_profile_seed(self, value: object) -> int | str:
+        return self._normalise_optional_int(value, min_value=0, label="Seed")
+
+    def _normalise_model_profile_presence_penalty(self, value: object) -> float | str:
+        return self._normalise_optional_float(
+            value,
+            min_value=-2.0,
+            max_value=2.0,
+            label="Presence penalty",
+        )
+
+    def _normalise_model_profile_frequency_penalty(self, value: object) -> float | str:
+        return self._normalise_optional_float(
+            value,
+            min_value=-2.0,
+            max_value=2.0,
+            label="Frequency penalty",
+        )
+
+    @staticmethod
+    def _normalise_optional_choice(
+        value: object,
+        *,
+        allowed: frozenset[str],
+        label: str,
+    ) -> str:
+        text = "" if value is None else str(value).strip().lower()
+        if text in allowed:
+            return text
+        allowed_values = ", ".join(sorted(item for item in allowed if item))
+        raise ValueError(f"{label} must be one of: {allowed_values}.")
+
+    def _normalise_model_profile_reasoning_effort(self, value: object) -> str:
+        return self._normalise_optional_choice(
+            value,
+            allowed=REASONING_EFFORT_OPTIONS,
+            label="Reasoning effort",
+        )
+
+    def _normalise_model_profile_reasoning_summary(self, value: object) -> str:
+        return self._normalise_optional_choice(
+            value,
+            allowed=REASONING_SUMMARY_OPTIONS,
+            label="Reasoning summary",
+        )
+
+    def _normalise_model_profile_verbosity(self, value: object) -> str:
+        return self._normalise_optional_choice(
+            value,
+            allowed=VERBOSITY_OPTIONS,
+            label="Verbosity",
+        )
+
+    def _normalise_model_profile_thinking_effort(self, value: object) -> str:
+        return self._normalise_optional_choice(
+            value,
+            allowed=THINKING_EFFORT_OPTIONS,
+            label="Thinking effort",
+        )
+
+    def _normalise_model_profile_thinking_budget_tokens(self, value: object) -> int | str:
+        return self._normalise_optional_int(
+            value,
+            min_value=1024,
+            label="Thinking budget tokens",
+        )
+
     @staticmethod
     def _normalise_optional_bool(value: object) -> bool | str:
         if isinstance(value, bool):
@@ -3188,6 +3431,58 @@ class SettingsScreen(BaseAppScreen):
         if normalized in {"false", "0"}:
             return False
         raise ValueError("Streaming must be true or false.")
+
+    @staticmethod
+    def _provider_supports_openai_reasoning(provider: object) -> bool:
+        return provider_config_key(str(provider or "")) in OPENAI_REASONING_PROVIDER_KEYS
+
+    @staticmethod
+    def _provider_supports_anthropic_thinking(provider: object) -> bool:
+        return provider_config_key(str(provider or "")) in ANTHROPIC_THINKING_PROVIDER_KEYS
+
+    def _model_profile_field_supported(self, provider: object, draft_key: str) -> bool:
+        if draft_key in OPENAI_REASONING_PROFILE_FIELD_KEYS:
+            return self._provider_supports_openai_reasoning(provider)
+        if draft_key in ANTHROPIC_THINKING_PROFILE_FIELD_KEYS:
+            return self._provider_supports_anthropic_thinking(provider)
+        return True
+
+    def _unsupported_model_profile_placeholder(self, provider: object) -> str:
+        provider_label = self._provider_display_name(str(provider or "").strip())
+        if not provider_label:
+            provider_label = "this provider"
+        return f"Unavailable for {provider_label}"
+
+    def _model_profile_input_placeholder(self, provider: object, draft_key: str) -> str:
+        if not self._model_profile_field_supported(provider, draft_key):
+            return self._unsupported_model_profile_placeholder(provider)
+        return MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key]
+
+    def _model_profile_input_value(
+        self,
+        provider: object,
+        draft_key: str,
+        value: object,
+    ) -> str:
+        if not self._model_profile_field_supported(provider, draft_key):
+            return ""
+        return self._profile_input_value(value)
+
+    def _provider_generation_support_copy(self, provider: object) -> str:
+        provider_label = self._provider_display_name(str(provider or "").strip())
+        if not provider_label:
+            provider_label = "this provider"
+        reasoning_status = (
+            f"Reasoning available for {provider_label}"
+            if self._provider_supports_openai_reasoning(provider)
+            else f"Reasoning unavailable for {provider_label}"
+        )
+        thinking_status = (
+            f"Thinking available for {provider_label}"
+            if self._provider_supports_anthropic_thinking(provider)
+            else f"Thinking unavailable for {provider_label}"
+        )
+        return f"{reasoning_status}; {thinking_status}."
 
     def _provider_form_values_from_widgets(self) -> dict[str, object]:
         loaded_values = self._provider_loaded_setting_values()
@@ -3225,9 +3520,49 @@ class SettingsScreen(BaseAppScreen):
         model_profile_top_p = self._normalise_model_profile_top_p(
             self.query_one("#settings-model-profile-top-p", Input).value
         )
+        model_profile_min_p = self._normalise_model_profile_min_p(
+            self.query_one("#settings-model-profile-min-p", Input).value
+        )
+        model_profile_top_k = self._normalise_model_profile_top_k(
+            self.query_one("#settings-model-profile-top-k", Input).value
+        )
+        model_profile_max_tokens = self._normalise_model_profile_max_tokens(
+            self.query_one("#settings-model-profile-max-tokens", Input).value
+        )
+        model_profile_seed = self._normalise_model_profile_seed(
+            self.query_one("#settings-model-profile-seed", Input).value
+        )
+        model_profile_presence_penalty = self._normalise_model_profile_presence_penalty(
+            self.query_one("#settings-model-profile-presence-penalty", Input).value
+        )
+        model_profile_frequency_penalty = self._normalise_model_profile_frequency_penalty(
+            self.query_one("#settings-model-profile-frequency-penalty", Input).value
+        )
+        model_profile_reasoning_effort = self._normalise_model_profile_reasoning_effort(
+            self.query_one("#settings-model-profile-reasoning-effort", Input).value
+        )
+        model_profile_reasoning_summary = self._normalise_model_profile_reasoning_summary(
+            self.query_one("#settings-model-profile-reasoning-summary", Input).value
+        )
+        model_profile_verbosity = self._normalise_model_profile_verbosity(
+            self.query_one("#settings-model-profile-verbosity", Input).value
+        )
+        model_profile_thinking_effort = self._normalise_model_profile_thinking_effort(
+            self.query_one("#settings-model-profile-thinking-effort", Input).value
+        )
+        model_profile_thinking_budget_tokens = self._normalise_model_profile_thinking_budget_tokens(
+            self.query_one("#settings-model-profile-thinking-budget-tokens", Input).value
+        )
         model_profile_streaming = self._normalise_optional_bool(
             self.query_one("#settings-model-profile-streaming", Input).value
         )
+        if not self._provider_supports_openai_reasoning(provider):
+            model_profile_reasoning_effort = ""
+            model_profile_reasoning_summary = ""
+            model_profile_verbosity = ""
+        if not self._provider_supports_anthropic_thinking(provider):
+            model_profile_thinking_effort = ""
+            model_profile_thinking_budget_tokens = ""
         return {
             "provider": provider,
             "model": model,
@@ -3235,6 +3570,17 @@ class SettingsScreen(BaseAppScreen):
             "credential_env_var": credential_env_var,
             "model_profile_temperature": model_profile_temperature,
             "model_profile_top_p": model_profile_top_p,
+            "model_profile_min_p": model_profile_min_p,
+            "model_profile_top_k": model_profile_top_k,
+            "model_profile_max_tokens": model_profile_max_tokens,
+            "model_profile_seed": model_profile_seed,
+            "model_profile_presence_penalty": model_profile_presence_penalty,
+            "model_profile_frequency_penalty": model_profile_frequency_penalty,
+            "model_profile_reasoning_effort": model_profile_reasoning_effort,
+            "model_profile_reasoning_summary": model_profile_reasoning_summary,
+            "model_profile_verbosity": model_profile_verbosity,
+            "model_profile_thinking_effort": model_profile_thinking_effort,
+            "model_profile_thinking_budget_tokens": model_profile_thinking_budget_tokens,
             "model_profile_streaming": model_profile_streaming,
         }
 
@@ -3422,6 +3768,9 @@ class SettingsScreen(BaseAppScreen):
         current_profile = model_defaults.get(model_name, {})
         next_profile = copy.deepcopy(current_profile) if isinstance(current_profile, Mapping) else {}
         for draft_key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items():
+            if not self._model_profile_field_supported(provider, draft_key):
+                next_profile.pop(profile_key, None)
+                continue
             value = values.get(draft_key, "")
             if value == "":
                 next_profile.pop(profile_key, None)
@@ -3478,17 +3827,33 @@ class SettingsScreen(BaseAppScreen):
     def _sync_provider_model_profile_widgets(self, provider: str, model: str) -> None:
         profile = self._provider_model_profile(provider, model)
         input_values = {
-            "#settings-model-profile-temperature": profile.get("temperature", ""),
-            "#settings-model-profile-top-p": profile.get("top_p", ""),
-            "#settings-model-profile-streaming": profile.get("streaming", ""),
+            "model_profile_temperature": profile.get("temperature", ""),
+            "model_profile_top_p": profile.get("top_p", ""),
+            "model_profile_min_p": profile.get("min_p", ""),
+            "model_profile_top_k": profile.get("top_k", ""),
+            "model_profile_max_tokens": profile.get("max_tokens", ""),
+            "model_profile_seed": profile.get("seed", ""),
+            "model_profile_presence_penalty": profile.get("presence_penalty", ""),
+            "model_profile_frequency_penalty": profile.get("frequency_penalty", ""),
+            "model_profile_reasoning_effort": profile.get("reasoning_effort", ""),
+            "model_profile_reasoning_summary": profile.get("reasoning_summary", ""),
+            "model_profile_verbosity": profile.get("verbosity", ""),
+            "model_profile_thinking_effort": profile.get("thinking_effort", ""),
+            "model_profile_thinking_budget_tokens": profile.get("thinking_budget_tokens", ""),
+            "model_profile_streaming": profile.get("streaming", ""),
         }
         self._syncing_provider_model_profile = True
         try:
-            for selector, value in input_values.items():
+            for draft_key, value in input_values.items():
+                selector = f"#settings-{draft_key.replace('_', '-')}"
                 try:
-                    self.query_one(selector, Input).value = self._profile_input_value(value)
+                    widget = self.query_one(selector, Input)
                 except QueryError:
-                    pass
+                    continue
+                supported = self._model_profile_field_supported(provider, draft_key)
+                widget.disabled = not supported
+                widget.placeholder = self._model_profile_input_placeholder(provider, draft_key)
+                widget.value = self._profile_input_value(value) if supported else ""
         finally:
             self._syncing_provider_model_profile = False
 
@@ -3948,6 +4313,10 @@ class SettingsScreen(BaseAppScreen):
             )
         except QueryError:
             pass
+        self._set_static_text(
+            "#settings-provider-generation-support",
+            self._provider_generation_support_copy(provider),
+        )
         self._refresh_provider_field_guidance()
 
     def _detail_row(self, label: str, value: object, *, identifier: str | None = None) -> Static:
@@ -4014,6 +4383,90 @@ class SettingsScreen(BaseAppScreen):
                 ("Purpose", "Optional token-probability cutoff for this provider and model profile."),
                 ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.top_p"),
                 ("Validation", "number from 0.0 to 1.0, or blank for inherited default"),
+            )
+        model_profile_guidance = {
+            "settings-model-profile-min-p": (
+                "Min P",
+                "Optional minimum-probability sampling cutoff for local/provider profiles.",
+                "min_p",
+                "number from 0.0 to 1.0, or blank for inherited default",
+            ),
+            "settings-model-profile-top-k": (
+                "Top K",
+                "Optional token candidate count for providers that support top-k sampling.",
+                "top_k",
+                "whole number of at least 0, or blank for inherited default",
+            ),
+            "settings-model-profile-max-tokens": (
+                "Max tokens",
+                "Optional response length ceiling for this provider and model profile.",
+                "max_tokens",
+                "whole number of at least 1, or blank for inherited default",
+            ),
+            "settings-model-profile-seed": (
+                "Seed",
+                "Optional deterministic generation seed for providers that support it.",
+                "seed",
+                "whole number of at least 0, or blank for inherited default",
+            ),
+            "settings-model-profile-presence-penalty": (
+                "Presence penalty",
+                "Optional penalty for introducing tokens already present in the conversation.",
+                "presence_penalty",
+                "number from -2.0 to 2.0, or blank for inherited default",
+            ),
+            "settings-model-profile-frequency-penalty": (
+                "Frequency penalty",
+                "Optional penalty for repeating frequent tokens in the response.",
+                "frequency_penalty",
+                "number from -2.0 to 2.0, or blank for inherited default",
+            ),
+            "settings-model-profile-reasoning-effort": (
+                "Reasoning effort",
+                "Optional OpenAI Responses reasoning level for reasoning-capable models.",
+                "reasoning_effort",
+                "minimal, low, medium, high, xhigh, or blank for inherited default",
+            ),
+            "settings-model-profile-reasoning-summary": (
+                "Reasoning summary",
+                "Optional OpenAI reasoning summary detail for supported models.",
+                "reasoning_summary",
+                "auto, concise, detailed, none, or blank for inherited default",
+            ),
+            "settings-model-profile-verbosity": (
+                "Verbosity",
+                "Optional OpenAI text verbosity hint for GPT-5-style Responses models.",
+                "verbosity",
+                "low, medium, high, or blank for inherited default",
+            ),
+            "settings-model-profile-thinking-effort": (
+                "Thinking effort",
+                "Optional Anthropic-style thinking level mapped to provider token budgets.",
+                "thinking_effort",
+                "off, low, medium, high, xhigh, or blank for inherited default",
+            ),
+            "settings-model-profile-thinking-budget-tokens": (
+                "Think budget",
+                "Optional explicit thinking token budget for providers that expose it.",
+                "thinking_budget_tokens",
+                "whole number of at least 1024, or blank for inherited default",
+            ),
+        }
+        if field_id in model_profile_guidance:
+            label, purpose, key, validation = model_profile_guidance[field_id]
+            draft_key = field_id.removeprefix("settings-").replace("-", "_")
+            if not self._model_profile_field_supported(provider, draft_key):
+                return (
+                    ("Focused setting", label),
+                    ("Availability", self._unsupported_model_profile_placeholder(provider)),
+                    ("Saved as", "not saved for the selected provider"),
+                    ("Validation", "select a provider that supports this control before editing"),
+                )
+            return (
+                ("Focused setting", label),
+                ("Purpose", purpose),
+                ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.{key}"),
+                ("Validation", validation),
             )
         if field_id == "settings-model-profile-streaming":
             return (
@@ -4348,6 +4801,7 @@ class SettingsScreen(BaseAppScreen):
     def _render_provider_detail(self) -> ComposeResult:
         resolved = self._resolve_provider_model_for_settings()
         values = self._provider_setting_values()
+        provider = str(values["provider"])
         yield Static("Providers & Models", classes="destination-section settings-column-title")
         with Vertical(id="settings-providers-models-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.PROVIDERS_MODELS)
@@ -4355,27 +4809,26 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Provider", classes="settings-input-label")
                 yield Select(
                     self._provider_select_options(),
-                    value=self._provider_select_value_for_provider(str(values["provider"])),
+                    value=self._provider_select_value_for_provider(provider),
                     id="settings-provider-value",
                     classes="settings-compact-select",
                     allow_blank=False,
                     compact=True,
                 )
             manual_provider_classes = "settings-input-row"
-            if self._provider_select_value_for_provider(str(values["provider"])) != PROVIDER_MANUAL_SELECT_VALUE:
+            if self._provider_select_value_for_provider(provider) != PROVIDER_MANUAL_SELECT_VALUE:
                 manual_provider_classes += " settings-provider-manual-hidden"
             with Horizontal(id="settings-provider-manual-row", classes=manual_provider_classes):
                 yield Static("Manual", classes="settings-input-label")
                 yield Input(
                     value=str(values["provider"])
-                    if self._provider_select_value_for_provider(str(values["provider"])) == PROVIDER_MANUAL_SELECT_VALUE
+                    if self._provider_select_value_for_provider(provider) == PROVIDER_MANUAL_SELECT_VALUE
                     else "",
                     id="settings-provider-manual-value",
                     classes="settings-compact-input",
                     placeholder="Custom provider key",
                     disabled=(
-                        self._provider_select_value_for_provider(str(values["provider"]))
-                        != PROVIDER_MANUAL_SELECT_VALUE
+                        self._provider_select_value_for_provider(provider) != PROVIDER_MANUAL_SELECT_VALUE
                     ),
                 )
             with Horizontal(classes="settings-input-row"):
@@ -4413,6 +4866,158 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="0.0 - 1.0",
                 )
             with Horizontal(classes="settings-input-row"):
+                yield Static("Min P", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(values["model_profile_min_p"]),
+                    id="settings-model-profile-min-p",
+                    classes="settings-compact-input",
+                    placeholder="optional 0.0 - 1.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Top K", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(values["model_profile_top_k"]),
+                    id="settings-model-profile-top-k",
+                    classes="settings-compact-input",
+                    placeholder="optional whole number",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Max tokens", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(values["model_profile_max_tokens"]),
+                    id="settings-model-profile-max-tokens",
+                    classes="settings-compact-input",
+                    placeholder="optional whole number",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Seed", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(values["model_profile_seed"]),
+                    id="settings-model-profile-seed",
+                    classes="settings-compact-input",
+                    placeholder="optional whole number",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Presence", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(values["model_profile_presence_penalty"]),
+                    id="settings-model-profile-presence-penalty",
+                    classes="settings-compact-input",
+                    placeholder="-2.0 - 2.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Frequency", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(values["model_profile_frequency_penalty"]),
+                    id="settings-model-profile-frequency-penalty",
+                    classes="settings-compact-input",
+                    placeholder="-2.0 - 2.0",
+                )
+            yield Static(
+                self._provider_generation_support_copy(provider),
+                id="settings-provider-generation-support",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Reasoning", classes="settings-input-label")
+                yield Input(
+                    value=self._model_profile_input_value(
+                        provider,
+                        "model_profile_reasoning_effort",
+                        values["model_profile_reasoning_effort"],
+                    ),
+                    id="settings-model-profile-reasoning-effort",
+                    classes="settings-compact-input",
+                    placeholder=self._model_profile_input_placeholder(
+                        provider,
+                        "model_profile_reasoning_effort",
+                    ),
+                    disabled=not self._model_profile_field_supported(
+                        provider,
+                        "model_profile_reasoning_effort",
+                    ),
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Summary", classes="settings-input-label")
+                yield Input(
+                    value=self._model_profile_input_value(
+                        provider,
+                        "model_profile_reasoning_summary",
+                        values["model_profile_reasoning_summary"],
+                    ),
+                    id="settings-model-profile-reasoning-summary",
+                    classes="settings-compact-input",
+                    placeholder=self._model_profile_input_placeholder(
+                        provider,
+                        "model_profile_reasoning_summary",
+                    ),
+                    disabled=not self._model_profile_field_supported(
+                        provider,
+                        "model_profile_reasoning_summary",
+                    ),
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Verbosity", classes="settings-input-label")
+                yield Input(
+                    value=self._model_profile_input_value(
+                        provider,
+                        "model_profile_verbosity",
+                        values["model_profile_verbosity"],
+                    ),
+                    id="settings-model-profile-verbosity",
+                    classes="settings-compact-input",
+                    placeholder=self._model_profile_input_placeholder(
+                        provider,
+                        "model_profile_verbosity",
+                    ),
+                    disabled=not self._model_profile_field_supported(
+                        provider,
+                        "model_profile_verbosity",
+                    ),
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Thinking", classes="settings-input-label")
+                yield Input(
+                    value=self._model_profile_input_value(
+                        provider,
+                        "model_profile_thinking_effort",
+                        values["model_profile_thinking_effort"],
+                    ),
+                    id="settings-model-profile-thinking-effort",
+                    classes="settings-compact-input",
+                    placeholder=self._model_profile_input_placeholder(
+                        provider,
+                        "model_profile_thinking_effort",
+                    ),
+                    disabled=not self._model_profile_field_supported(
+                        provider,
+                        "model_profile_thinking_effort",
+                    ),
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Think budget", classes="settings-input-label")
+                yield Input(
+                    value=self._model_profile_input_value(
+                        provider,
+                        "model_profile_thinking_budget_tokens",
+                        values["model_profile_thinking_budget_tokens"],
+                    ),
+                    id="settings-model-profile-thinking-budget-tokens",
+                    classes="settings-compact-input",
+                    placeholder=self._model_profile_input_placeholder(
+                        provider,
+                        "model_profile_thinking_budget_tokens",
+                    ),
+                    restrict=r"^[0-9]*$",
+                    disabled=not self._model_profile_field_supported(
+                        provider,
+                        "model_profile_thinking_budget_tokens",
+                    ),
+                )
+            with Horizontal(classes="settings-input-row"):
                 yield Static("Streaming", classes="settings-input-label")
                 yield Input(
                     value=self._profile_input_value(values["model_profile_streaming"]),
@@ -4426,7 +5031,7 @@ class SettingsScreen(BaseAppScreen):
                     value=str(values["endpoint"]),
                     id="settings-provider-endpoint-value",
                     classes="settings-compact-input",
-                    placeholder=self._provider_endpoint_placeholder(str(values["provider"])),
+                    placeholder=self._provider_endpoint_placeholder(provider),
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Credential env", classes="settings-input-label")
@@ -4434,7 +5039,7 @@ class SettingsScreen(BaseAppScreen):
                     value=str(values["credential_env_var"]),
                     id="settings-provider-credential-env-var",
                     classes="settings-compact-input",
-                    placeholder=self._provider_credential_placeholder(str(values["provider"])),
+                    placeholder=self._provider_credential_placeholder(provider),
                 )
             yield Static(
                 self._provider_catalog_summary(),
@@ -4548,6 +5153,29 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(id="settings-console-behavior-card", classes="settings-secondary-card"):
             title = "Console paste collapse" if compact else "Console Behavior"
             yield Static(title, classes="destination-section")
+            yield Static("Composer paste handling", classes="destination-section")
+            yield Static(
+                "Collapse large pasted chunks only when they exceed the threshold.",
+                id="settings-console-collapse-large-pastes-label",
+            )
+            yield Button(
+                self._collapse_large_pastes_button_label(),
+                id="settings-console-collapse-large-pastes-toggle",
+                tooltip="Toggle compact display for large pasted Console chunks.",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Threshold", classes="settings-input-label")
+                yield Input(
+                    value=str(self._paste_collapse_threshold_value()),
+                    id="settings-console-paste-collapse-threshold",
+                    classes="settings-compact-input",
+                    placeholder=str(DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD),
+                    restrict=r"^[0-9]*$",
+                )
+            yield Static(
+                "Normal typing stays literal. The canonical message payload is preserved.",
+                id="settings-console-collapse-large-pastes-help",
+            )
             yield Static("Global fallback defaults", classes="destination-section")
             yield Static(
                 "Used when no provider+model profile or active Console session overrides them.",
@@ -4579,6 +5207,23 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="0.0 - 1.0",
                 )
             with Horizontal(classes="settings-input-row"):
+                yield Static("Min P", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(self._console_behavior_value("min_p")),
+                    id="settings-console-default-min-p",
+                    classes="settings-compact-input",
+                    placeholder="optional 0.0 - 1.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Top K", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(self._console_behavior_value("top_k")),
+                    id="settings-console-default-top-k",
+                    classes="settings-compact-input",
+                    placeholder="optional whole number",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
                 yield Static("Max tokens", classes="settings-input-label")
                 yield Input(
                     value=self._console_input_value(self._console_behavior_value("max_tokens")),
@@ -4587,33 +5232,93 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="optional whole number",
                     restrict=r"^[0-9]*$",
                 )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Seed", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(self._console_behavior_value("seed")),
+                    id="settings-console-default-seed",
+                    classes="settings-compact-input",
+                    placeholder="optional deterministic seed",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Presence", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("presence_penalty")
+                    ),
+                    id="settings-console-default-presence-penalty",
+                    classes="settings-compact-input",
+                    placeholder="-2.0 - 2.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Frequency", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("frequency_penalty")
+                    ),
+                    id="settings-console-default-frequency-penalty",
+                    classes="settings-compact-input",
+                    placeholder="-2.0 - 2.0",
+                )
+            yield Static(
+                "Reasoning and thinking controls are sent only to providers that support them.",
+                id="settings-console-reasoning-help",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Reasoning", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("reasoning_effort")
+                    ),
+                    id="settings-console-default-reasoning-effort",
+                    classes="settings-compact-input",
+                    placeholder="minimal, low, medium, high, xhigh",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Summary", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("reasoning_summary")
+                    ),
+                    id="settings-console-default-reasoning-summary",
+                    classes="settings-compact-input",
+                    placeholder="auto, concise, detailed, none",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Verbosity", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(self._console_behavior_value("verbosity")),
+                    id="settings-console-default-verbosity",
+                    classes="settings-compact-input",
+                    placeholder="low, medium, high",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Thinking", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("thinking_effort")
+                    ),
+                    id="settings-console-default-thinking-effort",
+                    classes="settings-compact-input",
+                    placeholder="off, low, medium, high, xhigh",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Think budget", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("thinking_budget_tokens")
+                    ),
+                    id="settings-console-default-thinking-budget-tokens",
+                    classes="settings-compact-input",
+                    placeholder="optional tokens, min 1024",
+                    restrict=r"^[0-9]*$",
+                )
             yield Static(
                 "chat_defaults.streaming is canonical; enable_streaming is read as fallback only.",
                 id="settings-console-streaming-compatibility",
                 classes="settings-status-row",
-            )
-            yield Static("Composer paste handling", classes="destination-section")
-            yield Static(
-                "Collapse large pasted chunks only when they exceed the threshold.",
-                id="settings-console-collapse-large-pastes-label",
-            )
-            yield Button(
-                self._collapse_large_pastes_button_label(),
-                id="settings-console-collapse-large-pastes-toggle",
-                tooltip="Toggle compact display for large pasted Console chunks.",
-            )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Threshold", classes="settings-input-label")
-                yield Input(
-                    value=str(self._paste_collapse_threshold_value()),
-                    id="settings-console-paste-collapse-threshold",
-                    classes="settings-compact-input",
-                    placeholder=str(DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD),
-                    restrict=r"^[0-9]*$",
-                )
-            yield Static(
-                "Normal typing stays literal. The canonical message payload is preserved.",
-                id="settings-console-collapse-large-pastes-help",
             )
             yield Static("Background effects", classes="destination-section")
             yield Button(
@@ -5570,6 +6275,17 @@ class SettingsScreen(BaseAppScreen):
             "settings-provider-credential-env-var",
             "settings-model-profile-temperature",
             "settings-model-profile-top-p",
+            "settings-model-profile-min-p",
+            "settings-model-profile-top-k",
+            "settings-model-profile-max-tokens",
+            "settings-model-profile-seed",
+            "settings-model-profile-presence-penalty",
+            "settings-model-profile-frequency-penalty",
+            "settings-model-profile-reasoning-effort",
+            "settings-model-profile-reasoning-summary",
+            "settings-model-profile-verbosity",
+            "settings-model-profile-thinking-effort",
+            "settings-model-profile-thinking-budget-tokens",
             "settings-model-profile-streaming",
         }
         self._active_settings_field_id = (
@@ -5731,6 +6447,14 @@ class SettingsScreen(BaseAppScreen):
         self._stage_console_default_value("top_p", value)
         self._mark_console_behavior_settings_staged()
 
+    @on(Input.Changed, "#settings-console-default-min-p")
+    def handle_console_default_min_p_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input("min_p", event.value, self._normalise_model_profile_min_p)
+
+    @on(Input.Changed, "#settings-console-default-top-k")
+    def handle_console_default_top_k_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input("top_k", event.value, self._normalise_model_profile_top_k)
+
     @on(Input.Changed, "#settings-console-default-max-tokens")
     def handle_console_default_max_tokens_changed(self, event: Input.Changed) -> None:
         if self._syncing_console_defaults:
@@ -5740,6 +6464,76 @@ class SettingsScreen(BaseAppScreen):
         except ValueError:
             value = event.value
         self._stage_console_default_value("max_tokens", value)
+        self._mark_console_behavior_settings_staged()
+
+    @on(Input.Changed, "#settings-console-default-seed")
+    def handle_console_default_seed_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input("seed", event.value, self._normalise_model_profile_seed)
+
+    @on(Input.Changed, "#settings-console-default-presence-penalty")
+    def handle_console_default_presence_penalty_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "presence_penalty",
+            event.value,
+            self._normalise_model_profile_presence_penalty,
+        )
+
+    @on(Input.Changed, "#settings-console-default-frequency-penalty")
+    def handle_console_default_frequency_penalty_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "frequency_penalty",
+            event.value,
+            self._normalise_model_profile_frequency_penalty,
+        )
+
+    @on(Input.Changed, "#settings-console-default-reasoning-effort")
+    def handle_console_default_reasoning_effort_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "reasoning_effort",
+            event.value,
+            self._normalise_model_profile_reasoning_effort,
+        )
+
+    @on(Input.Changed, "#settings-console-default-reasoning-summary")
+    def handle_console_default_reasoning_summary_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "reasoning_summary",
+            event.value,
+            self._normalise_model_profile_reasoning_summary,
+        )
+
+    @on(Input.Changed, "#settings-console-default-verbosity")
+    def handle_console_default_verbosity_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "verbosity",
+            event.value,
+            self._normalise_model_profile_verbosity,
+        )
+
+    @on(Input.Changed, "#settings-console-default-thinking-effort")
+    def handle_console_default_thinking_effort_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "thinking_effort",
+            event.value,
+            self._normalise_model_profile_thinking_effort,
+        )
+
+    @on(Input.Changed, "#settings-console-default-thinking-budget-tokens")
+    def handle_console_default_thinking_budget_tokens_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "thinking_budget_tokens",
+            event.value,
+            self._normalise_model_profile_thinking_budget_tokens,
+        )
+
+    def _stage_console_default_input(self, key: str, raw_value: object, normalizer) -> None:
+        if self._syncing_console_defaults:
+            return
+        try:
+            value = normalizer(raw_value)
+        except ValueError:
+            value = raw_value
+        self._stage_console_default_value(key, value)
         self._mark_console_behavior_settings_staged()
 
     def _mark_console_behavior_settings_staged(self) -> None:
@@ -6092,6 +6886,105 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
+    @on(Input.Changed, "#settings-model-profile-min-p")
+    def handle_model_profile_min_p_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_min_p",
+            event.value,
+            self._normalise_model_profile_min_p,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-top-k")
+    def handle_model_profile_top_k_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_top_k",
+            event.value,
+            self._normalise_model_profile_top_k,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-max-tokens")
+    def handle_model_profile_max_tokens_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_max_tokens",
+            event.value,
+            self._normalise_model_profile_max_tokens,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-seed")
+    def handle_model_profile_seed_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_seed",
+            event.value,
+            self._normalise_model_profile_seed,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-presence-penalty")
+    def handle_model_profile_presence_penalty_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_presence_penalty",
+            event.value,
+            self._normalise_model_profile_presence_penalty,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-frequency-penalty")
+    def handle_model_profile_frequency_penalty_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_frequency_penalty",
+            event.value,
+            self._normalise_model_profile_frequency_penalty,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-reasoning-effort")
+    def handle_model_profile_reasoning_effort_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_reasoning_effort",
+            event.value,
+            self._normalise_model_profile_reasoning_effort,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-reasoning-summary")
+    def handle_model_profile_reasoning_summary_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_reasoning_summary",
+            event.value,
+            self._normalise_model_profile_reasoning_summary,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-verbosity")
+    def handle_model_profile_verbosity_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_verbosity",
+            event.value,
+            self._normalise_model_profile_verbosity,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-thinking-effort")
+    def handle_model_profile_thinking_effort_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_thinking_effort",
+            event.value,
+            self._normalise_model_profile_thinking_effort,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-thinking-budget-tokens")
+    def handle_model_profile_thinking_budget_tokens_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_thinking_budget_tokens",
+            event.value,
+            self._normalise_model_profile_thinking_budget_tokens,
+        )
+
+    def _stage_model_profile_input(self, key: str, raw_value: object, normalizer) -> None:
+        if self._syncing_provider_model_profile:
+            return
+        try:
+            value = normalizer(raw_value)
+        except ValueError:
+            value = raw_value
+        self._stage_provider_value(key, value)
+        self._update_provider_dynamic_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
     @on(Input.Changed, "#settings-model-profile-streaming")
     def handle_model_profile_streaming_changed(self, event: Input.Changed) -> None:
         if self._syncing_provider_model_profile:
@@ -6268,6 +7161,7 @@ class SettingsScreen(BaseAppScreen):
             selected_profile = self._provider_model_profile(provider, model)
             model_profile_dirty = any(
                 key in dirty_keys
+                and self._model_profile_field_supported(provider, key)
                 and values.get(key, "") != selected_profile.get(profile_key, "")
                 for key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
             )
@@ -6470,9 +7364,61 @@ class SettingsScreen(BaseAppScreen):
                     dirty_values["top_p"] = self._normalise_console_default_top_p(
                         dirty_values["top_p"]
                     )
+                if "min_p" in dirty_values:
+                    dirty_values["min_p"] = self._normalise_model_profile_min_p(
+                        dirty_values["min_p"]
+                    )
+                if "top_k" in dirty_values:
+                    dirty_values["top_k"] = self._normalise_model_profile_top_k(
+                        dirty_values["top_k"]
+                    )
                 if "max_tokens" in dirty_values:
                     dirty_values["max_tokens"] = self._normalise_console_default_max_tokens(
                         dirty_values["max_tokens"]
+                    )
+                if "seed" in dirty_values:
+                    dirty_values["seed"] = self._normalise_model_profile_seed(
+                        dirty_values["seed"]
+                    )
+                if "presence_penalty" in dirty_values:
+                    dirty_values["presence_penalty"] = (
+                        self._normalise_model_profile_presence_penalty(
+                            dirty_values["presence_penalty"]
+                        )
+                    )
+                if "frequency_penalty" in dirty_values:
+                    dirty_values["frequency_penalty"] = (
+                        self._normalise_model_profile_frequency_penalty(
+                            dirty_values["frequency_penalty"]
+                        )
+                    )
+                if "reasoning_effort" in dirty_values:
+                    dirty_values["reasoning_effort"] = (
+                        self._normalise_model_profile_reasoning_effort(
+                            dirty_values["reasoning_effort"]
+                        )
+                    )
+                if "reasoning_summary" in dirty_values:
+                    dirty_values["reasoning_summary"] = (
+                        self._normalise_model_profile_reasoning_summary(
+                            dirty_values["reasoning_summary"]
+                        )
+                    )
+                if "verbosity" in dirty_values:
+                    dirty_values["verbosity"] = self._normalise_model_profile_verbosity(
+                        dirty_values["verbosity"]
+                    )
+                if "thinking_effort" in dirty_values:
+                    dirty_values["thinking_effort"] = (
+                        self._normalise_model_profile_thinking_effort(
+                            dirty_values["thinking_effort"]
+                        )
+                    )
+                if "thinking_budget_tokens" in dirty_values:
+                    dirty_values["thinking_budget_tokens"] = (
+                        self._normalise_model_profile_thinking_budget_tokens(
+                            dirty_values["thinking_budget_tokens"]
+                        )
                     )
                 if "background_effects.fps" in dirty_values:
                     dirty_values["background_effects.fps"] = (
@@ -6581,18 +7527,12 @@ class SettingsScreen(BaseAppScreen):
                 )
                 credential_input.value = str(values["credential_env_var"])
                 credential_input.placeholder = self._provider_credential_placeholder(provider)
-                self.query_one("#settings-model-profile-temperature", Input).value = str(
-                    values["model_profile_temperature"]
-                )
-                self.query_one("#settings-model-profile-top-p", Input).value = str(
-                    values["model_profile_top_p"]
-                )
-                profile_streaming = values["model_profile_streaming"]
-                self.query_one("#settings-model-profile-streaming", Input).value = (
-                    str(profile_streaming).lower()
-                    if isinstance(profile_streaming, bool)
-                    else str(profile_streaming)
-                )
+                for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS:
+                    profile_value = values[draft_key]
+                    self.query_one(
+                        f"#settings-{draft_key.replace('_', '-')}",
+                        Input,
+                    ).value = self._profile_input_value(profile_value)
             except QueryError:
                 pass
             self._provider_save_result = "Provider settings reverted to last loaded values."
@@ -6851,7 +7791,29 @@ class SettingsScreen(BaseAppScreen):
             "#settings-console-default-streaming": self._console_behavior_value("streaming"),
             "#settings-console-default-temperature": self._console_behavior_value("temperature"),
             "#settings-console-default-top-p": self._console_behavior_value("top_p"),
+            "#settings-console-default-min-p": self._console_behavior_value("min_p"),
+            "#settings-console-default-top-k": self._console_behavior_value("top_k"),
             "#settings-console-default-max-tokens": self._console_behavior_value("max_tokens"),
+            "#settings-console-default-seed": self._console_behavior_value("seed"),
+            "#settings-console-default-presence-penalty": self._console_behavior_value(
+                "presence_penalty"
+            ),
+            "#settings-console-default-frequency-penalty": self._console_behavior_value(
+                "frequency_penalty"
+            ),
+            "#settings-console-default-reasoning-effort": self._console_behavior_value(
+                "reasoning_effort"
+            ),
+            "#settings-console-default-reasoning-summary": self._console_behavior_value(
+                "reasoning_summary"
+            ),
+            "#settings-console-default-verbosity": self._console_behavior_value("verbosity"),
+            "#settings-console-default-thinking-effort": self._console_behavior_value(
+                "thinking_effort"
+            ),
+            "#settings-console-default-thinking-budget-tokens": self._console_behavior_value(
+                "thinking_budget_tokens"
+            ),
         }
         self._syncing_console_defaults = True
         try:

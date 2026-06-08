@@ -4,6 +4,7 @@
 import pytest
 import base64
 import io
+import json
 from unittest.mock import patch, MagicMock
 #
 # 3rd-party Libraries
@@ -65,6 +66,57 @@ def create_base64_image():
     return base64.b64encode(img_bytes.getvalue()).decode('utf-8')
 
 
+class _CapturedSession:
+    """Small requests.Session stand-in that records the outbound JSON payload."""
+
+    def __init__(self, captured, response_data):
+        self._captured = captured
+        self._response_data = response_data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc_info):
+        return False
+
+    def mount(self, *_args, **_kwargs):
+        return None
+
+    def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+        self._captured.update(
+            {
+                "url": url,
+                "headers": headers,
+                "json": json,
+                "stream": stream,
+                "timeout": timeout,
+            }
+        )
+        return _FakeProviderResponse(self._response_data)
+
+
+class _FakeProviderResponse:
+    status_code = 200
+    text = "{}"
+
+    def __init__(self, response_data):
+        self._response_data = response_data
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._response_data
+
+    def iter_lines(self, decode_unicode=False):
+        lines = self._response_data if isinstance(self._response_data, list) else []
+        for line in lines:
+            yield line if decode_unicode else line.encode("utf-8")
+
+    def close(self):
+        return None
+
+
 # --- Test Classes ---
 
 @patch('tldw_chatbook.Chat.Chat_Functions.API_CALL_HANDLERS')
@@ -87,6 +139,50 @@ class TestChatApiCall:
         assert kwargs['input_data'][0]['content'] == "test"  # Mapped to 'input_data' for openai
         assert kwargs['model'] == "gpt-4"
         assert response == "OpenAI response"
+
+    def test_openai_generation_reasoning_params_are_mapped(self, mock_handlers, mocker):
+        mock_openai_handler = mocker.MagicMock(return_value="OpenAI response")
+        mock_openai_handler.__name__ = "mock_openai_handler"
+        mock_handlers.get.return_value = mock_openai_handler
+
+        chat_api_call(
+            api_endpoint="openai",
+            messages_payload=[{"role": "user", "content": "test"}],
+            model="o3",
+            seed=123,
+            presence_penalty=0.2,
+            frequency_penalty=0.3,
+            reasoning_effort="high",
+            reasoning_summary="auto",
+            verbosity="medium",
+        )
+
+        kwargs = mock_openai_handler.call_args.kwargs
+        assert kwargs["model"] == "o3"
+        assert kwargs["seed"] == 123
+        assert kwargs["presence_penalty"] == 0.2
+        assert kwargs["frequency_penalty"] == 0.3
+        assert kwargs["reasoning_effort"] == "high"
+        assert kwargs["reasoning_summary"] == "auto"
+        assert kwargs["verbosity"] == "medium"
+
+    def test_anthropic_thinking_params_are_mapped(self, mock_handlers, mocker):
+        mock_anthropic_handler = mocker.MagicMock(return_value="Anthropic response")
+        mock_anthropic_handler.__name__ = "mock_anthropic_handler"
+        mock_handlers.get.return_value = mock_anthropic_handler
+
+        chat_api_call(
+            api_endpoint="anthropic",
+            messages_payload=[{"role": "user", "content": "test"}],
+            model="claude-sonnet-4-20250514",
+            thinking_effort="high",
+            thinking_budget_tokens=4096,
+        )
+
+        kwargs = mock_anthropic_handler.call_args.kwargs
+        assert kwargs["model"] == "claude-sonnet-4-20250514"
+        assert kwargs["thinking_effort"] == "high"
+        assert kwargs["thinking_budget_tokens"] == 4096
 
     def test_unsupported_endpoint_raises_error(self, mock_handlers):
         mock_handlers.get.return_value = None
@@ -198,6 +294,171 @@ class TestChatFunction:
         assert adapted_payload[1]['content'] == "Old reply"
         assert isinstance(adapted_payload[2]['content'], str)
         assert adapted_payload[2]['content'] == "Hello"
+
+
+@pytest.mark.unit
+class TestProviderRequestPayloads:
+    def test_openai_reasoning_uses_responses_api_and_normalizes_output(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        response_data = {
+            "id": "resp_test",
+            "created_at": 123,
+            "model": "o3",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "reasoned answer"}],
+                }
+            ],
+            "usage": {"input_tokens": 5, "output_tokens": 6, "total_tokens": 11},
+        }
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, response_data),
+        )
+
+        response = LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="sk-test",
+            model="o3",
+            streaming=False,
+            temp=0.3,
+            maxp=0.8,
+            max_tokens=512,
+            reasoning_effort="high",
+            reasoning_summary="auto",
+            verbosity="medium",
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/responses"
+        assert captured["json"]["input"] == [{"role": "user", "content": "test"}]
+        assert "messages" not in captured["json"]
+        assert captured["json"]["reasoning"] == {"effort": "high", "summary": "auto"}
+        assert captured["json"]["text"] == {"verbosity": "medium"}
+        assert captured["json"]["max_output_tokens"] == 512
+        assert response["choices"][0]["message"]["content"] == "reasoned answer"
+        assert response["usage"] == {"input_tokens": 5, "output_tokens": 6, "total_tokens": 11}
+
+    def test_openai_reasoning_stream_normalizes_responses_events(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        response_events = [
+            "data: "
+            + json.dumps({"type": "response.output_text.delta", "delta": "streamed answer"}),
+            "data: " + json.dumps({"type": "response.completed"}),
+        ]
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, response_events),
+        )
+
+        stream = LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="sk-test",
+            model="o3",
+            streaming=True,
+            reasoning_effort="low",
+        )
+
+        chunks = list(stream)
+        combined = "".join(chunks)
+
+        assert captured["url"] == "https://api.openai.test/v1/responses"
+        assert captured["stream"] is True
+        assert "chat.completion.chunk" in combined
+        assert "streamed answer" in combined
+        assert "response.output_text.delta" not in combined
+        assert chunks[-1] == "data: [DONE]\n\n"
+
+    def test_anthropic_thinking_effort_maps_to_budget_tokens(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-4-20250514",
+                    "content": [{"type": "text", "text": "thinking answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        response = LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="sk-ant-test",
+            model="claude-sonnet-4-20250514",
+            streaming=False,
+            max_tokens=12000,
+            thinking_effort="high",
+        )
+
+        assert captured["url"] == "https://api.anthropic.test/v1/messages"
+        assert captured["json"]["thinking"] == {"type": "enabled", "budget_tokens": 8192}
+        assert captured["json"]["max_tokens"] == 12000
+        assert response["choices"][0]["message"]["content"] == "thinking answer"
+
+    def test_anthropic_latest_opus_uses_adaptive_thinking_effort(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-opus-4-7",
+                    "content": [{"type": "text", "text": "adaptive answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="sk-ant-test",
+            model="claude-opus-4-7",
+            streaming=False,
+            max_tokens=12000,
+            thinking_effort="xhigh",
+            thinking_budget_tokens=4096,
+        )
+
+        assert captured["json"]["thinking"] == {"type": "adaptive", "effort": "xhigh"}
 
 
 @pytest.mark.integration
