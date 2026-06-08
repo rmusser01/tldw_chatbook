@@ -4145,6 +4145,67 @@ async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_
 
 
 @pytest.mark.asyncio
+async def test_settings_privacy_security_renders_guided_redacted_posture(monkeypatch):
+    app = _build_test_app()
+    app.app_config.update(
+        {
+            "encryption": {"enabled": False},
+            "api_settings": {
+                "openai": {
+                    "api_key_env_var": "OPENAI_API_KEY",
+                    "api_key": DUMMY_REDACTION_CONFIG_VALUE,
+                },
+                "groq": {"api_key_env_var": "GROQ_API_KEY"},
+            },
+            "tldw_api": {"auth_token": DUMMY_REDACTION_SERVER_VALUE},
+        }
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", DUMMY_REDACTION_ENV_VALUE)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-privacy-security")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Privacy posture" in text
+        assert "Credential sources" in text
+        assert "Data boundary" in text
+        assert "Config encryption: disabled" in text
+        assert "Sensitive config fields: 2 present" in text
+        assert "Provider env vars: 1 present / 1 missing / 2 configured" in text
+        assert "Provider config secrets: 1 present" in text
+        assert "Preferred source: environment variables" in text
+        assert "Credential mutation: unavailable/WIP - password-gated flow required" in text
+        assert "Open Providers & Models" in text
+        assert "Open Advanced Config" in text
+        assert "Environment variables are preferred for provider credentials." in text
+        assert DUMMY_REDACTION_ENV_VALUE not in text
+        assert DUMMY_REDACTION_CONFIG_VALUE not in text
+        assert DUMMY_REDACTION_SERVER_VALUE not in text
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_settings_privacy_security_recovery_actions_navigate_to_existing_categories():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-privacy-security")
+        screen = _active_destination_screen(host)
+
+        await pilot.click("#settings-open-provider-credentials")
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+
+        await pilot.click("#settings-category-privacy-security")
+        await pilot.click("#settings-open-advanced-config")
+        assert screen.active_category == SettingsCategoryId.ADVANCED_CONFIG.value
+
+
+@pytest.mark.asyncio
 async def test_settings_diagnostics_validate_and_reload_config_actions():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
