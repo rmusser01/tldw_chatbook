@@ -46,7 +46,7 @@ Reason: This slice presents existing privacy/config state and adds recovery navi
 - Added recovery actions that route users to Providers & Models and Advanced Config without exposing raw credential values.
 - Replaced generic inspector guidance for Privacy & Security with category-specific guidance about credential source, recovery, and redaction boundaries.
 - Added helper and mounted Settings regressions covering posture calculation, redaction, visible rendering, and recovery navigation.
-- Verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_settings_privacy_security.py Tests/UI/test_settings_configuration_hub.py --tb=short` reported `196 passed, 1 warning`.
+- Verification: `python -m pytest -q Tests/UI/test_settings_privacy_security.py Tests/UI/test_settings_configuration_hub.py --tb=short` reported `196 passed, 1 warning`.
 - Verification: `git diff --check` returned clean.
 - QA screenshot: `Docs/superpowers/qa/product-maturity/screen-qa/settings/privacy-security-guided-2026-06-08.png` (`2400x1522` PNG) was captured via Textual-web/CDP and approved by the user.
 - ADR required: no. This presents existing privacy/config state and recovery navigation only; no storage/schema/sync/security policy/runtime boundary changes were introduced.
