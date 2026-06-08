@@ -430,8 +430,11 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "chat_defaults.top_p",
         "chat_defaults.max_tokens",
     )
-    assert not records_by_category[SettingsCategoryId.STORAGE].writes_allowed
-    assert records_by_category[SettingsCategoryId.STORAGE].read_only_reason
+    storage_record = records_by_category[SettingsCategoryId.STORAGE]
+    assert storage_record.writes_allowed is True
+    assert "database.media_db_path" in storage_record.owns_config_sections
+    assert "restart" in storage_record.recovery_copy.lower()
+    assert not storage_record.read_only_reason
 
     overview = records_by_category[SettingsCategoryId.OVERVIEW]
     boundary_text = " ".join(
@@ -832,6 +835,180 @@ def test_settings_appearance_theme_options_use_specific_import_fallback():
     assert "from tldw_chatbook.css.Themes.themes import ALL_THEMES" in source
     assert "except (ImportError, ModuleNotFoundError):" in source
     assert "except Exception:" not in source
+
+
+def test_settings_storage_defaults_load_validate_and_build_save_payload(tmp_path):
+    try:
+        from tldw_chatbook.UI.Screens.settings_storage_defaults import (
+            SettingsStorageDefaults,
+            build_storage_save_sections,
+            load_storage_defaults,
+            validate_storage_defaults,
+        )
+    except ModuleNotFoundError as exc:
+        pytest.fail(f"Storage defaults helper is missing: {exc}")
+
+    base_dir = tmp_path / "tldw"
+    base_dir.mkdir()
+    db_dir = base_dir / "db"
+    db_dir.mkdir()
+    app_config = {
+        "database": {
+            "USER_DB_BASE_DIR": str(base_dir),
+            "chachanotes_db_path": str(db_dir / "chatbook.db"),
+            "prompts_db_path": str(db_dir / "prompts.db"),
+            "media_db_path": str(db_dir / "media.db"),
+            "research_db_path": str(db_dir / "research.db"),
+            "writing_db_path": str(db_dir / "writing.db"),
+            "library_collections_db_path": str(db_dir / "collections.db"),
+            "workspaces_db_path": str(db_dir / "workspaces.db"),
+            "check_integrity_on_startup": True,
+        }
+    }
+
+    defaults = load_storage_defaults(app_config)
+
+    assert defaults.user_db_base_dir == str(base_dir)
+    assert defaults.chachanotes_db_path.endswith("chatbook.db")
+    assert validate_storage_defaults(defaults).valid is True
+
+    invalid = SettingsStorageDefaults(
+        user_db_base_dir="",
+        chachanotes_db_path="../outside.db",
+        prompts_db_path=str(db_dir / "prompts.db"),
+        media_db_path=str(db_dir / "media.db"),
+        research_db_path=str(db_dir / "research.db"),
+        writing_db_path=str(db_dir / "writing.db"),
+        library_collections_db_path=str(db_dir / "collections.db"),
+        workspaces_db_path=str(db_dir / "workspaces.db"),
+    )
+    validation = validate_storage_defaults(invalid)
+
+    assert validation.valid is False
+    assert "Base data directory" in validation.message
+
+    edited = SettingsStorageDefaults(
+        **{
+            **defaults.__dict__,
+            "media_db_path": "~/custom/tldw-media.db",
+        }
+    )
+    section_values = build_storage_save_sections(app_config, edited)
+
+    assert section_values["database"]["media_db_path"] == "~/custom/tldw-media.db"
+    assert section_values["database"]["check_integrity_on_startup"] is True
+
+
+@pytest.mark.asyncio
+async def test_settings_storage_renders_guided_defaults_and_validates(tmp_path):
+    app = _build_test_app()
+    db_dir = tmp_path / "db"
+    db_dir.mkdir()
+    app.app_config["database"] = {
+        "USER_DB_BASE_DIR": str(tmp_path),
+        "chachanotes_db_path": str(db_dir / "chatbook.db"),
+        "prompts_db_path": str(db_dir / "prompts.db"),
+        "media_db_path": str(db_dir / "media.db"),
+        "research_db_path": str(db_dir / "research.db"),
+        "writing_db_path": str(db_dir / "writing.db"),
+        "library_collections_db_path": str(db_dir / "collections.db"),
+        "workspaces_db_path": str(db_dir / "workspaces.db"),
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(195, 55)) as pilot:
+        await pilot.click("#settings-category-storage")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert "Storage defaults" in text
+        assert "Changes apply on next launch" in text
+        assert "no files are moved or reconnected" in text
+        assert screen.query_one("#settings-storage-user-db-base-dir", Input).value == str(tmp_path)
+        assert screen.query_one("#settings-storage-media-db-path", Input).value.endswith("media.db")
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert screen.query_one("#settings-revert-category", Button).disabled is True
+
+        media = screen.query_one("#settings-storage-media-db-path", Input)
+        media.value = "../outside.db"
+        screen.handle_storage_media_db_path_changed(Input.Changed(media, media.value))
+
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert "Media DB cannot contain parent-directory traversal." in _visible_text(screen)
+        assert media.has_class("settings-invalid-input")
+
+        media.value = str(db_dir / "media-next.db")
+        screen.handle_storage_media_db_path_changed(Input.Changed(media, media.value))
+
+        assert screen.query_one("#settings-save-category", Button).disabled is False
+        assert not media.has_class("settings-invalid-input")
+        assert "Unsaved" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_storage_save_and_revert_defaults(monkeypatch, tmp_path):
+    app = _build_test_app()
+    db_dir = tmp_path / "db"
+    db_dir.mkdir()
+    app.app_config["database"] = {
+        "USER_DB_BASE_DIR": str(tmp_path),
+        "chachanotes_db_path": str(db_dir / "chatbook.db"),
+        "prompts_db_path": str(db_dir / "prompts.db"),
+        "media_db_path": str(db_dir / "media.db"),
+        "research_db_path": str(db_dir / "research.db"),
+        "writing_db_path": str(db_dir / "writing.db"),
+        "library_collections_db_path": str(db_dir / "collections.db"),
+        "workspaces_db_path": str(db_dir / "workspaces.db"),
+        "check_integrity_on_startup": True,
+    }
+    saved = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(195, 55)) as pilot:
+        await pilot.click("#settings-category-storage")
+        screen = _active_destination_screen(host)
+        workspaces = screen.query_one("#settings-storage-workspaces-db-path", Input)
+        workspaces.value = str(db_dir / "workspaces-next.db")
+        screen.handle_storage_workspaces_db_path_changed(
+            Input.Changed(workspaces, workspaces.value)
+        )
+
+        await pilot.click("#settings-save-category")
+        await _wait_for_settings_text(screen, pilot, "Storage defaults saved.")
+
+        assert saved
+        assert saved[-1]["database"]["workspaces_db_path"].endswith("workspaces-next.db")
+        assert app.app_config["database"]["workspaces_db_path"].endswith("workspaces-next.db")
+        assert "Restart Chatbook" in _visible_text(screen)
+
+        prompts = screen.query_one("#settings-storage-prompts-db-path", Input)
+        prompts.value = str(db_dir / "prompts-next.db")
+        screen.handle_storage_prompts_db_path_changed(Input.Changed(prompts, prompts.value))
+
+        assert "Unsaved" in _visible_text(screen)
+
+        screen.action_settings_revert_category()
+
+        assert prompts.value.endswith("prompts.db")
+        assert "Storage defaults reverted to last loaded values." in _visible_text(screen)
+
+
+def test_settings_storage_save_uses_exclusive_thread_worker():
+    worker = SettingsScreen.__dict__["_settings_save_storage_worker"]
+    source = inspect.getsource(SettingsScreen)
+
+    assert getattr(worker, "__wrapped__", None) is not None
+    assert (
+        "@work(exclusive=True, thread=True)\n"
+        "    def _settings_save_storage_worker"
+    ) in source
 
 
 @pytest.mark.asyncio
@@ -1602,7 +1779,10 @@ async def test_settings_inspector_uses_category_specific_guidance():
         text = _visible_text(screen)
 
         assert "Affected config: config file path, local database paths, media storage roots" in text
-        assert "Recovery: verify paths, reload config, then restart only if storage roots changed" in text
+        assert (
+            "Recovery: Validate paths, save the config-only change, then restart Chatbook "
+            "to activate new storage defaults."
+        ) in text
         assert "MCP and tool-control settings live under MCP" not in text
 
 
@@ -2550,10 +2730,10 @@ async def test_settings_non_editable_categories_disable_guided_save_revert():
         assert screen.query_one("#settings-revert-category", Button).disabled is True
         assert "Guided edits: choose Providers or Console." in _visible_text(screen)
 
-        await pilot.click("#settings-category-storage")
+        await pilot.click("#settings-category-privacy-security")
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
-        assert "Guided edits: Storage is read-only." in _visible_text(screen)
+        assert "Guided edits: use Check Privacy." in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -3913,7 +4093,6 @@ async def test_settings_storage_privacy_diagnostics_label_unsupported_mutations_
 
     async with host.run_test(size=(180, 50)) as pilot:
         for button_id, expected in (
-            ("#settings-category-storage", "Storage mutation: unavailable/WIP"),
             ("#settings-category-privacy-security", "Credential mutation: unavailable/WIP"),
             ("#settings-category-diagnostics", "Diagnostics writes: unavailable/WIP"),
         ):
@@ -4330,8 +4509,9 @@ async def test_settings_storage_test_shortcut_runs_safety_check(monkeypatch, tmp
         await _wait_for_settings_text(screen, pilot, "Storage check: complete")
         text = _visible_text(screen)
 
-        assert "Config path parent: writable" in text
-        assert "User data directory: writable" in text
+        assert "Storage defaults are valid. Changes apply on next app launch." in text
+        assert "Base data directory:" in text
+        assert "Workspaces DB:" in text
         assert "No test action is available" not in text
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
