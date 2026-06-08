@@ -36,7 +36,19 @@ SENSITIVE_CONFIG_KEY_PATTERNS = (
 
 @dataclass(frozen=True)
 class SettingsPrivacyPosture:
-    """Redacted privacy posture derived from app configuration."""
+    """Redacted privacy posture derived from app configuration.
+
+    Attributes:
+        encryption_enabled: Whether config encryption is currently enabled.
+        sensitive_config_fields: Count of configured sensitive config fields.
+        provider_env_present: Count of configured provider env vars that are set.
+        provider_env_missing: Count of configured provider env vars that are missing.
+        provider_env_configured: Total configured provider credential env-var references.
+        provider_config_secrets: Count of configured provider secrets stored in config.
+        redaction_active: Whether visible privacy output redacts raw secret values.
+        data_boundary: User-facing local data boundary summary.
+        server_boundary: User-facing server token boundary summary.
+    """
 
     encryption_enabled: bool
     sensitive_config_fields: int
@@ -90,7 +102,14 @@ def build_settings_privacy_posture(
 
 
 def build_privacy_posture_rows(posture: SettingsPrivacyPosture) -> tuple[str, ...]:
-    """Return stable redacted rows for visible Privacy & Security status."""
+    """Return stable redacted rows for visible Privacy & Security status.
+
+    Args:
+        posture: Redacted posture values to render as user-facing status rows.
+
+    Returns:
+        Tuple of stable, redacted status strings safe to display in Settings.
+    """
 
     return (
         f"Config encryption: {'enabled' if posture.encryption_enabled else 'disabled'}",
@@ -129,6 +148,10 @@ def _is_configured_secret_value(value: object) -> bool:
             return False
         if value_text.startswith("<") and value_text.endswith(">"):
             return False
+        return True
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int | float):
         return True
     return False
 

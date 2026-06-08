@@ -62,6 +62,26 @@ def test_privacy_posture_ignores_non_secret_token_limits():
     assert posture.provider_config_secrets == 1
 
 
+def test_privacy_posture_counts_numeric_secret_values_without_exposing_values():
+    config = {
+        "api_settings": {
+            "numeric": {
+                "api_key": 123456789,
+                "token": 98765.0,
+                "enabled": True,
+            },
+        },
+    }
+
+    posture = build_settings_privacy_posture(config, environ={})
+    text = "\n".join(build_privacy_posture_rows(posture))
+
+    assert posture.sensitive_config_fields == 2
+    assert posture.provider_config_secrets == 2
+    assert "123456789" not in text
+    assert "98765" not in text
+
+
 def test_privacy_posture_handles_malformed_config_safely():
     posture = build_settings_privacy_posture(
         {
