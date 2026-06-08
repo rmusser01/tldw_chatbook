@@ -85,6 +85,11 @@ from .settings_library_rag_defaults import (
     normalise_library_rag_search_mode,
     validate_library_rag_defaults,
 )
+from .settings_privacy_security import (
+    SettingsPrivacyPosture,
+    build_privacy_posture_rows,
+    build_settings_privacy_posture,
+)
 from .settings_storage_defaults import (
     STORAGE_FIELD_LABELS,
     SettingsStorageDefaults,
@@ -221,31 +226,6 @@ PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "vllm": "http://127.0.0.1:8000/v1",
 }
 PROVIDER_CREDENTIAL_ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-SENSITIVE_CONFIG_EXACT_KEYS = frozenset(
-    {
-        "api_key",
-        "apikey",
-        "api-key",
-        "api_token",
-        "auth_token",
-        "access_token",
-        "refresh_token",
-        "client_secret",
-        "secret_key",
-        "secret",
-        "token",
-        "password",
-    }
-)
-SENSITIVE_CONFIG_KEY_PATTERNS = (
-    "api_key",
-    "apikey",
-    "api-key",
-    "_key",
-    "_token",
-    "_secret",
-    "_password",
-)
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
     {
         SettingsCategoryId.PROVIDERS_MODELS,
@@ -2758,114 +2738,28 @@ class SettingsScreen(BaseAppScreen):
         )
         self.app.call_from_thread(self._apply_storage_check_result, rows)
 
-    @staticmethod
-    def _is_sensitive_config_key(key: object) -> bool:
-        key_text = str(key).strip().lower()
-        if not key_text or key_text.endswith("_env_var"):
-            return False
-        return key_text in SENSITIVE_CONFIG_EXACT_KEYS or any(
-            key_text.endswith(pattern) for pattern in SENSITIVE_CONFIG_KEY_PATTERNS
-        )
-
-    @staticmethod
-    def _is_configured_secret_value(value: object) -> bool:
-        if value is None:
-            return False
-        if isinstance(value, str):
-            value_text = value.strip()
-            if not value_text or value_text in {"None", "null"}:
-                return False
-            if value_text.startswith("<") and value_text.endswith(">"):
-                return False
-            return True
-        return False
-
-    def _iter_config_leaf_values(self, value: object):
-        if isinstance(value, Mapping):
-            for key, child_value in value.items():
-                if isinstance(child_value, Mapping):
-                    yield from self._iter_config_leaf_values(child_value)
-                else:
-                    yield key, child_value
-
-    def _sensitive_config_field_count(self, app_config: object) -> int:
-        return sum(
-            1
-            for key, value in self._iter_config_leaf_values(app_config)
-            if self._is_sensitive_config_key(key)
-            and self._is_configured_secret_value(value)
-        )
-
-    @staticmethod
-    def _provider_env_var_status_counts(app_config: object) -> tuple[int, int, int]:
-        if not isinstance(app_config, Mapping):
-            return 0, 0, 0
-        api_settings = app_config.get("api_settings", {})
-        if not isinstance(api_settings, Mapping):
-            return 0, 0, 0
-        present = 0
-        missing = 0
-        for provider_config in api_settings.values():
-            if not isinstance(provider_config, Mapping):
-                continue
-            for key, value in provider_config.items():
-                key_text = str(key).strip().lower()
-                env_var = str(value or "").strip()
-                if not key_text.endswith("_env_var") or not env_var:
-                    continue
-                if os.environ.get(env_var):
-                    present += 1
-                else:
-                    missing += 1
-        return present, missing, present + missing
-
-    def _provider_config_secret_count(self, app_config: object) -> int:
-        if not isinstance(app_config, Mapping):
-            return 0
-        api_settings = app_config.get("api_settings", {})
-        if not isinstance(api_settings, Mapping):
-            return 0
-        count = 0
-        for provider_config in api_settings.values():
-            if not isinstance(provider_config, Mapping):
-                continue
-            count += sum(
-                1
-                for key, value in self._iter_config_leaf_values(provider_config)
-                if self._is_sensitive_config_key(key)
-                and self._is_configured_secret_value(value)
-            )
-        return count
-
-    def _privacy_check_results(self, app_config: object | None = None) -> tuple[str, ...]:
+    def _settings_privacy_posture(
+        self,
+        app_config: object | None = None,
+    ) -> SettingsPrivacyPosture:
         if app_config is None:
             app_config = getattr(self.app_instance, "app_config", {}) or {}
-        encryption_config = app_config.get("encryption", {}) if isinstance(app_config, Mapping) else {}
-        encryption_enabled = (
-            bool(encryption_config.get("enabled"))
-            if isinstance(encryption_config, Mapping)
-            else False
-        )
-        secret_count = self._sensitive_config_field_count(app_config)
-        provider_secret_count = self._provider_config_secret_count(app_config)
-        env_present, env_missing, env_total = self._provider_env_var_status_counts(app_config)
+        return build_settings_privacy_posture(app_config)
+
+    def _privacy_posture_rows(self, app_config: object | None = None) -> tuple[str, ...]:
+        return build_privacy_posture_rows(self._settings_privacy_posture(app_config))
+
+    def _privacy_check_results(self, app_config: object | None = None) -> tuple[str, ...]:
+        posture = self._settings_privacy_posture(app_config)
         return (
             "Privacy check: complete",
-            f"Config encryption: {'enabled' if encryption_enabled else 'disabled'}",
-            f"Sensitive config fields: {secret_count} present",
-            (
-                "Provider env vars: "
-                f"{env_present} present / {env_missing} missing / {env_total} configured"
-            ),
+            *build_privacy_posture_rows(posture),
             (
                 "Provider key source: "
-                f"environment {env_present} present / {env_missing} missing; "
-                f"provider config secrets {provider_secret_count} present"
+                f"environment {posture.provider_env_present} present / "
+                f"{posture.provider_env_missing} missing; provider config secrets "
+                f"{posture.provider_config_secrets} present"
             ),
-            "Data boundary: local data stays local unless explicit server handoff or sync is enabled",
-            "Server boundary: server tokens are reported as configured/missing only",
-            "Redaction: active; raw secret values hidden",
-            "Privacy safety: no secret values were printed or written.",
         )
 
     def _privacy_check_text(self) -> str:
@@ -4286,9 +4180,19 @@ class SettingsScreen(BaseAppScreen):
                 ("Boundary", "server handoff does not move local source content unless explicitly requested"),
             ),
             SettingsCategoryId.PRIVACY_SECURITY: (
-                ("Affected config", "secret redaction, local privacy boundaries, and future encryption controls"),
-                ("Recovery", "validate diagnostics output and rotate exposed credentials outside Chatbook"),
-                ("Boundary", "raw secret values are not displayed in Settings validation results"),
+                ("Affected config", "encryption posture, credential-source status, and redaction status"),
+                (
+                    "Credential source",
+                    "Environment variables are preferred for provider credentials.",
+                ),
+                (
+                    "Recovery",
+                    "open Providers & Models for provider defaults or Advanced Config for expert repair",
+                ),
+                (
+                    "Boundary",
+                    "raw secret values are never displayed; encryption mutation needs a password-gated flow",
+                ),
             ),
             SettingsCategoryId.CONSOLE_BEHAVIOR: (
                 ("Affected config", "chat_defaults fallbacks plus Console composer paste behavior"),
@@ -5146,24 +5050,41 @@ class SettingsScreen(BaseAppScreen):
                     "database and media paths remain local unless a server handoff is explicit",
                 )
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
+            posture = self._settings_privacy_posture()
             yield Static("Privacy & Security", classes="destination-section settings-column-title")
             with Vertical(id="settings-privacy-security-card", classes="settings-focus-card"):
                 yield self._render_category_state_banner(SettingsCategoryId.PRIVACY_SECURITY)
                 yield Static("Privacy posture", classes="destination-section")
                 yield self._detail_row(
-                    "Secrets",
-                    "read from environment/config and hidden from diagnostics",
+                    "Config encryption",
+                    "enabled" if posture.encryption_enabled else "disabled",
                 )
                 yield self._detail_row(
-                    "Validation redaction",
-                    "API key, token, password, and secret assignments",
+                    "Redaction",
+                    "active; raw secret values hidden",
                 )
-                yield self._detail_row("Encryption", "not configured from this Settings slice")
-                yield self._detail_row("Secret redaction", "enabled for diagnostics and validation errors")
-                yield self._detail_row("Audit posture", "expose status, not raw credentials")
                 yield self._detail_row(
-                    "Credential mutation",
-                    "unavailable/WIP - rotate or edit secrets in the owning credential source",
+                    "Sensitive config fields",
+                    f"{posture.sensitive_config_fields} present",
+                )
+                yield self._detail_row(
+                    "Provider config secrets",
+                    f"{posture.provider_config_secrets} present",
+                )
+                yield Static("Credential sources", classes="destination-section")
+                yield self._detail_row(
+                    "Provider env vars",
+                    (
+                        f"{posture.provider_env_present} present / "
+                        f"{posture.provider_env_missing} missing / "
+                        f"{posture.provider_env_configured} configured"
+                    ),
+                )
+                yield self._detail_row("Preferred source", "environment variables")
+                yield self._detail_row("Config secrets", "counted only; raw values are never displayed")
+                yield self._detail_row(
+                    "Recovery actions",
+                    "Check Privacy | Open Providers & Models | Open Advanced Config",
                 )
                 with Horizontal(id="settings-privacy-actions", classes="settings-action-row"):
                     yield Button(
@@ -5171,6 +5092,23 @@ class SettingsScreen(BaseAppScreen):
                         id="settings-check-privacy",
                         tooltip="Verify secret and redaction status without exposing values.",
                     )
+                    yield Button(
+                        "Open Providers & Models",
+                        id="settings-open-provider-credentials",
+                        tooltip="Review provider, endpoint, and credential-source defaults.",
+                    )
+                    yield Button(
+                        "Open Advanced Config",
+                        id="settings-open-advanced-config",
+                        tooltip="Open guarded raw TOML recovery for expert repair.",
+                    )
+                yield Static("Data boundary", classes="destination-section")
+                yield self._detail_row("Local data", posture.data_boundary)
+                yield self._detail_row("Server tokens", posture.server_boundary)
+                yield self._detail_row(
+                    "Credential mutation",
+                    "unavailable/WIP - password-gated flow required",
+                )
                 yield Static(
                     self._privacy_check_text(),
                     id="settings-privacy-check-result",
@@ -6208,6 +6146,16 @@ class SettingsScreen(BaseAppScreen):
     def handle_check_privacy(self, event: Button.Pressed) -> None:
         event.stop()
         self.action_settings_test_category()
+
+    @on(Button.Pressed, "#settings-open-provider-credentials")
+    def handle_open_provider_credentials(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._select_category(SettingsCategoryId.PROVIDERS_MODELS.value, restore_focus=True)
+
+    @on(Button.Pressed, "#settings-open-advanced-config")
+    def handle_open_advanced_config_from_privacy(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._select_category(SettingsCategoryId.ADVANCED_CONFIG.value, restore_focus=True)
 
     @on(Button.Pressed, "#settings-validate-config")
     def handle_validate_config(self, event: Button.Pressed) -> None:
