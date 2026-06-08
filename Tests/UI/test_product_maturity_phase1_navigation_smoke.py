@@ -80,6 +80,13 @@ async def _wait_until(
     raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s")
 
 
+async def _click_visible_widget_bottom_row(pilot, app, widget_id: str) -> None:
+    """Click the visible bottom row of a widget by absolute screen coordinates."""
+    widget = app.screen.query_one(widget_id)
+    region = widget.region
+    await pilot.click(offset=(region.x + max(1, region.width // 2), region.y + max(0, region.height - 1)))
+
+
 @pytest.mark.asyncio
 async def test_destination_body_text_helper_excludes_navigation_chrome(
     monkeypatch: pytest.MonkeyPatch,
@@ -139,6 +146,45 @@ async def test_clean_run_top_level_navigation_reaches_every_destination(
                 reached[destination.destination_id] = expected_screen_name
 
             assert set(reached) == set(TOP_LEVEL_DESTINATION_IDS)
+
+
+@pytest.mark.asyncio
+async def test_top_level_navigation_activates_visible_tab_border_from_cached_console_screen(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = _build_clean_navigation_app(monkeypatch, tmp_path)
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(180, 50)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: app.current_tab == "home" and app.screen.__class__.__name__ == "HomeScreen",
+            )
+
+            await pilot.click("#nav-console")
+            await _wait_until(
+                pilot,
+                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+            )
+
+            await _click_visible_widget_bottom_row(pilot, app, "#nav-settings")
+            await _wait_until(
+                pilot,
+                lambda: app.current_tab == "settings" and app.screen.__class__.__name__ == "SettingsScreen",
+            )
+
+            await pilot.click("#nav-console")
+            await _wait_until(
+                pilot,
+                lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
+            )
+
+            await pilot.click("#nav-settings")
+            await _wait_until(
+                pilot,
+                lambda: app.current_tab == "settings" and app.screen.__class__.__name__ == "SettingsScreen",
+            )
 
 
 def test_phase_one_three_evidence_records_top_level_navigation_smoke() -> None:

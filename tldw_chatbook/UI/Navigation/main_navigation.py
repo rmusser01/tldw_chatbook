@@ -156,9 +156,26 @@ class MainNavigationBar(Container):
     @on(Button.Pressed, ".nav-button")
     def handle_navigation(self, event: Button.Pressed) -> None:
         """Handle navigation button clicks."""
-        button_id = event.button.id
-        if not button_id:
+        self._activate_navigation_button(event.button)
+
+    def on_click(self, event) -> None:
+        """Route clicks on a tab's visible border back to the owning button."""
+        clicked_widget = self.app.get_widget_at(event.screen_x, event.screen_y)[0]
+        if clicked_widget is not self:
             return
+
+        click_point = (event.screen_x, event.screen_y)
+        for button in self.query(NavigationButton):
+            if button.region.contains_point(click_point):
+                if self._activate_navigation_button(button):
+                    event.stop()
+                return
+
+    def _activate_navigation_button(self, button: Button) -> bool:
+        """Activate a navigation button and return whether navigation was requested."""
+        button_id = button.id
+        if not button_id:
+            return False
         
         destination_id = button_id.replace("nav-", "")
         destination = get_shell_destination(destination_id)
@@ -170,12 +187,12 @@ class MainNavigationBar(Container):
             destination.destination_id == self.active_destination_id
             and screen_name == self.active_route
         ):
-            return
+            return False
         
         # Update active state
-        for button in self.query(".nav-button"):
-            button.remove_class("is-active")
-        event.button.add_class("is-active")
+        for nav_button in self.query(".nav-button"):
+            nav_button.remove_class("is-active")
+        button.add_class("is-active")
         self.active_destination_id = destination.destination_id
         self.active_route = screen_name
         self.active_screen = self.active_destination_id
@@ -184,3 +201,4 @@ class MainNavigationBar(Container):
         self.post_message(NavigateToScreen(screen_name))
         
         logger.info(f"Navigation requested to screen: {screen_name}")
+        return True
