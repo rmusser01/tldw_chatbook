@@ -210,6 +210,14 @@ class LocalWorkspaceRegistryService:
         The built-in Default workspace gives users a concrete active workspace
         without granting filesystem/runtime capabilities. Users can still browse
         and chat normally, but tool/file access requires an explicit workspace.
+
+        Returns:
+            Existing active workspace, or the restored/created built-in Default
+            workspace when no active workspace exists.
+
+        Raises:
+            WorkspaceRegistryServiceError: If workspace storage cannot be read
+                or updated.
         """
 
         active_workspace = self.get_active_workspace()
@@ -467,10 +475,10 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         if row is None:
             return None
-        binding = _runtime_binding_from_row(row)
-        if binding.workspace_id == DEFAULT_WORKSPACE_ID:
+        if row["workspace_id"] == DEFAULT_WORKSPACE_ID:
             self._delete_default_runtime_bindings()
             return None
+        binding = _runtime_binding_from_row(row)
         return binding
 
     def list_runtime_bindings(

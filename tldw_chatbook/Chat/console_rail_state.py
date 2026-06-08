@@ -25,6 +25,7 @@ _WORKSPACE_FALLBACK_LABELS = {
     "no workspace selected",
     "no-workspace",
     "no_workspace",
+    "workspace: default",
     "workspace: local default",
 }
 _INACTIVE_STAGED_SUMMARIES = {

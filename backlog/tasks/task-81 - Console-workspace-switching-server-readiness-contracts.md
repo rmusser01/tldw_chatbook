@@ -50,8 +50,10 @@ Reason: TASK-81 defines long-lived workspace authority, sync/handoff policy, ser
 - Extended workspace display state and Console left rail rendering to show server fallback/unavailable/remote/conflict/runtime-missing states, copy/reference/metadata-only/local-only handoff rows, and ACP handoff readiness/audit copy.
 - Added `Default` workspace constants and `LocalWorkspaceRegistryService.ensure_default_workspace()`, wired app startup to create it when no active workspace exists, and blocked/sanitized runtime bindings on `Default` so file/tool access remains disabled until a user creates an explicit workspace.
 - Review follow-up: optimized Default runtime binding sanitization so common read paths first check for stale bindings and skip the write transaction when none exist.
+- Review follow-up: kept `Workspace: Default` out of context-rail badges, sanitized malformed Default runtime binding rows before enum parsing, and updated public API docstrings for the new workspace server-readiness types and builder arguments.
 - Updated Console rail persistence tests so the built-in default workspace uses the real `workspace-default` namespace instead of the old display-only `global` sentinel.
-- Verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Workspaces --tb=short` passed with 42 tests.
+- Verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Workspaces --tb=short` passed with 43 tests.
+- Verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Chat/test_console_rail_state.py --tb=short` passed with 25 tests.
 - Verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_console_workspace_context_rail.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_console_persistent_rails.py --tb=short` passed with 93 tests and one existing dependency warning.
 - Verification: `git diff --check` passed.
 - QA screenshots: `Docs/superpowers/qa/console-workspace-server-readiness-task81-cdp-v2.png` and `Docs/superpowers/qa/console-workspace-default-task81-cdp.png`.

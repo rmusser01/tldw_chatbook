@@ -50,7 +50,13 @@ class ConsoleWorkspaceConversationRow:
 
 @dataclass(frozen=True)
 class ConsoleWorkspaceServerAdapterState:
-    """Server adapter availability for future workspace hydration paths."""
+    """Server adapter availability for future workspace hydration paths.
+
+    Attributes:
+        available: Whether a server workspace adapter is available for the
+            active workspace context.
+        detail: Human-readable readiness or recovery detail for the adapter.
+    """
 
     available: bool
     detail: str = ""
@@ -58,7 +64,17 @@ class ConsoleWorkspaceServerAdapterState:
 
 @dataclass(frozen=True)
 class ConsoleWorkspaceHandoffRow:
-    """One source/conversation/artifact handoff eligibility row."""
+    """One source/conversation/artifact handoff eligibility row.
+
+    Attributes:
+        item_type: Type of item being considered for workspace handoff.
+        item_id: Stable item identifier from the source registry.
+        title: Display title shown in the Console workspace context.
+        transfer_policy: Copy/reference/metadata/local-only handoff policy.
+        handoff_label: User-facing policy label.
+        portable: Whether the item can be staged into the active workspace.
+        detail: Recovery or audit detail explaining the handoff state.
+    """
 
     item_type: str
     item_id: str
@@ -71,7 +87,14 @@ class ConsoleWorkspaceHandoffRow:
 
 @dataclass(frozen=True)
 class ConsoleWorkspaceACPHandoffState:
-    """Visible readiness state for future ACP task/run package handoff."""
+    """Visible readiness state for future ACP task/run package handoff.
+
+    Attributes:
+        status: Machine-readable readiness state such as unavailable, ready,
+            blocked, or failed.
+        detail: User-facing readiness or recovery copy.
+        audit_detail: Audit summary for the last ACP package handoff attempt.
+    """
 
     status: str = "unavailable"
     detail: str = "ACP task/run package handoff is not wired."
@@ -156,6 +179,11 @@ def build_console_workspace_state(
             conversation row, when it belongs to the active workspace.
         conversations: Optional prebuilt conversation rows. When omitted, rows
             are derived from `conversation` workspace memberships.
+        server_adapter_state: Optional server adapter readiness snapshot used
+            to render unavailable, ready, conflict, or remote-only workspace
+            hydration states without starting sync.
+        acp_handoff_state: Optional ACP task/run package handoff snapshot used
+            to render unavailable, ready, failed, blocked, and audit states.
 
     Returns:
         Renderable Console workspace context state.

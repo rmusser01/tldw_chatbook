@@ -135,6 +135,56 @@ def test_registry_never_exposes_runtime_bindings_for_default_workspace(
     assert service.get_runtime_binding("stale-default-binding") is None
 
 
+def test_registry_sanitizes_malformed_default_runtime_binding_before_parsing(
+    tmp_path: Path,
+) -> None:
+    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
+    service = LocalWorkspaceRegistryService(db)
+    service.ensure_default_workspace()
+
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO workspace_runtime_bindings (
+                binding_id,
+                workspace_id,
+                binding_kind,
+                label,
+                locator,
+                status,
+                metadata_json,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "malformed-default-binding",
+                DEFAULT_WORKSPACE_ID,
+                "invalid-binding-kind",
+                "Unsafe local files",
+                "/tmp",
+                "invalid-status",
+                "{}",
+                "2026-06-08T00:00:00Z",
+                "2026-06-08T00:00:00Z",
+            ),
+        )
+
+    assert service.get_runtime_binding("malformed-default-binding") is None
+    with db.connection() as conn:
+        stale_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM workspace_runtime_bindings
+            WHERE workspace_id = ?
+            """,
+            (DEFAULT_WORKSPACE_ID,),
+        ).fetchone()[0]
+
+    assert stale_count == 0
+
+
 def test_registry_skips_default_runtime_binding_write_when_none_exist(
     tmp_path: Path,
 ) -> None:
