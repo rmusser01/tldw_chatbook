@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import inspect
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -131,6 +133,22 @@ def test_registry_never_exposes_runtime_bindings_for_default_workspace(
 
     assert service.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
     assert service.get_runtime_binding("stale-default-binding") is None
+
+
+def test_registry_skips_default_runtime_binding_write_when_none_exist(
+    tmp_path: Path,
+) -> None:
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+
+    @contextmanager
+    def fail_on_write_transaction() -> Iterator[None]:
+        raise AssertionError("Default runtime binding reads should not write.")
+        yield
+
+    service.db.transaction = fail_on_write_transaction  # type: ignore[method-assign]
+
+    assert service.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
 
 
 def test_registry_links_note_without_hiding_other_workspaces(tmp_path: Path) -> None:

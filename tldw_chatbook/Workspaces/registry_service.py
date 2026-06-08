@@ -502,6 +502,23 @@ class LocalWorkspaceRegistryService:
         """Remove stale runtime bindings from the safe built-in Default workspace."""
 
         try:
+            with self.db.connection() as conn:
+                has_bindings = (
+                    conn.execute(
+                        """
+                        SELECT 1
+                        FROM workspace_runtime_bindings
+                        WHERE workspace_id = ?
+                        LIMIT 1
+                        """,
+                        (DEFAULT_WORKSPACE_ID,),
+                    ).fetchone()
+                    is not None
+                )
+
+            if not has_bindings:
+                return
+
             with self.db.transaction() as conn:
                 conn.execute(
                     """

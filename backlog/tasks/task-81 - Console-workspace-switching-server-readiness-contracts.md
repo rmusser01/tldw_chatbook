@@ -49,8 +49,9 @@ Reason: TASK-81 defines long-lived workspace authority, sync/handoff policy, ser
 - Added ADR 005 to document the local-first Console workspace boundary, server-readiness adapter seam, transfer-policy staging model, and ACP task/run handoff readiness contract without implementing sync.
 - Extended workspace display state and Console left rail rendering to show server fallback/unavailable/remote/conflict/runtime-missing states, copy/reference/metadata-only/local-only handoff rows, and ACP handoff readiness/audit copy.
 - Added `Default` workspace constants and `LocalWorkspaceRegistryService.ensure_default_workspace()`, wired app startup to create it when no active workspace exists, and blocked/sanitized runtime bindings on `Default` so file/tool access remains disabled until a user creates an explicit workspace.
+- Review follow-up: optimized Default runtime binding sanitization so common read paths first check for stale bindings and skip the write transaction when none exist.
 - Updated Console rail persistence tests so the built-in default workspace uses the real `workspace-default` namespace instead of the old display-only `global` sentinel.
-- Verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Workspaces --tb=short` passed with 41 tests.
+- Verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Workspaces --tb=short` passed with 42 tests.
 - Verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_console_workspace_context_rail.py Tests/UI/test_console_live_work_handoffs.py Tests/UI/test_console_persistent_rails.py --tb=short` passed with 93 tests and one existing dependency warning.
 - Verification: `git diff --check` passed.
 - QA screenshots: `Docs/superpowers/qa/console-workspace-server-readiness-task81-cdp-v2.png` and `Docs/superpowers/qa/console-workspace-default-task81-cdp.png`.
