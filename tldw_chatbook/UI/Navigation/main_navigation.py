@@ -160,7 +160,10 @@ class MainNavigationBar(Container):
 
     def on_click(self, event) -> None:
         """Route clicks on a tab's visible border back to the owning button."""
-        clicked_widget = self.app.get_widget_at(event.screen_x, event.screen_y)[0]
+        try:
+            clicked_widget = self.app.get_widget_at(event.screen_x, event.screen_y)[0]
+        except Exception:
+            return
         if clicked_widget is not self:
             return
 
