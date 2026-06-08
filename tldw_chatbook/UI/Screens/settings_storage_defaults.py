@@ -8,6 +8,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Utils.path_validation import validate_path_simple
+
 from .settings_config_models import SettingsValidationResult
 
 
@@ -127,7 +130,19 @@ def _expanded_path(value: str) -> Path:
 
 def _path_has_parent_traversal(value: str) -> bool:
     """Return whether a path contains explicit parent traversal."""
-    return ".." in Path(value).parts
+    normalized = value.replace("\\", "/")
+    return ".." in Path(normalized).parts
+
+
+def _shared_path_validation_error(label: str, text: str) -> str | None:
+    """Return a user-facing error from centralized input/path validation."""
+    if not validate_text_input(text, max_length=4096, allow_html=False):
+        return f"{label} contains unsupported path text."
+    try:
+        validate_path_simple(_expanded_path(text), require_exists=False)
+    except ValueError as exc:
+        return f"{label} is invalid: {exc}"
+    return None
 
 
 def _validate_path_text(field_name: str, value: str, *, database_file: bool) -> str | None:
@@ -140,11 +155,16 @@ def _validate_path_text(field_name: str, value: str, *, database_file: bool) -> 
         return f"{label} must be a single filesystem path."
     if _path_has_parent_traversal(text):
         return f"{label} cannot contain parent-directory traversal."
+    shared_error = _shared_path_validation_error(label, text)
+    if shared_error:
+        return shared_error
 
     path = _expanded_path(text)
     if database_file:
         if text.endswith(("/", "\\")) or not path.name:
             return f"{label} must be a database file path."
+        if path.exists() and path.is_dir():
+            return f"{label} must be a database file path, not a directory."
         if path.suffix.lower() not in DATABASE_FILE_SUFFIXES:
             return f"{label} must end with .db, .sqlite, or .sqlite3."
         parent = path.parent
@@ -204,12 +224,18 @@ def build_storage_save_sections(
 
 def _parent_status(path_text: str, *, database_file: bool) -> str:
     """Return a non-mutating parent-directory readiness label."""
-    path = _expanded_path(path_text)
+    try:
+        path = _expanded_path(path_text)
+    except (OSError, ValueError):
+        return "invalid path"
     parent = path.parent if database_file else path
-    if parent.exists() and parent.is_dir():
-        return f"{parent}: ready"
-    if parent.exists():
-        return f"{parent}: blocked, not a directory"
+    try:
+        if parent.exists() and parent.is_dir():
+            return f"{parent}: ready"
+        if parent.exists():
+            return f"{parent}: blocked, not a directory"
+    except (OSError, ValueError):
+        return "invalid path"
     return f"{parent}: missing, create before restart"
 
 
@@ -218,6 +244,9 @@ def build_storage_check_rows(values: SettingsStorageDefaults) -> tuple[str, ...]
     rows = ["Storage check: complete"]
     validation = validate_storage_defaults(values)
     rows.append(validation.message)
+    if not validation.valid:
+        rows.append("Storage check blocked: fix invalid paths first.")
+        return tuple(rows)
     for field_name, value in asdict(values).items():
         label = STORAGE_FIELD_LABELS[field_name]
         status = _parent_status(

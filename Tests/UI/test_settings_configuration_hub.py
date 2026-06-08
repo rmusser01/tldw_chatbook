@@ -841,6 +841,7 @@ def test_settings_storage_defaults_load_validate_and_build_save_payload(tmp_path
     try:
         from tldw_chatbook.UI.Screens.settings_storage_defaults import (
             SettingsStorageDefaults,
+            build_storage_check_rows,
             build_storage_save_sections,
             load_storage_defaults,
             validate_storage_defaults,
@@ -897,6 +898,44 @@ def test_settings_storage_defaults_load_validate_and_build_save_payload(tmp_path
 
     assert section_values["database"]["media_db_path"] == "~/custom/tldw-media.db"
     assert section_values["database"]["check_integrity_on_startup"] is True
+
+    null_byte = SettingsStorageDefaults(
+        **{
+            **defaults.__dict__,
+            "media_db_path": f"{db_dir / 'media'}\x00.db",
+        }
+    )
+    rows = build_storage_check_rows(null_byte)
+
+    assert rows[0] == "Storage check: complete"
+    assert "Media DB must be a single filesystem path." in rows
+    assert "Storage check blocked: fix invalid paths first." in rows
+
+    windows_traversal = SettingsStorageDefaults(
+        **{
+            **defaults.__dict__,
+            "media_db_path": r"C:\tmp\..\outside.db",
+        }
+    )
+
+    validation = validate_storage_defaults(windows_traversal)
+
+    assert validation.valid is False
+    assert "Media DB cannot contain parent-directory traversal." in validation.message
+
+    existing_directory = db_dir / "media-directory.db"
+    existing_directory.mkdir()
+    directory_as_database = SettingsStorageDefaults(
+        **{
+            **defaults.__dict__,
+            "media_db_path": str(existing_directory),
+        }
+    )
+
+    validation = validate_storage_defaults(directory_as_database)
+
+    assert validation.valid is False
+    assert "Media DB must be a database file path, not a directory." in validation.message
 
 
 @pytest.mark.asyncio
