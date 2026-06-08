@@ -12,7 +12,17 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import Con
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Widgets.Console import ConsoleWorkspaceSwitcherModal
-from tldw_chatbook.Workspaces import WorkspaceSyncStatus
+from tldw_chatbook.Workspaces import (
+    ConsoleWorkspaceACPHandoffState,
+    DEFAULT_WORKSPACE_ID,
+    RuntimeBindingKind,
+    RuntimeBindingStatus,
+    WorkspaceAuthority,
+    WorkspaceRuntimeBinding,
+    WorkspaceSyncStatus,
+    WorkspaceTransferPolicy,
+)
+from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceServerAdapterState
 
 
 def _visible_text(screen) -> str:
@@ -72,16 +82,19 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         )
         assert staged_context.region.width == workspace_context.region.width
         assert workspace_context.region.height > staged_context.region.height
-        workspace_recovery = console.query_one("#console-workspace-recovery")
         conversations_title = console.query_one("#console-workspace-conversations-title")
-        assert workspace_recovery.region.y < conversations_title.region.y
+        assert conversations_title.region.y > workspace_context.region.y
+        assert len(console.query("#console-workspace-recovery")) == 0
         assert len(console.query("#console-change-workspace")) == 0
         assert len(console.query("#console-new-workspace-conversation")) == 0
         text = _visible_text(console)
         assert "Staged Context" in text
         assert "Convos & Workspaces" in text
-        assert "Local Default" in text
-        assert "Workspace switching: locked" in text
+        assert "Default" in text
+        assert "Workspace switching: locked" not in text
+        assert DEFAULT_WORKSPACE_ID in {
+            app.workspace_registry_service.get_active_workspace().workspace_id
+        }
         assert "until workspace selection is wired" not in text
         assert "read-only" not in text
         assert "Change workspace" not in text
@@ -101,7 +114,7 @@ async def test_console_workspace_selector_is_compact_plain_status_row() -> None:
         rendered_label = str(active_workspace.renderable)
         border = active_workspace.styles.border
 
-        assert rendered_label == "Local Default"
+        assert rendered_label == "Default"
         assert active_workspace.region.height == 1
         assert border.top[0] in {"", "none"}
         assert border.right[0] in {"", "none"}
@@ -136,6 +149,70 @@ async def test_console_workspace_context_renders_active_workspace() -> None:
         assert "Research Sprint" in text
         assert "Sync: dry-run only" in text
         assert "Planning thread" in text
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_context_renders_server_readiness_handoff_and_acp_contracts() -> None:
+    app = _build_test_app()
+    app.workspace_server_adapter_state = ConsoleWorkspaceServerAdapterState(
+        available=False,
+        detail="No tldw_server workspace API configured.",
+    )
+    app.workspace_acp_handoff_state = ConsoleWorkspaceACPHandoffState(
+        status="unavailable",
+        detail="ACP task/run package handoff is not wired.",
+        audit_detail="Audit: visible only; no package was sent.",
+    )
+    service = app.workspace_registry_service
+    service.create_workspace(
+        workspace_id="ws-a",
+        name="Server Readiness",
+        authority=WorkspaceAuthority.RUNTIME_MISSING,
+        sync_status=WorkspaceSyncStatus.BLOCKED,
+    )
+    service.set_active_workspace("ws-a")
+    service.save_runtime_binding(
+        WorkspaceRuntimeBinding(
+            workspace_id="ws-a",
+            binding_id="acp-run-1",
+            binding_kind=RuntimeBindingKind.ACP_SESSION,
+            label="ACP run package",
+            locator="acp://runs/1",
+            status=RuntimeBindingStatus.MISSING,
+        )
+    )
+    service.link_membership(
+        "ws-a",
+        item_type="note",
+        item_id="note-1",
+        role="source",
+        title="Source note",
+        transfer_policy=WorkspaceTransferPolicy.COPY,
+    )
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="conv-1",
+        role="workspace-thread",
+        title="Conversation package",
+        transfer_policy=WorkspaceTransferPolicy.METADATA_ONLY,
+    )
+
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+
+        text = _visible_text(console)
+        assert "Server: unavailable" in text
+        assert "No background sync" in text
+        assert "Runtime: 1 binding, 0 ready, 1 missing" in text
+        assert "Handoff readiness" in text
+        assert "Source note - copy" in text
+        assert "Conversation package - metadata-only" in text
+        assert "ACP task/run: unavailable" in text
+        assert "Audit: visible only; no package was sent." in text
 
 
 @pytest.mark.asyncio
@@ -222,8 +299,11 @@ async def test_console_change_workspace_switches_active_context_and_conversation
 
         console.query_one("#console-change-workspace", Button).press()
         modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
-        switch_button = modal_screen.query_one("#console-workspace-switch-1", Button)
-        assert str(switch_button.label) == "Workspace B"
+        switch_button = next(
+            button
+            for button in modal_screen.query(Button)
+            if str(button.label) == "Workspace B"
+        )
 
         switch_button.press()
         await _wait_for_console_screen(host, console, pilot)
