@@ -12,6 +12,10 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    first_configured_endpoint,
+    normalize_generic_endpoint_for_compare,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -54,8 +58,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         if settings_model:
             self._provider_model_drafts[settings.provider] = settings_model
         self._provider_base_url_drafts: dict[str, str] = {}
-        if settings.base_url:
-            self._provider_base_url_drafts[settings.provider] = settings.base_url
+        initial_base_url = self._initial_base_url_for_provider(
+            settings.provider,
+            settings.base_url,
+        )
+        if initial_base_url:
+            self._provider_base_url_drafts[settings.provider] = initial_base_url
 
     def compose(self) -> ComposeResult:
         provider_options = self._provider_select_options()
@@ -422,14 +430,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         if provider in self._provider_base_url_drafts:
             return self._provider_base_url_drafts[provider] or None
         if provider == self._settings.provider and self._settings.base_url:
-            return self._settings.base_url
+            return self._initial_base_url_for_provider(provider, self._settings.base_url)
         return self._default_base_url_for_provider(provider)
 
     def _provider_uses_base_url(self, provider: str) -> bool:
         provider_key = provider_config_key(provider)
         provider_settings = self._provider_settings(provider_key)
         return provider_key in URL_BASED_PROVIDER_KEYS or any(
-            key in provider_settings for key in ("api_url", "base_url", "api_base")
+            key in provider_settings for key in ("api_base_url", "api_url", "base_url", "api_base")
         )
 
     def _provider_settings(self, provider_key: str) -> Mapping[str, object]:
@@ -447,14 +455,72 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _default_base_url_for_provider(self, provider: str) -> str | None:
         provider_key = provider_config_key(provider)
         provider_settings = self._provider_settings(provider_key)
-        base_url = self._first_string(
-            provider_settings.get("api_url"),
-            provider_settings.get("base_url"),
-            provider_settings.get("api_base"),
-        )
+        base_url = first_configured_endpoint(provider_settings)
         if provider_key in {"llama_cpp", "local_llamacpp"}:
             return normalize_llamacpp_base_url(base_url or DEFAULT_LLAMACPP_BASE_URL)
         return base_url
+
+    def _initial_base_url_for_provider(self, provider: str, session_base_url: str | None) -> str | None:
+        provider_key = provider_config_key(provider)
+        provider_settings = self._provider_settings(provider_key)
+        configured_base_url = self._default_base_url_for_provider(provider)
+        session_base_url = self._normalized_base_url_for_provider(provider_key, session_base_url)
+        if not session_base_url:
+            return configured_base_url
+        if (
+            configured_base_url
+            and self._matches_lower_priority_configured_endpoint(
+                provider_key,
+                session_base_url,
+                provider_settings,
+            )
+        ):
+            return configured_base_url
+        return session_base_url
+
+    def _matches_lower_priority_configured_endpoint(
+        self,
+        provider_key: str,
+        session_base_url: str,
+        provider_settings: Mapping[str, object],
+    ) -> bool:
+        configured_endpoint = self._normalized_base_url_for_provider(
+            provider_key,
+            first_configured_endpoint(provider_settings),
+        )
+        if not configured_endpoint:
+            return False
+        session_identity = self._endpoint_identity_for_provider(provider_key, session_base_url)
+        configured_identity = self._endpoint_identity_for_provider(provider_key, configured_endpoint)
+        if session_identity == configured_identity:
+            return False
+        for key in ("api_url", "base_url", "api_base", "api_endpoint", "endpoint"):
+            lower_priority_endpoint = self._normalized_base_url_for_provider(
+                provider_key,
+                provider_settings.get(key),
+            )
+            if (
+                lower_priority_endpoint
+                and session_identity
+                == self._endpoint_identity_for_provider(provider_key, lower_priority_endpoint)
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _normalized_base_url_for_provider(provider_key: str, base_url: object | None) -> str | None:
+        value = str(base_url or "").strip()
+        if not value:
+            return None
+        if provider_key in {"llama_cpp", "local_llamacpp"}:
+            return normalize_llamacpp_base_url(value)
+        return value
+
+    @staticmethod
+    def _endpoint_identity_for_provider(provider_key: str, base_url: str | None) -> str:
+        if provider_key in {"llama_cpp", "local_llamacpp"}:
+            base_url = normalize_llamacpp_base_url(base_url)
+        return normalize_generic_endpoint_for_compare(base_url)
 
     @staticmethod
     def _first_string(*values: object) -> str | None:

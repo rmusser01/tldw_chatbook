@@ -832,6 +832,68 @@ async def test_console_settings_modal_shows_inherited_provider_endpoint() -> Non
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_prefers_api_base_url_alias_over_default_api_url() -> None:
+    app = ModalHarness()
+    app.app_config["api_settings"]["llama_cpp"] = {
+        "api_url": "http://localhost:8080/completion",
+        "api_base_url": "http://127.0.0.1:9099/v1",
+    }
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a", base_url=None)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        base_url_input = app.screen.query_one("#console-settings-base-url", Input)
+        readiness = app.screen.query_one("#console-settings-readiness", Static)
+        assert base_url_input.value == "http://127.0.0.1:9099"
+        assert "Provider blocked" not in str(readiness.renderable)
+        assert "localhost:8080" not in str(readiness.renderable)
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_replaces_stale_lower_priority_endpoint_with_alias() -> None:
+    app = ModalHarness()
+    app.app_config["api_settings"]["llama_cpp"] = {
+        "api_url": "http://localhost:8080/completion",
+        "api_base_url": "http://127.0.0.1:9099/v1",
+    }
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://localhost:8080",
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        base_url_input = app.screen.query_one("#console-settings-base-url", Input)
+        readiness = app.screen.query_one("#console-settings-readiness", Static)
+        assert base_url_input.value == "http://127.0.0.1:9099"
+        assert "Provider blocked" not in str(readiness.renderable)
+        assert "localhost:8080" not in str(readiness.renderable)
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_focus_mode_uses_ready_copy_when_model_selected() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
