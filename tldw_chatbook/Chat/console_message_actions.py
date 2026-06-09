@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 
 
 ConsoleActionStatus = Literal[
@@ -97,8 +97,8 @@ class ConsoleMessageActionService:
             ConsoleMessageAction(
                 action_id=action_id,
                 label=label,
-                enabled=disabled_reason == "" and self._variant_action_enabled(action_id, message),
-                disabled_reason=disabled_reason or self._variant_disabled_reason(action_id, message),
+                enabled=disabled_reason == "" and self._action_enabled(action_id, message),
+                disabled_reason=disabled_reason or self._action_disabled_reason(action_id, message),
             )
             for action_id, label in completed_actions
         ]
@@ -191,6 +191,12 @@ class ConsoleMessageActionService:
                 status="completed",
                 visible_copy="Selected response variant.",
             )
+        if action_id == "regenerate" and not ConsoleMessageActionService._is_assistant_message(message):
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="blocked",
+                visible_copy="Only assistant messages can be regenerated.",
+            )
         if action_id == "continue":
             target_content = (
                 message.variants.current.content
@@ -225,7 +231,20 @@ class ConsoleMessageActionService:
         return True
 
     @staticmethod
-    def _variant_disabled_reason(action_id: str, message: ConsoleChatMessage) -> str:
+    def _action_enabled(action_id: str, message: ConsoleChatMessage) -> bool:
+        if action_id == "regenerate":
+            return ConsoleMessageActionService._is_assistant_message(message)
+        return ConsoleMessageActionService._variant_action_enabled(action_id, message)
+
+    @staticmethod
+    def _action_disabled_reason(action_id: str, message: ConsoleChatMessage) -> str:
+        if action_id == "regenerate" and not ConsoleMessageActionService._is_assistant_message(message):
+            return "Only assistant messages can be regenerated."
         if action_id in {"variant-previous", "variant-next"} and not ConsoleMessageActionService._variant_action_enabled(action_id, message):
             return "No response variant in that direction."
         return ""
+
+    @staticmethod
+    def _is_assistant_message(message: ConsoleChatMessage) -> bool:
+        role = getattr(message.role, "value", message.role)
+        return str(role).lower() == ConsoleMessageRole.ASSISTANT.value

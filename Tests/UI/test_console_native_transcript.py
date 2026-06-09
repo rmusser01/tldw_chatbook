@@ -12,7 +12,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleVariantSet,
 )
-from tldw_chatbook.Chat.console_message_actions import ConsoleSaveDestination
+from tldw_chatbook.Chat.console_message_actions import (
+    ConsoleMessageActionService,
+    ConsoleSaveDestination,
+)
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
@@ -242,6 +245,23 @@ def test_console_transcript_selected_message_shows_action_row():
 
     assert "Copy Edit Save as... ♻ ---> 👍 👎 🗑" in plain
     assert "|" not in plain
+
+
+def test_console_user_message_regenerate_action_is_disabled_and_blocks_dispatch():
+    message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="prompt", id="m1")
+    service = ConsoleMessageActionService()
+
+    regenerate = next(
+        action
+        for action in service.available_actions(message)
+        if action.action_id == "regenerate"
+    )
+    result = service.dispatch("regenerate", message)
+
+    assert not regenerate.enabled
+    assert regenerate.disabled_reason == "Only assistant messages can be regenerated."
+    assert result.status == "blocked"
+    assert result.visible_copy == "Only assistant messages can be regenerated."
 
 
 def test_console_transcript_selected_message_does_not_apply_inline_border_geometry():
