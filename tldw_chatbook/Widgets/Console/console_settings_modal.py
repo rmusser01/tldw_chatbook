@@ -30,6 +30,9 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 
 
+MODEL_INPUT_PLACEHOLDER = "Enter model id"
+
+
 class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     """Edit a draft of the current Console session settings."""
 
@@ -118,6 +121,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield model_select
                         model_input = Input(
                             value=selected_model or "",
+                            placeholder=MODEL_INPUT_PLACEHOLDER,
                             id="console-settings-model-input",
                             disabled=has_model_options,
                             classes="console-settings-control",

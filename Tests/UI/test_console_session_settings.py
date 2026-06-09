@@ -1415,6 +1415,7 @@ async def test_console_settings_modal_provider_change_to_no_models_allows_freefo
         assert model_input.display is True
         assert model_input.disabled is False
         assert model_input.value == ""
+        assert model_input.placeholder == "Enter model id"
         model_input.value = "freeform-model"
         await pilot.pause()
         await pilot.click("#console-settings-save")
