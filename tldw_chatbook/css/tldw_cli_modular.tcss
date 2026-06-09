@@ -65,7 +65,8 @@ $ds-library-mode-chip-height: 3;
 $ds-library-mode-chip-min-width: 10;
 $ds-library-source-action-width: 28;
 $ds-library-source-action-min-width: 18;
-$ds-library-source-action-height: 1;
+$ds-library-source-action-height: 3;
+$ds-library-source-browser-width: 31;
 
 /* ===== MODULE: core/_reset.tcss ===== */
 /* ========================================
@@ -3411,7 +3412,18 @@ Button.settings-category-button.settings-secondary-search-match {
     background: $ds-surface-panel;
 }
 
-#library-source-browser,
+#library-source-browser {
+    width: $ds-library-source-browser-width;
+    min-width: $ds-library-source-browser-width;
+    max-width: $ds-library-source-browser-width;
+    height: 100%;
+    min-height: 20;
+    padding: 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    overflow-y: auto;
+}
+
 #library-source-inspector {
     width: 2fr;
     min-width: 0;
@@ -3493,7 +3505,12 @@ Button.settings-category-button.settings-secondary-search-match {
     min-width: $ds-library-source-action-min-width;
     height: $ds-library-source-action-height;
     min-height: $ds-library-source-action-height;
-    margin: 0;
+    margin: 0 0 1 0;
+}
+
+.library-source-action-spacer {
+    height: 1;
+    min-height: 1;
 }
 
 .library-source-action:focus {

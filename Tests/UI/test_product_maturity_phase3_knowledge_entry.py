@@ -136,7 +136,7 @@ def test_phase_3_1_library_study_entry_evidence_is_tracked() -> None:
     assert "Library -> Study Dashboard / Flashcards / Quizzes" in evidence
     assert "No P0/P1 defects found" in evidence
     assert "Tests/UI/test_product_maturity_phase3_knowledge_entry.py" in evidence
-    assert "status: In Progress" in parent_task
+    assert "status: Done" in parent_task
     assert "Product Maturity Phase 3.1: Library Study Entry" in task
     assert "status: Done" in task
     assert "- [x] #1" in task
