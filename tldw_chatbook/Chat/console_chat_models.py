@@ -31,6 +31,7 @@ class ConsoleRunStatus(str, Enum):
 
 
 ConsoleMessageStatus = Literal["complete", "pending", "streaming", "stopped", "failed"]
+ConsoleMessageFeedback = Literal["up", "down"]
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,7 @@ class ConsoleChatMessage:
     status: ConsoleMessageStatus = "complete"
     persisted_message_id: str | None = None
     variants: "ConsoleVariantSet | None" = None
+    feedback: ConsoleMessageFeedback | None = None
 
 
 @dataclass(frozen=True)

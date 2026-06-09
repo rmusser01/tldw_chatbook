@@ -5,10 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
 
 
-ConsoleActionStatus = Literal["completed", "wip", "blocked", "continue_requested"]
+ConsoleActionStatus = Literal[
+    "completed",
+    "wip",
+    "blocked",
+    "continue_requested",
+    "edit_requested",
+]
 
 
 @dataclass(frozen=True)
@@ -45,16 +51,16 @@ class ConsoleSaveDestination:
 class ConsoleMessageActionService:
     """Resolve and dispatch safe Console selected-message actions."""
 
-    FEEDBACK_PLAIN_LABELS: tuple[str, str] = ("Good", "Bad")
+    FEEDBACK_PLAIN_LABELS: tuple[str, str] = ("👍", "👎")
 
     _COMPLETED_ACTIONS: tuple[tuple[str, str], ...] = (
         ("copy", "Copy"),
         ("edit", "Edit"),
         ("save-as", "Save as..."),
-        ("regenerate", "Regen"),
+        ("regenerate", "♻"),
         ("continue", "--->"),
         ("feedback", "Feedback"),
-        ("delete", "Del"),
+        ("delete", "🗑"),
     )
 
     def __init__(self, *, available_save_destinations: set[str] | None = None) -> None:
@@ -71,10 +77,10 @@ class ConsoleMessageActionService:
                 ("save-as", "Save as..."),
                 ("variant-previous", "<"),
                 ("variant-next", ">"),
-                ("regenerate", "Regen"),
+                ("regenerate", "♻"),
                 ("continue", "--->"),
                 ("feedback", "Feedback"),
-                ("delete", "Del"),
+                ("delete", "🗑"),
             ]
         if message.status == "failed":
             return [
@@ -82,17 +88,17 @@ class ConsoleMessageActionService:
                 ConsoleMessageAction("edit", "Edit"),
                 ConsoleMessageAction("save-as", "Save as..."),
                 ConsoleMessageAction("retry", "Try"),
-                ConsoleMessageAction("regenerate", "Regen"),
+                ConsoleMessageAction("regenerate", "♻"),
                 ConsoleMessageAction("continue", "--->"),
                 ConsoleMessageAction("feedback", "Feedback"),
-                ConsoleMessageAction("delete", "Del"),
+                ConsoleMessageAction("delete", "🗑"),
             ]
         return [
             ConsoleMessageAction(
                 action_id=action_id,
                 label=label,
-                enabled=disabled_reason == "" and self._variant_action_enabled(action_id, message),
-                disabled_reason=disabled_reason or self._variant_disabled_reason(action_id, message),
+                enabled=disabled_reason == "" and self._action_enabled(action_id, message),
+                disabled_reason=disabled_reason or self._action_disabled_reason(action_id, message),
             )
             for action_id, label in completed_actions
         ]
@@ -150,11 +156,46 @@ class ConsoleMessageActionService:
                 status="completed",
                 visible_copy="Retrying failed response.",
             )
+        if action_id == "edit":
+            target_content = (
+                message.variants.current.content
+                if message.variants is not None
+                else message.content
+            )
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="edit_requested",
+                visible_copy="Opened Edit Message.",
+                target_message_id=message.id,
+                target_content=target_content,
+            )
+        if action_id in {"feedback-up", "feedback-down"}:
+            feedback = "up" if action_id == "feedback-up" else "down"
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy=f"Marked message feedback: {feedback}.",
+                target_message_id=message.id,
+                target_content=feedback,
+            )
+        if action_id == "delete":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Deleted message from transcript.",
+                target_message_id=message.id,
+            )
         if action_id in {"variant-previous", "variant-next"}:
             return ConsoleActionResult(
                 action_id=action_id,
                 status="completed",
                 visible_copy="Selected response variant.",
+            )
+        if action_id == "regenerate" and not ConsoleMessageActionService._is_assistant_message(message):
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="blocked",
+                visible_copy="Only assistant messages can be regenerated.",
             )
         if action_id == "continue":
             target_content = (
@@ -190,7 +231,20 @@ class ConsoleMessageActionService:
         return True
 
     @staticmethod
-    def _variant_disabled_reason(action_id: str, message: ConsoleChatMessage) -> str:
+    def _action_enabled(action_id: str, message: ConsoleChatMessage) -> bool:
+        if action_id == "regenerate":
+            return ConsoleMessageActionService._is_assistant_message(message)
+        return ConsoleMessageActionService._variant_action_enabled(action_id, message)
+
+    @staticmethod
+    def _action_disabled_reason(action_id: str, message: ConsoleChatMessage) -> str:
+        if action_id == "regenerate" and not ConsoleMessageActionService._is_assistant_message(message):
+            return "Only assistant messages can be regenerated."
         if action_id in {"variant-previous", "variant-next"} and not ConsoleMessageActionService._variant_action_enabled(action_id, message):
             return "No response variant in that direction."
         return ""
+
+    @staticmethod
+    def _is_assistant_message(message: ConsoleChatMessage) -> bool:
+        role = getattr(message.role, "value", message.role)
+        return str(role).lower() == ConsoleMessageRole.ASSISTANT.value

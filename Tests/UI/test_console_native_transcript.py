@@ -12,7 +12,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleVariantSet,
 )
-from tldw_chatbook.Chat.console_message_actions import ConsoleSaveDestination
+from tldw_chatbook.Chat.console_message_actions import (
+    ConsoleMessageActionService,
+    ConsoleSaveDestination,
+)
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
@@ -240,8 +243,25 @@ def test_console_transcript_selected_message_shows_action_row():
 
     plain = transcript.to_plain_text(width=80)
 
-    assert "Copy Edit Save as... Regen ---> Good Bad Del" in plain
+    assert "Copy Edit Save as... ♻ ---> 👍 👎 🗑" in plain
     assert "|" not in plain
+
+
+def test_console_user_message_regenerate_action_is_disabled_and_blocks_dispatch():
+    message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="prompt", id="m1")
+    service = ConsoleMessageActionService()
+
+    regenerate = next(
+        action
+        for action in service.available_actions(message)
+        if action.action_id == "regenerate"
+    )
+    result = service.dispatch("regenerate", message)
+
+    assert not regenerate.enabled
+    assert regenerate.disabled_reason == "Only assistant messages can be regenerated."
+    assert result.status == "blocked"
+    assert result.visible_copy == "Only assistant messages can be regenerated."
 
 
 def test_console_transcript_selected_message_does_not_apply_inline_border_geometry():
@@ -274,7 +294,7 @@ def test_console_transcript_action_row_stays_within_terminal_width_budget():
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... Regen ---> Good Bad Del"
+    assert action_row == "Copy Edit Save as... ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 48
 
 
@@ -315,7 +335,7 @@ def test_console_transcript_variant_action_row_stays_within_terminal_width_budge
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... < > Regen ---> Good Bad Del"
+    assert action_row == "Copy Edit Save as... < > ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 52
 
 
@@ -336,7 +356,7 @@ def test_console_transcript_failed_action_row_includes_retry_without_exceeding_b
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... Try Regen ---> Good Bad Del"
+    assert action_row == "Copy Edit Save as... Try ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 52
 
 
@@ -352,7 +372,10 @@ async def test_console_transcript_keyboard_selects_messages_and_enter_shows_acti
 
     assert "Copy" in text
     assert "Save as..." in text
-    assert "Regen" in text
+    assert "♻" in text
+    assert "👍" in text
+    assert "👎" in text
+    assert "🗑" in text
     assert "|" not in text
 
 
@@ -366,7 +389,10 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
 
     assert "Copy" in text
     assert "Save as..." in text
-    assert "Regen" in text
+    assert "♻" in text
+    assert "👍" in text
+    assert "👎" in text
+    assert "🗑" in text
     assert "|" not in text
 
 
@@ -396,7 +422,10 @@ async def test_console_transcript_action_buttons_have_stable_ids():
 
     assert "Copy" in text
     assert "Save as..." in text
-    assert "Regen" in text
+    assert "♻" in text
+    assert "👍" in text
+    assert "👎" in text
+    assert "🗑" in text
     assert "|" not in text
 
 

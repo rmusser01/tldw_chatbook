@@ -18,9 +18,10 @@ if TYPE_CHECKING:
 class NavigateToScreen(Message):
     """Message to request navigation to a specific screen."""
     
-    def __init__(self, screen_name: str):
+    def __init__(self, screen_name: str, screen_context: dict[str, object] | None = None):
         super().__init__()
         self.screen_name = screen_name
+        self.screen_context = dict(screen_context or {})
 
 
 class NavigationButton(Button):

@@ -3,6 +3,7 @@
 from .console_control_bar import ConsoleControlBar
 from .console_composer_bar import ConsoleComposerBar
 from .console_background_effect import ConsoleBackgroundEffect, ConsoleTranscriptSurface
+from .console_edit_message_modal import ConsoleEditMessageModal
 from .console_rail_handle import ConsoleRailHandle
 from .console_rename_session_modal import ConsoleRenameSessionModal
 from .console_run_inspector import ConsoleRunInspector
@@ -19,6 +20,7 @@ __all__ = [
     "ConsoleComposerBar",
     "ConsoleBackgroundEffect",
     "ConsoleControlBar",
+    "ConsoleEditMessageModal",
     "ConsoleRailHandle",
     "ConsoleRenameSessionModal",
     "ConsoleRunInspector",

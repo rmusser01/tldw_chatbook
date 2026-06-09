@@ -159,11 +159,19 @@ ConsoleSettingsModal {
 .console-settings-control {
     width: 1fr;
     min-width: 0;
-    height: 1;
-    min-height: 1;
 }
 
-ConsoleSettingsModal Input,
+ConsoleSettingsModal Input {
+    width: 1fr;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
 ConsoleSettingsModal Select {
     width: 1fr;
     min-width: 0;
@@ -172,6 +180,11 @@ ConsoleSettingsModal Select {
     border: none;
     background: $ds-surface-raised;
     color: $ds-text-primary;
+}
+
+ConsoleSettingsModal Checkbox {
+    height: 1;
+    min-height: 1;
 }
 
 ConsoleSettingsModal Select > SelectCurrent {
@@ -198,7 +211,26 @@ ConsoleSettingsModal Select > SelectCurrent .arrow {
     color: $ds-text-muted;
 }
 
-ConsoleSettingsModal Input:focus,
+ConsoleSettingsModal Input:focus {
+    height: 3;
+    min-height: 3;
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+ConsoleSettingsModal Input > .input--cursor {
+    background: $ds-input-focus-accent;
+    color: $ds-surface-panel;
+}
+
+ConsoleSettingsModal Input > .input--selection {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
 ConsoleSettingsModal Select:focus {
     border: none;
     border-bottom: none;
@@ -211,6 +243,33 @@ ConsoleSettingsModal Select:focus > SelectCurrent {
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+ConsoleSettingsModal Select > SelectOverlay {
+    padding: 0 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    min-width: 30;
+}
+
+ConsoleSettingsModal Select > SelectOverlay Option {
+    padding: 0 2;
+    min-height: 3;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+ConsoleSettingsModal Select > SelectOverlay Option:hover {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+ConsoleSettingsModal Select > SelectOverlay Option.-selected {
+    padding: 0 2;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .console-settings-modal-actions {

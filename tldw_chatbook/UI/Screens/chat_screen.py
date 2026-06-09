@@ -28,6 +28,7 @@ from .provider_model_resolution import (
     resolve_effective_provider_model,
     resolve_provider_model_options,
 )
+from .settings_config_models import SettingsCategoryId
 from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.console_chat_controller import ConsoleChatController
@@ -109,6 +110,7 @@ from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
     ConsoleComposerBar,
     ConsoleControlBar,
+    ConsoleEditMessageModal,
     ConsoleRailHandle,
     ConsoleRenameSessionModal,
     ConsoleRunInspector,
@@ -800,6 +802,7 @@ class ChatScreen(BaseAppScreen):
             fallback_url = (
                 os.environ.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
                 or console_config.get("llama_cpp_base_url_override")
+                or provider_config.get("api_base_url")
                 or provider_config.get("api_url")
                 or provider_config.get("base_url")
                 or provider_config.get("api_base")
@@ -1612,11 +1615,11 @@ class ChatScreen(BaseAppScreen):
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleInspectorState:
-        _provider_display, model, settings = self._active_console_provider_model_display()
+        provider_display, model, settings = self._active_console_provider_model_display()
         _effective_settings, settings_readiness = self._active_console_settings_readiness()
         explicit_provider_ready = getattr(self.app_instance, "console_provider_ready", None)
         provider_readiness = get_provider_readiness(
-            settings.provider,
+            (settings.provider if settings is not None else None) or provider_display,
             getattr(self.app_instance, "app_config", {}) or {},
         )
         provider_runtime_ready = settings_readiness.native_send_supported and explicit_provider_ready is not False
@@ -1739,7 +1742,7 @@ class ChatScreen(BaseAppScreen):
         if settings_readiness.native_send_supported:
             return ""
         provider_readiness = get_provider_readiness(
-            settings.provider,
+            (settings.provider if settings is not None else None) or provider,
             getattr(self.app_instance, "app_config", {}) or {},
         )
         if provider_readiness.reason == "Missing API key":
@@ -1788,7 +1791,7 @@ class ChatScreen(BaseAppScreen):
             return ("Open Settings", "hidden", "Open provider settings")
 
         provider_readiness = get_provider_readiness(
-            settings.provider,
+            (settings.provider if settings is not None else None) or provider,
             getattr(self.app_instance, "app_config", {}) or {},
         )
         if provider_readiness.reason == "Missing API key":
@@ -3148,7 +3151,24 @@ class ChatScreen(BaseAppScreen):
         if target == "console" and getattr(self, "is_mounted", False):
             await self.on_console_settings_open(event)
             return
-        self.post_message(NavigateToScreen(TAB_SETTINGS))
+        provider, model, settings = self._active_console_provider_model_display()
+        settings_provider = settings.provider if settings is not None else None
+        provider_context = str(settings_provider or provider or "").strip()
+        screen_context: dict[str, object] = {
+            "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+        }
+        if provider_context:
+            screen_context["provider"] = provider_context
+        settings_model = settings.model if settings is not None else None
+        model_context = str(model or settings_model or "").strip()
+        if model_context:
+            screen_context["model"] = model_context
+        self.post_message(
+            NavigateToScreen(
+                TAB_SETTINGS,
+                screen_context=screen_context,
+            )
+        )
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:
@@ -3213,6 +3233,12 @@ class ChatScreen(BaseAppScreen):
             copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
             if callable(copy_to_clipboard):
                 copy_to_clipboard(result.clipboard_text)
+        if action_id == "edit" and result.status == "edit_requested":
+            await self._open_console_message_edit_modal(
+                message_id=message_id,
+                content=result.target_content or "",
+            )
+            return True
         if action_id == "retry" and result.status == "completed":
             controller = self._ensure_console_chat_controller()
             self.run_worker(self._retry_console_message(controller, message_id), exclusive=True)
@@ -3225,6 +3251,17 @@ class ChatScreen(BaseAppScreen):
             self._select_console_message_variant(message_id, direction=action_id)
             await self._sync_native_console_chat_ui()
             return True
+        if action_id in {"feedback-up", "feedback-down"} and result.status == "completed":
+            feedback = "up" if action_id == "feedback-up" else "down"
+            store.set_message_feedback(message_id, feedback)
+            await self._sync_native_console_chat_ui()
+            self.app_instance.notify(result.visible_copy, severity="information")
+            return True
+        if action_id == "delete" and result.status == "completed":
+            store.delete_message(message_id)
+            await self._sync_native_console_chat_ui()
+            self.app_instance.notify(result.visible_copy, severity="information")
+            return True
         if action_id == "continue" and result.status == "continue_requested":
             controller = self._ensure_console_chat_controller()
             self.run_worker(self._continue_console_message(controller, message_id), exclusive=True)
@@ -3232,6 +3269,39 @@ class ChatScreen(BaseAppScreen):
         severity = "information" if result.status in {"completed", "wip"} else "warning"
         self.app_instance.notify(result.visible_copy, severity=severity)
         return True
+
+    async def _open_console_message_edit_modal(self, *, message_id: str, content: str) -> None:
+        """Open the dedicated transcript edit modal for one Console message."""
+        store = self._ensure_console_chat_store()
+
+        def _apply_edit(result: str | None) -> None:
+            if result is None:
+                return
+            try:
+                store.update_message_content(message_id, result)
+            except ValueError as exc:
+                self.app_instance.notify(str(exc), severity="warning")
+                return
+            except KeyError:
+                self.app_instance.notify(
+                    "Console message action target no longer exists.",
+                    severity="error",
+                )
+                return
+            self._last_console_action = ConsoleActionResult(
+                action_id="edit",
+                status="completed",
+                visible_copy="Edited message.",
+                target_message_id=message_id,
+                target_content=result,
+            )
+            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
+            self.app_instance.notify("Edited message.", severity="information")
+
+        await self.app.push_screen(
+            ConsoleEditMessageModal(content=content),
+            callback=_apply_edit,
+        )
 
     @staticmethod
     def _parse_console_message_action_button_id(button_id: str) -> tuple[str | None, str | None]:

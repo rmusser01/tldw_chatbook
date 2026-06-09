@@ -645,23 +645,13 @@ def test_console_composer_focus_uses_thin_input_treatment():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    ("base_selector", "focus_selector"),
-    (
-        ("ConsoleSettingsModal Input", "ConsoleSettingsModal Input:focus"),
-        ("ConsoleSettingsModal Select", "ConsoleSettingsModal Select:focus"),
-    ),
-)
-def test_console_settings_modal_controls_use_compact_focus_outline(
-    base_selector: str,
-    focus_selector: str,
-):
+def test_console_settings_modal_select_uses_compact_focus_outline():
     for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
     ):
-        base = css_block(text, base_selector)
-        focus = css_block(text, focus_selector)
+        base = css_block(text, "ConsoleSettingsModal Select")
+        focus = css_block(text, "ConsoleSettingsModal Select:focus")
         assert "height: 1;" in base
         assert "border: none;" in base
         assert "border: none;" in focus
@@ -676,6 +666,25 @@ def test_console_settings_modal_controls_use_compact_focus_outline(
         assert "$accent" not in focus
         assert "$warning" not in focus
         assert "$error" not in focus
+
+
+@pytest.mark.unit
+def test_console_settings_modal_focused_inputs_keep_value_row_visible():
+    """Focused settings inputs must keep Textual's editable value row visible."""
+    for _, text in (
+        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        base = css_block(text, "ConsoleSettingsModal Input")
+        focus = css_block(text, "ConsoleSettingsModal Input:focus")
+
+        assert "height: 3;" in base
+        assert "min-height: 3;" in base
+        assert "border: tall $ds-grid-line;" in base
+        assert "height: 3;" in focus
+        assert "min-height: 3;" in focus
+        assert "border: tall $ds-input-focus-accent;" in focus
+        assert "outline: none;" in focus
 
 
 @pytest.mark.unit
@@ -697,6 +706,33 @@ def test_console_settings_modal_select_current_preserves_visible_value_row():
         assert "background: $ds-input-focus-bg;" in current_focus
         assert "text-style: bold;" in current_focus
         assert "reverse" not in current_focus
+
+
+@pytest.mark.unit
+def test_console_settings_modal_select_overlay_is_readable():
+    for _, text in (
+        ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
+        ("tldw_cli_modular.tcss", BUNDLE.read_text(encoding="utf-8")),
+    ):
+        overlay = css_block(text, "ConsoleSettingsModal Select > SelectOverlay")
+        option = css_block(text, "ConsoleSettingsModal Select > SelectOverlay Option")
+        hover = css_block(text, "ConsoleSettingsModal Select > SelectOverlay Option:hover")
+        selected = css_block(text, "ConsoleSettingsModal Select > SelectOverlay Option.-selected")
+
+        assert "border: solid $ds-grid-line;" in overlay
+        assert "background: $ds-surface-panel;" in overlay
+        assert "color: $ds-text-primary;" in overlay
+        assert "padding: 0 1;" in overlay
+        assert "min-width: 30;" in overlay
+        assert "background: $ds-surface-inspector;" in option
+        assert "color: $ds-text-primary;" in option
+        assert "min-height: 3;" in option
+        assert "background: $ds-input-focus-bg;" in hover
+        assert "color: $ds-text-primary;" in hover
+        assert "background: $ds-focus-bg;" in selected
+        assert "color: $ds-focus-fg;" in selected
+        assert "text-style: bold underline;" in selected
+        assert "reverse" not in overlay + option + hover + selected
 
 
 @pytest.mark.unit

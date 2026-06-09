@@ -107,6 +107,23 @@ def test_default_settings_uses_api_base_for_llamacpp_base_url() -> None:
     assert settings.base_url == "http://127.0.0.1:9191"
 
 
+def test_default_settings_uses_api_base_url_for_llamacpp_base_url() -> None:
+    settings = build_default_console_session_settings(
+        {
+            "chat_defaults": {"provider": "llama_cpp"},
+            "api_settings": {
+                "llama_cpp": {
+                    "api_url": "http://localhost:8080/completion",
+                    "api_base_url": "127.0.0.1:9191/v1",
+                }
+            },
+        },
+        provider="llama_cpp",
+    )
+
+    assert settings.base_url == "http://127.0.0.1:9191"
+
+
 def test_public_helpers_accept_planned_positional_call_forms() -> None:
     config = {
         "chat_defaults": {"provider": "llama_cpp", "model": "chat-default"},

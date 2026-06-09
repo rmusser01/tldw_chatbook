@@ -2966,6 +2966,101 @@ async def test_settings_provider_category_renders_catalog_select_with_visible_va
 
 
 @pytest.mark.asyncio
+async def test_settings_navigation_context_can_preselect_provider_category_target():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(
+            {
+                "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+                "provider": "huggingface",
+                "model": "meta-llama/test-model",
+            }
+        )
+        await pilot.pause()
+
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        assert screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        assert screen.query_one("#settings-model-value", Input).value == "meta-llama/test-model"
+        assert "HUGGINGFACE_API_KEY" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_settings_navigation_context_preselection_does_not_create_provider_draft():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(
+            {
+                "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+                "provider": "huggingface",
+                "model": "meta-llama/test-model",
+            }
+        )
+        await pilot.pause()
+
+        assert screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        assert screen.query_one("#settings-model-value", Input).value == "meta-llama/test-model"
+        assert not screen._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS)
+
+
+@pytest.mark.asyncio
+async def test_settings_navigation_context_preserves_existing_provider_draft_values():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("endpoint", "https://api.example/v1", "https://draft.example/v1")
+        draft.set_value("credential_env_var", "OPENAI_API_KEY", "DRAFT_PROVIDER_KEY")
+        draft.set_value("model_profile_temperature", "", 0.4)
+        screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+
+        screen.apply_navigation_context(
+            {
+                "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+                "provider": "huggingface",
+                "model": "meta-llama/test-model",
+            }
+        )
+        await pilot.pause()
+
+        preserved_draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert preserved_draft.values["endpoint"] == "https://draft.example/v1"
+        assert preserved_draft.values["credential_env_var"] == "DRAFT_PROVIDER_KEY"
+        assert preserved_draft.values["model_profile_temperature"] == 0.4
+
+
+@pytest.mark.asyncio
+async def test_settings_navigation_provider_context_tolerates_missing_provider_values(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await pilot.pause()
+        monkeypatch.setattr(screen, "_provider_setting_values", lambda: None)
+
+        screen._apply_navigation_provider_context("huggingface")
+        await pilot.pause()
+
+        assert screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        assert screen.query_one("#settings-model-value", Input).value == ""
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_keyless_local_provider_does_not_report_missing_env_var():
     app = _build_test_app()
     app.chat_api_provider_value = "OpenAI"

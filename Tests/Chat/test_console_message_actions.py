@@ -1,3 +1,5 @@
+import pytest
+
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -16,10 +18,10 @@ def test_assistant_message_actions_include_required_order():
         "Copy",
         "Edit",
         "Save as...",
-        "Regen",
+        "♻",
         "--->",
         "Feedback",
-        "Del",
+        "🗑",
     ]
 
 
@@ -37,10 +39,10 @@ def test_streaming_assistant_message_shows_completed_actions_disabled_with_reaso
         "Copy",
         "Edit",
         "Save as...",
-        "Regen",
+        "♻",
         "--->",
         "Feedback",
-        "Del",
+        "🗑",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -64,10 +66,10 @@ def test_pending_assistant_message_shows_completed_actions_disabled_with_reasons
         "Copy",
         "Edit",
         "Save as...",
-        "Regen",
+        "♻",
         "--->",
         "Feedback",
-        "Del",
+        "🗑",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -90,7 +92,7 @@ def test_action_labels_fit_compact_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save as... Regen ---> Good Bad Del"
+    assert " ".join(labels) == "Copy Edit Save as... ♻ ---> 👍 👎 🗑"
     assert len(" ".join(labels)) <= 48
 
 
@@ -111,10 +113,10 @@ def test_variant_action_labels_use_symbolic_navigation():
         "Save as...",
         "<",
         ">",
-        "Regen",
+        "♻",
         "--->",
         "Feedback",
-        "Del",
+        "🗑",
     ]
 
 
@@ -129,7 +131,7 @@ def test_variant_action_labels_fit_compact_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save as... < > Regen ---> Good Bad Del"
+    assert " ".join(labels) == "Copy Edit Save as... < > ♻ ---> 👍 👎 🗑"
     assert len(" ".join(labels)) <= 52
 
 
@@ -143,7 +145,7 @@ def test_failed_action_labels_include_retry_inside_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save as... Try Regen ---> Good Bad Del"
+    assert " ".join(labels) == "Copy Edit Save as... Try ♻ ---> 👍 👎 🗑"
     assert len(" ".join(labels)) <= 52
 
 
@@ -157,11 +159,50 @@ def test_copy_action_returns_clipboard_text():
     assert result.clipboard_text == "answer"
 
 
-def test_unimplemented_actions_return_wip_reason():
+def test_delete_action_returns_completed_result():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
 
     result = service.dispatch("delete", message)
+
+    assert result.status == "completed"
+    assert result.visible_copy == "Deleted message from transcript."
+    assert result.target_message_id == message.id
+
+
+@pytest.mark.parametrize(
+    ("action_id", "expected_feedback"),
+    [("feedback-up", "up"), ("feedback-down", "down")],
+)
+def test_feedback_actions_return_completed_result(action_id: str, expected_feedback: str):
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    result = service.dispatch(action_id, message)
+
+    assert result.status == "completed"
+    assert result.visible_copy == f"Marked message feedback: {expected_feedback}."
+    assert result.target_message_id == message.id
+    assert result.target_content == expected_feedback
+
+
+def test_edit_action_requests_modal_with_current_message_content():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    result = service.dispatch("edit", message)
+
+    assert result.status == "edit_requested"
+    assert result.visible_copy == "Opened Edit Message."
+    assert result.target_message_id == message.id
+    assert result.target_content == "answer"
+
+
+def test_unimplemented_actions_return_wip_reason():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    result = service.dispatch("save-later", message)
 
     assert result.status == "wip"
     assert "WIP" in result.visible_copy

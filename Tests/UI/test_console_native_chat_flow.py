@@ -3,20 +3,23 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from textual import on
+from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
-from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 
 
@@ -67,6 +70,17 @@ class DelayedWaitingGateway(WaitingGateway):
         self.validation_started.set()
         await self.validation_release.wait()
         return await super().resolve_for_send(selection)
+
+
+class ConsoleNavigationHarness(ConsoleHarness):
+    def __init__(self, app_instance: object) -> None:
+        super().__init__(app_instance)
+        self.navigation_messages = []
+
+    @on(NavigateToScreen)
+    def capture_navigation(self, message: NavigateToScreen) -> None:
+        self.navigation_messages.append(message)
+        message.stop()
 
 
 class BlockedGateway:
@@ -152,6 +166,11 @@ async def _wait_for_focus(app, pilot, widget, *, attempts: int = 40) -> None:
         f"Focus did not reach {getattr(widget, 'id', widget)!r}; "
         f"focused={getattr(focused, 'id', focused)!r}"
     )
+
+
+def _static_plain_text(widget: Static) -> str:
+    renderable = widget.renderable
+    return getattr(renderable, "plain", str(renderable))
 
 
 async def _wait_for_console_rename_modal(host: ConsoleHarness, pilot):
@@ -378,6 +397,24 @@ def test_console_configured_llamacpp_override_wins_over_provider_api_url():
     selection = screen._build_console_provider_selection()
 
     assert selection.base_url == "http://127.0.0.1:9099"
+
+
+def test_console_provider_selection_reads_llamacpp_api_base_url_alias():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "configured-model"
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://localhost:8080/completion",
+            "api_base_url": "http://127.0.0.1:9191/v1",
+            "model": "fallback-model",
+        }
+    }
+    screen = ChatScreen(app)
+
+    selection = screen._build_console_provider_selection()
+
+    assert selection.base_url == "http://127.0.0.1:9191"
 
 
 def test_console_llamacpp_env_url_wins_over_provider_api_url(monkeypatch):
@@ -838,6 +875,69 @@ async def test_console_unsupported_provider_block_renders_one_normalized_system_
 
 
 @pytest.mark.asyncio
+async def test_console_add_api_key_recovery_targets_provider_settings_category():
+    app = _build_test_app()
+    app.app_config["api_settings"] = {"huggingface": {}}
+    host = ConsoleNavigationHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="huggingface", model="meta-llama/test-model"),
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, "#console-open-provider-settings")
+
+        await pilot.click("#console-open-provider-settings")
+
+        assert len(host.navigation_messages) == 1
+        message = host.navigation_messages[0]
+        assert message.screen_name == "settings"
+        assert message.screen_context == {
+            "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+            "provider": "huggingface",
+            "model": "meta-llama/test-model",
+        }
+
+
+@pytest.mark.asyncio
+async def test_console_add_api_key_recovery_tolerates_missing_session_settings():
+    app = _build_test_app()
+    host = ConsoleNavigationHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="huggingface", model="meta-llama/test-model"),
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, "#console-open-provider-settings")
+        console._active_console_provider_model_display = lambda: (
+            "huggingface",
+            "meta-llama/test-model",
+            None,
+        )
+
+        await pilot.click("#console-open-provider-settings")
+
+        assert len(host.navigation_messages) == 1
+        message = host.navigation_messages[0]
+        assert message.screen_context == {
+            "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+            "provider": "huggingface",
+            "model": "meta-llama/test-model",
+        }
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_copy_action_uses_app_clipboard():
     app = _build_test_app()
     app.copy_to_clipboard = Mock()
@@ -906,6 +1006,176 @@ async def test_console_selected_message_copy_action_works_from_keyboard():
 
     app.copy_to_clipboard.assert_called_once_with("answer")
     assert console._last_console_action.action_id == "copy"
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_feedback_action_records_rating():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-feedback-up-{message.id}")
+
+        await pilot.click(f"#console-message-action-feedback-up-{message.id}")
+        await pilot.pause()
+
+    updated = store.get_message(message.id)
+    assert updated.feedback == "up"
+    assert console._last_console_action.action_id == "feedback-up"
+    assert console._last_console_action.visible_copy == "Marked message feedback: up."
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_delete_action_removes_message_from_transcript():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-delete-{message.id}")
+
+        await pilot.click(f"#console-message-action-delete-{message.id}")
+        await pilot.pause()
+
+    assert store.messages_for_session(session.id) == []
+    assert console._last_console_action.action_id == "delete"
+    assert console._last_console_action.visible_copy == "Deleted message from transcript."
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_edit_action_opens_modal_and_saves_content():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-edit-{message.id}")
+
+        await pilot.click(f"#console-message-action-edit-{message.id}")
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-edit-message-modal")
+        edit_modal = host.screen_stack[-1]
+        assert "Editing existing transcript message" in _static_plain_text(
+            edit_modal.query_one("#console-edit-message-context", Static)
+        )
+
+        editor = edit_modal.query_one("#console-edit-message-body", TextArea)
+        assert editor.text == "answer"
+        editor.text = "edited answer"
+        await pilot.click("#console-edit-message-save")
+        await pilot.pause()
+
+    assert store.get_message(message.id).content == "edited answer"
+    assert console._last_console_action.action_id == "edit"
+    assert console._last_console_action.visible_copy == "Edited message."
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_edit_action_cancel_preserves_content():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-edit-{message.id}")
+
+        await pilot.click(f"#console-message-action-edit-{message.id}")
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-edit-message-modal")
+        edit_modal = host.screen_stack[-1]
+        editor = edit_modal.query_one("#console-edit-message-body", TextArea)
+        editor.text = "discard this"
+        await pilot.click("#console-edit-message-cancel")
+        await pilot.pause()
+
+    assert store.get_message(message.id).content == "answer"
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_edit_action_blank_save_stays_open_with_error():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-edit-{message.id}")
+
+        await pilot.click(f"#console-message-action-edit-{message.id}")
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-edit-message-modal")
+        edit_modal = host.screen_stack[-1]
+        editor = edit_modal.query_one("#console-edit-message-body", TextArea)
+        editor.text = "   "
+        await pilot.click("#console-edit-message-save")
+        await _wait_for_selector(edit_modal, pilot, "#console-edit-message-error")
+
+        assert "cannot be blank" in _static_plain_text(
+            edit_modal.query_one("#console-edit-message-error", Static)
+        ).lower()
+        assert store.get_message(message.id).content == "answer"
 
 
 @pytest.mark.asyncio
