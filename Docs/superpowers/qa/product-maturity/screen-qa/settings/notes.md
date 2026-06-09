@@ -205,3 +205,54 @@ Fallback reason: none for screenshots. Text entry through browser automation hit
 
 - `python -m pytest -q Tests/UI/test_settings_configuration_hub.py --tb=short`
 - Result: `191 passed, 1 warning`.
+
+## Remaining Category Functional QA Sweep Closeout
+
+Date: 2026-06-09
+Branch: `codex/settings-remaining-functional-qa`
+Backlog task: TASK-87
+Screen: Settings
+Launch method: Textual-web/CDP evidence from the post-merge Settings actual-use sweep plus the approved Storage reachability correction after PR #495 merged.
+Screenshot method: Playwright browser automation against textual-web through CDP.
+Fallback reason: none for the Storage closeout screenshot.
+
+### Screenshots
+
+- Post-merge actual-use sweep evidence index: `Docs/superpowers/qa/product-maturity/screen-qa/settings/postmerge-actual-use-2026-06-07/findings.md`
+- Storage check visible before long path editor: `Docs/superpowers/qa/product-maturity/screen-qa/settings/remaining-category-functional-qa-2026-06-09/settings-storage-check-visible-before-paths.png`
+
+### Category State Map
+
+| Category | Verified state |
+| --- | --- |
+| Overview | Read-only status/recovery hub for app health, server/sync/workspace/handoff status, and next settings actions. |
+| Providers & Models | Guided-editable provider, model, endpoint, credential source, discovery, and per-model defaults. |
+| Appearance | Guided-editable visual defaults with Preview, Save, Revert, dropdown validation, and focused input visibility. |
+| Console Behavior | Guided-editable Console defaults with Save/Revert, validation, and keyboard operation. |
+| Library & RAG | Guided-editable Library/RAG defaults with dropdowns, snippet/citation controls, validation, and Save/Revert. |
+| Storage | Guided-editable persisted database path defaults with non-mutating Check Storage, Save/Revert, invalid-path recovery, and restart-required copy. |
+| Privacy & Security | Read-only privacy posture and recovery actions; secret values remain redacted. |
+| Diagnostics | Read-only validation/reload action path with visible status feedback. |
+| Advanced Config | Guarded expert editor with validation, backup preview, and save gating before raw TOML edits. |
+| Artifacts, Personas, Skills, Schedules, Watchlists, Workflows | Destination-owned read-only defaults/status guidance; Settings does not imply unsupported mutation paths. |
+| MCP Defaults, ACP Defaults | Destination-owned read-only runtime/default guidance; MCP and ACP remain the operational owners. |
+
+### Verification Scope
+
+- Confirmed the remaining Settings categories are classified as guided-editable, read-only status/recovery, destination-owned, or explicit guarded expert paths.
+- Confirmed the post-merge actual-use sweep covered category navigation, editable field focus visibility, dropdown selection, validation feedback, Save/Revert/Test controls, and read-only domain defaults.
+- Confirmed the Storage `Check Storage` action is now visible before the long database path editor in the normal Settings viewport.
+- Confirmed the top-level navigation visible-border activation regression is present on merged `dev`; the behavior is covered by `test_top_level_navigation_activates_visible_tab_border_from_cached_console_screen`.
+- User approval: approved in the Codex thread after actual Storage screenshot review.
+
+### Verification
+
+- `python -m pytest -q Tests/UI/test_settings_configuration_hub.py Tests/UI/test_settings_library_rag_defaults.py Tests/UI/test_settings_appearance_defaults.py Tests/UI/test_settings_privacy_security.py Tests/UI/test_console_session_settings.py Tests/UI/test_product_maturity_phase1_navigation_smoke.py::test_top_level_navigation_activates_visible_tab_border_from_cached_console_screen --tb=short`
+- Result: `298 passed, 1 warning`.
+- `git diff --check`
+- Result: clean.
+
+### Residual Risks
+
+- Domain defaults remain intentionally read-only until their owning destinations define writable source-of-truth contracts.
+- Runtime operations for MCP, ACP, Schedules, Workflows, Skills, Personas, and sync/handoff remain outside Settings by design.
