@@ -13,6 +13,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-003](003-settings-library-rag-defaults.md) | Accepted | Keep Library/RAG Settings scoped to persisted global defaults while Library owns active search and Console owns staged context. |
 | [ADR-004](004-settings-storage-defaults-restart-boundary.md) | Accepted | Keep Settings storage defaults persisted under `database` config while active storage handles remain restart-boundary owned. |
 | [ADR-005](005-console-workspace-server-readiness.md) | Accepted | Keep Console workspace switching local-first while exposing honest server-readiness, handoff, runtime, and ACP task/run states behind adapter boundaries. |
+| [ADR-006](006-provider-aware-generation-settings.md) | Accepted | Keep Settings as the owner of persisted generation defaults while Console resolves effective session settings and provider adapters translate sampler/thinking controls into provider-specific request payloads. |
 
 ## Historical Decision Material
 

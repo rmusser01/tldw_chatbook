@@ -201,6 +201,14 @@ def test_update_provider_selection_updates_all_selection_fields() -> None:
         min_p=0.04,
         top_k=35,
         max_tokens=256,
+        seed=99,
+        presence_penalty=0.1,
+        frequency_penalty=0.2,
+        reasoning_effort="high",
+        reasoning_summary="auto",
+        verbosity="medium",
+        thinking_effort="low",
+        thinking_budget_tokens=2048,
         streaming=False,
     )
 
@@ -215,7 +223,18 @@ def test_update_provider_selection_updates_all_selection_fields() -> None:
     assert controller.min_p == 0.04
     assert controller.top_k == 35
     assert controller.max_tokens == 256
+    assert controller.seed == 99
+    assert controller.presence_penalty == 0.1
+    assert controller.frequency_penalty == 0.2
+    assert controller.reasoning_effort == "high"
+    assert controller.reasoning_summary == "auto"
+    assert controller.verbosity == "medium"
+    assert controller.thinking_effort == "low"
+    assert controller.thinking_budget_tokens == 2048
     assert controller.streaming is False
+    assert controller._provider_selection().seed == 99
+    assert controller._provider_selection().reasoning_effort == "high"
+    assert controller._provider_selection().thinking_budget_tokens == 2048
 
 
 @pytest.mark.asyncio

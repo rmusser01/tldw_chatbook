@@ -387,6 +387,15 @@ def test_settings_console_default_max_tokens_rejects_raw_zero():
         screen._normalise_console_default_max_tokens(0)
 
 
+def test_settings_optional_int_defaults_load_invalid_values_as_blank():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"seed": "not-an-int", "top_k": "not-an-int"}
+    screen = SettingsScreen(app)
+
+    assert screen._loaded_console_default_seed() == ""
+    assert screen._loaded_console_default_top_k() == ""
+
+
 @pytest.mark.asyncio
 async def test_settings_defaults_to_overview_category():
     app = _build_test_app()
@@ -2153,7 +2162,17 @@ async def test_settings_console_behavior_renders_global_default_controls():
         "streaming": False,
         "temperature": 0.33,
         "top_p": 0.81,
+        "min_p": 0.04,
+        "top_k": 42,
         "max_tokens": 2048,
+        "seed": 123,
+        "presence_penalty": 0.2,
+        "frequency_penalty": 0.3,
+        "reasoning_effort": "high",
+        "reasoning_summary": "auto",
+        "verbosity": "medium",
+        "thinking_effort": "low",
+        "thinking_budget_tokens": 4096,
     }
     app.app_config["console"] = {
         "collapse_large_pastes": True,
@@ -2168,7 +2187,20 @@ async def test_settings_console_behavior_renders_global_default_controls():
         assert screen.query_one("#settings-console-default-streaming", Input).value == "false"
         assert screen.query_one("#settings-console-default-temperature", Input).value == "0.33"
         assert screen.query_one("#settings-console-default-top-p", Input).value == "0.81"
+        assert screen.query_one("#settings-console-default-min-p", Input).value == "0.04"
+        assert screen.query_one("#settings-console-default-top-k", Input).value == "42"
         assert screen.query_one("#settings-console-default-max-tokens", Input).value == "2048"
+        assert screen.query_one("#settings-console-default-seed", Input).value == "123"
+        assert screen.query_one("#settings-console-default-presence-penalty", Input).value == "0.2"
+        assert screen.query_one("#settings-console-default-frequency-penalty", Input).value == "0.3"
+        assert screen.query_one("#settings-console-default-reasoning-effort", Input).value == "high"
+        assert screen.query_one("#settings-console-default-reasoning-summary", Input).value == "auto"
+        assert screen.query_one("#settings-console-default-verbosity", Input).value == "medium"
+        assert screen.query_one("#settings-console-default-thinking-effort", Input).value == "low"
+        assert (
+            screen.query_one("#settings-console-default-thinking-budget-tokens", Input).value
+            == "4096"
+        )
         assert screen.query_one("#settings-console-paste-collapse-threshold", Input).value == "50"
         text = _visible_text(screen)
         assert "Used when no provider+model profile or active Console session overrides them." in text
@@ -2533,7 +2565,17 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
         streaming = screen.query_one("#settings-console-default-streaming", Input)
         temperature = screen.query_one("#settings-console-default-temperature", Input)
         top_p = screen.query_one("#settings-console-default-top-p", Input)
+        min_p = screen.query_one("#settings-console-default-min-p", Input)
+        top_k = screen.query_one("#settings-console-default-top-k", Input)
         max_tokens = screen.query_one("#settings-console-default-max-tokens", Input)
+        seed = screen.query_one("#settings-console-default-seed", Input)
+        presence_penalty = screen.query_one("#settings-console-default-presence-penalty", Input)
+        frequency_penalty = screen.query_one("#settings-console-default-frequency-penalty", Input)
+        reasoning_effort = screen.query_one("#settings-console-default-reasoning-effort", Input)
+        reasoning_summary = screen.query_one("#settings-console-default-reasoning-summary", Input)
+        verbosity = screen.query_one("#settings-console-default-verbosity", Input)
+        thinking_effort = screen.query_one("#settings-console-default-thinking-effort", Input)
+        thinking_budget = screen.query_one("#settings-console-default-thinking-budget-tokens", Input)
 
         streaming.value = "false"
         screen.handle_console_default_streaming_changed(Input.Changed(streaming, streaming.value))
@@ -2541,8 +2583,40 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
         screen.handle_console_default_temperature_changed(Input.Changed(temperature, temperature.value))
         top_p.value = "0.81"
         screen.handle_console_default_top_p_changed(Input.Changed(top_p, top_p.value))
+        min_p.value = "0.04"
+        screen.handle_console_default_min_p_changed(Input.Changed(min_p, min_p.value))
+        top_k.value = "42"
+        screen.handle_console_default_top_k_changed(Input.Changed(top_k, top_k.value))
         max_tokens.value = "2048"
         screen.handle_console_default_max_tokens_changed(Input.Changed(max_tokens, max_tokens.value))
+        seed.value = "123"
+        screen.handle_console_default_seed_changed(Input.Changed(seed, seed.value))
+        presence_penalty.value = "0.2"
+        screen.handle_console_default_presence_penalty_changed(
+            Input.Changed(presence_penalty, presence_penalty.value)
+        )
+        frequency_penalty.value = "0.3"
+        screen.handle_console_default_frequency_penalty_changed(
+            Input.Changed(frequency_penalty, frequency_penalty.value)
+        )
+        reasoning_effort.value = "high"
+        screen.handle_console_default_reasoning_effort_changed(
+            Input.Changed(reasoning_effort, reasoning_effort.value)
+        )
+        reasoning_summary.value = "auto"
+        screen.handle_console_default_reasoning_summary_changed(
+            Input.Changed(reasoning_summary, reasoning_summary.value)
+        )
+        verbosity.value = "medium"
+        screen.handle_console_default_verbosity_changed(Input.Changed(verbosity, verbosity.value))
+        thinking_effort.value = "low"
+        screen.handle_console_default_thinking_effort_changed(
+            Input.Changed(thinking_effort, thinking_effort.value)
+        )
+        thinking_budget.value = "4096"
+        screen.handle_console_default_thinking_budget_tokens_changed(
+            Input.Changed(thinking_budget, thinking_budget.value)
+        )
 
         assert "Unsaved" in _visible_text(screen)
 
@@ -2555,7 +2629,17 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
                 "streaming": False,
                 "temperature": 0.33,
                 "top_p": 0.81,
+                "min_p": 0.04,
+                "top_k": 42,
                 "max_tokens": 2048,
+                "seed": 123,
+                "presence_penalty": 0.2,
+                "frequency_penalty": 0.3,
+                "reasoning_effort": "high",
+                "reasoning_summary": "auto",
+                "verbosity": "medium",
+                "thinking_effort": "low",
+                "thinking_budget_tokens": 4096,
             }
         }
     ]
@@ -2563,7 +2647,17 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
         "streaming": False,
         "temperature": 0.33,
         "top_p": 0.81,
+        "min_p": 0.04,
+        "top_k": 42,
         "max_tokens": 2048,
+        "seed": 123,
+        "presence_penalty": 0.2,
+        "frequency_penalty": 0.3,
+        "reasoning_effort": "high",
+        "reasoning_summary": "auto",
+        "verbosity": "medium",
+        "thinking_effort": "low",
+        "thinking_budget_tokens": 4096,
     }
 
 
@@ -2647,6 +2741,18 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
             "handle_console_default_max_tokens_changed",
             "0",
             "Max tokens must be a whole number of at least 1.",
+        ),
+        (
+            "#settings-console-default-min-p",
+            "handle_console_default_min_p_changed",
+            "1.1",
+            "Min P must be between 0.0 and 1.0.",
+        ),
+        (
+            "#settings-console-default-thinking-budget-tokens",
+            "handle_console_default_thinking_budget_tokens_changed",
+            "128",
+            "Thinking budget tokens must be a whole number of at least 1024.",
         ),
     ),
 )
@@ -3061,6 +3167,152 @@ async def test_settings_provider_category_saves_selected_model_profile(monkeypat
         "top_p": 0.88,
         "streaming": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_saves_openai_generation_profile(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "o3"}
+    app.app_config["api_settings"] = {"openai": {"model_defaults": {"o3": {}}}}
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 55)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        values = {
+            "#settings-model-profile-temperature": "0.3",
+            "#settings-model-profile-top-p": "0.86",
+            "#settings-model-profile-min-p": "0.04",
+            "#settings-model-profile-top-k": "42",
+            "#settings-model-profile-max-tokens": "2048",
+            "#settings-model-profile-seed": "123",
+            "#settings-model-profile-presence-penalty": "0.2",
+            "#settings-model-profile-frequency-penalty": "0.3",
+            "#settings-model-profile-reasoning-effort": "high",
+            "#settings-model-profile-reasoning-summary": "auto",
+            "#settings-model-profile-verbosity": "medium",
+            "#settings-model-profile-thinking-effort": "high",
+            "#settings-model-profile-thinking-budget-tokens": "4096",
+            "#settings-model-profile-streaming": "false",
+        }
+        for selector, value in values.items():
+            screen.query_one(selector, Input).value = value
+
+        text = _visible_text(screen)
+        assert "Thinking unavailable for OpenAI" in text
+        assert screen.query_one("#settings-model-profile-thinking-effort", Input).disabled is True
+        assert screen.query_one("#settings-model-profile-thinking-budget-tokens", Input).disabled is True
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [
+        (
+            "api_settings.openai",
+            "model_defaults",
+            {
+                "o3": {
+                    "temperature": 0.3,
+                    "top_p": 0.86,
+                    "min_p": 0.04,
+                    "top_k": 42,
+                    "max_tokens": 2048,
+                    "seed": 123,
+                    "presence_penalty": 0.2,
+                    "frequency_penalty": 0.3,
+                    "reasoning_effort": "high",
+                    "reasoning_summary": "auto",
+                    "verbosity": "medium",
+                    "streaming": False,
+                },
+            },
+        ),
+    ]
+
+
+def test_settings_generation_controls_allow_openai_none_reasoning_effort():
+    screen = SettingsScreen(_build_test_app())
+
+    assert screen._normalise_model_profile_reasoning_effort("none") == "none"
+    assert (
+        "none"
+        in settings_screen_module.MODEL_PROFILE_INPUT_PLACEHOLDERS[
+            "model_profile_reasoning_effort"
+        ]
+    )
+
+
+def test_settings_generation_controls_allow_anthropic_max_thinking_effort():
+    screen = SettingsScreen(_build_test_app())
+
+    assert screen._normalise_model_profile_thinking_effort("max") == "max"
+    assert (
+        "max"
+        in settings_screen_module.MODEL_PROFILE_INPUT_PLACEHOLDERS[
+            "model_profile_thinking_effort"
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_saves_anthropic_thinking_profile(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "Anthropic", "model": "claude-opus-4-7"}
+    app.app_config["api_settings"] = {
+        "anthropic": {"model_defaults": {"claude-opus-4-7": {}}},
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 55)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        values = {
+            "#settings-model-profile-max-tokens": "12000",
+            "#settings-model-profile-reasoning-effort": "high",
+            "#settings-model-profile-reasoning-summary": "auto",
+            "#settings-model-profile-verbosity": "medium",
+            "#settings-model-profile-thinking-effort": "xhigh",
+            "#settings-model-profile-thinking-budget-tokens": "4096",
+            "#settings-model-profile-streaming": "false",
+        }
+        for selector, value in values.items():
+            screen.query_one(selector, Input).value = value
+
+        text = _visible_text(screen)
+        assert "Reasoning unavailable for Anthropic" in text
+        assert screen.query_one("#settings-model-profile-reasoning-effort", Input).disabled is True
+        assert screen.query_one("#settings-model-profile-reasoning-summary", Input).disabled is True
+        assert screen.query_one("#settings-model-profile-verbosity", Input).disabled is True
+
+        await pilot.click("#settings-save-category")
+
+    assert saved == [
+        (
+            "api_settings.anthropic",
+            "model_defaults",
+            {
+                "claude-opus-4-7": {
+                    "max_tokens": 12000,
+                    "thinking_effort": "xhigh",
+                    "thinking_budget_tokens": 4096,
+                    "streaming": False,
+                },
+            },
+        ),
+    ]
 
 
 @pytest.mark.asyncio

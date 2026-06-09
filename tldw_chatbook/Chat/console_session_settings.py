@@ -101,6 +101,10 @@ CONSOLE_TOKEN_CHAR_RATIOS = {
     "huggingface": 0.3,
     "default": 0.25,
 }
+_REASONING_EFFORT_VALUES = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
+_REASONING_SUMMARY_VALUES = frozenset({"auto", "concise", "detailed", "none"})
+_VERBOSITY_VALUES = frozenset({"low", "medium", "high"})
+_THINKING_EFFORT_VALUES = frozenset({"off", "low", "medium", "high", "xhigh", "max"})
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -145,6 +149,14 @@ class ConsoleSessionSettings:
     min_p: float | None = None
     top_k: int | None = None
     max_tokens: int | None = None
+    seed: int | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    reasoning_effort: str | None = None
+    reasoning_summary: str | None = None
+    verbosity: str | None = None
+    thinking_effort: str | None = None
+    thinking_budget_tokens: int | None = None
     streaming: bool = True
     persona_label: str = "General"
     character_label: str = ""
@@ -268,6 +280,14 @@ def build_default_console_session_settings(
         min_p=_optional_float_setting_from_sources(default_sources, "min_p"),
         top_k=_optional_int_setting_from_sources(default_sources, "top_k"),
         max_tokens=_optional_int_setting_from_sources(default_sources, "max_tokens"),
+        seed=_optional_int_setting_from_sources(default_sources, "seed"),
+        presence_penalty=_optional_float_setting_from_sources(default_sources, "presence_penalty"),
+        frequency_penalty=_optional_float_setting_from_sources(default_sources, "frequency_penalty"),
+        reasoning_effort=_optional_string_setting_from_sources(default_sources, "reasoning_effort"),
+        reasoning_summary=_optional_string_setting_from_sources(default_sources, "reasoning_summary"),
+        verbosity=_optional_string_setting_from_sources(default_sources, "verbosity"),
+        thinking_effort=_optional_string_setting_from_sources(default_sources, "thinking_effort"),
+        thinking_budget_tokens=_optional_int_setting_from_sources(default_sources, "thinking_budget_tokens"),
         streaming=_bool_setting_from_sources(default_sources, "streaming", True),
     )
 
@@ -301,6 +321,22 @@ def validate_console_session_settings(
         errors.append("Top K must be 0 or greater.")
     if not _is_blank_value(settings.max_tokens) and not _optional_int_at_least(settings.max_tokens, 1):
         errors.append("Max tokens must be 1 or greater.")
+    if not _is_blank_value(settings.seed) and not _optional_int_at_least(settings.seed, 0):
+        errors.append("Seed must be 0 or greater.")
+    if not _is_blank_value(settings.presence_penalty) and not _float_in_range(settings.presence_penalty, -2.0, 2.0):
+        errors.append("Presence penalty must be between -2 and 2.")
+    if not _is_blank_value(settings.frequency_penalty) and not _float_in_range(settings.frequency_penalty, -2.0, 2.0):
+        errors.append("Frequency penalty must be between -2 and 2.")
+    if not _is_blank_value(settings.reasoning_effort) and settings.reasoning_effort not in _REASONING_EFFORT_VALUES:
+        errors.append("Reasoning effort must be one of none, minimal, low, medium, high, or xhigh.")
+    if not _is_blank_value(settings.reasoning_summary) and settings.reasoning_summary not in _REASONING_SUMMARY_VALUES:
+        errors.append("Reasoning summary must be one of auto, concise, detailed, or none.")
+    if not _is_blank_value(settings.verbosity) and settings.verbosity not in _VERBOSITY_VALUES:
+        errors.append("Verbosity must be one of low, medium, or high.")
+    if not _is_blank_value(settings.thinking_effort) and settings.thinking_effort not in _THINKING_EFFORT_VALUES:
+        errors.append("Thinking effort must be one of off, low, medium, high, xhigh, or max.")
+    if not _is_blank_value(settings.thinking_budget_tokens) and not _optional_int_at_least(settings.thinking_budget_tokens, 1024):
+        errors.append("Thinking budget tokens must be at least 1024.")
 
     return errors
 
@@ -463,6 +499,12 @@ def build_console_settings_summary_state(
         sampling_parts.append(f"top_k {settings.top_k}")
     if settings.max_tokens is not None:
         sampling_parts.append(f"max_tokens {settings.max_tokens}")
+    if settings.seed is not None:
+        sampling_parts.append(f"seed {settings.seed}")
+    if settings.reasoning_effort:
+        sampling_parts.append(f"reasoning {settings.reasoning_effort}")
+    elif settings.thinking_effort:
+        sampling_parts.append(f"thinking {settings.thinking_effort}")
 
     character_label = _string_value(settings.character_label)
     persona_label = _string_value(settings.persona_label) or "General"
@@ -741,6 +783,18 @@ def _optional_int_setting_from_sources(
         parsed = _parse_optional_int(value)
         if parsed is not None:
             return parsed
+    return None
+
+
+def _optional_string_setting_from_sources(
+    sources: Sequence[Mapping[str, object]],
+    key: str,
+) -> str | None:
+    for source in sources:
+        value = source.get(key)
+        text = _string_value(value)
+        if text:
+            return text
     return None
 
 

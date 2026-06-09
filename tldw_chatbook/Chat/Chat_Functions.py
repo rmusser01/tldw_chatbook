@@ -142,6 +142,9 @@ PROVIDER_PARAM_MAP = {
         'response_format': 'response_format',
         'n': 'n',
         'user_identifier': 'user',
+        'reasoning_effort': 'reasoning_effort',
+        'reasoning_summary': 'reasoning_summary',
+        'verbosity': 'verbosity',
     },
     'anthropic': {
         'api_key': 'api_key',
@@ -157,6 +160,8 @@ PROVIDER_PARAM_MAP = {
         #'tool_choice': 'tool_choice',
         'max_tokens': 'max_tokens',  # Anthropic uses max_tokens
         'stop': 'stop_sequences',  # Anthropic uses stop_sequences
+        'thinking_effort': 'thinking_effort',
+        'thinking_budget_tokens': 'thinking_budget_tokens',
     },
     'cohere': {
         'api_key': 'api_key',
@@ -684,6 +689,11 @@ def chat_api_call(
     response_format: Optional[Dict[str, str]] = None,  # Expects {'type': 'text' | 'json_object'}
     n: Optional[int] = None,
     user_identifier: Optional[str] = None,  # Renamed from 'user' to avoid conflict with 'user' role in messages
+    reasoning_effort: Optional[str] = None,
+    reasoning_summary: Optional[str] = None,
+    verbosity: Optional[str] = None,
+    thinking_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
     llm_fixed_tokens_kobold: Optional[bool] = False # Added
     ):
     """
@@ -722,6 +732,11 @@ def chat_api_call(
         response_format: Specifies the format of the response (e.g., `{'type': 'json_object'}`).
         n: The number of chat completion choices to generate.
         user_identifier: An identifier for the end-user, for tracking or moderation purposes.
+        reasoning_effort: Provider-specific reasoning effort for OpenAI-compatible reasoning models.
+        reasoning_summary: Provider-specific reasoning summary setting for OpenAI-compatible reasoning models.
+        verbosity: Provider-specific response verbosity setting for OpenAI-compatible reasoning models.
+        thinking_effort: Provider-specific thinking level for Anthropic-style thinking models.
+        thinking_budget_tokens: Optional thinking token budget for Anthropic-style thinking models.
 
     Returns:
         The LLM's response. This can be a string for non-streaming responses or
@@ -781,6 +796,11 @@ def chat_api_call(
         'response_format': response_format,
         'n': n,
         'user_identifier': user_identifier,
+        'reasoning_effort': reasoning_effort,
+        'reasoning_summary': reasoning_summary,
+        'verbosity': verbosity,
+        'thinking_effort': thinking_effort,
+        'thinking_budget_tokens': thinking_budget_tokens,
         'llm_fixed_tokens_kobold': llm_fixed_tokens_kobold # Added
     }
 

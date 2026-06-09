@@ -126,6 +126,14 @@ class LlamaCppProviderConfig:
         min_p: Optional min-p sampling value.
         top_k: Optional top-k sampling value.
         max_tokens: Optional response token limit.
+        seed: Optional deterministic generation seed.
+        presence_penalty: Optional presence penalty value.
+        frequency_penalty: Optional frequency penalty value.
+        reasoning_effort: Optional OpenAI-style reasoning effort.
+        reasoning_summary: Optional OpenAI-style reasoning summary detail.
+        verbosity: Optional OpenAI-style verbosity hint.
+        thinking_effort: Optional Anthropic-style thinking effort.
+        thinking_budget_tokens: Optional Anthropic-style thinking token budget.
         streaming: Whether streaming responses are requested.
     """
 
@@ -137,6 +145,14 @@ class LlamaCppProviderConfig:
     min_p: float | None = None
     top_k: int | None = None
     max_tokens: int | None = None
+    seed: int | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    reasoning_effort: str | None = None
+    reasoning_summary: str | None = None
+    verbosity: str | None = None
+    thinking_effort: str | None = None
+    thinking_budget_tokens: int | None = None
     streaming: bool = True
 
 
@@ -176,6 +192,14 @@ class ConsoleProviderResolution:
     min_p: float | None = None
     top_k: int | None = None
     max_tokens: int | None = None
+    seed: int | None = None
+    presence_penalty: float | None = None
+    frequency_penalty: float | None = None
+    reasoning_effort: str | None = None
+    reasoning_summary: str | None = None
+    verbosity: str | None = None
+    thinking_effort: str | None = None
+    thinking_budget_tokens: int | None = None
     streaming: bool = True
 
 
@@ -387,6 +411,14 @@ class ConsoleProviderGateway:
                     min_p=selection.min_p,
                     top_k=selection.top_k,
                     max_tokens=selection.max_tokens,
+                    seed=selection.seed,
+                    presence_penalty=selection.presence_penalty,
+                    frequency_penalty=selection.frequency_penalty,
+                    reasoning_effort=selection.reasoning_effort,
+                    reasoning_summary=selection.reasoning_summary,
+                    verbosity=selection.verbosity,
+                    thinking_effort=selection.thinking_effort,
+                    thinking_budget_tokens=selection.thinking_budget_tokens,
                     streaming=selection.streaming,
                 )
             )
@@ -466,6 +498,14 @@ class ConsoleProviderGateway:
             min_p=selection.min_p,
             top_k=selection.top_k,
             max_tokens=selection.max_tokens,
+            seed=selection.seed,
+            presence_penalty=selection.presence_penalty,
+            frequency_penalty=selection.frequency_penalty,
+            reasoning_effort=selection.reasoning_effort,
+            reasoning_summary=selection.reasoning_summary,
+            verbosity=selection.verbosity,
+            thinking_effort=selection.thinking_effort,
+            thinking_budget_tokens=selection.thinking_budget_tokens,
             streaming=selection.streaming,
         )
 
@@ -751,6 +791,14 @@ class ConsoleProviderGateway:
             "topk": resolution.top_k,
             "minp": resolution.min_p,
             "max_tokens": resolution.max_tokens,
+            "seed": resolution.seed,
+            "presence_penalty": resolution.presence_penalty,
+            "frequency_penalty": resolution.frequency_penalty,
+            "reasoning_effort": resolution.reasoning_effort,
+            "reasoning_summary": resolution.reasoning_summary,
+            "verbosity": resolution.verbosity,
+            "thinking_effort": resolution.thinking_effort,
+            "thinking_budget_tokens": resolution.thinking_budget_tokens,
         }
         return {key: value for key, value in kwargs.items() if value is not None}
 
@@ -774,6 +822,14 @@ class ConsoleProviderGateway:
             "min_p": config.min_p,
             "top_k": config.top_k,
             "max_tokens": config.max_tokens,
+            "seed": config.seed,
+            "presence_penalty": config.presence_penalty,
+            "frequency_penalty": config.frequency_penalty,
+            "reasoning_effort": config.reasoning_effort,
+            "reasoning_summary": config.reasoning_summary,
+            "verbosity": config.verbosity,
+            "thinking_effort": config.thinking_effort,
+            "thinking_budget_tokens": config.thinking_budget_tokens,
             "streaming": config.streaming,
         }
 
@@ -877,6 +933,14 @@ class ConsoleProviderGateway:
             min_p=selection.min_p,
             top_k=selection.top_k,
             max_tokens=selection.max_tokens,
+            seed=selection.seed,
+            presence_penalty=selection.presence_penalty,
+            frequency_penalty=selection.frequency_penalty,
+            reasoning_effort=selection.reasoning_effort,
+            reasoning_summary=selection.reasoning_summary,
+            verbosity=selection.verbosity,
+            thinking_effort=selection.thinking_effort,
+            thinking_budget_tokens=selection.thinking_budget_tokens,
             streaming=selection.streaming,
         )
 
