@@ -905,6 +905,39 @@ async def test_console_add_api_key_recovery_targets_provider_settings_category()
 
 
 @pytest.mark.asyncio
+async def test_console_add_api_key_recovery_tolerates_missing_session_settings():
+    app = _build_test_app()
+    host = ConsoleNavigationHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="huggingface", model="meta-llama/test-model"),
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, "#console-open-provider-settings")
+        console._active_console_provider_model_display = lambda: (
+            "huggingface",
+            "meta-llama/test-model",
+            None,
+        )
+
+        await pilot.click("#console-open-provider-settings")
+
+        assert len(host.navigation_messages) == 1
+        message = host.navigation_messages[0]
+        assert message.screen_context == {
+            "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+            "provider": "huggingface",
+            "model": "meta-llama/test-model",
+        }
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_copy_action_uses_app_clipboard():
     app = _build_test_app()
     app.copy_to_clipboard = Mock()

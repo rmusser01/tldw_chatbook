@@ -3042,6 +3042,25 @@ async def test_settings_navigation_context_preserves_existing_provider_draft_val
 
 
 @pytest.mark.asyncio
+async def test_settings_navigation_provider_context_tolerates_missing_provider_values(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await pilot.pause()
+        monkeypatch.setattr(screen, "_provider_setting_values", lambda: None)
+
+        screen._apply_navigation_provider_context("huggingface")
+        await pilot.pause()
+
+        assert screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        assert screen.query_one("#settings-model-value", Input).value == ""
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_keyless_local_provider_does_not_report_missing_env_var():
     app = _build_test_app()
     app.chat_api_provider_value = "OpenAI"

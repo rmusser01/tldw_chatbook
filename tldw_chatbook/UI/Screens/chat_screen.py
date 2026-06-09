@@ -1615,11 +1615,11 @@ class ChatScreen(BaseAppScreen):
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleInspectorState:
-        _provider_display, model, settings = self._active_console_provider_model_display()
+        provider_display, model, settings = self._active_console_provider_model_display()
         _effective_settings, settings_readiness = self._active_console_settings_readiness()
         explicit_provider_ready = getattr(self.app_instance, "console_provider_ready", None)
         provider_readiness = get_provider_readiness(
-            settings.provider,
+            (settings.provider if settings is not None else None) or provider_display,
             getattr(self.app_instance, "app_config", {}) or {},
         )
         provider_runtime_ready = settings_readiness.native_send_supported and explicit_provider_ready is not False
@@ -1742,7 +1742,7 @@ class ChatScreen(BaseAppScreen):
         if settings_readiness.native_send_supported:
             return ""
         provider_readiness = get_provider_readiness(
-            settings.provider,
+            (settings.provider if settings is not None else None) or provider,
             getattr(self.app_instance, "app_config", {}) or {},
         )
         if provider_readiness.reason == "Missing API key":
@@ -1791,7 +1791,7 @@ class ChatScreen(BaseAppScreen):
             return ("Open Settings", "hidden", "Open provider settings")
 
         provider_readiness = get_provider_readiness(
-            settings.provider,
+            (settings.provider if settings is not None else None) or provider,
             getattr(self.app_instance, "app_config", {}) or {},
         )
         if provider_readiness.reason == "Missing API key":
@@ -3152,13 +3152,15 @@ class ChatScreen(BaseAppScreen):
             await self.on_console_settings_open(event)
             return
         provider, model, settings = self._active_console_provider_model_display()
-        provider_context = str(settings.provider or provider or "").strip()
+        settings_provider = settings.provider if settings is not None else None
+        provider_context = str(settings_provider or provider or "").strip()
         screen_context: dict[str, object] = {
             "category": SettingsCategoryId.PROVIDERS_MODELS.value,
         }
         if provider_context:
             screen_context["provider"] = provider_context
-        model_context = str(model or settings.model or "").strip()
+        settings_model = settings.model if settings is not None else None
+        model_context = str(model or settings_model or "").strip()
         if model_context:
             screen_context["model"] = model_context
         self.post_message(

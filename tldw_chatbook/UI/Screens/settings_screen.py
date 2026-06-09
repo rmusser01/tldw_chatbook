@@ -3296,9 +3296,13 @@ class SettingsScreen(BaseAppScreen):
             for key, value in loaded.items()
         }
 
+    def _provider_setting_values_mapping(self) -> Mapping[str, object]:
+        values = self._provider_setting_values()
+        return values if isinstance(values, Mapping) else {}
+
     def _provider_display_setting_values(self) -> dict[str, object]:
         """Return provider values for rendering without staging navigation context."""
-        values = self._provider_setting_values()
+        values = dict(self._provider_setting_values_mapping())
         if self._provider_draft() is not None or not self._navigation_provider:
             return values
         provider = self._navigation_provider
@@ -3744,7 +3748,7 @@ class SettingsScreen(BaseAppScreen):
             try:
                 return self.query_one("#settings-provider-value", Input).value.strip()
             except QueryError:
-                return str(self._provider_setting_values().get("provider") or "").strip()
+                return str(self._provider_setting_values_mapping().get("provider") or "").strip()
 
     def _sync_provider_manual_widget(self, provider: str) -> None:
         try:
@@ -4029,7 +4033,7 @@ class SettingsScreen(BaseAppScreen):
                 Input,
             ).value.strip()
         except QueryError:
-            values = self._provider_setting_values()
+            values = self._provider_setting_values_mapping()
             endpoint = str(values.get("endpoint") or "").strip()
             credential_env_var = str(values.get("credential_env_var") or "").strip()
         provider_settings: dict[str, object] = {}
@@ -4323,7 +4327,7 @@ class SettingsScreen(BaseAppScreen):
         try:
             provider = self._provider_widget_value()
         except QueryError:
-            provider = str(self._provider_setting_values().get("provider") or "")
+            provider = str(self._provider_setting_values_mapping().get("provider") or "")
         try:
             endpoint = self.query_one("#settings-provider-endpoint-value", Input).value.strip()
         except QueryError:
@@ -4368,7 +4372,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _provider_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
-        provider = str(self._provider_setting_values().get("provider") or "").strip()
+        provider = str(self._provider_setting_values_mapping().get("provider") or "").strip()
         endpoint_key = self._provider_endpoint_row(provider).removeprefix("Endpoint key: ")
         provider_config_prefix = (
             f"api_settings.{provider_config_key(provider)}"
@@ -6326,7 +6330,8 @@ class SettingsScreen(BaseAppScreen):
             return
         if self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS):
             return
-        model_value = str(model or self._provider_setting_values().get("model") or "").strip()
+        provider_settings = self._provider_setting_values_mapping()
+        model_value = str(model or provider_settings.get("model") or "").strip()
         self._sync_provider_manual_widget(provider_value)
         self._sync_provider_credential_widget(provider_value)
         try:
@@ -6893,7 +6898,7 @@ class SettingsScreen(BaseAppScreen):
     def _apply_provider_value_change(self, provider: str) -> None:
         self._clear_navigation_provider_context()
         loaded_provider = str(self._provider_loaded_setting_values().get("provider") or "")
-        previous_provider = str(self._provider_setting_values().get("provider") or "")
+        previous_provider = str(self._provider_setting_values_mapping().get("provider") or "")
         provider_changed = (
             bool(provider)
             and provider_config_key(provider) != provider_config_key(previous_provider)
@@ -6929,7 +6934,7 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one("#settings-model-value", Input).value = provider_default_model
             except QueryError:
                 pass
-        model = str(self._provider_setting_values().get("model") or "")
+        model = str(self._provider_setting_values_mapping().get("model") or "")
         self._sync_provider_model_profile_widgets(staged_provider, model)
         self._clear_provider_auxiliary_draft_keys()
         self._reset_provider_model_discovery_state()
@@ -6952,7 +6957,7 @@ class SettingsScreen(BaseAppScreen):
             and provider_config_key(provider) == provider_config_key(self._navigation_provider)
         ):
             return
-        current_provider = str(self._provider_setting_values().get("provider") or "")
+        current_provider = str(self._provider_setting_values_mapping().get("provider") or "")
         if provider_config_key(provider) == provider_config_key(current_provider):
             return
         self._apply_provider_value_change(provider)
@@ -6970,12 +6975,12 @@ class SettingsScreen(BaseAppScreen):
         model_value = event.value.strip()
         if self._navigation_model is not None and model_value == self._navigation_model:
             return
-        current_model = str(self._provider_setting_values().get("model") or "").strip()
+        current_model = str(self._provider_setting_values_mapping().get("model") or "").strip()
         if model_value == current_model:
             return
         self._clear_navigation_provider_context()
         self._stage_provider_value("model", model_value or None)
-        provider = str(self._provider_setting_values().get("provider") or "")
+        provider = str(self._provider_setting_values_mapping().get("provider") or "")
         self._sync_provider_model_profile_widgets(provider, model_value)
         self._clear_provider_model_profile_draft_keys()
         self._update_provider_dynamic_widgets()
