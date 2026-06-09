@@ -1111,6 +1111,42 @@ async def test_console_settings_modal_has_stable_body_error_and_footer_regions()
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_inputs_keep_visible_content_row_when_unfocused() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        base_url="http://127.0.0.1:9099",
+        temperature=0.6,
+        top_p=0.95,
+        max_tokens=4096,
+    )
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        for selector in (
+            "#console-settings-base-url",
+            "#console-settings-temperature",
+            "#console-settings-top-p",
+            "#console-settings-max-tokens",
+        ):
+            input_widget = app.screen.query_one(selector, Input)
+
+            assert input_widget.value
+            assert input_widget.content_region.height >= 1
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_renders_context_and_identity_read_only_rows() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(
