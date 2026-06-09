@@ -6341,18 +6341,6 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
-    def _apply_navigation_model_context(self, provider: str, model: str) -> None:
-        """Keep provider-targeted navigation on the originating Console model."""
-        model_value = str(model or "").strip()
-        if not model_value:
-            return
-        self._stage_provider_value("model", model_value)
-        try:
-            self.query_one("#settings-model-value", Input).value = model_value
-        except QueryError:
-            pass
-        self._sync_provider_model_profile_widgets(provider, model_value)
-
     def _select_category(self, category_value: str, *, restore_focus: bool = False) -> None:
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
