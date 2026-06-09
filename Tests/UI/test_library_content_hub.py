@@ -70,6 +70,29 @@ async def test_library_default_mode_renders_content_hub_with_real_counts_and_rec
 
 
 @pytest.mark.asyncio
+async def test_library_hub_recent_titles_render_rich_markup_literals() -> None:
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService(
+        [{"title": "[bold]Literal Note[/]", "id": "note-1"}]
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-content-hub-title")
+
+        visible = _visible_text(screen)
+        card = screen.query_one("#library-notes-summary")
+
+        assert getattr(card, "_render_markup") is False
+        assert "Recent: [bold]Literal Note[/]" in visible
+        assert "Recent: Literal Note" not in visible
+
+
+@pytest.mark.asyncio
 async def test_library_hub_empty_state_teaches_content_entry_without_selected_source_actions() -> None:
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService([])
@@ -188,6 +211,7 @@ async def test_library_conversations_selection_shows_metadata_and_handoff_action
                 "conversation_id": "chat-2",
                 "message_count": 3,
                 "workspace_id": "ws-other",
+                "last_modified": "2026-06-02T09:30:00Z",
             },
         ]
     )
@@ -209,6 +233,7 @@ async def test_library_conversations_selection_shows_metadata_and_handoff_action
         assert "Messages: 3" in visible
         assert "Source authority: local" in visible
         assert "Workspace: ws-other" in visible
+        assert "Updated: 2026-06-02T09:30:00Z" in visible
         assert "Handoff eligibility:" in visible
         assert str(open_button.label) == "Open in Console"
         assert str(source_button.label) == "Use as source"
@@ -254,6 +279,7 @@ async def test_library_conversation_use_as_source_hands_off_selected_conversatio
                 "title": "Planning Chat",
                 "conversation_id": "chat-1",
                 "message_count": 7,
+                "last_modified": "2026-06-03T10:15:00Z",
             },
         ]
     )
@@ -282,7 +308,9 @@ async def test_library_conversation_use_as_source_hands_off_selected_conversatio
     assert payload.source_id == "chat-1"
     assert payload.title == "Planning Chat"
     assert "Planning Chat" in payload.body
+    assert "Updated: 2026-06-03T10:15:00Z" in payload.body
     assert payload.metadata["conversation_id"] == "chat-1"
+    assert payload.metadata["updated_label"] == "Updated: 2026-06-03T10:15:00Z"
 
 
 @pytest.mark.asyncio

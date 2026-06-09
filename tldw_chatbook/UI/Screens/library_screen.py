@@ -629,7 +629,7 @@ class LibraryScreen(BaseAppScreen):
 
     @classmethod
     def _conversation_updated_label(cls, record: Mapping[str, Any]) -> str:
-        for key in ("updated_at", "last_updated", "modified_at", "created_at"):
+        for key in ("updated_at", "last_modified", "last_updated", "modified_at", "created_at"):
             value = cls._safe_text(record.get(key), max_length=64)
             if value:
                 return f"Updated: {value}"
@@ -805,6 +805,7 @@ class LibraryScreen(BaseAppScreen):
                 "conversation_title": title,
                 "message_count_label": message_count,
                 "workspace_label": workspace_label,
+                "updated_label": updated_label,
                 "source_authority": "local",
             },
         )
@@ -833,6 +834,7 @@ class LibraryScreen(BaseAppScreen):
                     self._source_recent_label(source_type),
                 )
             ),
+            markup=False,
             id=widget_id,
             classes="library-hub-card",
         )
@@ -2234,6 +2236,7 @@ class LibraryScreen(BaseAppScreen):
         if not regions:
             return
         region = regions[0]
+        # Textual removes children asynchronously; wait before remounting reused IDs.
         await region.remove_children()
         if not self._library_loaded:
             await region.mount(
