@@ -150,7 +150,7 @@ def test_phase_3_2_library_study_context_evidence_is_tracked() -> None:
     assert "Library -> Flashcards / Quizzes with source context" in evidence
     assert "No P0/P1 defects found" in evidence
     assert "Tests/UI/test_product_maturity_phase3_library_study_context.py" in evidence
-    assert "status: In Progress" in parent_task
+    assert "status: Done" in parent_task
     assert "Product Maturity Phase 3.2: Library Source Study Context" in task
     assert "status: Done" in task
     assert "- [x] #1" in task

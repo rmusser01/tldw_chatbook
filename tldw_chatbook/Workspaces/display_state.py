@@ -425,6 +425,28 @@ def build_library_workspace_depth_state(
             )
             if row is not None:
                 rows.append(row)
+    workspace_display_name = (
+        "Local Default"
+        if active_workspace.workspace_id == DEFAULT_WORKSPACE_ID
+        else active_workspace.name
+    )
+    if not rows:
+        return LibraryWorkspaceDepthState(
+            heading="Workspaces",
+            workspace_label=f"Workspace: {workspace_display_name}",
+            workspace_name=workspace_display_name,
+            visibility_label=LIBRARY_WORKSPACE_VISIBILITY_COPY,
+            handoff_label="Console/RAG handoff: unavailable until sources exist",
+            context_handoff_enabled=False,
+            context_handoff_tooltip="Add Library sources before staging context in Console.",
+            source_authority_label=f"Source authority: active workspace {active_workspace.workspace_id}",
+            collections_membership_label=LIBRARY_WORKSPACE_COLLECTIONS_COPY,
+            import_export_label=LIBRARY_WORKSPACE_IMPORT_EXPORT_COPY,
+            source_rows=(),
+            recovery_copy=(
+                "Workspace switching changes context eligibility, not Library visibility."
+            ),
+        )
     eligible_count = sum(row.active_context_eligible for row in rows)
     blocked_count = len(rows) - eligible_count
     handoff_enabled = bool(rows) and blocked_count == 0
@@ -438,8 +460,8 @@ def build_library_workspace_depth_state(
     )
     return LibraryWorkspaceDepthState(
         heading="Workspaces",
-        workspace_label=f"Workspace: {active_workspace.name}",
-        workspace_name=active_workspace.name,
+        workspace_label=f"Workspace: {workspace_display_name}",
+        workspace_name=workspace_display_name,
         visibility_label=LIBRARY_WORKSPACE_VISIBILITY_COPY,
         handoff_label=(
             f"Console/RAG handoff: {eligible_count} eligible"
