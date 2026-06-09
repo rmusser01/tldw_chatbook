@@ -2966,6 +2966,30 @@ async def test_settings_provider_category_renders_catalog_select_with_visible_va
 
 
 @pytest.mark.asyncio
+async def test_settings_navigation_context_can_preselect_provider_category_target():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(
+            {
+                "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+                "provider": "huggingface",
+                "model": "meta-llama/test-model",
+            }
+        )
+        await pilot.pause()
+
+        assert screen.active_category == SettingsCategoryId.PROVIDERS_MODELS.value
+        assert screen.query_one("#settings-provider-value", Select).value == "huggingface"
+        assert screen.query_one("#settings-model-value", Input).value == "meta-llama/test-model"
+        assert "HUGGINGFACE_API_KEY" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_keyless_local_provider_does_not_report_missing_env_var():
     app = _build_test_app()
     app.chat_api_provider_value = "OpenAI"

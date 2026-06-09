@@ -28,6 +28,7 @@ from .provider_model_resolution import (
     resolve_effective_provider_model,
     resolve_provider_model_options,
 )
+from .settings_config_models import SettingsCategoryId
 from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.console_chat_controller import ConsoleChatController
@@ -3148,7 +3149,22 @@ class ChatScreen(BaseAppScreen):
         if target == "console" and getattr(self, "is_mounted", False):
             await self.on_console_settings_open(event)
             return
-        self.post_message(NavigateToScreen(TAB_SETTINGS))
+        provider, model, settings = self._active_console_provider_model_display()
+        provider_context = str(settings.provider or provider or "").strip()
+        screen_context: dict[str, object] = {
+            "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+        }
+        if provider_context:
+            screen_context["provider"] = provider_context
+        model_context = str(model or settings.model or "").strip()
+        if model_context:
+            screen_context["model"] = model_context
+        self.post_message(
+            NavigateToScreen(
+                TAB_SETTINGS,
+                screen_context=screen_context,
+            )
+        )
 
     @on(Button.Pressed, f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")
     def handle_console_inspector_review_approval(self, event: Button.Pressed) -> None:

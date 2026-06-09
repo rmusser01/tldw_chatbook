@@ -3293,6 +3293,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                             logger.debug(f"Restored state for screen: {screen_name}")
                     except Exception as e:
                         logger.error(f"Error restoring screen state: {e}")
+
+            navigation_context = getattr(message, "screen_context", {}) or {}
+            if navigation_context and hasattr(new_screen, "apply_navigation_context"):
+                try:
+                    result = new_screen.apply_navigation_context(navigation_context)
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception as e:
+                    logger.error(f"Error applying navigation context for {screen_name}: {e}")
             
             # Use switch_screen to replace the current screen
             await self.switch_screen(new_screen)

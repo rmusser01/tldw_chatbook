@@ -9,14 +9,17 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
+from textual import on
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 
 
@@ -67,6 +70,17 @@ class DelayedWaitingGateway(WaitingGateway):
         self.validation_started.set()
         await self.validation_release.wait()
         return await super().resolve_for_send(selection)
+
+
+class ConsoleNavigationHarness(ConsoleHarness):
+    def __init__(self, app_instance):
+        super().__init__(app_instance)
+        self.navigation_messages = []
+
+    @on(NavigateToScreen)
+    def capture_navigation(self, message: NavigateToScreen) -> None:
+        self.navigation_messages.append(message)
+        message.stop()
 
 
 class BlockedGateway:
@@ -835,6 +849,36 @@ async def test_console_unsupported_provider_block_renders_one_normalized_system_
             "Choose a supported provider."
         ]
         assert console._ensure_console_chat_controller().run_state.visible_copy == system_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_console_add_api_key_recovery_targets_provider_settings_category():
+    app = _build_test_app()
+    app.app_config["api_settings"] = {"huggingface": {}}
+    host = ConsoleNavigationHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="huggingface", model="meta-llama/test-model"),
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, "#console-open-provider-settings")
+
+        await pilot.click("#console-open-provider-settings")
+
+        assert len(host.navigation_messages) == 1
+        message = host.navigation_messages[0]
+        assert message.screen_name == "settings"
+        assert message.screen_context == {
+            "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+            "provider": "huggingface",
+            "model": "meta-llama/test-model",
+        }
 
 
 @pytest.mark.asyncio

@@ -6221,6 +6221,59 @@ class SettingsScreen(BaseAppScreen):
         next_index = max(0, min(len(category_values) - 1, current_index + delta))
         self._focus_category(category_values[next_index])
 
+    def apply_navigation_context(self, context: Mapping[str, object]) -> None:
+        """Apply destination-specific navigation context after cross-screen routing."""
+        category = context.get("category")
+        if isinstance(category, SettingsCategoryId):
+            category_value = category.value
+        elif isinstance(category, str):
+            category_value = category
+        else:
+            return
+        valid_categories = {summary.category.value for summary in self._category_summaries()}
+        if category_value not in valid_categories:
+            logger.debug("Ignoring unknown Settings navigation category: %s", category_value)
+            return
+        self._select_category(category_value, restore_focus=True)
+        if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
+            return
+        provider = str(context.get("provider") or "").strip()
+        if not provider:
+            return
+        self._apply_provider_value_change(provider)
+        model = str(context.get("model") or "").strip()
+        if model:
+            self._apply_navigation_model_context(provider, model)
+        self.call_after_refresh(self._apply_navigation_provider_context, provider, model)
+
+    def _apply_navigation_provider_context(self, provider: str, model: str = "") -> None:
+        """Synchronize mounted provider widgets after route-targeted navigation."""
+        if self.active_category != SettingsCategoryId.PROVIDERS_MODELS.value:
+            return
+        provider_value = str(provider or "").strip()
+        if not provider_value:
+            return
+        model_value = str(model or self._provider_setting_values().get("model") or "").strip()
+        self._sync_provider_manual_widget(provider_value)
+        self._sync_provider_credential_widget(provider_value)
+        if model_value:
+            self._apply_navigation_model_context(provider_value, model_value)
+        self._sync_provider_model_profile_widgets(provider_value, model_value)
+        self._update_provider_dynamic_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    def _apply_navigation_model_context(self, provider: str, model: str) -> None:
+        """Keep provider-targeted navigation on the originating Console model."""
+        model_value = str(model or "").strip()
+        if not model_value:
+            return
+        self._stage_provider_value("model", model_value)
+        try:
+            self.query_one("#settings-model-value", Input).value = model_value
+        except QueryError:
+            pass
+        self._sync_provider_model_profile_widgets(provider, model_value)
+
     def _select_category(self, category_value: str, *, restore_focus: bool = False) -> None:
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
