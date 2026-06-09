@@ -1,5 +1,5 @@
 ---
-id: TASK-81
+id: TASK-86
 title: Console workspace switching server-readiness contracts
 status: Done
 labels:
@@ -33,7 +33,7 @@ Prepare Console workspace switching for future tldw_server and ACP handoff suppo
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/005-console-workspace-server-readiness.md
-Reason: TASK-81 defines long-lived workspace authority, sync/handoff policy, server adapter boundaries, and ACP task/run package readiness contracts.
+Reason: TASK-86 defines long-lived workspace authority, sync/handoff policy, server adapter boundaries, and ACP task/run package readiness contracts.
 
 1. Create ADR 005 to lock the local-first/server-readiness boundary: no sync engine, local registry fallback, explicit adapter states, and ACP handoff as visible future target.
 2. Write failing pure regressions for Console workspace server-readiness display state covering server-unavailable, remote-only, conflict, runtime-missing, source/conversation transfer policy labels, and ACP handoff blocked/ready/failure/audit states.
