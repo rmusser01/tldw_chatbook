@@ -51,16 +51,16 @@ class ConsoleSaveDestination:
 class ConsoleMessageActionService:
     """Resolve and dispatch safe Console selected-message actions."""
 
-    FEEDBACK_PLAIN_LABELS: tuple[str, str] = ("Good", "Bad")
+    FEEDBACK_PLAIN_LABELS: tuple[str, str] = ("👍", "👎")
 
     _COMPLETED_ACTIONS: tuple[tuple[str, str], ...] = (
         ("copy", "Copy"),
         ("edit", "Edit"),
         ("save-as", "Save as..."),
-        ("regenerate", "Regen"),
+        ("regenerate", "♻"),
         ("continue", "--->"),
         ("feedback", "Feedback"),
-        ("delete", "Del"),
+        ("delete", "🗑"),
     )
 
     def __init__(self, *, available_save_destinations: set[str] | None = None) -> None:
@@ -77,10 +77,10 @@ class ConsoleMessageActionService:
                 ("save-as", "Save as..."),
                 ("variant-previous", "<"),
                 ("variant-next", ">"),
-                ("regenerate", "Regen"),
+                ("regenerate", "♻"),
                 ("continue", "--->"),
                 ("feedback", "Feedback"),
-                ("delete", "Del"),
+                ("delete", "🗑"),
             ]
         if message.status == "failed":
             return [
@@ -88,10 +88,10 @@ class ConsoleMessageActionService:
                 ConsoleMessageAction("edit", "Edit"),
                 ConsoleMessageAction("save-as", "Save as..."),
                 ConsoleMessageAction("retry", "Try"),
-                ConsoleMessageAction("regenerate", "Regen"),
+                ConsoleMessageAction("regenerate", "♻"),
                 ConsoleMessageAction("continue", "--->"),
                 ConsoleMessageAction("feedback", "Feedback"),
-                ConsoleMessageAction("delete", "Del"),
+                ConsoleMessageAction("delete", "🗑"),
             ]
         return [
             ConsoleMessageAction(

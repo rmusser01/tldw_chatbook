@@ -18,10 +18,10 @@ def test_assistant_message_actions_include_required_order():
         "Copy",
         "Edit",
         "Save as...",
-        "Regen",
+        "♻",
         "--->",
         "Feedback",
-        "Del",
+        "🗑",
     ]
 
 
@@ -39,10 +39,10 @@ def test_streaming_assistant_message_shows_completed_actions_disabled_with_reaso
         "Copy",
         "Edit",
         "Save as...",
-        "Regen",
+        "♻",
         "--->",
         "Feedback",
-        "Del",
+        "🗑",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -66,10 +66,10 @@ def test_pending_assistant_message_shows_completed_actions_disabled_with_reasons
         "Copy",
         "Edit",
         "Save as...",
-        "Regen",
+        "♻",
         "--->",
         "Feedback",
-        "Del",
+        "🗑",
     ]
     assert all(action.enabled is False for action in actions)
     assert all(action.disabled_reason for action in actions)
@@ -92,7 +92,7 @@ def test_action_labels_fit_compact_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save as... Regen ---> Good Bad Del"
+    assert " ".join(labels) == "Copy Edit Save as... ♻ ---> 👍 👎 🗑"
     assert len(" ".join(labels)) <= 48
 
 
@@ -113,10 +113,10 @@ def test_variant_action_labels_use_symbolic_navigation():
         "Save as...",
         "<",
         ">",
-        "Regen",
+        "♻",
         "--->",
         "Feedback",
-        "Del",
+        "🗑",
     ]
 
 
@@ -131,7 +131,7 @@ def test_variant_action_labels_fit_compact_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save as... < > Regen ---> Good Bad Del"
+    assert " ".join(labels) == "Copy Edit Save as... < > ♻ ---> 👍 👎 🗑"
     assert len(" ".join(labels)) <= 52
 
 
@@ -145,7 +145,7 @@ def test_failed_action_labels_include_retry_inside_terminal_width_budget():
 
     labels = service.plain_action_labels(message)
 
-    assert " ".join(labels) == "Copy Edit Save as... Try Regen ---> Good Bad Del"
+    assert " ".join(labels) == "Copy Edit Save as... Try ♻ ---> 👍 👎 🗑"
     assert len(" ".join(labels)) <= 52
 
 

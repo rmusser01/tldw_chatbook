@@ -240,7 +240,7 @@ def test_console_transcript_selected_message_shows_action_row():
 
     plain = transcript.to_plain_text(width=80)
 
-    assert "Copy Edit Save as... Regen ---> Good Bad Del" in plain
+    assert "Copy Edit Save as... ♻ ---> 👍 👎 🗑" in plain
     assert "|" not in plain
 
 
@@ -274,7 +274,7 @@ def test_console_transcript_action_row_stays_within_terminal_width_budget():
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... Regen ---> Good Bad Del"
+    assert action_row == "Copy Edit Save as... ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 48
 
 
@@ -315,7 +315,7 @@ def test_console_transcript_variant_action_row_stays_within_terminal_width_budge
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... < > Regen ---> Good Bad Del"
+    assert action_row == "Copy Edit Save as... < > ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 52
 
 
@@ -336,7 +336,7 @@ def test_console_transcript_failed_action_row_includes_retry_without_exceeding_b
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... Try Regen ---> Good Bad Del"
+    assert action_row == "Copy Edit Save as... Try ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 52
 
 
@@ -352,7 +352,10 @@ async def test_console_transcript_keyboard_selects_messages_and_enter_shows_acti
 
     assert "Copy" in text
     assert "Save as..." in text
-    assert "Regen" in text
+    assert "♻" in text
+    assert "👍" in text
+    assert "👎" in text
+    assert "🗑" in text
     assert "|" not in text
 
 
@@ -366,7 +369,10 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
 
     assert "Copy" in text
     assert "Save as..." in text
-    assert "Regen" in text
+    assert "♻" in text
+    assert "👍" in text
+    assert "👎" in text
+    assert "🗑" in text
     assert "|" not in text
 
 
@@ -396,7 +402,10 @@ async def test_console_transcript_action_buttons_have_stable_ids():
 
     assert "Copy" in text
     assert "Save as..." in text
-    assert "Regen" in text
+    assert "♻" in text
+    assert "👍" in text
+    assert "👎" in text
+    assert "🗑" in text
     assert "|" not in text
 
 
