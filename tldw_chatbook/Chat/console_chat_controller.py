@@ -57,6 +57,14 @@ class ConsoleChatController:
         min_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
+        seed: int | None = None,
+        presence_penalty: float | None = None,
+        frequency_penalty: float | None = None,
+        reasoning_effort: str | None = None,
+        reasoning_summary: str | None = None,
+        verbosity: str | None = None,
+        thinking_effort: str | None = None,
+        thinking_budget_tokens: int | None = None,
         streaming: bool = True,
     ) -> None:
         self.store = store
@@ -70,6 +78,14 @@ class ConsoleChatController:
         self.min_p = min_p
         self.top_k = top_k
         self.max_tokens = max_tokens
+        self.seed = seed
+        self.presence_penalty = presence_penalty
+        self.frequency_penalty = frequency_penalty
+        self.reasoning_effort = reasoning_effort
+        self.reasoning_summary = reasoning_summary
+        self.verbosity = verbosity
+        self.thinking_effort = thinking_effort
+        self.thinking_budget_tokens = thinking_budget_tokens
         self.streaming = streaming
         self.run_state = ConsoleRunState()
         self.run_state_history: list[ConsoleRunStatus] = [self.run_state.status]
@@ -141,6 +157,14 @@ class ConsoleChatController:
         self.min_p = selection.min_p
         self.top_k = selection.top_k
         self.max_tokens = selection.max_tokens
+        self.seed = selection.seed
+        self.presence_penalty = selection.presence_penalty
+        self.frequency_penalty = selection.frequency_penalty
+        self.reasoning_effort = selection.reasoning_effort
+        self.reasoning_summary = selection.reasoning_summary
+        self.verbosity = selection.verbosity
+        self.thinking_effort = selection.thinking_effort
+        self.thinking_budget_tokens = selection.thinking_budget_tokens
         self.streaming = selection.streaming
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
@@ -336,6 +360,14 @@ class ConsoleChatController:
             min_p=self.min_p,
             top_k=self.top_k,
             max_tokens=self.max_tokens,
+            seed=self.seed,
+            presence_penalty=self.presence_penalty,
+            frequency_penalty=self.frequency_penalty,
+            reasoning_effort=self.reasoning_effort,
+            reasoning_summary=self.reasoning_summary,
+            verbosity=self.verbosity,
+            thinking_effort=self.thinking_effort,
+            thinking_budget_tokens=self.thinking_budget_tokens,
             streaming=self.streaming,
             workspace_context=self.store.workspace_context,
         )

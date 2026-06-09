@@ -101,10 +101,10 @@ CONSOLE_TOKEN_CHAR_RATIOS = {
     "huggingface": 0.3,
     "default": 0.25,
 }
-_REASONING_EFFORT_VALUES = frozenset({"minimal", "low", "medium", "high", "xhigh"})
+_REASONING_EFFORT_VALUES = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
 _REASONING_SUMMARY_VALUES = frozenset({"auto", "concise", "detailed", "none"})
 _VERBOSITY_VALUES = frozenset({"low", "medium", "high"})
-_THINKING_EFFORT_VALUES = frozenset({"off", "low", "medium", "high", "xhigh"})
+_THINKING_EFFORT_VALUES = frozenset({"off", "low", "medium", "high", "xhigh", "max"})
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -328,13 +328,13 @@ def validate_console_session_settings(
     if not _is_blank_value(settings.frequency_penalty) and not _float_in_range(settings.frequency_penalty, -2.0, 2.0):
         errors.append("Frequency penalty must be between -2 and 2.")
     if not _is_blank_value(settings.reasoning_effort) and settings.reasoning_effort not in _REASONING_EFFORT_VALUES:
-        errors.append("Reasoning effort must be one of minimal, low, medium, high, or xhigh.")
+        errors.append("Reasoning effort must be one of none, minimal, low, medium, high, or xhigh.")
     if not _is_blank_value(settings.reasoning_summary) and settings.reasoning_summary not in _REASONING_SUMMARY_VALUES:
         errors.append("Reasoning summary must be one of auto, concise, detailed, or none.")
     if not _is_blank_value(settings.verbosity) and settings.verbosity not in _VERBOSITY_VALUES:
         errors.append("Verbosity must be one of low, medium, or high.")
     if not _is_blank_value(settings.thinking_effort) and settings.thinking_effort not in _THINKING_EFFORT_VALUES:
-        errors.append("Thinking effort must be one of off, low, medium, high, or xhigh.")
+        errors.append("Thinking effort must be one of off, low, medium, high, xhigh, or max.")
     if not _is_blank_value(settings.thinking_budget_tokens) and not _optional_int_at_least(settings.thinking_budget_tokens, 1024):
         errors.append("Thinking budget tokens must be at least 1024.")
 

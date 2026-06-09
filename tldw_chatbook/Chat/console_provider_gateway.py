@@ -411,6 +411,14 @@ class ConsoleProviderGateway:
                     min_p=selection.min_p,
                     top_k=selection.top_k,
                     max_tokens=selection.max_tokens,
+                    seed=selection.seed,
+                    presence_penalty=selection.presence_penalty,
+                    frequency_penalty=selection.frequency_penalty,
+                    reasoning_effort=selection.reasoning_effort,
+                    reasoning_summary=selection.reasoning_summary,
+                    verbosity=selection.verbosity,
+                    thinking_effort=selection.thinking_effort,
+                    thinking_budget_tokens=selection.thinking_budget_tokens,
                     streaming=selection.streaming,
                 )
             )
@@ -814,6 +822,14 @@ class ConsoleProviderGateway:
             "min_p": config.min_p,
             "top_k": config.top_k,
             "max_tokens": config.max_tokens,
+            "seed": config.seed,
+            "presence_penalty": config.presence_penalty,
+            "frequency_penalty": config.frequency_penalty,
+            "reasoning_effort": config.reasoning_effort,
+            "reasoning_summary": config.reasoning_summary,
+            "verbosity": config.verbosity,
+            "thinking_effort": config.thinking_effort,
+            "thinking_budget_tokens": config.thinking_budget_tokens,
             "streaming": config.streaming,
         }
 

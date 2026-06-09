@@ -260,6 +260,14 @@ async def test_resolve_for_send_copies_sampling_fields_to_llamacpp_resolution():
             min_p=0.05,
             top_k=30,
             max_tokens=500,
+            seed=11,
+            presence_penalty=0.2,
+            frequency_penalty=0.3,
+            reasoning_effort="high",
+            reasoning_summary="auto",
+            verbosity="medium",
+            thinking_effort="low",
+            thinking_budget_tokens=2048,
             streaming=False,
         )
     )
@@ -270,6 +278,14 @@ async def test_resolve_for_send_copies_sampling_fields_to_llamacpp_resolution():
     assert resolved.min_p == 0.05
     assert resolved.top_k == 30
     assert resolved.max_tokens == 500
+    assert resolved.seed == 11
+    assert resolved.presence_penalty == 0.2
+    assert resolved.frequency_penalty == 0.3
+    assert resolved.reasoning_effort == "high"
+    assert resolved.reasoning_summary == "auto"
+    assert resolved.verbosity == "medium"
+    assert resolved.thinking_effort == "low"
+    assert resolved.thinking_budget_tokens == 2048
     assert resolved.streaming is False
 
 

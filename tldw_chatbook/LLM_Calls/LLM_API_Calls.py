@@ -113,6 +113,7 @@ _ANTHROPIC_THINKING_BUDGETS_BY_EFFORT = {
     "medium": 4096,
     "high": 8192,
     "xhigh": 16384,
+    "max": 32768,
 }
 _ANTHROPIC_ADAPTIVE_THINKING_MODEL_MARKERS = (
     "opus-4-8",
@@ -217,7 +218,7 @@ def _responses_stream_to_chat_sse(response, *, model: str):
                 yield f"data: {json.dumps(chunk)}\n\n"
             elif event_type == "error":
                 yield f"data: {payload_text}\n\n"
-    except requests.exceptions.ChunkedEncodingError as exc:
+    except requests.exceptions.RequestException as exc:
         logger.error("OpenAI Responses: stream connection error: %s", exc, exc_info=True)
         yield (
             "data: "
@@ -500,37 +501,41 @@ def chat_with_openai(
     try:
         if final_streaming:
             logger.debug("OpenAI: Posting request (streaming)")
-            with requests.Session() as session:
-                response = session.post(api_url, headers=headers, json=payload, stream=True, timeout=180)
-                response.raise_for_status()
-
-                def stream_generator():
-                    try:
-                        for line in response.iter_lines(decode_unicode=True):
-                            if line and line.strip():
-                                # Pass through OpenAI's SSE lines directly.
-                                # Ensure they end with \n\n if not already.
-                                # OpenAI's SSE usually includes double newlines.
-                                yield line if line.endswith("\n") else line + "\n"
-                    except requests.exceptions.ChunkedEncodingError as e_chunk:
-                        logger.error(f"OpenAI: ChunkedEncodingError during stream: {e_chunk}", exc_info=True)
-                        error_content = json.dumps({"error": {"message": f"Stream connection error: {str(e_chunk)}",
-                                                              "type": "openai_stream_error"}})
-                        yield f"data: {error_content}\n\n" # Yield as SSE error
-                    except Exception as e_stream:
-                        logger.error(f"OpenAI: Error during stream iteration: {e_stream}", exc_info=True)
-                        error_content = json.dumps({"error": {"message": f"Stream iteration error: {str(e_stream)}",
-                                                              "type": "openai_stream_error"}})
-                        yield f"data: {error_content}\n\n" # Yield as SSE error
-                    finally:
-                        # Ensure DONE is sent for the endpoint wrapper's logic
+            def stream_generator():
+                session_context = requests.Session()
+                session = session_context.__enter__()
+                response = None
+                try:
+                    response = session.post(api_url, headers=headers, json=payload, stream=True, timeout=180)
+                    response.raise_for_status()
+                    if use_responses_api:
+                        yield from _responses_stream_to_chat_sse(response, model=final_model)
+                        return
+                    for line in response.iter_lines(decode_unicode=True):
+                        if line and line.strip():
+                            # Pass through OpenAI's SSE lines directly.
+                            # Ensure they end with \n\n if not already.
+                            # OpenAI's SSE usually includes double newlines.
+                            yield line if line.endswith("\n") else line + "\n"
+                except requests.exceptions.RequestException as e_request:
+                    logger.error(f"OpenAI: RequestException during stream: {e_request}", exc_info=True)
+                    error_content = json.dumps({"error": {"message": f"Stream connection error: {str(e_request)}",
+                                                          "type": "openai_stream_error"}})
+                    yield f"data: {error_content}\n\n" # Yield as SSE error
+                except Exception as e_stream:
+                    logger.error(f"OpenAI: Error during stream iteration: {e_stream}", exc_info=True)
+                    error_content = json.dumps({"error": {"message": f"Stream iteration error: {str(e_stream)}",
+                                                          "type": "openai_stream_error"}})
+                    yield f"data: {error_content}\n\n" # Yield as SSE error
+                finally:
+                    # Ensure DONE is sent for the endpoint wrapper's logic
+                    if not use_responses_api:
                         yield "data: [DONE]\n\n"
-                        if response:
-                            response.close()
+                    if response:
+                        response.close()
+                    session_context.__exit__(None, None, None)
 
-                if use_responses_api:
-                    return _responses_stream_to_chat_sse(response, model=final_model)
-                return stream_generator()
+            return stream_generator()
 
         else:  # Non-streaming
             logger.debug("OpenAI: Posting request (non-streaming)")

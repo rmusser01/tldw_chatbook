@@ -53,8 +53,9 @@ Reason: This slice changes provider/runtime boundaries, persisted generation def
 - Added ADR-006 to document the Settings/Console/provider-adapter boundary for persisted generation defaults and request-shape translation.
 - Verified with focused tests: `python -m pytest -q Tests/UI/test_console_session_settings.py Tests/Chat/test_console_provider_gateway.py Tests/Chat/test_chat_functions.py::TestChatApiCall Tests/Chat/test_chat_functions.py::TestProviderRequestPayloads Tests/UI/test_settings_configuration_hub.py --tb=short` passed with 317 tests.
 - Added a follow-up provider API validation pass: OpenAI reasoning now accepts the current `none` effort option, Anthropic thinking payloads omit incompatible sampling controls, current Opus adaptive thinking markers are covered, and opt-in live tests under `Tests/Chat/test_live_thinking_provider_apis.py` validate configured thinking-capable OpenAI/Anthropic models against their real APIs when credentials and model env vars are supplied.
+- Addressed PR review feedback by replacing API-key-shaped test placeholders, preserving OpenAI streaming session lifetime through generator consumption, forwarding expanded Console generation fields through ChatScreen/controller/llama.cpp resolution, loading malformed optional integer defaults as blank, and accepting documented `none`/`max` effort values.
 - Local live validation command `python -m pytest -q Tests/Chat/test_live_thinking_provider_apis.py --tb=short` skipped both tests because no OpenAI/Anthropic API keys or explicit live thinking model env vars are exposed in this shell.
-- Verified compile and diff hygiene with `python -m py_compile ...` and `git diff --check`.
+- Verified compile and diff hygiene with `python -m py_compile ...` and `git diff --check`; review-fix verification included the focused regression set, the PR Settings/Console/provider suite, and the legacy mocked OpenAI streaming test.
 - Captured actual Textual-web/CDP screenshots under `Docs/superpowers/qa/product-maturity/screen-qa/settings/generation-controls-2026-06-08/`; user approved the updated provider-gated controls screenshot.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 

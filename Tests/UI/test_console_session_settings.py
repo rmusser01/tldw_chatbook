@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsSummaryState,
     build_default_console_session_settings,
     build_console_settings_summary_state,
+    validate_console_session_settings,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens import provider_model_resolution
@@ -382,6 +383,28 @@ def test_default_console_session_settings_prefers_chat_defaults_over_provider_sc
     assert settings.temperature == 0.9
     assert settings.top_p == 0.8
     assert settings.streaming is False
+
+
+def test_console_session_settings_accepts_documented_effort_values() -> None:
+    app_config = {
+        "api_settings": {
+            "openai": {"api_key": "test-key", "model": "gpt-5.1"},
+            "anthropic": {"api_key": "test-key", "model": "claude-opus-4-8"},
+        }
+    }
+    openai_settings = ConsoleSessionSettings(
+        provider="openai",
+        model="gpt-5.1",
+        reasoning_effort="none",
+    )
+    anthropic_settings = ConsoleSessionSettings(
+        provider="anthropic",
+        model="claude-opus-4-8",
+        thinking_effort="max",
+    )
+
+    assert validate_console_session_settings(openai_settings, app_config=app_config) == []
+    assert validate_console_session_settings(anthropic_settings, app_config=app_config) == []
 
 
 def test_default_console_session_settings_reads_enable_streaming_as_compatibility_fallback() -> None:
@@ -1495,6 +1518,52 @@ async def test_console_settings_are_isolated_between_native_tabs() -> None:
         await _click_console_session_tab(console, store, pilot, second_id)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         assert console._build_console_provider_selection().provider == "openai"
+
+
+@pytest.mark.asyncio
+async def test_console_provider_selection_includes_generation_controls() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "openai"
+    app.chat_api_model_value = "gpt-4.1"
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {"api_key": "test-key", "model": "gpt-4.1"},
+    }
+    app.providers_models = {"openai": ["gpt-4.1"]}
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(
+                provider="openai",
+                model="gpt-4.1",
+                seed=17,
+                presence_penalty=0.4,
+                frequency_penalty=0.5,
+                reasoning_effort="high",
+                reasoning_summary="auto",
+                verbosity="medium",
+                thinking_effort="low",
+                thinking_budget_tokens=2048,
+            ),
+        )
+        await console._sync_native_console_chat_ui()
+
+        selection = console._build_console_provider_selection()
+
+    assert selection.seed == 17
+    assert selection.presence_penalty == 0.4
+    assert selection.frequency_penalty == 0.5
+    assert selection.reasoning_effort == "high"
+    assert selection.reasoning_summary == "auto"
+    assert selection.verbosity == "medium"
+    assert selection.thinking_effort == "low"
+    assert selection.thinking_budget_tokens == 2048
 
 
 @pytest.mark.asyncio

@@ -124,7 +124,7 @@ PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
 REASONING_EFFORT_OPTIONS = frozenset({"", "none", "minimal", "low", "medium", "high", "xhigh"})
 REASONING_SUMMARY_OPTIONS = frozenset({"", "auto", "concise", "detailed", "none"})
 VERBOSITY_OPTIONS = frozenset({"", "low", "medium", "high"})
-THINKING_EFFORT_OPTIONS = frozenset({"", "off", "low", "medium", "high", "xhigh"})
+THINKING_EFFORT_OPTIONS = frozenset({"", "off", "low", "medium", "high", "xhigh", "max"})
 OPENAI_REASONING_PROVIDER_KEYS = frozenset({"openai"})
 ANTHROPIC_THINKING_PROVIDER_KEYS = frozenset({"anthropic"})
 OPENAI_REASONING_PROFILE_FIELD_KEYS = frozenset(
@@ -152,7 +152,7 @@ MODEL_PROFILE_INPUT_PLACEHOLDERS = {
     "model_profile_reasoning_effort": "none, minimal, low, medium, high, xhigh",
     "model_profile_reasoning_summary": "auto, concise, detailed, none",
     "model_profile_verbosity": "low, medium, high",
-    "model_profile_thinking_effort": "off, low, medium, high, xhigh",
+    "model_profile_thinking_effort": "off, low, medium, high, xhigh, max",
     "model_profile_thinking_budget_tokens": "optional >= 1024",
     "model_profile_streaming": "true or false",
 }
@@ -1219,7 +1219,8 @@ class SettingsScreen(BaseAppScreen):
         value = self._chat_defaults().get(key, "")
         if value is None or str(value).strip() == "":
             return ""
-        coerced = coerce_int_setting(value, 0, minimum=minimum)
+        invalid_sentinel = minimum - 1
+        coerced = coerce_int_setting(value, invalid_sentinel, minimum=minimum)
         return coerced if minimum <= coerced else ""
 
     def _console_behavior_loaded_values(self) -> dict[str, object]:
@@ -4425,7 +4426,7 @@ class SettingsScreen(BaseAppScreen):
                 "Reasoning effort",
                 "Optional OpenAI Responses reasoning level for reasoning-capable models.",
                 "reasoning_effort",
-                "minimal, low, medium, high, xhigh, or blank for inherited default",
+                "none, minimal, low, medium, high, xhigh, or blank for inherited default",
             ),
             "settings-model-profile-reasoning-summary": (
                 "Reasoning summary",
@@ -4443,7 +4444,7 @@ class SettingsScreen(BaseAppScreen):
                 "Thinking effort",
                 "Optional Anthropic-style thinking level mapped to provider token budgets.",
                 "thinking_effort",
-                "off, low, medium, high, xhigh, or blank for inherited default",
+                "off, low, medium, high, xhigh, max, or blank for inherited default",
             ),
             "settings-model-profile-thinking-budget-tokens": (
                 "Think budget",
@@ -5274,7 +5275,7 @@ class SettingsScreen(BaseAppScreen):
                     ),
                     id="settings-console-default-reasoning-effort",
                     classes="settings-compact-input",
-                    placeholder="minimal, low, medium, high, xhigh",
+                    placeholder="none, minimal, low, medium, high, xhigh",
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Summary", classes="settings-input-label")
@@ -5302,7 +5303,7 @@ class SettingsScreen(BaseAppScreen):
                     ),
                     id="settings-console-default-thinking-effort",
                     classes="settings-compact-input",
-                    placeholder="off, low, medium, high, xhigh",
+                    placeholder="off, low, medium, high, xhigh, max",
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Think budget", classes="settings-input-label")

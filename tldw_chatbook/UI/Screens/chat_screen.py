@@ -825,6 +825,14 @@ class ChatScreen(BaseAppScreen):
             min_p=selection_settings.min_p,
             top_k=selection_settings.top_k,
             max_tokens=selection_settings.max_tokens,
+            seed=selection_settings.seed,
+            presence_penalty=selection_settings.presence_penalty,
+            frequency_penalty=selection_settings.frequency_penalty,
+            reasoning_effort=selection_settings.reasoning_effort,
+            reasoning_summary=selection_settings.reasoning_summary,
+            verbosity=selection_settings.verbosity,
+            thinking_effort=selection_settings.thinking_effort,
+            thinking_budget_tokens=selection_settings.thinking_budget_tokens,
             streaming=selection_settings.streaming,
             workspace_context=self._current_console_workspace_context(),
         )
@@ -925,6 +933,14 @@ class ChatScreen(BaseAppScreen):
                 min_p=selection.min_p,
                 top_k=selection.top_k,
                 max_tokens=selection.max_tokens,
+                seed=selection.seed,
+                presence_penalty=selection.presence_penalty,
+                frequency_penalty=selection.frequency_penalty,
+                reasoning_effort=selection.reasoning_effort,
+                reasoning_summary=selection.reasoning_summary,
+                verbosity=selection.verbosity,
+                thinking_effort=selection.thinking_effort,
+                thinking_budget_tokens=selection.thinking_budget_tokens,
                 streaming=selection.streaming,
             )
         self._sync_console_chat_core_state()
@@ -952,6 +968,14 @@ class ChatScreen(BaseAppScreen):
                 self._console_chat_controller.min_p = selection.min_p
                 self._console_chat_controller.top_k = selection.top_k
                 self._console_chat_controller.max_tokens = selection.max_tokens
+                self._console_chat_controller.seed = selection.seed
+                self._console_chat_controller.presence_penalty = selection.presence_penalty
+                self._console_chat_controller.frequency_penalty = selection.frequency_penalty
+                self._console_chat_controller.reasoning_effort = selection.reasoning_effort
+                self._console_chat_controller.reasoning_summary = selection.reasoning_summary
+                self._console_chat_controller.verbosity = selection.verbosity
+                self._console_chat_controller.thinking_effort = selection.thinking_effort
+                self._console_chat_controller.thinking_budget_tokens = selection.thinking_budget_tokens
                 self._console_chat_controller.streaming = selection.streaming
         return selection
 

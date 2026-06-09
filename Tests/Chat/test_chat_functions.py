@@ -59,6 +59,10 @@ def db_instance(db_path, client_id):
 
 # --- Helper Functions ---
 
+DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
+DUMMY_ANTHROPIC_API_KEY = "DUMMY_ANTHROPIC_API_KEY"
+
+
 def create_base64_image():
     """Creates a dummy 1x1 png and returns its base64 string."""
     img_bytes = io.BytesIO()
@@ -72,14 +76,20 @@ class _CapturedSession:
     def __init__(self, captured, response_data):
         self._captured = captured
         self._response_data = response_data
+        self.closed = False
 
     def __enter__(self):
         return self
 
     def __exit__(self, *_exc_info):
+        self.close()
         return False
 
     def mount(self, *_args, **_kwargs):
+        return None
+
+    def close(self):
+        self.closed = True
         return None
 
     def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
@@ -92,15 +102,16 @@ class _CapturedSession:
                 "timeout": timeout,
             }
         )
-        return _FakeProviderResponse(self._response_data)
+        return _FakeProviderResponse(self._response_data, session=self)
 
 
 class _FakeProviderResponse:
     status_code = 200
     text = "{}"
 
-    def __init__(self, response_data):
+    def __init__(self, response_data, session=None):
         self._response_data = response_data
+        self._session = session
 
     def raise_for_status(self):
         return None
@@ -109,6 +120,8 @@ class _FakeProviderResponse:
         return self._response_data
 
     def iter_lines(self, decode_unicode=False):
+        if self._session is not None and self._session.closed:
+            raise requests.exceptions.ConnectionError("session closed before stream consumption")
         lines = self._response_data if isinstance(self._response_data, list) else []
         for line in lines:
             yield line if decode_unicode else line.encode("utf-8")
@@ -328,7 +341,7 @@ class TestProviderRequestPayloads:
 
         response = LLM_API_Calls.chat_with_openai(
             input_data=[{"role": "user", "content": "test"}],
-            api_key="sk-test",
+            api_key=DUMMY_OPENAI_API_KEY,
             model="o3",
             streaming=False,
             temp=0.3,
@@ -370,7 +383,7 @@ class TestProviderRequestPayloads:
 
         stream = LLM_API_Calls.chat_with_openai(
             input_data=[{"role": "user", "content": "test"}],
-            api_key="sk-test",
+            api_key=DUMMY_OPENAI_API_KEY,
             model="o3",
             streaming=True,
             reasoning_effort="low",
@@ -412,7 +425,7 @@ class TestProviderRequestPayloads:
 
         LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
-            api_key="sk-ant-test",
+            api_key=DUMMY_ANTHROPIC_API_KEY,
             model="claude-sonnet-4-20250514",
             streaming=False,
             temp=0.2,
@@ -453,7 +466,7 @@ class TestProviderRequestPayloads:
 
         response = LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
-            api_key="sk-ant-test",
+            api_key=DUMMY_ANTHROPIC_API_KEY,
             model="claude-sonnet-4-20250514",
             streaming=False,
             max_tokens=12000,
@@ -491,7 +504,7 @@ class TestProviderRequestPayloads:
 
         LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
-            api_key="sk-ant-test",
+            api_key=DUMMY_ANTHROPIC_API_KEY,
             model="claude-opus-4-7",
             streaming=False,
             max_tokens=12000,
@@ -527,7 +540,7 @@ class TestProviderRequestPayloads:
 
         LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
-            api_key="sk-ant-test",
+            api_key=DUMMY_ANTHROPIC_API_KEY,
             model="claude-opus-4-8",
             streaming=False,
             max_tokens=12000,

@@ -387,6 +387,15 @@ def test_settings_console_default_max_tokens_rejects_raw_zero():
         screen._normalise_console_default_max_tokens(0)
 
 
+def test_settings_optional_int_defaults_load_invalid_values_as_blank():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"seed": "not-an-int", "top_k": "not-an-int"}
+    screen = SettingsScreen(app)
+
+    assert screen._loaded_console_default_seed() == ""
+    assert screen._loaded_console_default_top_k() == ""
+
+
 @pytest.mark.asyncio
 async def test_settings_defaults_to_overview_category():
     app = _build_test_app()
@@ -3235,6 +3244,18 @@ def test_settings_generation_controls_allow_openai_none_reasoning_effort():
         "none"
         in settings_screen_module.MODEL_PROFILE_INPUT_PLACEHOLDERS[
             "model_profile_reasoning_effort"
+        ]
+    )
+
+
+def test_settings_generation_controls_allow_anthropic_max_thinking_effort():
+    screen = SettingsScreen(_build_test_app())
+
+    assert screen._normalise_model_profile_thinking_effort("max") == "max"
+    assert (
+        "max"
+        in settings_screen_module.MODEL_PROFILE_INPUT_PLACEHOLDERS[
+            "model_profile_thinking_effort"
         ]
     )
 
