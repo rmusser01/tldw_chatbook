@@ -994,6 +994,31 @@ async def test_settings_storage_renders_guided_defaults_and_validates(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_settings_storage_surfaces_check_action_before_long_path_editor(tmp_path):
+    app = _build_test_app()
+    db_dir = tmp_path / "db"
+    db_dir.mkdir()
+    app.app_config["database"] = {
+        "USER_DB_BASE_DIR": str(tmp_path),
+        "chachanotes_db_path": str(db_dir / "chatbook.db"),
+        "prompts_db_path": str(db_dir / "prompts.db"),
+        "media_db_path": str(db_dir / "media.db"),
+        "research_db_path": str(db_dir / "research.db"),
+        "writing_db_path": str(db_dir / "writing.db"),
+        "library_collections_db_path": str(db_dir / "collections.db"),
+        "workspaces_db_path": str(db_dir / "workspaces.db"),
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-storage")
+        screen = _active_destination_screen(host)
+        text = _visible_text(screen)
+
+        assert text.index("Draft path check") < text.index("Database paths")
+
+
+@pytest.mark.asyncio
 async def test_settings_storage_save_and_revert_defaults(monkeypatch, tmp_path):
     app = _build_test_app()
     db_dir = tmp_path / "db"
