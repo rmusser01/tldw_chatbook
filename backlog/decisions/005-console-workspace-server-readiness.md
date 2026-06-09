@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-06-08
-Related Task: [backlog/tasks/task-81 - Console-workspace-switching-server-readiness-contracts.md](../tasks/task-81%20-%20Console-workspace-switching-server-readiness-contracts.md)
+Related Task: [backlog/tasks/task-86 - Console-workspace-switching-server-readiness-contracts.md](../tasks/task-86%20-%20Console-workspace-switching-server-readiness-contracts.md)
 Supersedes: N/A
 
 ## Decision
@@ -43,7 +43,7 @@ The built-in `Default` workspace is local-only and not-configured for sync. It c
 
 ## Links
 
-- [Backlog task TASK-81](../tasks/task-81%20-%20Console-workspace-switching-server-readiness-contracts.md)
+- [Backlog task TASK-86](../tasks/task-86%20-%20Console-workspace-switching-server-readiness-contracts.md)
 - [Workspace operating context PRD](../../Docs/superpowers/specs/2026-05-20-workspace-operating-context-handoff-prd-design.md)
 - [Workspace operating context implementation plan](../../Docs/superpowers/plans/2026-05-20-workspace-operating-context-implementation.md)
 - [Server parity roadmap](../../Docs/superpowers/specs/2026-04-28-remaining-server-parity-roadmap-design.md)
