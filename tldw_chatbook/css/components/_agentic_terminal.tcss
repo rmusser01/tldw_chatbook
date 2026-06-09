@@ -213,6 +213,33 @@ ConsoleSettingsModal Select:focus > SelectCurrent {
     text-style: bold;
 }
 
+ConsoleSettingsModal Select > SelectOverlay {
+    padding: 0 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    min-width: 30;
+}
+
+ConsoleSettingsModal Select > SelectOverlay Option {
+    padding: 0 2;
+    min-height: 3;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+ConsoleSettingsModal Select > SelectOverlay Option:hover {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+ConsoleSettingsModal Select > SelectOverlay Option.-selected {
+    padding: 0 2;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
 .console-settings-modal-actions {
     height: 1;
     min-height: 1;
