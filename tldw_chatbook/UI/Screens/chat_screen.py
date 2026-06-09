@@ -429,7 +429,9 @@ class ChatScreen(BaseAppScreen):
                     severity="error",
                 )
                 return
+            self._save_active_console_session_draft()
             self._sync_console_chat_core_state()
+            self._activate_console_session_for_workspace(workspace_id)
             self._sync_console_workspace_context()
 
         self.app.push_screen(
@@ -952,6 +954,79 @@ class ChatScreen(BaseAppScreen):
                 self._console_chat_controller.max_tokens = selection.max_tokens
                 self._console_chat_controller.streaming = selection.streaming
         return selection
+
+    def _activate_console_session_for_workspace(self, workspace_id: str) -> None:
+        """Activate or create the Console session for the selected workspace."""
+        target_workspace_id = str(workspace_id).strip()
+        if not target_workspace_id:
+            return
+        store = self._ensure_console_chat_store()
+        inherited_settings = None
+        if store.active_session_id is not None:
+            try:
+                inherited_settings = store.session_settings(store.active_session_id)
+            except KeyError:
+                inherited_settings = None
+        if store.active_session_id is not None:
+            for session in store.sessions():
+                if (
+                    session.id == store.active_session_id
+                    and session.workspace_id == target_workspace_id
+                ):
+                    return
+        for session in store.sessions():
+            if session.workspace_id == target_workspace_id:
+                store.switch_session(session.id)
+                return
+        store.create_session(
+            title=self._console_workspace_session_title(target_workspace_id),
+            workspace_id=target_workspace_id,
+            settings=inherited_settings or self._default_console_session_settings(),
+        )
+
+    def _console_workspace_session_title(self, workspace_id: str) -> str:
+        """Return a readable title for an auto-created workspace Console tab."""
+        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        workspace_name = str(workspace_id).strip()
+        if registry_service is not None:
+            try:
+                workspace = registry_service.get_workspace(workspace_id)
+                if workspace is not None:
+                    workspace_name = workspace.name
+            except Exception:
+                logger.debug("Unable to read Console workspace title", exc_info=True)
+        if not workspace_name:
+            workspace_name = "Workspace"
+        return f"{workspace_name} Chat"
+
+    def _set_active_workspace_for_console_session(self, session_id: str) -> None:
+        """Keep workspace context aligned when switching Console tabs."""
+        store = self._ensure_console_chat_store()
+        target_session = next(
+            (session for session in store.sessions() if session.id == session_id),
+            None,
+        )
+        if target_session is None:
+            return
+        workspace_id = str(target_session.workspace_id or "").strip()
+        if not workspace_id or workspace_id == "global":
+            return
+        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry_service is None:
+            return
+        try:
+            active_workspace = registry_service.get_active_workspace()
+            if (
+                active_workspace is not None
+                and active_workspace.workspace_id == workspace_id
+            ):
+                return
+            registry_service.set_active_workspace(workspace_id)
+        except Exception:
+            logger.warning(
+                "Unable to align Console workspace with selected tab",
+                exc_info=True,
+            )
 
     def _console_composer_or_none(self) -> ConsoleComposerBar | None:
         """Return the native Console composer when it is mounted."""
@@ -2873,6 +2948,7 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_settings_summary()
             self._sync_console_mode_bar()
             await self._sync_console_native_session_tabs()
+            self._sync_console_workspace_context()
             await self._sync_native_console_transcript_to_legacy_surface()
             self._sync_console_rail_visibility(self._current_console_rail_state())
         finally:
@@ -4386,6 +4462,7 @@ class ChatScreen(BaseAppScreen):
                 self._open_console_session_rename_modal(session_id)
                 return
             self._save_active_console_session_draft()
+            self._set_active_workspace_for_console_session(session_id)
             controller.switch_session(session_id)
             await self._sync_native_console_chat_ui()
             return

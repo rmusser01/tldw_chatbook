@@ -9,7 +9,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
 )
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 
 
 class _ReadyResolutionGateway:
@@ -93,6 +94,34 @@ class CapturingGateway(_ReadyResolutionGateway):
             yield chunk
 
 
+class WorkspaceLinkingPersistence:
+    def __init__(self, registry_service) -> None:
+        self.registry_service = registry_service
+        self.conversation_count = 0
+        self.message_count = 0
+
+    def create_conversation(self, **kwargs):
+        self.conversation_count += 1
+        conversation_id = f"persisted-conversation-{self.conversation_count}"
+        workspace_id = kwargs.get("workspace_id")
+        if kwargs.get("scope_type") == "workspace" and workspace_id:
+            self.registry_service.link_membership(
+                workspace_id,
+                item_type="conversation",
+                item_id=conversation_id,
+                role="workspace-thread",
+                title=kwargs.get("conversation_title") or "Chat 1",
+            )
+        return conversation_id
+
+    def create_message(self, **kwargs):
+        self.message_count += 1
+        return f"persisted-message-{self.message_count}"
+
+    def update_message_content(self, **kwargs):
+        return True
+
+
 class FailThenRecoverGateway(_ReadyResolutionGateway):
     def __init__(self) -> None:
         self.calls = 0
@@ -145,6 +174,18 @@ async def _wait_for_console_screen(host: ConsoleHarness, console, pilot) -> None
             return
         await pilot.pause(0.05)
     raise AssertionError("Console modal did not dismiss")
+
+
+async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
+    for _ in range(40):
+        if (
+            host.screen_stack
+            and host.screen_stack[-1].query("#console-workspace-switcher-modal")
+        ):
+            await pilot.pause()
+            return host.screen_stack[-1]
+        await pilot.pause(0.05)
+    raise AssertionError("Console workspace switcher modal did not open")
 
 
 def _select_llamacpp_console(console: ChatScreen) -> None:
@@ -316,7 +357,7 @@ def test_console_provider_selection_reads_local_llamacpp_configured_model():
     assert selection.base_url == "http://127.0.0.1:9099"
     assert selection.explicit_model == "runtime-model"
     assert selection.configured_model == "configured-model"
-    assert selection.workspace_context.active_workspace_id == "global"
+    assert selection.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
 
 
 def test_console_configured_llamacpp_override_wins_over_provider_api_url():
@@ -656,6 +697,116 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
         messages = store.messages_for_session(store.active_session_id)
         assert messages[-2].content == "hello"
         assert messages[-1].content == "hello"
+
+
+@pytest.mark.asyncio
+async def test_console_send_refreshes_workspace_conversation_rail_after_persistence():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("accepted",))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        assert len(console.query("#console-workspace-empty-conversations")) == 1
+        store = console._ensure_console_chat_store()
+        store.persistence = WorkspaceLinkingPersistence(app.workspace_registry_service)
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-0")
+
+        row = console.query_one("#console-workspace-conversation-0", Static)
+        row_text = getattr(row.renderable, "plain", str(row.renderable))
+        assert row_text.startswith("> ")
+        assert "Chat 1" in row_text
+        assert "workspace-thread" in row_text
+        assert len(console.query("#console-workspace-empty-conversations")) == 0
+
+
+@pytest.mark.asyncio
+async def test_console_send_after_workspace_switch_persists_to_selected_workspace():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("accepted",))
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-change-workspace")
+        store = console._ensure_console_chat_store()
+        store.persistence = WorkspaceLinkingPersistence(service)
+        _select_llamacpp_console(console)
+        first_session = store.ensure_session()
+        store.replace_session_settings(
+            first_session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="test-model"),
+        )
+        assert first_session.workspace_id == "ws-a"
+
+        console.query_one("#console-change-workspace", Button).press()
+        modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
+        switch_button = next(
+            button
+            for button in modal_screen.query(Button)
+            if str(button.label) == "Workspace B"
+        )
+        switch_button.press()
+        await _wait_for_console_screen(host, console, pilot)
+        assert service.get_active_workspace().workspace_id == "ws-b"
+
+        active_session = store.switch_session(store.active_session_id)
+        assert active_session.workspace_id == "ws-b"
+        assert active_session.title == "Workspace B Chat"
+        assert active_session.settings.provider == "llama_cpp"
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello from b")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "accepted")
+
+        workspace_a_conversations = service.list_workspace_conversations("ws-a")
+        workspace_b_conversations = service.list_workspace_conversations("ws-b")
+        assert workspace_a_conversations == ()
+        assert [row.title for row in workspace_b_conversations] == [active_session.title]
+
+
+@pytest.mark.asyncio
+async def test_console_tab_switch_aligns_active_workspace_context():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Workspace A Chat", workspace_id="ws-a")
+        second = store.create_session(title="Workspace B Chat", workspace_id="ws-b")
+        service.set_active_workspace("ws-b")
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{first.id}")
+        assert store.active_session_id == second.id
+        assert service.get_active_workspace().workspace_id == "ws-b"
+
+        await pilot.click(f"#console-session-tab-{first.id}")
+
+        assert store.active_session_id == first.id
+        assert service.get_active_workspace().workspace_id == "ws-a"
+        await _wait_for_text(console, pilot, "Workspace A")
 
 
 @pytest.mark.asyncio
