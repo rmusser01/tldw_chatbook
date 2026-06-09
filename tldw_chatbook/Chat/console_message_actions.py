@@ -8,7 +8,13 @@ from typing import Literal
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
 
 
-ConsoleActionStatus = Literal["completed", "wip", "blocked", "continue_requested"]
+ConsoleActionStatus = Literal[
+    "completed",
+    "wip",
+    "blocked",
+    "continue_requested",
+    "edit_requested",
+]
 
 
 @dataclass(frozen=True)
@@ -149,6 +155,35 @@ class ConsoleMessageActionService:
                 action_id=action_id,
                 status="completed",
                 visible_copy="Retrying failed response.",
+            )
+        if action_id == "edit":
+            target_content = (
+                message.variants.current.content
+                if message.variants is not None
+                else message.content
+            )
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="edit_requested",
+                visible_copy="Opened Edit Message.",
+                target_message_id=message.id,
+                target_content=target_content,
+            )
+        if action_id in {"feedback-up", "feedback-down"}:
+            feedback = "up" if action_id == "feedback-up" else "down"
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy=f"Marked message feedback: {feedback}.",
+                target_message_id=message.id,
+                target_content=feedback,
+            )
+        if action_id == "delete":
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Deleted message from transcript.",
+                target_message_id=message.id,
             )
         if action_id in {"variant-previous", "variant-next"}:
             return ConsoleActionResult(

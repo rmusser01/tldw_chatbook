@@ -1,3 +1,5 @@
+import pytest
+
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -157,11 +159,50 @@ def test_copy_action_returns_clipboard_text():
     assert result.clipboard_text == "answer"
 
 
-def test_unimplemented_actions_return_wip_reason():
+def test_delete_action_returns_completed_result():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
 
     result = service.dispatch("delete", message)
+
+    assert result.status == "completed"
+    assert result.visible_copy == "Deleted message from transcript."
+    assert result.target_message_id == message.id
+
+
+@pytest.mark.parametrize(
+    ("action_id", "expected_feedback"),
+    [("feedback-up", "up"), ("feedback-down", "down")],
+)
+def test_feedback_actions_return_completed_result(action_id: str, expected_feedback: str):
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    result = service.dispatch(action_id, message)
+
+    assert result.status == "completed"
+    assert result.visible_copy == f"Marked message feedback: {expected_feedback}."
+    assert result.target_message_id == message.id
+    assert result.target_content == expected_feedback
+
+
+def test_edit_action_requests_modal_with_current_message_content():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    result = service.dispatch("edit", message)
+
+    assert result.status == "edit_requested"
+    assert result.visible_copy == "Opened Edit Message."
+    assert result.target_message_id == message.id
+    assert result.target_content == "answer"
+
+
+def test_unimplemented_actions_return_wip_reason():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    result = service.dispatch("save-later", message)
 
     assert result.status == "wip"
     assert "WIP" in result.visible_copy

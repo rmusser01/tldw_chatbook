@@ -25,6 +25,56 @@ def test_store_creates_session_and_appends_messages():
     ]
 
 
+def test_store_records_message_feedback():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    updated = store.set_message_feedback(message.id, "up")
+
+    assert updated.feedback == "up"
+    assert store.get_message(message.id).feedback == "up"
+
+
+def test_store_deletes_message_from_transcript():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    deleted = store.delete_message(message.id)
+
+    assert deleted.id == message.id
+    assert store.messages_for_session(session.id) == []
+    with pytest.raises(KeyError):
+        store.get_message(message.id)
+
+
+def test_store_updates_message_content():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    updated = store.update_message_content(message.id, "edited answer")
+
+    assert updated.content == "edited answer"
+    assert store.get_message(message.id).content == "edited answer"
+
+
+def test_store_updates_current_variant_content():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="first")
+    store.add_variant(message.id, "second")
+
+    updated = store.update_message_content(message.id, "edited second")
+
+    assert updated.content == "edited second"
+    assert updated.variants is not None
+    assert updated.variants.selected_index == 1
+    assert updated.variants.current.content == "edited second"
+    assert updated.variants.variants[0].content == "first"
+
+
 def test_store_updates_streaming_message_and_marks_stopped():
     store = ConsoleChatStore()
     session = store.ensure_session()

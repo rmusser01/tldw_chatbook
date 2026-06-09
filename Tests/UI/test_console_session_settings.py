@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -63,6 +64,12 @@ class ModalHarness(App[None]):
 
     def capture_saved_settings(self, settings: ConsoleSessionSettings | None) -> None:
         self.saved_settings = settings
+
+
+class StyledModalHarness(ModalHarness):
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+    )
 
 
 class FakeConsoleModelDiscoveryScope:
@@ -742,6 +749,64 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
     assert app.saved_settings.top_p == 0.88
 
 
+@pytest.mark.parametrize(
+    ("field_id", "attribute", "backspace_count", "typed_suffix", "expected"),
+    [
+        ("console-settings-temperature", "temperature", 0, "1", 0.71),
+        ("console-settings-top-p", "top_p", 1, "6", 0.96),
+        ("console-settings-min-p", "min_p", 1, "6", 0.06),
+        ("console-settings-top-k", "top_k", 1, "1", 41),
+        ("console-settings-max-tokens", "max_tokens", 1, "5", 65),
+    ],
+)
+@pytest.mark.asyncio
+async def test_console_settings_modal_accepts_keyboard_edited_sampling_inputs(
+    field_id: str,
+    attribute: str,
+    backspace_count: int,
+    typed_suffix: str,
+    expected: float | int,
+) -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        temperature=0.70,
+        top_p=0.95,
+        min_p=0.05,
+        top_k=40,
+        max_tokens=64,
+    )
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        target_input = app.screen.query_one(f"#{field_id}", Input)
+        body = app.screen.query_one("#console-settings-body")
+        body.scroll_to_widget(target_input)
+        await pilot.pause()
+        await pilot.click(target_input)
+        await pilot.press("end")
+        for _ in range(backspace_count):
+            await pilot.press("backspace")
+        await pilot.press(typed_suffix)
+        assert str(expected) in target_input.value
+
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert getattr(app.saved_settings, attribute) == expected
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_shows_inherited_provider_endpoint() -> None:
     app = ModalHarness()
@@ -1106,6 +1171,85 @@ async def test_console_settings_modal_uses_first_model_when_initial_model_missin
     assert app.saved_settings is not None
     assert app.saved_settings.provider == "openai"
     assert app.saved_settings.model == "gpt-4.1"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_keyboard_selects_model_from_dropdown() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1", "gpt-5"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        model_select.focus()
+        await pilot.press("enter")
+        assert model_select.expanded is True
+
+        await pilot.press("down")
+        await pilot.press("enter")
+        assert model_select.expanded is False
+        assert model_select.value == "gpt-5"
+
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "openai"
+    assert app.saved_settings.model == "gpt-5"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_keyboard_selects_provider_and_refreshes_models() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_llamacpp": ["local-model"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert provider_select.value == "llama_cpp"
+        assert model_select.value == "model-a"
+
+        provider_select.focus()
+        await pilot.press("enter")
+        assert provider_select.expanded is True
+
+        await pilot.press("down")
+        await pilot.press("enter")
+        assert provider_select.expanded is False
+        assert provider_select.value == "local_llamacpp"
+        assert model_select.disabled is False
+        assert model_select.value == "local-model"
+
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "local_llamacpp"
+    assert app.saved_settings.model == "local-model"
 
 
 @pytest.mark.asyncio
