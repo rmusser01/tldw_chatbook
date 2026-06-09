@@ -25,8 +25,8 @@ URL_BASED_PROVIDER_KEYS = frozenset(
         "vllm",
     }
 )
-_ENDPOINT_SETTING_KEYS = ("api_url", "base_url", "api_base", "api_endpoint", "endpoint")
-_URL_PROVIDER_SETTING_KEYS = ("api_url", "base_url", "api_base")
+_ENDPOINT_SETTING_KEYS = ("api_base_url", "api_url", "base_url", "api_base", "api_endpoint", "endpoint")
+_URL_PROVIDER_SETTING_KEYS = ("api_base_url", "api_url", "base_url", "api_base")
 _INVALID_ENDPOINT_DISPLAY = "invalid endpoint"
 
 

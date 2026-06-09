@@ -636,6 +636,7 @@ def _has_provider_settings_key(app_config: Mapping[str, object], provider_key: s
 
 def _default_base_url(provider_key: str, provider_settings: Mapping[str, object]) -> str | None:
     base_url = _first_string(
+        provider_settings.get("api_base_url"),
         provider_settings.get("api_url"),
         provider_settings.get("base_url"),
         provider_settings.get("api_base"),

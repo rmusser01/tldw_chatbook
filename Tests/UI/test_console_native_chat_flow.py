@@ -399,6 +399,24 @@ def test_console_configured_llamacpp_override_wins_over_provider_api_url():
     assert selection.base_url == "http://127.0.0.1:9099"
 
 
+def test_console_provider_selection_reads_llamacpp_api_base_url_alias():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "configured-model"
+    app.app_config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://localhost:8080/completion",
+            "api_base_url": "http://127.0.0.1:9191/v1",
+            "model": "fallback-model",
+        }
+    }
+    screen = ChatScreen(app)
+
+    selection = screen._build_console_provider_selection()
+
+    assert selection.base_url == "http://127.0.0.1:9191"
+
+
 def test_console_llamacpp_env_url_wins_over_provider_api_url(monkeypatch):
     monkeypatch.setenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", "http://127.0.0.1:9099/v1")
     app = _build_test_app()

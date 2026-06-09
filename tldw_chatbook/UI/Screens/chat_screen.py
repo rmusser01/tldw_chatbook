@@ -802,6 +802,7 @@ class ChatScreen(BaseAppScreen):
             fallback_url = (
                 os.environ.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
                 or console_config.get("llama_cpp_base_url_override")
+                or provider_config.get("api_base_url")
                 or provider_config.get("api_url")
                 or provider_config.get("base_url")
                 or provider_config.get("api_base")
