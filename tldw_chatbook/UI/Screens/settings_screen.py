@@ -5713,19 +5713,6 @@ class SettingsScreen(BaseAppScreen):
                     "Save writes config only; no files are moved or reconnected",
                 )
                 yield self._detail_row("Config path", config_path)
-                yield Static("Database paths", classes="destination-section")
-                for key, label in STORAGE_FIELD_LABELS.items():
-                    selector = self._storage_field_selector(key)
-                    if selector is None:
-                        continue
-                    with Horizontal(classes="settings-input-row"):
-                        yield Static(label, classes="settings-input-label")
-                        yield Input(
-                            value=str(values[key]),
-                            id=selector.removeprefix("#"),
-                            classes="settings-compact-input",
-                            placeholder="~/path/to/database.db",
-                        )
                 yield Static("Draft path check", classes="destination-section")
                 yield self._detail_row(
                     "Check mode",
@@ -5747,6 +5734,19 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-storage-save-result",
                     classes="settings-status-row",
                 )
+                yield Static("Database paths", classes="destination-section")
+                for key, label in STORAGE_FIELD_LABELS.items():
+                    selector = self._storage_field_selector(key)
+                    if selector is None:
+                        continue
+                    with Horizontal(classes="settings-input-row"):
+                        yield Static(label, classes="settings-input-label")
+                        yield Input(
+                            value=str(values[key]),
+                            id=selector.removeprefix("#"),
+                            classes="settings-compact-input",
+                            placeholder="~/path/to/database.db",
+                        )
                 yield Static("Runtime local paths", classes="destination-section")
                 for path_summary in self._known_storage_paths():
                     yield self._split_detail_row(path_summary)
