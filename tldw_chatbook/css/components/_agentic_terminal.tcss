@@ -198,7 +198,15 @@ ConsoleSettingsModal Select > SelectCurrent .arrow {
     color: $ds-text-muted;
 }
 
-ConsoleSettingsModal Input:focus,
+ConsoleSettingsModal Input:focus {
+    border: none;
+    border-bottom: none;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
 ConsoleSettingsModal Select:focus {
     border: none;
     border-bottom: none;
