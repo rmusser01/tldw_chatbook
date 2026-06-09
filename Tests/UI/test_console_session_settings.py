@@ -1426,6 +1426,43 @@ async def test_console_settings_modal_provider_change_to_no_models_allows_freefo
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_accepts_keyboard_edited_freeform_model_input() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"], "koboldcpp": []},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-provider", Select).value = "koboldcpp"
+        await pilot.pause()
+
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_input.display is True
+        assert model_input.disabled is False
+        assert model_input.placeholder == "Enter model id"
+
+        await pilot.click(model_input)
+        for character in "local-model":
+            await pilot.press(character)
+        assert model_input.value == "local-model"
+
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "koboldcpp"
+    assert app.saved_settings.model == "local-model"
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_provider_change_uses_target_provider_model() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
