@@ -1013,24 +1013,25 @@ class LibraryScreen(BaseAppScreen):
 
         widgets: list[Button | Static] = []
         active_action_id = self._active_source_action_id()
+        hide_search_action = self._active_mode == "search"
         for index, (label, widget_id, tooltip) in enumerate(actions):
-            if self._active_mode == "search" and widget_id == "library-open-search":
-                continue
             classes = "library-source-action"
             if widget_id == active_action_id:
                 classes = f"{classes} is-active"
-            widgets.append(
-                Button(
-                    label,
-                    id=widget_id,
-                    classes=classes,
-                    tooltip=tooltip,
-                )
+            button = Button(
+                label,
+                id=widget_id,
+                classes=classes,
+                tooltip=tooltip,
             )
+            if widget_id == "library-open-search":
+                button.display = not hide_search_action
+            widgets.append(button)
             if index < len(actions) - 1:
-                widgets.append(
-                    Static("", classes="library-source-action-spacer")
-                )
+                spacer = Static("", classes="library-source-action-spacer")
+                if widget_id == "library-open-search":
+                    spacer.display = not hide_search_action
+                widgets.append(spacer)
         return tuple(widgets)
 
     def _hub_inspector_rows(
@@ -2148,7 +2149,7 @@ class LibraryScreen(BaseAppScreen):
             buttons = list(self.query(f"#{button_id}"))
             if buttons:
                 buttons[0].set_class(button_id == active_source_action_id, "is-active")
-        await self._sync_source_module_actions()
+        self._sync_source_module_actions()
         workspace_depth_state = self._library_workspace_depth_state(refresh=True)
         await self._sync_local_snapshot_region(workspace_depth_state)
         await self._sync_search_rag_panel(workspace_depth_state=workspace_depth_state)
@@ -2156,16 +2157,21 @@ class LibraryScreen(BaseAppScreen):
         await self._sync_workspaces_panel(workspace_depth_state)
         await self._sync_action_region(workspace_depth_state)
 
-    async def _sync_source_module_actions(self) -> None:
+    def _sync_source_module_actions(self) -> None:
+        """Toggle stable source action visibility without remounting widgets."""
+        is_search = self._active_mode == "search"
         browser = self.query_one("#library-source-browser", Vertical)
-        for widget in list(browser.query(".library-source-action")):
-            await widget.remove()
-        for widget in list(browser.query(".library-source-action-spacer")):
-            await widget.remove()
-        await browser.mount(
-            *self._source_module_action_widgets(),
-            after="#library-source-browser-title",
-        )
+        children = list(browser.children)
+        for index, child in enumerate(children):
+            if child.id != "library-open-search":
+                continue
+            child.display = not is_search
+            if (
+                index + 1 < len(children)
+                and children[index + 1].has_class("library-source-action-spacer")
+            ):
+                children[index + 1].display = not is_search
+            break
 
     async def _sync_search_rag_panel(
         self,

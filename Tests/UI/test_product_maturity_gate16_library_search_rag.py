@@ -288,11 +288,17 @@ async def test_library_search_rag_mode_hides_generic_hub_and_study_actions() -> 
         assert len(screen.query("#library-hub-study-card")) == 0
         assert len(screen.query("#library-use-in-console")) == 0
         assert len(screen.query("#library-open-study")) == 0
-        assert len(screen.query("#library-open-search")) == 0
+        open_search_button = screen.query_one("#library-open-search", Button)
+        assert open_search_button.display is False
         assert "Library Content Hub" not in visible_text
         assert "Knowledge workflow" not in visible_text
         assert "Study Dashboard" not in visible_text
         assert "Retrieval Inspector" in visible_text
+
+        screen.query_one("#library-mode-sources", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-content-hub-title")
+        assert screen.query_one("#library-open-search", Button) is open_search_button
+        assert open_search_button.display is True
 
 
 @pytest.mark.asyncio
