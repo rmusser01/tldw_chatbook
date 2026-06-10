@@ -1429,6 +1429,68 @@ async def test_console_settings_modal_provider_change_uses_configured_provider_m
     assert app.saved_settings.base_url == "http://127.0.0.1:9099"
 
 
+@pytest.mark.parametrize(
+    ("provider_settings", "expected_model"),
+    (
+        (
+            {
+                "api_url": "http://127.0.0.1:9099",
+                "api_model": "gemma-api-model",
+            },
+            "gemma-api-model",
+        ),
+        (
+            {
+                "api_url": "http://127.0.0.1:9099",
+                "model": "None",
+                "api_model": "null",
+                "default_model": "gemma-default-model",
+            },
+            "gemma-default-model",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_console_settings_modal_provider_change_uses_model_alias_fallbacks(
+    provider_settings: dict[str, str],
+    expected_model: str,
+) -> None:
+    app = ModalHarness()
+    app.app_config["api_settings"]["llama_cpp"] = provider_settings
+    settings = ConsoleSessionSettings(
+        provider="custom",
+        model="custom-model-beta",
+        base_url="http://localhost:1234/v1/chat/completions",
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "Custom": ["custom-model-alpha", "custom-model-beta"],
+                    "Llama_cpp": ["None"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.display is True
+        assert model_select.value == expected_model
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "llama_cpp"
+    assert app.saved_settings.model == expected_model
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_can_select_runtime_discovered_model_with_warning() -> None:
     app = _build_test_app()

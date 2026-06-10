@@ -45,4 +45,5 @@ Reason: UI/settings bugfix aligning provider-switch behavior with existing confi
 - Verified the regression failed before the fix, then passed after the fix.
 - Verified broader Console Settings behavior with focused UI and pure helper tests.
 - Verified in CDP/textual-web that switching to llama_cpp prefilled `uat-model` and `http://127.0.0.1:9099`, saving updated the Console rail, and sending `say ok` rendered the local response.
+- Addressed review follow-up by aligning modal provider model fallback with session defaults: `model`, `api_model`, and `default_model` are checked in order, with placeholder values skipped before falling through.
 <!-- SECTION:NOTES:END -->
