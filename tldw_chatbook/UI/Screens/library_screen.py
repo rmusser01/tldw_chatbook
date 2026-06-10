@@ -13,7 +13,6 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.geometry import Spacing
 from textual.widgets import Button, Input, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -61,17 +60,8 @@ LIBRARY_INSPECTOR_EMPTY_COPY = "No source selected."
 LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
     "Library remains a hub; Notes, Media, Search/RAG, and Study own deeper work."
 )
-LIBRARY_FRAME_BORDER = ("solid", "#6f7782")
-LIBRARY_FRAME_PADDING = Spacing(1, 1, 1, 1)
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
-LIBRARY_MODE_BAR_HEIGHT = 3
-LIBRARY_MODE_LABEL_WIDTH = 8
-LIBRARY_MODE_CHIP_MIN_WIDTH = 10
-LIBRARY_MODE_CHIP_WIDTH_PADDING = 6
-LIBRARY_SOURCE_BROWSER_WIDTH = 31
-LIBRARY_SOURCE_DETAIL_WIDTH = "5fr"
-LIBRARY_SOURCE_INSPECTOR_WIDTH = "2fr"
 LIBRARY_LOCAL_SNAPSHOT_MODES = frozenset({"sources", "conversations", "import-export"})
 LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH = 30
 LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
@@ -270,6 +260,68 @@ class LibraryScreen(BaseAppScreen):
         ("u", "library_rag_use_in_console", "Use Search/RAG evidence in Console"),
     ]
 
+    # Baseline workbench geometry so the screen renders correctly even without
+    # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
+    # equal-specificity selectors and takes precedence when loaded.
+    DEFAULT_CSS = """
+    #library-mode-bar {
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        overflow: hidden;
+    }
+
+    #library-mode-label {
+        width: 8;
+        min-width: 8;
+        height: 1;
+        min-height: 1;
+    }
+
+    Button.library-mode-chip {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+    }
+
+    .library-mode-chip.is-active {
+        border: none;
+        text-style: bold underline;
+    }
+
+    #library-contract-grid {
+        height: 1fr;
+        min-height: 20;
+        padding: 1;
+        border: solid $surface-lighten-1;
+    }
+
+    .library-region {
+        min-width: 0;
+        height: 100%;
+        min-height: 20;
+        padding: 1;
+        border: solid $surface-lighten-1;
+    }
+
+    #library-source-browser {
+        width: 31;
+        min-width: 31;
+        max-width: 31;
+    }
+
+    #library-source-detail {
+        width: 5fr;
+    }
+
+    #library-source-inspector {
+        width: 2fr;
+    }
+    """
+
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "library", **kwargs)
         self._local_source_records: dict[str, tuple[Mapping[str, Any], ...]] = {
@@ -355,13 +407,6 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_SERVICE_ERROR_COPY,
             None,
         )
-
-    @staticmethod
-    def _frame_library_region(widget: Any) -> Any:
-        """Apply visible terminal workbench framing to Library panes."""
-        widget.styles.border = LIBRARY_FRAME_BORDER
-        widget.styles.padding = LIBRARY_FRAME_PADDING
-        return widget
 
     @staticmethod
     async def _run_library_service_call(
@@ -1881,52 +1926,30 @@ class LibraryScreen(BaseAppScreen):
                 id="library-status-row",
                 classes="destination-status-row",
             )
-            mode_bar = DestinationModeStrip(id="library-mode-bar", classes="destination-mode-strip")
-            mode_bar.styles.height = LIBRARY_MODE_BAR_HEIGHT
-            mode_bar.styles.min_height = LIBRARY_MODE_BAR_HEIGHT
-            with mode_bar:
-                mode_label = Static(
+            with DestinationModeStrip(id="library-mode-bar", classes="destination-mode-strip"):
+                yield Static(
                     "Modes:",
                     id="library-mode-label",
                     classes="destination-section",
                 )
-                mode_label.styles.width = LIBRARY_MODE_LABEL_WIDTH
-                mode_label.styles.min_width = LIBRARY_MODE_LABEL_WIDTH
-                mode_label.styles.height = LIBRARY_MODE_BAR_HEIGHT
-                mode_label.styles.min_height = LIBRARY_MODE_BAR_HEIGHT
-                yield mode_label
                 for mode_id, mode in LIBRARY_MODES.items():
                     if not mode.get("show_in_strip", True):
                         continue
                     classes = "library-mode-chip"
                     if mode_id == self._active_mode:
                         classes = f"{classes} is-active"
-                    mode_button = Button(
+                    yield Button(
                         mode["label"],
                         id=mode["button_id"],
                         classes=classes,
                         tooltip=mode["description"],
                     )
-                    mode_button.styles.width = max(
-                        len(mode["label"]) + LIBRARY_MODE_CHIP_WIDTH_PADDING,
-                        LIBRARY_MODE_CHIP_MIN_WIDTH,
-                    )
-                    mode_button.styles.min_width = 0
-                    mode_button.styles.height = LIBRARY_MODE_BAR_HEIGHT
-                    mode_button.styles.min_height = LIBRARY_MODE_BAR_HEIGHT
-                    yield mode_button
 
-            contract_grid = self._frame_library_region(
-                Horizontal(id="library-contract-grid", classes="ds-panel destination-workbench")
-            )
-            with contract_grid:
-                source_browser = self._frame_library_region(
-                    Vertical(id="library-source-browser", classes="library-region destination-workbench-pane")
-                )
-                source_browser.styles.width = LIBRARY_SOURCE_BROWSER_WIDTH
-                source_browser.styles.min_width = LIBRARY_SOURCE_BROWSER_WIDTH
-                source_browser.styles.max_width = LIBRARY_SOURCE_BROWSER_WIDTH
-                with source_browser:
+            with Horizontal(id="library-contract-grid", classes="ds-panel destination-workbench"):
+                with Vertical(
+                    id="library-source-browser",
+                    classes="library-region destination-workbench-pane",
+                ):
                     yield Static(
                         source_column_title,
                         id="library-source-browser-title",
@@ -1942,11 +1965,10 @@ class LibraryScreen(BaseAppScreen):
                         id="library-workspace-scope",
                     )
 
-                source_detail = self._frame_library_region(
-                    Vertical(id="library-source-detail", classes="library-region destination-workbench-pane")
-                )
-                source_detail.styles.width = LIBRARY_SOURCE_DETAIL_WIDTH
-                with source_detail:
+                with Vertical(
+                    id="library-source-detail",
+                    classes="library-region destination-workbench-pane",
+                ):
                     yield Static(
                         detail_column_title,
                         id="library-source-detail-title",
@@ -2026,11 +2048,10 @@ class LibraryScreen(BaseAppScreen):
                             else:
                                 yield from self._content_hub_rows()
 
-                source_inspector = self._frame_library_region(
-                    Vertical(id="library-source-inspector", classes="library-region destination-workbench-pane")
-                )
-                source_inspector.styles.width = LIBRARY_SOURCE_INSPECTOR_WIDTH
-                with source_inspector:
+                with Vertical(
+                    id="library-source-inspector",
+                    classes="library-region destination-workbench-pane",
+                ):
                     yield Static(
                         inspector_column_title,
                         id="library-source-inspector-title",

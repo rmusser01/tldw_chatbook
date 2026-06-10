@@ -1299,7 +1299,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     min-height: $ds-library-mode-bar-height;
 }
 
-.library-mode-chip {
+Button.library-mode-chip {
     width: auto;
     min-width: 0;
     height: $ds-library-mode-chip-height;
@@ -1312,7 +1312,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     outline: none;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
-    text-style: bold;
+    text-style: bold underline;
 }
 
 #library-contract-grid,
@@ -1958,18 +1958,18 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 .library-mode-chip.is-active {
-    border: solid $ds-focus-accent;
+    border: none;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
-    text-style: bold;
+    text-style: bold underline;
 }
 
 .library-mode-chip.is-active:focus {
     outline: none;
-    border: round $ds-focus-accent;
+    border: none;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
-    text-style: bold;
+    text-style: bold underline;
 }
 
 .library-source-action {

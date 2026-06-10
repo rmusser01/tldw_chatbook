@@ -71,11 +71,23 @@ or cross-module boundary changes.
 
 ## Library fixes (summary)
 
-Slim the status row to `{status} | Local`; remove inline `styles.*` in favor of TCSS;
-de-duplicate the Inspector heading; drop the mode next-action prose; remove the
-`#library-open-search` / `#library-open-collections` buttons (pure duplicates of mode
-chips — the other source-browser buttons do real navigation and stay); make empty states
-actionable (primary "Import Sources" button navigating to ingest).
+Revised 2026-06-10 after PR #503 (Library content hub / Search-RAG evidence workflow)
+landed on dev and superseded several originally planned fixes. Surviving scope:
+
+- Single-row mode strip: all chip/strip/pane sizing moves from inline `styles.*`
+  assignments to design-system TCSS tokens (`$ds-library-mode-*`, bar/chip height 1).
+  Chip rules use `Button.library-mode-chip` selectors to out-specify Textual's
+  `Button.-style-default` tall borders, and the active chip reads via background +
+  bold underline (a border would consume the single content row).
+- Remove `_frame_library_region`'s hardcoded `#6f7782` border in favor of
+  `$ds-grid-line` TCSS; add `LibraryScreen.DEFAULT_CSS` baseline geometry so
+  stylesheet-less harness tests render correctly.
+
+Superseded by #503 (kept as dev has them): the dynamic per-mode status row, the
+Library Modules buttons (now load-bearing hub navigation with active-state sync,
+including `#library-open-search`/`#library-open-collections`), the per-mode
+next-action copy, the hub empty-state copy, and the mode-specific inspector
+headings ("Hub inspector" etc.).
 
 ## Constraints
 

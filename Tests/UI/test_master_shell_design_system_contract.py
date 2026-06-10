@@ -176,11 +176,14 @@ def test_library_mode_chip_focus_keeps_active_label_readable():
 
     assert "color: $ds-focus-fg;" in focus_block
     assert "text-style: bold underline;" in focus_block
-    assert "background: $primary-darken-1;" in active_block
-    assert "border: solid $primary;" in active_block
-    assert "color: $ds-text-primary;" in active_focus_block
+    assert "background: $ds-focus-bg;" in active_block
+    # Chips are one row tall; the active state must not rely on a border that
+    # would consume the single content row.
+    assert "border: none;" in active_block
+    assert "color: $ds-focus-fg;" in active_focus_block
     assert "text-style: bold underline;" in active_focus_block
-    assert "$ds-library-mode-bar-height: 3;" in variables
-    assert "$ds-library-mode-chip-height: 3;" in variables
-    assert "LIBRARY_MODE_BAR_HEIGHT = 3" in library_screen
-    assert "LIBRARY_MODE_CHIP_WIDTH_PADDING = 7" in library_screen
+    assert "$ds-library-mode-bar-height: 1;" in variables
+    assert "$ds-library-mode-chip-height: 1;" in variables
+    # Chip sizing lives in TCSS tokens, not inline widget styles.
+    assert "LIBRARY_MODE_BAR_HEIGHT" not in library_screen
+    assert "LIBRARY_MODE_CHIP_WIDTH_PADDING" not in library_screen
