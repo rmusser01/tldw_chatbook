@@ -1,15 +1,19 @@
 """Workbench panes for the redesigned Notes screen.
 
 The Notes screen renders a three-pane destination workbench:
-navigator (scope lists + search) | editor | inspector (details + actions).
+navigator (scope lists + search) | editor | inspector (details + actions),
+plus full-width Sync and Templates mode panes.
 List-population logic is shared with the legacy ``NotesSidebarLeft`` via
 ``NotesListPopulateMixin`` so the old Notes window keeps working unchanged.
 """
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from pathlib import Path
+from typing import Any, Iterable, Optional
 
+from loguru import logger
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
@@ -460,3 +464,315 @@ class NotesInspectorPane(VerticalScroll):
             except Exception:
                 pass
         self.apply_scope_context("local", "note")
+
+
+class NotesSyncPane(VerticalScroll):
+    """Sync-mode pane embedding the quick-sync sections inside the workbench."""
+
+    DEFAULT_CSS = """
+    NotesSyncPane {
+        height: 100%;
+        min-height: 0;
+    }
+    NotesSyncPane SyncStatusCard {
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+    NotesSyncPane QuickSyncSection {
+        height: auto;
+        padding: 0;
+        margin-bottom: 1;
+    }
+    NotesSyncPane .sync-settings-row {
+        height: auto;
+    }
+    NotesSyncPane .sync-setting {
+        height: auto;
+    }
+    NotesSyncPane .sync-button-container {
+        height: 3;
+        margin-top: 0;
+    }
+    NotesSyncPane .sync-options {
+        height: 3;
+        margin-top: 0;
+    }
+    NotesSyncPane RecentActivitySection {
+        height: 8;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, app_instance: Any, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.app_instance = app_instance
+        self.sync_service: Any = None
+        self.sync_in_progress = False
+
+    def compose(self) -> ComposeResult:
+        from tldw_chatbook.Widgets.Note_Widgets.notes_sync_widget_improved import (
+            QuickSyncSection,
+            RecentActivitySection,
+            SyncProgressSection,
+            SyncStatusCard,
+        )
+
+        yield SyncStatusCard(id="status-card")
+        yield QuickSyncSection(id="quick-sync-section")
+        yield SyncProgressSection(id="progress-section")
+        yield RecentActivitySection(id="activity-section")
+
+    def on_mount(self) -> None:
+        try:
+            from tldw_chatbook.Notes.sync_service import NotesSyncService
+
+            notes_service = getattr(self.app_instance, "notes_service", None)
+            db = getattr(self.app_instance, "chachanotes_db", None) or getattr(
+                notes_service, "db", None
+            )
+            if notes_service is not None and db is not None:
+                self.sync_service = NotesSyncService(notes_service=notes_service, db=db)
+        except Exception as exc:  # pragma: no cover - optional dependency wiring
+            logger.warning(f"Notes sync service unavailable: {exc}")
+            self.sync_service = None
+
+        try:
+            from tldw_chatbook.config import get_cli_setting
+
+            saved_dir = get_cli_setting("notes", "sync_directory", "~/Documents/Notes")
+            self.query_one("#sync-folder-input", Input).value = str(
+                Path(saved_dir).expanduser()
+            )
+        except Exception:
+            pass
+        self.update_status()
+
+    def update_status(self) -> None:
+        from datetime import datetime as _datetime
+
+        last_sync = getattr(self.app_instance, "last_sync_time", None)
+        try:
+            if isinstance(last_sync, _datetime):
+                self.query_one("#last-sync-time", Static).update(
+                    f"Last synced: {last_sync.strftime('%Y-%m-%d %H:%M')}"
+                )
+            else:
+                self.query_one("#last-sync-time", Static).update("Last synced: Never")
+            if self.sync_service is None:
+                self.query_one("#sync-status", Static).update(
+                    "Status: Sync service unavailable"
+                )
+            else:
+                self.query_one("#sync-status", Static).update("Status: Ready to sync")
+        except Exception:
+            return
+
+    def _add_activity(self, message: str, status: str = "info") -> None:
+        try:
+            self.query_one("#activity-section").add_activity(message, status)
+        except Exception:
+            return
+
+    @on(Button.Pressed, "#browse-folder-btn")
+    async def browse_folder(self, event: Button.Pressed) -> None:
+        event.stop()
+
+        from tldw_chatbook.Third_Party.textual_fspicker import SelectDirectory
+
+        async def folder_selected(path: Optional[Path]) -> None:
+            if not path:
+                return
+            self.query_one("#sync-folder-input", Input).value = str(path)
+            try:
+                from tldw_chatbook.config import save_setting_to_cli_config
+
+                save_setting_to_cli_config("notes", "sync_directory", str(path))
+            except Exception:
+                pass
+            try:
+                header = self.query_one("#status-card .status-header", Static)
+                header.update(f"📁 {path.name or 'Notes'}")
+            except Exception:
+                pass
+
+        from tldw_chatbook.config import get_cli_setting
+
+        default_dir = get_cli_setting("notes", "sync_directory", "~/Documents/Notes")
+        current_path = Path(default_dir).expanduser()
+        if not current_path.exists():
+            try:
+                current_path.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                current_path = Path.home()
+        await self.app.push_screen(
+            SelectDirectory(str(current_path), title="Select Notes Folder"),
+            callback=folder_selected,
+        )
+
+    @on(Button.Pressed, "#quick-sync-btn")
+    async def run_quick_sync(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self.sync_in_progress:
+            return
+        await self.perform_sync()
+
+    async def perform_sync(self) -> None:
+        from tldw_chatbook.Notes.sync_engine import ConflictResolution, SyncDirection
+
+        folder_value = self.query_one("#sync-folder-input", Input).value
+        if not folder_value:
+            self.app.notify("Please select a folder to sync", severity="warning")
+            return
+        sync_folder = Path(folder_value).expanduser()
+        if not sync_folder.exists():
+            self.app.notify("Selected folder does not exist", severity="error")
+            return
+        if self.sync_service is None:
+            self.app.notify(
+                "Sync service is unavailable in this runtime.", severity="warning"
+            )
+            return
+
+        direction = SyncDirection(self.query_one("#sync-direction", Select).value)
+        resolution = ConflictResolution(
+            self.query_one("#conflict-resolution", Select).value
+        )
+
+        self.sync_in_progress = True
+        sync_button = self.query_one("#quick-sync-btn", Button)
+        sync_button.disabled = True
+        progress = self.query_one("#progress-section")
+        progress.start_progress()
+        self._add_activity(f"Starting sync: {sync_folder.name}", "info")
+
+        def progress_callback(sync_progress: Any) -> None:
+            progress.update_progress(
+                sync_progress.processed_files,
+                max(sync_progress.total_files, 1),
+                f"Processed {sync_progress.processed_files} of {sync_progress.total_files}",
+            )
+
+        try:
+            user_id = getattr(self.app_instance, "notes_user_id", "default_user")
+            _session_id, results = await self.sync_service.sync_folder(
+                root_folder=sync_folder,
+                user_id=user_id,
+                direction=direction,
+                conflict_resolution=resolution,
+                progress_callback=progress_callback,
+            )
+            summary_parts = []
+            if results.created_notes:
+                summary_parts.append(f"{len(results.created_notes)} notes created")
+            if results.updated_notes:
+                summary_parts.append(f"{len(results.updated_notes)} notes updated")
+            if results.created_files:
+                summary_parts.append(f"{len(results.created_files)} files created")
+            if results.updated_files:
+                summary_parts.append(f"{len(results.updated_files)} files updated")
+            summary = ", ".join(summary_parts) if summary_parts else "No changes"
+            self._add_activity(f"Sync complete: {summary}", "success")
+            if results.conflicts:
+                self._add_activity(
+                    f"{len(results.conflicts)} conflicts recorded", "info"
+                )
+            if results.errors:
+                self._add_activity(f"{len(results.errors)} errors during sync", "error")
+            from datetime import datetime as _datetime
+
+            self.app_instance.last_sync_time = _datetime.now()
+            self.update_status()
+        except Exception as exc:
+            logger.error(f"Notes sync failed: {exc}")
+            self._add_activity(f"Sync failed: {exc}", "error")
+            self.app.notify("Sync failed", severity="error")
+        finally:
+            progress.complete_progress()
+            sync_button.disabled = False
+            self.sync_in_progress = False
+
+
+class NotesTemplatesPane(VerticalScroll):
+    """Templates-mode pane: browse templates, preview, create a note."""
+
+    DEFAULT_CSS = """
+    NotesTemplatesPane #notes-templates-list {
+        height: auto;
+        max-height: 14;
+        border: round $surface;
+        margin-bottom: 1;
+    }
+    NotesTemplatesPane #notes-template-preview {
+        min-height: 6;
+        padding: 1;
+        border: round $surface;
+        margin-bottom: 1;
+        color: $text-muted;
+    }
+    NotesTemplatesPane #notes-templates-create-button {
+        width: auto;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "Pick a template, preview its content, then create a note from it.",
+            id="notes-templates-help",
+        )
+        yield ListView(id="notes-templates-list")
+        yield Static("Select a template to preview it.", id="notes-template-preview")
+        yield Button(
+            "Create Note from Template",
+            id="notes-templates-create-button",
+            variant="primary",
+        )
+
+    @property
+    def selected_template_key(self) -> Optional[str]:
+        return self._selected_template_key
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._selected_template_key: Optional[str] = None
+
+    async def on_mount(self) -> None:
+        from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
+
+        list_view = self.query_one("#notes-templates-list", ListView)
+        for key in sorted(NOTE_TEMPLATES):
+            template = NOTE_TEMPLATES[key]
+            label = template.get(
+                "description", template.get("title", key.replace("_", " ").title())
+            )
+            item = ListItem(Label(str(label)))
+            setattr(item, "template_key", key)
+            await list_view.append(item)
+
+    def _show_preview(self, item: Any) -> None:
+        from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
+
+        key = getattr(item, "template_key", None)
+        if not key or key not in NOTE_TEMPLATES:
+            return
+        self._selected_template_key = key
+        template = NOTE_TEMPLATES[key]
+        title = template.get("title", key)
+        content = str(template.get("content", "")).strip() or "(blank note)"
+        keywords = template.get("keywords", "")
+        preview_lines = [f"Title: {title}"]
+        if keywords:
+            preview_lines.append(f"Keywords: {keywords}")
+        preview_lines.append("")
+        preview_lines.append(content)
+        self.query_one("#notes-template-preview", Static).update(
+            "\n".join(preview_lines)
+        )
+
+    @on(ListView.Highlighted, "#notes-templates-list")
+    def handle_template_highlighted(self, event: ListView.Highlighted) -> None:
+        if event.item is not None:
+            self._show_preview(event.item)
+
+    @on(ListView.Selected, "#notes-templates-list")
+    def handle_template_selected(self, event: ListView.Selected) -> None:
+        self._show_preview(event.item)

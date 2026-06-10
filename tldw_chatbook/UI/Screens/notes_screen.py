@@ -30,11 +30,12 @@ from ...Third_Party.textual_fspicker import FileOpen, FileSave
 from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
 from ...Widgets.delete_confirmation_dialog import create_delete_confirmation
 from ...Widgets.destination_workbench import DestinationModeStrip
-from ...Widgets.Note_Widgets.notes_sync_widget_improved import NotesSyncWidgetImproved
 from ...Widgets.Note_Widgets.notes_workbench_panes import (
     NotesEditorPane,
     NotesInspectorPane,
     NotesNavigatorPane,
+    NotesSyncPane,
+    NotesTemplatesPane,
 )
 from ...Widgets.Note_Widgets.workspace_context_panel import WorkspaceContextPanel
 from ...Widgets.Note_Widgets.workspace_source_picker import WorkspaceSourcePicker
@@ -313,23 +314,16 @@ class NotesScreen(BaseAppScreen):
             with sync_region:
                 yield Static("Sync", classes="destination-section")
                 yield Static(
-                    "Sync local notes to and from a folder on disk. "
-                    "The full sync dashboard lands in a follow-up; the existing sync "
-                    "tool opens as a dialog for now.",
+                    "Sync local notes to and from a folder on disk.",
                     id="notes-sync-region-copy",
                 )
-                yield Button("Open Sync Tool", id="notes-open-sync-modal", variant="primary")
+                yield NotesSyncPane(self.app_instance, id="notes-sync-pane")
 
             templates_region = Vertical(id="notes-mode-region-templates", classes="ds-panel")
             templates_region.display = self.state.active_mode == "templates"
             with templates_region:
                 yield Static("Templates", classes="destination-section")
-                yield Static(
-                    "Template browsing and preview lands in a follow-up. "
-                    "Use 'Create from Template' in the Notes navigator to create "
-                    "a note from a template now.",
-                    id="notes-templates-region-copy",
-                )
+                yield NotesTemplatesPane(id="notes-templates-pane")
 
     def watch_state(self, old_state: NotesScreenState, new_state: NotesScreenState) -> None:
         if old_state.has_unsaved_changes != new_state.has_unsaved_changes:
@@ -2546,7 +2540,7 @@ class NotesScreen(BaseAppScreen):
             self._notify("Sync is only available for local notes.", severity="warning")
             return
         self.post_message(SyncRequested())
-        self.app.push_screen(NotesSyncWidgetImproved(self.app_instance))
+        self._set_state(active_mode="sync")
 
     @on(Button.Pressed, "#notes-preview-toggle")
     async def handle_preview_toggle(self, event: Button.Pressed) -> None:
@@ -2582,36 +2576,24 @@ class NotesScreen(BaseAppScreen):
         if mode_id is not None:
             self._set_state(active_mode=mode_id)
 
-    @on(Button.Pressed, "#notes-open-sync-modal")
-    def handle_open_sync_modal(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(SyncRequested())
-        self.app.push_screen(NotesSyncWidgetImproved(self.app_instance))
-
     @on(Button.Pressed, "#notes-create-new-button")
     async def handle_create_new_button(self, event: Button.Pressed) -> None:
         event.stop()
         await self._create_new_note()
 
-    @on(Button.Pressed, "#notes-create-from-template-button")
-    async def handle_create_from_template_button(self, event: Button.Pressed) -> None:
-        event.stop()
+    async def _create_local_note_from_template(self, template_key: Optional[str]) -> bool:
         if self.state.scope_type != ScopeType.LOCAL_NOTE:
             self._notify("Templates create local notes; switch to local notes first.", severity="warning")
-            return
+            return False
         if self.notes_service is None:
             self._notify("Local notes service is not configured.", severity="warning")
-            return
+            return False
 
         from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
 
-        try:
-            template_key = self.query_one("#notes-template-select", Select).value
-        except QueryError:
-            return
         if not template_key or template_key not in NOTE_TEMPLATES:
             self._notify("Please select a template.", severity="warning")
-            return
+            return False
         template = NOTE_TEMPLATES[template_key]
         now = datetime.now()
         template_data = {
@@ -2629,7 +2611,7 @@ class NotesScreen(BaseAppScreen):
                 f"Template '{template_key}' has an invalid placeholder: {exc}",
                 severity="error",
             )
-            return
+            return False
         new_note_id = self.notes_service.add_note(
             user_id=self.notes_user_id,
             title=title,
@@ -2637,13 +2619,36 @@ class NotesScreen(BaseAppScreen):
         )
         if not new_note_id:
             self._notify("Failed to create note from template.", severity="error")
-            return
+            return False
         keywords = self._normalize_keywords(template.get("keywords"))
         if keywords:
             self._sync_local_note_keywords(new_note_id, list(keywords))
         await self._load_note(new_note_id)
         await self.refresh_current_scope()
         self._notify(f"Note created from template: {title}", severity="information")
+        return True
+
+    @on(Button.Pressed, "#notes-create-from-template-button")
+    async def handle_create_from_template_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        try:
+            template_key = self.query_one("#notes-template-select", Select).value
+        except QueryError:
+            return
+        await self._create_local_note_from_template(
+            template_key if isinstance(template_key, str) else None
+        )
+
+    @on(Button.Pressed, "#notes-templates-create-button")
+    async def handle_templates_pane_create_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        try:
+            pane = self.query_one("#notes-templates-pane", NotesTemplatesPane)
+        except QueryError:
+            return
+        created = await self._create_local_note_from_template(pane.selected_template_key)
+        if created:
+            self._set_state(active_mode="notes")
 
     @on(Button.Pressed, "#notes-import-button")
     def handle_import_button(self, event: Button.Pressed) -> None:
