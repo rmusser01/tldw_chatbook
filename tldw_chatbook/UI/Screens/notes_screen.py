@@ -12,12 +12,12 @@ from uuid import uuid4
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.message import Message
 from textual.reactive import reactive
 from textual.timer import Timer
-from textual.widgets import Button, Input, Label, ListView, Select, Switch, TextArea
+from textual.widgets import Button, Input, Label, ListView, Select, Static, Switch, TextArea
 
 from ...Chat.chat_handoff_messages import (
     USE_IN_CHAT_UNAVAILABLE_RECOVERY,
@@ -25,11 +25,15 @@ from ...Chat.chat_handoff_messages import (
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Event_Handlers.Audio_Events.dictation_integration_events import InsertDictationTextEvent
-from ...Third_Party.textual_fspicker import FileSave
+from ...Third_Party.textual_fspicker import FileOpen, FileSave
 from ...Widgets.delete_confirmation_dialog import create_delete_confirmation
-from ...Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
-from ...Widgets.Note_Widgets.notes_sidebar_right import NotesSidebarRight
+from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Note_Widgets.notes_sync_widget_improved import NotesSyncWidgetImproved
+from ...Widgets.Note_Widgets.notes_workbench_panes import (
+    NotesEditorPane,
+    NotesInspectorPane,
+    NotesNavigatorPane,
+)
 from ...Widgets.Note_Widgets.workspace_context_panel import WorkspaceContextPanel
 from ...Widgets.Note_Widgets.workspace_source_picker import WorkspaceSourcePicker
 from ...Widgets.emoji_picker import EmojiPickerScreen, EmojiSelected
@@ -82,20 +86,77 @@ class SyncRequested(Message):
 class NotesScreen(BaseAppScreen):
     """Notes management screen with scope-aware state."""
 
+    # Baseline workbench geometry so the screen renders correctly even without
+    # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
+    # equal-specificity selectors and takes precedence when loaded.
     DEFAULT_CSS = """
     NotesScreen {
         background: $background;
     }
 
-    #notes-main-content {
-        width: 100%;
-        height: 100%;
+    #notes-mode-strip {
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        overflow: hidden;
     }
 
-    #notes-controls-area {
-        height: 3;
-        align: center middle;
-        overflow-x: auto;
+    #notes-mode-label {
+        width: 8;
+        min-width: 8;
+        height: 1;
+        min-height: 1;
+    }
+
+    Button.notes-mode-chip {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+    }
+
+    .notes-mode-chip.is-active {
+        border: none;
+        background: $primary;
+        color: $background;
+        text-style: bold underline;
+    }
+
+    #notes-workbench {
+        height: 1fr;
+        min-height: 20;
+        padding: 1;
+        border: solid $surface-lighten-1;
+    }
+
+    .notes-workbench-pane {
+        min-width: 0;
+        height: 100%;
+        min-height: 20;
+        padding: 1;
+        border: solid $surface-lighten-1;
+    }
+
+    #notes-navigator-pane {
+        width: 2fr;
+    }
+
+    #notes-editor-pane {
+        width: 5fr;
+    }
+
+    #notes-inspector-pane {
+        width: 2fr;
+    }
+
+    #notes-mode-region-sync,
+    #notes-mode-region-templates {
+        height: 1fr;
+        min-height: 20;
+        padding: 1;
+        border: solid $surface-lighten-1;
     }
 
     .unsaved-indicator {
@@ -124,10 +185,6 @@ class NotesScreen(BaseAppScreen):
 
     #notes-preview-toggle {
         margin: 0 1;
-    }
-
-    .sidebar-toggle {
-        min-width: 4;
     }
     """
 
@@ -167,25 +224,74 @@ class NotesScreen(BaseAppScreen):
         self._skip_next_resume_refresh = False
         logger.debug("NotesScreen initialized with scope-aware state")
 
+    NOTES_MODES = {
+        "notes": {"label": "Notes", "button_id": "notes-mode-notes"},
+        "sync": {"label": "Sync", "button_id": "notes-mode-sync"},
+        "templates": {"label": "Templates", "button_id": "notes-mode-templates"},
+    }
+
     def compose_content(self) -> ComposeResult:
-        yield NotesSidebarLeft(id="notes-sidebar-left")
+        with Vertical(id="notes-shell"):
+            yield Static("Notes", id="notes-title", classes="ds-destination-header")
+            yield Static(
+                "Capture, search, and reuse notes; sync to disk; create from templates.",
+                id="notes-purpose",
+                classes="destination-purpose",
+            )
+            yield Static(
+                self._status_row_label(),
+                id="notes-status-row",
+                classes="destination-status-row",
+            )
+            with DestinationModeStrip(id="notes-mode-strip", classes="destination-mode-strip"):
+                yield Static("Modes:", id="notes-mode-label", classes="destination-section")
+                for mode_id, mode in self.NOTES_MODES.items():
+                    classes = "notes-mode-chip"
+                    if mode_id == self.state.active_mode:
+                        classes = f"{classes} is-active"
+                    yield Button(mode["label"], id=mode["button_id"], classes=classes)
 
-        with Container(id="notes-main-content"):
-            yield TextArea(id="notes-editor-area", classes="notes-editor", disabled=False)
-            workspace_panel = WorkspaceContextPanel(id="workspace-context-panel")
-            workspace_panel.display = False
-            yield workspace_panel
+            notes_region = Horizontal(
+                id="notes-mode-region-notes",
+                classes="ds-panel destination-workbench",
+            )
+            notes_region.display = self.state.active_mode == "notes"
+            with notes_region:
+                yield NotesNavigatorPane(
+                    id="notes-navigator-pane",
+                    classes="notes-workbench-pane destination-workbench-pane",
+                )
+                yield NotesEditorPane(
+                    id="notes-editor-pane",
+                    classes="notes-workbench-pane destination-workbench-pane",
+                )
+                yield NotesInspectorPane(
+                    id="notes-inspector-pane",
+                    classes="notes-workbench-pane destination-workbench-pane",
+                )
 
-            with Horizontal(id="notes-controls-area"):
-                yield Button("☰ L", id="toggle-notes-sidebar-left", classes="sidebar-toggle", tooltip="Toggle left sidebar")
-                yield Label("Ready", id="notes-unsaved-indicator", classes="unsaved-indicator")
-                yield Label("Words: 0", id="notes-word-count", classes="word-count")
-                yield Button("Save Note", id="notes-save-button", variant="primary")
-                yield Button("Preview", id="notes-preview-toggle", variant="default")
-                yield Button("Sync 🔄", id="notes-sync-button", variant="default")
-                yield Button("R ☰", id="toggle-notes-sidebar-right", classes="sidebar-toggle", tooltip="Toggle right sidebar")
+            sync_region = Vertical(id="notes-mode-region-sync", classes="ds-panel")
+            sync_region.display = self.state.active_mode == "sync"
+            with sync_region:
+                yield Static("Sync", classes="destination-section")
+                yield Static(
+                    "Sync local notes to and from a folder on disk. "
+                    "The full sync dashboard lands in a follow-up; the existing sync "
+                    "tool opens as a dialog for now.",
+                    id="notes-sync-region-copy",
+                )
+                yield Button("Open Sync Tool", id="notes-open-sync-modal", variant="primary")
 
-        yield NotesSidebarRight(id="notes-sidebar-right")
+            templates_region = Vertical(id="notes-mode-region-templates", classes="ds-panel")
+            templates_region.display = self.state.active_mode == "templates"
+            with templates_region:
+                yield Static("Templates", classes="destination-section")
+                yield Static(
+                    "Template browsing and preview lands in a follow-up. "
+                    "Use 'Create from Template' in the Notes navigator to create "
+                    "a note from a template now.",
+                    id="notes-templates-region-copy",
+                )
 
     def watch_state(self, old_state: NotesScreenState, new_state: NotesScreenState) -> None:
         if old_state.has_unsaved_changes != new_state.has_unsaved_changes:
@@ -194,10 +300,8 @@ class NotesScreen(BaseAppScreen):
             self._update_save_status()
         if old_state.word_count != new_state.word_count:
             self._update_word_count_display()
-        if old_state.left_sidebar_collapsed != new_state.left_sidebar_collapsed:
-            self._toggle_left_sidebar_visibility()
-        if old_state.right_sidebar_collapsed != new_state.right_sidebar_collapsed:
-            self._toggle_right_sidebar_visibility()
+        if old_state.active_mode != new_state.active_mode:
+            self._apply_active_mode_visibility()
         if (
             old_state.scope_type != new_state.scope_type
             or old_state.workspace_subview != new_state.workspace_subview
@@ -208,7 +312,40 @@ class NotesScreen(BaseAppScreen):
         state.word_count = max(0, state.word_count)
         if state.auto_save_status not in ("", "saving", "saved"):
             state.auto_save_status = ""
+        if state.active_mode not in self.NOTES_MODES:
+            state.active_mode = "notes"
         return state
+
+    def _status_row_label(self) -> str:
+        scope_labels = {
+            ScopeType.LOCAL_NOTE: "Local",
+            ScopeType.SERVER_NOTE: "Server",
+            ScopeType.WORKSPACE: "Workspace",
+        }
+        return f"{scope_labels.get(self.state.scope_type, 'Local')} | Notes"
+
+    def _update_status_row(self) -> None:
+        try:
+            self.query_one("#notes-status-row", Static).update(self._status_row_label())
+        except QueryError:
+            return
+
+    def _apply_active_mode_visibility(self) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            for mode_id, mode in self.NOTES_MODES.items():
+                self.query_one(f"#{mode['button_id']}", Button).set_class(
+                    mode_id == self.state.active_mode,
+                    "is-active",
+                )
+            self.query_one("#notes-mode-region-notes").display = self.state.active_mode == "notes"
+            self.query_one("#notes-mode-region-sync").display = self.state.active_mode == "sync"
+            self.query_one("#notes-mode-region-templates").display = (
+                self.state.active_mode == "templates"
+            )
+        except QueryError:
+            return
 
     def _set_state(self, **changes: Any) -> None:
         self.state = self.validate_state(replace(self.state, **changes))
@@ -361,22 +498,21 @@ class NotesScreen(BaseAppScreen):
             resource_kind = self._current_resource_kind()
 
             editor = self.query_one("#notes-editor-area", TextArea)
+            title_input = self.query_one("#notes-title-input", Input)
             workspace_panel = self.query_one("#workspace-context-panel", WorkspaceContextPanel)
             save_button = self.query_one("#notes-save-button", Button)
             preview_button = self.query_one("#notes-preview-toggle", Button)
             sync_button = self.query_one("#notes-sync-button", Button)
             unsaved_indicator = self.query_one("#notes-unsaved-indicator", Label)
             word_count = self.query_one("#notes-word-count", Label)
-            sidebar_left = self.query_one("#notes-sidebar-left", NotesSidebarLeft)
-            sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
-            template_select = sidebar_left.query_one("#notes-template-select", Select)
-            create_from_template_button = sidebar_left.query_one("#notes-create-from-template-button", Button)
-            create_blank_button = sidebar_left.query_one("#notes-create-new-button", Button)
-            import_button = sidebar_left.query_one("#notes-import-button", Button)
-            load_selected_button = sidebar_left.query_one("#notes-load-selected-button", Button)
-            edit_selected_button = sidebar_left.query_one("#notes-edit-selected-button", Button)
+            inspector_pane = self.query_one("#notes-inspector-pane", NotesInspectorPane)
+            template_select = self.query_one("#notes-template-select", Select)
+            create_from_template_button = self.query_one("#notes-create-from-template-button", Button)
+            create_blank_button = self.query_one("#notes-create-new-button", Button)
+            import_button = self.query_one("#notes-import-button", Button)
 
             editor.display = is_note_editor
+            title_input.display = resource_kind == "note"
             workspace_panel.display = show_workspace_panel
 
             save_button.display = is_note_editor
@@ -406,8 +542,6 @@ class NotesScreen(BaseAppScreen):
             create_blank_button.display = show_create_blank
             create_blank_button.label = create_blank_label
             import_button.display = show_local_create_actions
-            load_selected_button.display = show_local_create_actions
-            edit_selected_button.display = show_local_create_actions
 
             if self.state.scope_type == ScopeType.SERVER_NOTE:
                 save_button.label = "Save Server Note"
@@ -416,7 +550,8 @@ class NotesScreen(BaseAppScreen):
             else:
                 save_button.label = "Save Note"
 
-            sidebar_right.apply_scope_context(self.state.scope_type.value, resource_kind)
+            inspector_pane.apply_scope_context(self.state.scope_type.value, resource_kind)
+            self._update_status_row()
             self._update_use_in_chat_action_states()
         except QueryError:
             return
@@ -795,13 +930,13 @@ class NotesScreen(BaseAppScreen):
         if not self.is_mounted:
             return
         try:
-            sidebar_left = self.query_one("#notes-sidebar-left", NotesSidebarLeft)
+            navigator = self.query_one("#notes-navigator-pane", NotesNavigatorPane)
             if self.state.scope_type == ScopeType.LOCAL_NOTE:
-                await sidebar_left.populate_local_notes_list(items)
+                await navigator.populate_local_notes_list(items)
             elif self.state.scope_type == ScopeType.SERVER_NOTE:
-                await sidebar_left.populate_server_notes_list(items)
+                await navigator.populate_server_notes_list(items)
             else:
-                await sidebar_left.populate_workspaces_list(items)
+                await navigator.populate_workspaces_list(items)
         except QueryError:
             return
 
@@ -1153,7 +1288,16 @@ class NotesScreen(BaseAppScreen):
             "artifacts": [],
         }
         self._write_editor_surface(title=title, content=content, keywords=note_details.get("keywords"))
+        self._update_inspector_meta(note_details)
         self._update_scope_context_ui()
+
+    def _update_inspector_meta(self, note_details: Optional[dict[str, Any]]) -> None:
+        if not self.is_mounted:
+            return
+        try:
+            self.query_one("#notes-inspector-pane", NotesInspectorPane).update_note_meta(note_details)
+        except QueryError:
+            return
 
     def _write_editor_surface(
         self,
@@ -1166,10 +1310,9 @@ class NotesScreen(BaseAppScreen):
             try:
                 self._suspend_dirty_tracking = True
                 self.query_one("#notes-editor-area", TextArea).load_text(content)
-                sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
-                sidebar_right.query_one("#notes-title-input", Input).value = title
+                self.query_one("#notes-title-input", Input).value = title
                 keyword_text = ", ".join(self._normalize_keywords(keywords))
-                sidebar_right.query_one("#notes-keywords-area", TextArea).load_text(keyword_text)
+                self.query_one("#notes-keywords-area", TextArea).load_text(keyword_text)
             except QueryError:
                 return
             finally:
@@ -1193,6 +1336,7 @@ class NotesScreen(BaseAppScreen):
         self._set_keywords_baseline(note_details.get("keywords"))
         self._sync_legacy_local_selection()
         self._write_editor_surface(title=title, content=content, keywords=note_details.get("keywords"))
+        self._update_inspector_meta(note_details)
         self._update_scope_context_ui()
 
     async def _hydrate_editor_for_workspace_note(self, note_details: dict[str, Any]) -> None:
@@ -1215,6 +1359,7 @@ class NotesScreen(BaseAppScreen):
         self._set_keywords_baseline(note_details.get("keywords"))
         self._sync_legacy_local_selection()
         self._write_editor_surface(title=title, content=content, keywords=note_details.get("keywords"))
+        self._update_inspector_meta(note_details)
         self._update_scope_context_ui()
 
     def _read_editor_text(self) -> str:
@@ -1229,8 +1374,7 @@ class NotesScreen(BaseAppScreen):
         if not self.is_mounted:
             return self.state.selected_note_title
         try:
-            sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
-            return sidebar_right.query_one("#notes-title-input", Input).value
+            return self.query_one("#notes-title-input", Input).value
         except QueryError:
             return self.state.selected_note_title
 
@@ -1238,8 +1382,7 @@ class NotesScreen(BaseAppScreen):
         if not self.is_mounted:
             return list(self._selected_note_keywords)
         try:
-            sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
-            keywords_text = sidebar_right.query_one("#notes-keywords-area", TextArea).text
+            keywords_text = self.query_one("#notes-keywords-area", TextArea).text
         except QueryError:
             return list(self._selected_note_keywords)
         return [item.strip() for item in keywords_text.split(",") if item.strip()]
@@ -1412,18 +1555,6 @@ class NotesScreen(BaseAppScreen):
     def _update_word_count_display(self) -> None:
         try:
             self.query_one("#notes-word-count", Label).update(f"Words: {self.state.word_count}")
-        except QueryError:
-            return
-
-    def _toggle_left_sidebar_visibility(self) -> None:
-        try:
-            self.query_one("#notes-sidebar-left", NotesSidebarLeft).display = not self.state.left_sidebar_collapsed
-        except QueryError:
-            return
-
-    def _toggle_right_sidebar_visibility(self) -> None:
-        try:
-            self.query_one("#notes-sidebar-right", NotesSidebarRight).display = not self.state.right_sidebar_collapsed
         except QueryError:
             return
 
@@ -2314,9 +2445,9 @@ class NotesScreen(BaseAppScreen):
         try:
             self._suspend_dirty_tracking = True
             self.query_one("#notes-editor-area", TextArea).clear()
-            sidebar_right = self.query_one("#notes-sidebar-right", NotesSidebarRight)
-            sidebar_right.query_one("#notes-title-input", Input).value = ""
-            sidebar_right.query_one("#notes-keywords-area", TextArea).clear()
+            self.query_one("#notes-title-input", Input).value = ""
+            self.query_one("#notes-keywords-area", TextArea).clear()
+            self.query_one("#notes-inspector-pane", NotesInspectorPane).update_note_meta(None)
         except QueryError:
             return
         finally:
@@ -2358,20 +2489,128 @@ class NotesScreen(BaseAppScreen):
         self._set_state(is_preview_mode=not self.state.is_preview_mode)
         await self._toggle_preview_mode()
 
-    @on(Button.Pressed, "#toggle-notes-sidebar-left")
-    def handle_left_sidebar_toggle(self, event: Button.Pressed) -> None:
+    @on(Button.Pressed, ".notes-mode-chip")
+    def handle_mode_chip(self, event: Button.Pressed) -> None:
         event.stop()
-        self._set_state(left_sidebar_collapsed=not self.state.left_sidebar_collapsed)
+        mode_by_button = {mode["button_id"]: mode_id for mode_id, mode in self.NOTES_MODES.items()}
+        mode_id = mode_by_button.get(event.button.id or "")
+        if mode_id is not None:
+            self._set_state(active_mode=mode_id)
 
-    @on(Button.Pressed, "#toggle-notes-sidebar-right")
-    def handle_right_sidebar_toggle(self, event: Button.Pressed) -> None:
+    @on(Button.Pressed, "#notes-open-sync-modal")
+    def handle_open_sync_modal(self, event: Button.Pressed) -> None:
         event.stop()
-        self._set_state(right_sidebar_collapsed=not self.state.right_sidebar_collapsed)
+        self.post_message(SyncRequested())
+        self.app.push_screen(NotesSyncWidgetImproved(self.app_instance))
 
     @on(Button.Pressed, "#notes-create-new-button")
     async def handle_create_new_button(self, event: Button.Pressed) -> None:
         event.stop()
         await self._create_new_note()
+
+    @on(Button.Pressed, "#notes-create-from-template-button")
+    async def handle_create_from_template_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self.state.scope_type != ScopeType.LOCAL_NOTE:
+            self._notify("Templates create local notes; switch to local notes first.", severity="warning")
+            return
+        if self.notes_service is None:
+            self._notify("Local notes service is not configured.", severity="warning")
+            return
+
+        from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
+
+        try:
+            template_key = self.query_one("#notes-template-select", Select).value
+        except QueryError:
+            return
+        if not template_key or template_key not in NOTE_TEMPLATES:
+            self._notify("Please select a template.", severity="warning")
+            return
+        template = NOTE_TEMPLATES[template_key]
+        now = datetime.now()
+        template_data = {
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H:%M"),
+            "datetime": now.strftime("%Y-%m-%d %H:%M"),
+        }
+        title = str(template.get("title", "New Note")).format(**template_data)
+        content = str(template.get("content", "")).format(**template_data)
+        new_note_id = self.notes_service.add_note(
+            user_id=self.notes_user_id,
+            title=title,
+            content=content,
+        )
+        if not new_note_id:
+            self._notify("Failed to create note from template.", severity="error")
+            return
+        keywords = self._normalize_keywords(template.get("keywords"))
+        if keywords:
+            self._sync_local_note_keywords(new_note_id, list(keywords))
+        await self._load_note(new_note_id)
+        await self.refresh_current_scope()
+        self._notify(f"Note created from template: {title}", severity="information")
+
+    @on(Button.Pressed, "#notes-import-button")
+    def handle_import_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self.state.scope_type != ScopeType.LOCAL_NOTE:
+            self._notify("Import creates local notes; switch to local notes first.", severity="warning")
+            return
+
+        async def import_callback(selected_path: Optional[Path]) -> None:
+            await self._import_note_from_path(selected_path)
+
+        self.app.push_screen(
+            FileOpen(title="Import Note (TXT, MD, JSON, YAML)"),
+            import_callback,
+        )
+
+    async def _import_note_from_path(self, selected_path: Optional[Path]) -> None:
+        if selected_path is None:
+            return
+        if self.notes_service is None:
+            self._notify("Local notes service is not configured.", severity="warning")
+            return
+
+        from tldw_chatbook.Event_Handlers.notes_events import _parse_note_from_file_content
+
+        try:
+            file_content = Path(selected_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            self._notify(f"Could not read file: {exc}", severity="error")
+            return
+        title, content = _parse_note_from_file_content(Path(selected_path), file_content)
+        if title is None:
+            title = Path(selected_path).stem or "Imported Note"
+        new_note_id = self.notes_service.add_note(
+            user_id=self.notes_user_id,
+            title=title,
+            content=content or "",
+        )
+        if not new_note_id:
+            self._notify("Failed to import note.", severity="error")
+            return
+        await self._load_note(new_note_id)
+        await self.refresh_current_scope()
+        self._notify(f"Imported note: {title}", severity="information")
+
+    @on(Button.Pressed, "#notes-sort-order-button")
+    async def handle_sort_order_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        ascending = not self.state.sort_ascending
+        self._set_state(sort_ascending=ascending)
+        try:
+            event.button.label = "↑ Oldest First" if ascending else "↓ Newest First"
+        except Exception:
+            pass
+        await self.refresh_current_scope()
+
+    @on(Button.Pressed, "#notes-save-current-button")
+    async def handle_save_current_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        success = await self._save_current_note()
+        self.post_message(NoteSaved(self._get_current_resource_id(), success))
 
     @on(Button.Pressed, "#notes-search-button")
     async def handle_search_button(self, event: Button.Pressed) -> None:
@@ -2707,6 +2946,7 @@ class NotesScreen(BaseAppScreen):
                     "sort_ascending": self.state.sort_ascending,
                     "search_query": self.state.search_query,
                     "keyword_filter": self.state.keyword_filter,
+                    "active_mode": self.state.active_mode,
                     "left_sidebar_collapsed": self.state.left_sidebar_collapsed,
                     "right_sidebar_collapsed": self.state.right_sidebar_collapsed,
                 }
@@ -2744,6 +2984,7 @@ class NotesScreen(BaseAppScreen):
             sort_ascending=notes_state.get("sort_ascending", False),
             search_query=notes_state.get("search_query", ""),
             keyword_filter=notes_state.get("keyword_filter", ""),
+            active_mode=notes_state.get("active_mode", "notes"),
             left_sidebar_collapsed=notes_state.get("left_sidebar_collapsed", False),
             right_sidebar_collapsed=notes_state.get("right_sidebar_collapsed", False),
         )
