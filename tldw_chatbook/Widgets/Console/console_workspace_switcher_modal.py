@@ -17,7 +17,7 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[str | None]):
     Args:
         workspaces: Workspace records available for selection in the modal.
         active_workspace_id: Workspace id that should render as the current
-            disabled choice, or ``None`` when no workspace is active.
+            non-actionable row, or ``None`` when no workspace is active.
     """
 
     DEFAULT_CSS = """
