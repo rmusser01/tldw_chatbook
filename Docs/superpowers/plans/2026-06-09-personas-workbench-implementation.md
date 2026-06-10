@@ -11,8 +11,43 @@
 **Spec:** `Docs/superpowers/specs/2026-06-09-personas-workbench-design.md`
 
 **ADR required:** yes
-**ADR path:** `backlog/decisions/004-personas-destination-native-workbench.md` (Task 1)
+**ADR path:** `backlog/decisions/007-personas-workbench-route-consolidation.md` (landed via PR #506)
 **Reason:** Route consolidation, module retirement, and long-lived UX structure.
+
+## Revision 2026-06-10: PR #506 adoption
+
+PR #506 ("Add Personas workbench foundation contracts") landed the foundation
+independently. Tasks 1 and 2 are SUPERSEDED — do not execute them as written:
+
+- The ADR is `backlog/decisions/007-personas-workbench-route-consolidation.md`
+  (ADR-007), not ADR-004. The backlog task is task-90.
+- `Widgets/Persona_Widgets/personas_state.py` and `personas_messages.py` exist with a
+  different API than Tasks 1-2 describe. Keep these two files byte-identical to PR #506
+  until it merges; new message classes needed by later tasks are ADDED to
+  `personas_messages.py` (additive only).
+
+Substitutions for all later tasks:
+
+| Plan as written | Use instead |
+| --- | --- |
+| `LibraryRowSelected(kind, item_id)` | `PersonaEntitySelected(entity_kind=..., entity_id=..., entity_name=...)` |
+| `LibrarySearchChanged(query)` | `PersonaSearchChanged(query=...)` |
+| `LibraryNewRequested()` | `PersonaActionRequested(action="create")` |
+| `LibraryImportRequested()` | `PersonaActionRequested(action="import")` |
+| `PersonasWorkbenchState` frozen + `replace()` / `with_mode()` | mutable instance: `state.switch_mode(mode)`, `state.select_entity(...)`, `state.clear_selection()` |
+| `state.selected_kind` / `state.selected_id` | `state.selected_entity_kind` / `state.selected_entity_id` |
+| `state.is_unsaved` | `state.has_unsaved_changes` |
+| `state.edit_mode` | screen attribute `self._edit_mode` ("view"/"edit"/"create") — not part of shared state |
+| `PERSONAS_MODES` / `PLACEHOLDER_MODES` | `VALID_PERSONA_MODES` from `personas_state` (includes `import_export`, which gets NO mode chip — Import/Export stay toolbar actions per spec); placeholder modes are `("prompts", "dictionaries", "lore")` defined screen-side |
+| `MODE_LABELS` defined in screen | import `MODE_LABELS` from `personas_state` |
+
+Messages still to be added (in the task that first needs them, additively):
+`ConversationRowSelected`, `PreviewReplyRequested`, `PreviewResetRequested`,
+`PreviewOpenInConsoleRequested`, `EditPersonaRequested`,
+`PersonaProfileSaveRequested`, `PersonaProfileEditCancelled` — constructors exactly as
+written in Tasks 2/7/11/13. `Tests/UI/test_personas_workbench_state.py` from Task 2 is
+NOT created; PR #506's `Tests/UI/test_personas_workbench_foundation.py` covers the
+state model.
 
 **Conventions for every task:**
 - Run tests with `python -m pytest -q <path> --tb=short` (no `timeout` command in this environment).
