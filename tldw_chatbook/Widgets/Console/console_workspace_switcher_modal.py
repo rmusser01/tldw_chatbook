@@ -47,6 +47,13 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[str | None]):
         margin: 0;
     }
 
+    .console-workspace-switcher-current {
+        content-align: center middle;
+        background: $surface;
+        color: $text;
+        text-style: bold;
+    }
+
     #console-workspace-switcher-actions {
         height: 3;
         min-height: 3;
@@ -85,16 +92,24 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[str | None]):
                 for index, workspace in enumerate(self._workspaces):
                     label = workspace.name
                     if workspace.workspace_id == self._active_workspace_id:
-                        label = f"{workspace.name} (current)"
-                    button = Button(
-                        label,
-                        id=f"console-workspace-switch-{index}",
-                        classes="console-workspace-switcher-option",
-                        disabled=workspace.workspace_id == self._active_workspace_id,
-                        compact=True,
-                    )
-                    button.tooltip = f"Use {workspace.name} as the active Console workspace"
-                    yield button
+                        yield Static(
+                            f"{workspace.name} (current)",
+                            id=f"console-workspace-switch-current-{index}",
+                            classes=(
+                                "console-workspace-switcher-option "
+                                "console-workspace-switcher-current"
+                            ),
+                            markup=False,
+                        )
+                    else:
+                        button = Button(
+                            label,
+                            id=f"console-workspace-switch-{index}",
+                            classes="console-workspace-switcher-option",
+                            compact=True,
+                        )
+                        button.tooltip = f"Use {workspace.name} as the active Console workspace"
+                        yield button
             with Horizontal(id="console-workspace-switcher-actions"):
                 yield Button("Cancel", id="console-workspace-switcher-cancel", compact=True)
 

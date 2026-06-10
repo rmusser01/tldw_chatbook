@@ -299,6 +299,15 @@ async def test_console_change_workspace_switches_active_context_and_conversation
 
         console.query_one("#console-change-workspace", Button).press()
         modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
+        current_workspace = modal_screen.query_one(
+            "#console-workspace-switch-current-1",
+            Static,
+        )
+        assert str(current_workspace.renderable) == "Workspace A (current)"
+        assert all(
+            str(button.label) != "Workspace A (current)"
+            for button in modal_screen.query(Button)
+        )
         switch_button = next(
             button
             for button in modal_screen.query(Button)
