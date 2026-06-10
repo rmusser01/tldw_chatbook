@@ -72,6 +72,7 @@ LIBRARY_MODE_CHIP_WIDTH_PADDING = 6
 LIBRARY_SOURCE_BROWSER_WIDTH = 31
 LIBRARY_SOURCE_DETAIL_WIDTH = "5fr"
 LIBRARY_SOURCE_INSPECTOR_WIDTH = "2fr"
+LIBRARY_LOCAL_SNAPSHOT_MODES = frozenset({"sources", "conversations", "import-export"})
 LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH = 30
 LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
 LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
@@ -111,10 +112,9 @@ LIBRARY_MODES = {
         "label": "Search/RAG",
         "button_id": "library-mode-search",
         "description": (
-            "Search/RAG mode: ask over selected Library sources inside Library; "
-            "standalone Search/RAG remains available from Source Browser."
+            "Ask Library sources, inspect evidence, then send selected snippets to Console."
         ),
-        "next_action": "Run Search/RAG, inspect cited evidence, then Use in Console.",
+        "next_action": "Query first; scope, evidence, and Console handoff stay visible below.",
     },
     "import-export": {
         "label": "Import/Export",
@@ -1014,6 +1014,8 @@ class LibraryScreen(BaseAppScreen):
         widgets: list[Button | Static] = []
         active_action_id = self._active_source_action_id()
         for index, (label, widget_id, tooltip) in enumerate(actions):
+            if self._active_mode == "search" and widget_id == "library-open-search":
+                continue
             classes = "library-source-action"
             if widget_id == active_action_id:
                 classes = f"{classes} is-active"
@@ -1183,9 +1185,31 @@ class LibraryScreen(BaseAppScreen):
             return "Unavailable"
         return "Blocked"
 
+    def _search_rag_status_label(self) -> str:
+        panel_state = self._library_rag_panel_state()
+        if panel_state.scope.status == "blocked":
+            if not panel_state.scope.has_available_sources:
+                return "Blocked: no Library sources"
+            return "Blocked: select Library source scope"
+        if panel_state.query_state.status == "blocked":
+            return f"Blocked: {panel_state.query_state.run_action.disabled_reason}"
+        if panel_state.retrieval_status == "searching":
+            return "Searching"
+        if panel_state.retrieval_status in {"blocked", "failed"}:
+            return "Blocked: retrieval unavailable"
+        if panel_state.retrieval_status == "empty":
+            return "No results"
+        if panel_state.selected_result is not None:
+            return "Evidence selected"
+        if panel_state.results:
+            return "Results ready"
+        return "Ready"
+
     def _status_row_copy(self) -> str:
         if self._active_mode == "conversations":
             return f"Library | Conversations | {self._status_label()} | Local"
+        if self._active_mode == "search":
+            return f"Library | Search/RAG | {self._search_rag_status_label()} | Local"
         if self._active_mode == "import-export":
             return f"Library | Import/Export | {self._status_label()} | Local"
         if self._active_mode == "collections":
@@ -1213,6 +1237,9 @@ class LibraryScreen(BaseAppScreen):
             "collections": "library-open-collections",
             "import-export": "library-open-import-export",
         }.get(self._active_mode, "")
+
+    def _should_show_local_snapshot_region(self) -> bool:
+        return self._active_mode in LIBRARY_LOCAL_SNAPSHOT_MODES
 
     def _library_rag_panel_state(self) -> LibraryRagPanelState:
         return LibraryRagPanelState.from_values(
@@ -1736,6 +1763,8 @@ class LibraryScreen(BaseAppScreen):
                     tooltip="Collection-scoped Console handoff is not available yet.",
                 ),
             )
+        if self._active_mode == "search":
+            return ()
         return (
             Static("Knowledge workflow", classes="destination-section"),
             Static(
@@ -1833,6 +1862,7 @@ class LibraryScreen(BaseAppScreen):
         )
         collection_scoped_actions_deferred = self._active_mode == "collections"
         source_column_title, detail_column_title, inspector_column_title = self._active_column_titles()
+        show_local_snapshot_region = self._should_show_local_snapshot_region()
 
         with Vertical(id="library-shell"):
             yield Static("Library", id="library-title", classes="ds-destination-header")
@@ -1955,40 +1985,41 @@ class LibraryScreen(BaseAppScreen):
                             id="library-collections-panel",
                         )
                     local_snapshot_region = Vertical(id="library-local-snapshot-region")
-                    local_snapshot_region.display = self._active_mode != "workspaces"
+                    local_snapshot_region.display = show_local_snapshot_region
                     with local_snapshot_region:
-                        if not self._library_loaded:
-                            yield Static(
-                                "Loading local Library sources...",
-                                id="library-source-loading",
-                            )
-                        elif self._library_lookup_error:
-                            recovery_state = self._library_lookup_recovery_state
-                            yield Static(
-                                self._library_lookup_error,
-                                id=(
-                                    recovery_state.stable_selector
-                                    if recovery_state is not None
-                                    else "library-source-error"
-                                ),
-                            )
-                        elif self._active_mode == "conversations":
-                            yield from self._conversation_browser_rows(workspace_depth_state)
-                        elif self._active_mode == "import-export":
-                            yield from self._import_export_workflow_rows()
-                        elif not has_sources:
-                            for hub_row in self._content_hub_rows():
-                                yield hub_row
-                            yield Static(
-                                LIBRARY_EMPTY_COPY,
-                                id="library-source-empty",
-                            )
-                            yield Static(
-                                LIBRARY_EMPTY_NEXT_ACTION_COPY,
-                                id="library-source-empty-next-action",
-                            )
-                        else:
-                            yield from self._content_hub_rows()
+                        if show_local_snapshot_region:
+                            if not self._library_loaded:
+                                yield Static(
+                                    "Loading local Library sources...",
+                                    id="library-source-loading",
+                                )
+                            elif self._library_lookup_error:
+                                recovery_state = self._library_lookup_recovery_state
+                                yield Static(
+                                    self._library_lookup_error,
+                                    id=(
+                                        recovery_state.stable_selector
+                                        if recovery_state is not None
+                                        else "library-source-error"
+                                    ),
+                                )
+                            elif self._active_mode == "conversations":
+                                yield from self._conversation_browser_rows(workspace_depth_state)
+                            elif self._active_mode == "import-export":
+                                yield from self._import_export_workflow_rows()
+                            elif not has_sources:
+                                for hub_row in self._content_hub_rows():
+                                    yield hub_row
+                                yield Static(
+                                    LIBRARY_EMPTY_COPY,
+                                    id="library-source-empty",
+                                )
+                                yield Static(
+                                    LIBRARY_EMPTY_NEXT_ACTION_COPY,
+                                    id="library-source-empty-next-action",
+                                )
+                            else:
+                                yield from self._content_hub_rows()
 
                 source_inspector = self._frame_library_region(
                     Vertical(id="library-source-inspector", classes="library-region destination-workbench-pane")
@@ -2097,7 +2128,7 @@ class LibraryScreen(BaseAppScreen):
         self.query_one("#library-active-mode-next-action", Static).display = active_mode_copy_visible
         local_snapshot_regions = list(self.query("#library-local-snapshot-region"))
         if local_snapshot_regions:
-            local_snapshot_regions[0].display = active_mode_copy_visible
+            local_snapshot_regions[0].display = self._should_show_local_snapshot_region()
         for mode_id, mode in LIBRARY_MODES.items():
             if not mode.get("show_in_strip", True):
                 continue
@@ -2117,12 +2148,24 @@ class LibraryScreen(BaseAppScreen):
             buttons = list(self.query(f"#{button_id}"))
             if buttons:
                 buttons[0].set_class(button_id == active_source_action_id, "is-active")
+        await self._sync_source_module_actions()
         workspace_depth_state = self._library_workspace_depth_state(refresh=True)
         await self._sync_local_snapshot_region(workspace_depth_state)
         await self._sync_search_rag_panel(workspace_depth_state=workspace_depth_state)
         await self._sync_collections_panel(refresh_snapshot=True)
         await self._sync_workspaces_panel(workspace_depth_state)
         await self._sync_action_region(workspace_depth_state)
+
+    async def _sync_source_module_actions(self) -> None:
+        browser = self.query_one("#library-source-browser", Vertical)
+        for widget in list(browser.query(".library-source-action")):
+            await widget.remove()
+        for widget in list(browser.query(".library-source-action-spacer")):
+            await widget.remove()
+        await browser.mount(
+            *self._source_module_action_widgets(),
+            after="#library-source-browser-title",
+        )
 
     async def _sync_search_rag_panel(
         self,
@@ -2238,6 +2281,8 @@ class LibraryScreen(BaseAppScreen):
         region = regions[0]
         # Textual removes children asynchronously; wait before remounting reused IDs.
         await region.remove_children()
+        if not self._should_show_local_snapshot_region():
+            return
         if not self._library_loaded:
             await region.mount(
                 Static(
@@ -2576,6 +2621,12 @@ class LibraryScreen(BaseAppScreen):
         self._reset_library_rag_retrieval_state()
         await self._refresh_search_rag_panel_state_widgets()
 
+    @on(Input.Submitted, "#library-rag-query-input")
+    async def submit_library_rag_query(self, event: Input.Submitted) -> None:
+        """Run Library Search/RAG from the query field for keyboard-only users."""
+        event.stop()
+        await self._start_library_rag_query()
+
     @on(Input.Changed, "#library-collection-name-input")
     async def update_library_collection_name_input(self, event: Input.Changed) -> None:
         event.stop()
@@ -2599,6 +2650,14 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-rag-run-query")
     async def run_library_rag_query(self, event: Button.Pressed) -> None:
         event.stop()
+        await self._start_library_rag_query()
+
+    @on(Button.Pressed, "#library-rag-open-import-export")
+    async def open_import_export_from_library_rag(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._set_active_mode("import-export")
+
+    async def _start_library_rag_query(self) -> None:
         panel_state = self._library_rag_panel_state()
         run_action = panel_state.query_state.run_action
         if not run_action.enabled:
@@ -2736,6 +2795,18 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-rag-use-in-console")
     def use_library_rag_result_in_console(self, event: Button.Pressed) -> None:
         """Stage the selected Library Search/RAG evidence result in Console."""
+        self._use_library_rag_result_in_console(event)
+
+    @on(Button.Pressed, "#library-rag-use-selected-in-console")
+    def use_selected_library_rag_result_in_console(
+        self,
+        event: Button.Pressed,
+    ) -> None:
+        """Stage selected evidence from the center results lane."""
+        self._use_library_rag_result_in_console(event)
+
+    def _use_library_rag_result_in_console(self, event: Button.Pressed) -> None:
+        """Shared implementation for inspector and results-lane handoff controls."""
         event.stop()
         panel_state = self._library_rag_panel_state()
         console_action = panel_state.use_in_console_action
@@ -2792,6 +2863,9 @@ class LibraryScreen(BaseAppScreen):
             return
 
         panel_state = self._library_rag_panel_state()
+        status_rows = list(self.query("#library-status-row"))
+        if status_rows:
+            status_rows[0].update(self._status_row_copy())
         self.query_one("#library-rag-query-status", Static).update(
             f"Mode: {panel_state.query_state.mode_label} | Top {panel_state.query_state.top_k}"
         )
@@ -2800,12 +2874,17 @@ class LibraryScreen(BaseAppScreen):
         run_button.disabled = not run_action.enabled
         run_button.tooltip = run_action.tooltip
 
+        query_controls = self.query_one("#library-rag-query-controls", Vertical)
         recovery_widgets = list(self.query("#library-rag-query-recovery"))
-        if panel_state.query_state.recovery_copy:
+        show_query_recovery = (
+            bool(panel_state.query_state.recovery_copy)
+            and panel_state.scope.status != "blocked"
+        )
+        query_controls.set_class(show_query_recovery, "has-recovery")
+        if show_query_recovery:
             if recovery_widgets:
                 recovery_widgets[0].update(panel_state.query_state.recovery_copy)
             else:
-                query_controls = self.query_one("#library-rag-query-controls", Vertical)
                 await query_controls.mount(
                     Static(
                         panel_state.query_state.recovery_copy,
@@ -2815,6 +2894,36 @@ class LibraryScreen(BaseAppScreen):
                 )
         else:
             for widget in recovery_widgets:
+                await widget.remove()
+
+        scope_container = self.query_one("#library-rag-source-scope", Vertical)
+        scope_container.set_class(bool(panel_state.scope.recovery_copy), "has-recovery")
+        self.query_one("#library-rag-scope-summary", Static).update(
+            self._library_rag_scope_summary(panel_state)
+        )
+        scope_recovery_widgets = list(self.query("#library-rag-scope-recovery"))
+        import_buttons = list(self.query("#library-rag-open-import-export"))
+        if panel_state.scope.recovery_copy:
+            if scope_recovery_widgets:
+                scope_recovery_widgets[0].update(panel_state.scope.recovery_copy)
+            else:
+                await scope_container.mount(
+                    Static(
+                        panel_state.scope.recovery_copy,
+                        id="library-rag-scope-recovery",
+                    )
+                )
+            if not import_buttons:
+                await scope_container.mount(
+                    Button(
+                        "Open Import/Export",
+                        id="library-rag-open-import-export",
+                        classes="library-rag-recovery-action",
+                        tooltip="Open Library Import/Export to add sources.",
+                    )
+                )
+        else:
+            for widget in (*scope_recovery_widgets, *import_buttons):
                 await widget.remove()
 
         self._refresh_library_rag_inspector(panel_state)
@@ -2842,18 +2951,31 @@ class LibraryScreen(BaseAppScreen):
         if panel_state.results:
             for index, result in enumerate(panel_state.results):
                 score = "" if result.score is None else f" | score {result.score:.3f}"
+                selected = result.result_id == panel_state.selected_result_id
                 await results_container.mount(
                     Static(
                         f"{index + 1}. {result.title}{score}",
                         id=f"library-rag-result-{index}",
+                        classes=(
+                            "library-rag-result-row is-selected"
+                            if selected
+                            else "library-rag-result-row"
+                        ),
                     )
                 )
                 await results_container.mount(
                     Button(
-                        "Select evidence",
+                        "Selected evidence" if selected else "Select evidence",
                         id=f"library-rag-select-result-{index}",
                         classes="library-rag-result-action",
                         tooltip="Select this evidence result for Console handoff.",
+                    )
+                )
+                await results_container.mount(
+                    Static(
+                        result.row_badge_label,
+                        id=f"library-rag-result-badges-{index}",
+                        classes="library-rag-result-badges",
                     )
                 )
                 await results_container.mount(
@@ -2867,6 +2989,19 @@ class LibraryScreen(BaseAppScreen):
                         Static(
                             f"Citations: {', '.join(result.citation_labels)}",
                             id=f"library-rag-result-citations-{index}",
+                        )
+                    )
+                if selected:
+                    await results_container.mount(
+                        Button(
+                            panel_state.use_in_console_action.label,
+                            id="library-rag-use-selected-in-console",
+                            classes=(
+                                "library-rag-console-action "
+                                "library-rag-center-console-action"
+                            ),
+                            disabled=not panel_state.use_in_console_action.enabled,
+                            tooltip=panel_state.use_in_console_action.tooltip,
                         )
                     )
         elif panel_state.retrieval_status == "searching":
@@ -2884,6 +3019,16 @@ class LibraryScreen(BaseAppScreen):
             await results_container.mount(
                 Static(panel_state.next_action, id="library-rag-results-empty")
             )
+
+    @staticmethod
+    def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
+        counts = {option.source_type: option.count for option in panel_state.scope.options}
+        return (
+            "Scope: all local"
+            f" | Notes {counts.get('notes', 0)}"
+            f" | Media {counts.get('media', 0)}"
+            f" | Conversations {counts.get('conversations', 0)}"
+        )
 
     @on(Button.Pressed, "#library-open-notes")
     def open_notes(self) -> None:
