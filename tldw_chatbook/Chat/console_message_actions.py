@@ -64,7 +64,7 @@ class ConsoleMessageActionService:
     )
 
     def __init__(self, *, available_save_destinations: set[str] | None = None) -> None:
-        self.available_save_destinations = available_save_destinations or {"Chatbook"}
+        self.available_save_destinations = set(available_save_destinations or ())
 
     def available_actions(self, message: ConsoleChatMessage) -> list[ConsoleMessageAction]:
         """Return canonical selected-message actions for a transcript message."""
