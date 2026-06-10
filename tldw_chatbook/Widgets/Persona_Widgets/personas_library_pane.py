@@ -8,10 +8,12 @@ from dataclasses import dataclass
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
 from .personas_messages import (
     PersonaActionRequested,
+    PersonaEntityKind,
     PersonaEntitySelected,
     PersonaSearchChanged,
 )
@@ -28,7 +30,7 @@ class LibraryRow:
     """One selectable row in the workbench library list."""
 
     item_id: str
-    kind: str  # "character" | "persona_profile"
+    kind: PersonaEntityKind
     name: str
     is_unsaved: bool = False
 
@@ -39,6 +41,7 @@ class PersonasLibraryPane(Vertical):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._row_lookup: dict[str, LibraryRow] = {}
+        self._import_visible: bool = True
 
     def compose(self) -> ComposeResult:
         yield Static("Library", classes="destination-section personas-column-title")
@@ -55,9 +58,10 @@ class PersonasLibraryPane(Vertical):
 
     def set_mode(self, mode: str) -> None:
         """Show Import only where it applies (Characters mode)."""
-        self.query_one("#personas-library-import", Button).display = mode == "characters"
+        self._import_visible = mode == "characters"
+        self.query_one("#personas-library-import", Button).display = self._import_visible
 
-    def update_rows(
+    async def update_rows(
         self,
         rows: tuple[LibraryRow, ...],
         *,
@@ -67,22 +71,32 @@ class PersonasLibraryPane(Vertical):
     ) -> None:
         """Replace the visible rows and count line."""
         container = self.query_one("#personas-library-rows", VerticalScroll)
-        container.remove_children()
+        await container.remove_children()
         self._row_lookup = {}
+        widgets: list[Widget] = []
         if not rows:
-            container.mount(
+            hint = "use New or Import" if self._import_visible else "use New"
+            widgets.append(
                 Static(
-                    f"No {noun} yet - use New or Import to add one.",
+                    f"No {noun} yet - {hint} to add one.",
                     id="personas-library-empty",
                 )
             )
+        seen: set[str] = set()
         for row in rows:
             dom_id = _row_dom_id(row.kind, row.item_id)
+            if dom_id in seen:
+                suffix = 2
+                while f"{dom_id}-{suffix}" in seen:
+                    suffix += 1
+                dom_id = f"{dom_id}-{suffix}"
+            seen.add(dom_id)
             self._row_lookup[dom_id] = row
             classes = "personas-library-row"
             if row.is_unsaved:
                 classes += " is-unsaved"
-            container.mount(Button(row.name, id=dom_id, classes=classes))
+            widgets.append(Button(row.name, id=dom_id, classes=classes))
+        await container.mount_all(widgets)
         count = f"{len(rows)} of {total} {noun}" if filtered else f"{total} {noun}"
         self.query_one("#personas-library-count", Static).update(count)
 

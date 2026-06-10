@@ -29,7 +29,7 @@ async def test_pane_renders_search_toolbar_and_empty_state():
         assert pilot.app.query_one("#personas-library-search", Input)
         assert pilot.app.query_one("#personas-library-new", Button)
         assert pilot.app.query_one("#personas-library-import", Button)
-        pane.update_rows((), total=0, noun="characters")
+        await pane.update_rows((), total=0, noun="characters")
         await pilot.pause()
         empty = pilot.app.query_one("#personas-library-empty", Static)
         assert "No characters yet" in str(empty.renderable)
@@ -43,7 +43,7 @@ async def test_update_rows_renders_rows_and_count():
             LibraryRow(item_id="1", kind="character", name="Detective Sam"),
             LibraryRow(item_id="2", kind="character", name="Tutor", is_unsaved=True),
         )
-        pane.update_rows(rows, total=2, noun="characters")
+        await pane.update_rows(rows, total=2, noun="characters")
         await pilot.pause()
         buttons = pilot.app.query(".personas-library-row")
         assert len(buttons) == 2
@@ -58,7 +58,7 @@ async def test_filtered_count_shows_n_of_m():
     app = LibraryPaneApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasLibraryPane)
-        pane.update_rows(
+        await pane.update_rows(
             (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
             total=12,
             noun="characters",
@@ -79,7 +79,7 @@ async def test_row_press_posts_persona_entity_selected():
     app = CaptureApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasLibraryPane)
-        pane.update_rows(
+        await pane.update_rows(
             (LibraryRow(item_id="7", kind="character", name="Detective Sam"),),
             total=1,
             noun="characters",
@@ -118,7 +118,7 @@ async def test_mark_active_row_applies_is_active_to_selected_only():
     app = LibraryPaneApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasLibraryPane)
-        pane.update_rows(
+        await pane.update_rows(
             (
                 LibraryRow(item_id="1", kind="character", name="Detective Sam"),
                 LibraryRow(item_id="2", kind="character", name="Tutor"),
@@ -130,3 +130,63 @@ async def test_mark_active_row_applies_is_active_to_selected_only():
         pane.mark_active_row("character", "2")
         assert "is-active" in pilot.app.query_one("#personas-library-row-character-2", Button).classes
         assert "is-active" not in pilot.app.query_one("#personas-library-row-character-1", Button).classes
+
+
+async def test_set_mode_toggles_import_button_and_empty_copy():
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        import_button = pilot.app.query_one("#personas-library-import", Button)
+        pane.set_mode("personas")
+        assert import_button.display is False
+        pane.set_mode("characters")
+        assert import_button.display is True
+        pane.set_mode("personas")
+        await pane.update_rows((), total=0, noun="persona profiles")
+        await pilot.pause()
+        empty = pilot.app.query_one("#personas-library-empty", Static)
+        copy = str(empty.renderable)
+        assert "No persona profiles yet" in copy
+        assert "Import" not in copy
+
+
+async def test_update_rows_twice_in_same_tick_does_not_crash():
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        rows_a = (LibraryRow(item_id="1", kind="character", name="First"),)
+        rows_b = (LibraryRow(item_id="2", kind="character", name="Second"),)
+        await pane.update_rows(rows_a, total=1, noun="characters")
+        await pane.update_rows(rows_b, total=1, noun="characters")
+        await pilot.pause()
+        buttons = pilot.app.query(".personas-library-row")
+        assert len(buttons) == 1
+        assert buttons.first(Button).id == "personas-library-row-character-2"
+        assert str(buttons.first(Button).label) == "Second"
+
+
+async def test_colliding_item_ids_render_without_crash():
+    received = []
+
+    class CaptureApp(LibraryPaneApp):
+        def on_persona_entity_selected(self, message: PersonaEntitySelected) -> None:
+            received.append(message.entity_id)
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="a.b", kind="character", name="Dotted"),
+                LibraryRow(item_id="a b", kind="character", name="Spaced"),
+            ),
+            total=2,
+            noun="characters",
+        )
+        await pilot.pause()
+        buttons = pilot.app.query(".personas-library-row")
+        assert len(buttons) == 2
+        for button in buttons:
+            await pilot.click(f"#{button.id}")
+            await pilot.pause()
+    assert received == ["a.b", "a b"]
