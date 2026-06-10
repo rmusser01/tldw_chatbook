@@ -1694,17 +1694,20 @@ class TestNotesScreenMethods:
         async with app.run_test() as pilot:
             await pilot.pause()
 
-            load_selected = screen.query_one("#notes-load-selected-button", Button)
-            edit_selected = screen.query_one("#notes-edit-selected-button", Button)
+            template_select = screen.query_one("#notes-template-select")
+            create_from_template = screen.query_one("#notes-create-from-template-button", Button)
+            import_button = screen.query_one("#notes-import-button", Button)
 
-            assert load_selected.display is not False
-            assert edit_selected.display is not False
+            assert template_select.display is not False
+            assert create_from_template.display is not False
+            assert import_button.display is not False
 
             screen._set_state(scope_type=ScopeType.SERVER_NOTE)
             await pilot.pause()
 
-            assert load_selected.display is False
-            assert edit_selected.display is False
+            assert template_select.display is False
+            assert create_from_template.display is False
+            assert import_button.display is False
 
             screen._set_state(
                 scope_type=ScopeType.WORKSPACE,
@@ -1712,8 +1715,9 @@ class TestNotesScreenMethods:
             )
             await pilot.pause()
 
-            assert load_selected.display is False
-            assert edit_selected.display is False
+            assert template_select.display is False
+            assert create_from_template.display is False
+            assert import_button.display is False
 
     @pytest.mark.asyncio
     async def test_search_button_routes_through_scope_aware_filtered_search_flow(self, mock_app_instance):
@@ -1758,8 +1762,7 @@ class TestNotesScreenMethods:
             )
             screen._set_state(auto_save_enabled=False)
 
-            sidebar_right = screen.query_one("#notes-sidebar-right")
-            keywords_area = sidebar_right.query_one("#notes-keywords-area", TextArea)
+            keywords_area = screen.query_one("#notes-keywords-area", TextArea)
             keywords_area.load_text("urgent, follow-up")
             await screen.handle_keywords_changed(Mock())
 
@@ -1793,9 +1796,8 @@ class TestNotesScreenMethods:
             )
             screen._set_state(auto_save_enabled=False)
 
-            sidebar_right = screen.query_one("#notes-sidebar-right")
-            keywords_area = sidebar_right.query_one("#notes-keywords-area", TextArea)
-            title_input = sidebar_right.query_one("#notes-title-input")
+            keywords_area = screen.query_one("#notes-keywords-area", TextArea)
+            title_input = screen.query_one("#notes-title-input")
 
             keywords_area.load_text("urgent")
             await screen.handle_keywords_changed(Mock())

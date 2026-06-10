@@ -241,6 +241,7 @@ ConsoleSettingsModal Select:focus > SelectCurrent {
 #home-dashboard,
 #console-shell,
 #library-shell,
+#notes-shell,
 #artifacts-shell,
 #personas-shell,
 #watchlists-collections-shell,
@@ -256,6 +257,7 @@ ConsoleSettingsModal Select:focus > SelectCurrent {
 #home-title,
 #console-title,
 #library-title,
+#notes-title,
 #artifacts-title,
 #personas-title,
 #watchlists-collections-title,
@@ -275,10 +277,13 @@ ConsoleSettingsModal Select:focus > SelectCurrent {
 #home-purpose,
 #console-purpose,
 #library-purpose,
+#notes-purpose,
 #artifacts-purpose,
 #mcp-purpose,
 #console-status-row,
 #library-status-row,
+#notes-status-row,
+#notes-mode-strip,
 #console-mode-bar,
 #artifacts-mode-strip,
 #personas-mode-strip,
@@ -1233,14 +1238,16 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     overflow: hidden;
 }
 
-#library-mode-label {
+#library-mode-label,
+#notes-mode-label {
     width: $ds-library-mode-label-width;
     min-width: $ds-library-mode-label-width;
     height: $ds-library-mode-bar-height;
     min-height: $ds-library-mode-bar-height;
 }
 
-Button.library-mode-chip {
+Button.library-mode-chip,
+Button.notes-mode-chip {
     width: auto;
     min-width: 0;
     height: $ds-library-mode-chip-height;
@@ -1249,7 +1256,8 @@ Button.library-mode-chip {
     border: none;
 }
 
-.library-mode-chip:focus {
+.library-mode-chip:focus,
+.notes-mode-chip:focus {
     outline: none;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
@@ -1257,6 +1265,9 @@ Button.library-mode-chip {
 }
 
 #library-contract-grid,
+#notes-mode-region-notes,
+#notes-mode-region-sync,
+#notes-mode-region-templates,
 #artifacts-workbench,
 #personas-workbench,
 #watchlists-workbench,
@@ -1826,7 +1837,9 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 #library-source-browser,
-#library-source-inspector {
+#library-source-inspector,
+#notes-navigator-pane,
+#notes-inspector-pane {
     width: 2fr;
     min-width: 0;
     height: 100%;
@@ -1837,7 +1850,8 @@ Button.settings-category-button.settings-secondary-search-match {
     overflow-y: auto;
 }
 
-#library-source-detail {
+#library-source-detail,
+#notes-editor-pane {
     width: 5fr;
     min-width: 0;
     height: 100%;
@@ -1846,6 +1860,10 @@ Button.settings-category-button.settings-secondary-search-match {
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
     overflow-y: auto;
+}
+
+#notes-editor-pane {
+    overflow-y: hidden;
 }
 
 .ds-shortcut-bar {
@@ -1887,14 +1905,16 @@ Button.settings-category-button.settings-secondary-search-match {
     text-style: bold;
 }
 
-.library-mode-chip.is-active {
+.library-mode-chip.is-active,
+.notes-mode-chip.is-active {
     border: none;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
 }
 
-.library-mode-chip.is-active:focus {
+.library-mode-chip.is-active:focus,
+.notes-mode-chip.is-active:focus {
     outline: none;
     border: none;
     background: $ds-focus-bg;

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Iterable
-
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
-from textual.widgets import Button, Collapsible, Input, Label, ListItem, ListView, Select, Static
+from textual.widgets import Button, Collapsible, Input, Label, ListView, Select, Static
+
+from tldw_chatbook.Widgets.Note_Widgets.notes_workbench_panes import NotesListPopulateMixin
 
 
-class NotesSidebarLeft(VerticalScroll):
+class NotesSidebarLeft(NotesListPopulateMixin, VerticalScroll):
     """Navigator sidebar with separate local, server, and workspace sections."""
 
     DEFAULT_CSS = """
@@ -117,88 +117,3 @@ class NotesSidebarLeft(VerticalScroll):
             yield Button("Load Selected Note", id="notes-load-selected-button", variant="default")
             yield Button("Edit Selected Note", id="notes-edit-selected-button", variant="primary")
 
-    async def _populate_list(
-        self,
-        list_id: str,
-        items: Iterable[dict[str, Any]],
-        *,
-        title_id: str,
-        empty_message: str,
-        item_kind: str,
-    ) -> None:
-        list_view = self.query_one(f"#{list_id}", ListView)
-        title_label = self.query_one(f"#{title_id}", Label)
-        await list_view.clear()
-
-        normalized_items = list(items)
-        title_prefix = str(title_label.render()).split(" (", 1)[0]
-        title_label.update(f"{title_prefix} ({len(normalized_items)})")
-
-        if not normalized_items:
-            list_item = ListItem(Label(empty_message))
-            if item_kind == "server":
-                setattr(list_item, "note_id", None)
-                setattr(list_item, "note_version", None)
-                setattr(list_item, "note_scope", item_kind)
-            await list_view.append(list_item)
-            return
-
-        for item in normalized_items:
-            display_text = (
-                item.get("title")
-                or item.get("name")
-                or item.get("artifact_type")
-                or item.get("id")
-                or "Untitled"
-            )
-            if not str(display_text).strip():
-                display_text = "Untitled"
-            list_item = ListItem(Label(str(display_text)))
-            if item_kind == "workspace":
-                setattr(list_item, "workspace_id", item.get("id"))
-                setattr(list_item, "workspace_version", item.get("version"))
-            else:
-                setattr(list_item, "note_id", item.get("id"))
-                setattr(list_item, "note_version", item.get("version"))
-                setattr(list_item, "note_scope", item_kind)
-            await list_view.append(list_item)
-
-    async def populate_local_notes_list(self, notes_data: list[dict[str, Any]]) -> None:
-        await self._populate_list(
-            "notes-list-view",
-            notes_data,
-            title_id="local-notes-title",
-            empty_message=(
-                "No local notes yet. Create Blank Note for a private draft, "
-                "or Import Note to bring in a file."
-            ),
-            item_kind="local",
-        )
-
-    async def populate_server_notes_list(self, notes_data: list[dict[str, Any]]) -> None:
-        await self._populate_list(
-            "server-notes-list-view",
-            notes_data,
-            title_id="server-notes-title",
-            empty_message=(
-                "No server notes yet. Open Server Notes and Create Server Note "
-                "when the server backend is available."
-            ),
-            item_kind="server",
-        )
-
-    async def populate_workspaces_list(self, workspaces_data: list[dict[str, Any]]) -> None:
-        await self._populate_list(
-            "workspaces-list-view",
-            workspaces_data,
-            title_id="workspaces-title",
-            empty_message=(
-                "No workspaces yet. Create Workspace to organize notes, sources, artifacts, "
-                "and Study materials together."
-            ),
-            item_kind="workspace",
-        )
-
-    async def populate_notes_list(self, notes_data: list[dict[str, Any]]) -> None:
-        """Compatibility path for existing local-note flows."""
-        await self.populate_local_notes_list(notes_data)
