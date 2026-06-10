@@ -43,6 +43,11 @@ Substitutions for all later tasks:
 | `PERSONAS_MODES` / `PLACEHOLDER_MODES` | `VALID_PERSONA_MODES` from `personas_state` (includes `import_export`, which gets NO mode chip — Import/Export stay toolbar actions per spec); placeholder modes are `("prompts", "dictionaries", "lore")` defined screen-side |
 | `MODE_LABELS` defined in screen | import `MODE_LABELS` from `personas_state` |
 
+Async pane APIs (Tasks 3-4 made these coroutines for safe child replacement; later
+plan snippets show sync calls — ALWAYS await them or schedule via `run_worker`):
+`PersonasLibraryPane.update_rows(...)`, `PersonasInspectorPane.clear_selection()`,
+`PersonasInspectorPane.show_conversations(...)`.
+
 Messages still to be added (in the task that first needs them, additively):
 `ConversationRowSelected`, `PreviewReplyRequested`, `PreviewResetRequested`,
 `PreviewOpenInConsoleRequested`, `EditPersonaRequested`,
