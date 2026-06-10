@@ -48,7 +48,7 @@ class MutableTranscriptHarness(App):
 class SaveAsModalHarness(App):
     def __init__(self, destinations: list[ConsoleSaveDestination] | None = None) -> None:
         super().__init__()
-        self.destinations = destinations or save_as_modal_destinations()
+        self.destinations = save_as_modal_destinations() if destinations is None else destinations
         self.selected_destination: str | None = None
 
     def on_mount(self) -> None:
@@ -505,6 +505,19 @@ async def test_save_as_modal_available_destination_is_clickable_control():
         await pilot.pause(0.1)
 
     assert app.selected_destination == "Chatbook"
+
+
+@pytest.mark.asyncio
+async def test_save_as_modal_harness_preserves_empty_destination_list():
+    app = SaveAsModalHarness(destinations=[])
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _wait_for_selector(app.screen, pilot, "#console-save-as-modal")
+        text = _visible_text(app.screen)
+
+    assert "No Save as destinations are wired for selected messages yet." in text
+    assert "Chatbook" not in text
+    assert "Note" not in text
 
 
 @pytest.mark.asyncio
