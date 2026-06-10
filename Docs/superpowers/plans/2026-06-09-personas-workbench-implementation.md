@@ -22,9 +22,11 @@ independently. Tasks 1 and 2 are SUPERSEDED — do not execute them as written:
 - The ADR is `backlog/decisions/007-personas-workbench-route-consolidation.md`
   (ADR-007), not ADR-004. The backlog task is task-90.
 - `Widgets/Persona_Widgets/personas_state.py` and `personas_messages.py` exist with a
-  different API than Tasks 1-2 describe. Keep these two files byte-identical to PR #506
-  until it merges; new message classes needed by later tasks are ADDED to
-  `personas_messages.py` (additive only).
+  different API than Tasks 1-2 describe. Keep these two files (and
+  `Persona_Widgets/__init__.py`) byte-identical to PR #506 until it merges; new message
+  classes needed by later tasks go in a NEW sibling module
+  `tldw_chatbook/Widgets/Persona_Widgets/personas_pane_messages.py` (created by the
+  first task that needs it, extended additively after that).
 
 Substitutions for all later tasks:
 
