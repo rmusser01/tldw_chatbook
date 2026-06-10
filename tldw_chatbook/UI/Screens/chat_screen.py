@@ -55,6 +55,7 @@ from ...Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     normalize_llamacpp_base_url,
 )
+from ...Chat.console_provider_endpoints import first_configured_endpoint
 from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_NO_TOOL_CALLS_REASON,
@@ -802,10 +803,7 @@ class ChatScreen(BaseAppScreen):
             fallback_url = (
                 os.environ.get("TLDW_CONSOLE_LLAMA_CPP_BASE_URL")
                 or console_config.get("llama_cpp_base_url_override")
-                or provider_config.get("api_base_url")
-                or provider_config.get("api_url")
-                or provider_config.get("base_url")
-                or provider_config.get("api_base")
+                or first_configured_endpoint(provider_config)
             )
             override_url = (
                 selection_settings.base_url
