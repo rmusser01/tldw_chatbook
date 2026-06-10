@@ -266,6 +266,10 @@ def _collection_scoped_conflicts(
 class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
 
+    BINDINGS = [
+        ("u", "library_rag_use_in_console", "Use Search/RAG evidence in Console"),
+    ]
+
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "library", **kwargs)
         self._local_source_records: dict[str, tuple[Mapping[str, Any], ...]] = {
@@ -2811,9 +2815,19 @@ class LibraryScreen(BaseAppScreen):
         """Stage selected evidence from the center results lane."""
         self._use_library_rag_result_in_console(event)
 
+    def action_library_rag_use_in_console(self) -> None:
+        """Keyboard shortcut for staging selected Search/RAG evidence in Console."""
+        if self._active_mode != "search":
+            return
+        self._stage_library_rag_result_in_console()
+
     def _use_library_rag_result_in_console(self, event: Button.Pressed) -> None:
         """Shared implementation for inspector and results-lane handoff controls."""
         event.stop()
+        self._stage_library_rag_result_in_console()
+
+    def _stage_library_rag_result_in_console(self) -> None:
+        """Stage the selected Search/RAG evidence result in Console."""
         panel_state = self._library_rag_panel_state()
         console_action = panel_state.use_in_console_action
         if not console_action.enabled or panel_state.selected_result is None:

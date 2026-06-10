@@ -856,7 +856,6 @@ def _provenance_text(provenance: Mapping[str, Any], key: str) -> str:
         provenance.get(key),
         "",
         max_length=LIBRARY_RAG_DISPLAY_MAX_LENGTH,
-        escape=False,
     )
 
 
@@ -868,7 +867,6 @@ def _provenance_text_tuple(provenance: Mapping[str, Any], key: str) -> tuple[str
             item,
             "",
             max_length=LIBRARY_RAG_DISPLAY_MAX_LENGTH,
-            escape=False,
         )
         for item in values
     )

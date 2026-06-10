@@ -10,6 +10,7 @@ from unittest.mock import Mock
 import pytest
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -167,6 +168,37 @@ def test_gate16_library_search_rag_evidence_is_tracked() -> None:
     assert "status: Done" in task_10_8
     assert "status: Done" in task_10_8_5
     assert "Closed Gate 1.6 with TASK-10.8" in task_10
+
+
+def test_library_search_rag_provenance_labels_escape_rich_markup() -> None:
+    result = LibraryRagResultRow.from_result(
+        {
+            "document_title": "Markup Attempt",
+            "snippet": "Adapter provenance should render literally.",
+            "source_id": "note-markup",
+            "chunk_id": "chunk-markup",
+            "provenance": {
+                "source_type": "[bold]spoof[/]",
+                "workspace_ids": ("[red]workspace[/]",),
+                "authority_label": "[green]trusted[/]",
+                "eligibility_reason": "[blink]blocked[/]",
+            },
+        }
+    )
+
+    combined = " ".join(
+        (
+            result.row_badge_label,
+            result.authority_display_label,
+            result.eligibility_label,
+        )
+    )
+    assert "[bold]spoof[/]" not in combined
+    assert "[red]workspace[/]" not in combined
+    assert "[green]trusted[/]" not in combined
+    assert r"\[bold]spoof\[/]" in combined
+    assert r"\[red]workspace\[/]" in combined
+    assert r"\[green]trusted\[/]" in combined
 
 
 @pytest.mark.asyncio
@@ -620,6 +652,57 @@ async def test_library_search_rag_keyboard_enter_runs_query_and_handoff_button()
     payload = app.open_console_for_live_work.call_args.kwargs["payload"]
     assert payload["query"] == query
     assert payload["source_id"] == "note-keyboard"
+    app.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_keyboard_u_shortcut_uses_selected_evidence() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Shortcut Evidence",
+                    "snippet": "The u shortcut stages selected evidence.",
+                    "source_id": "note-shortcut",
+                    "chunk_id": "chunk-u",
+                }
+            ],
+        }
+    )
+    app.open_console_for_live_work = Mock()
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "library")
+    query = "Can the u shortcut stage evidence?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = query
+        await _wait_for_query_ready(screen, pilot, query)
+
+        query_input.focus()
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+
+        select_button = screen.query_one("#library-rag-select-result-0", Button)
+        select_button.focus()
+        await pilot.press("enter")
+        await _wait_for_inspector_selection(screen, pilot, "Shortcut Evidence")
+
+        await pilot.press("u")
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once()
+    payload = app.open_console_for_live_work.call_args.kwargs["payload"]
+    assert payload["query"] == query
+    assert payload["source_id"] == "note-shortcut"
+    assert payload["chunk_id"] == "chunk-u"
     app.open_chat_with_handoff.assert_not_called()
 
 
