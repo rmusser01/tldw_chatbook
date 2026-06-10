@@ -102,10 +102,10 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
                 pilot,
                 lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
             )
-            app.screen.query_one("#library-open-search", Button).press()
+            app.screen.query_one("#library-mode-search", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "search" and app.screen.__class__.__name__ == "SearchScreen",
+                lambda: app.current_tab == "library" and "Search/RAG mode" in _screen_text(app),
             )
 
             app.open_console_for_live_work(

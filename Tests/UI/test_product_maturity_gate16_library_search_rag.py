@@ -208,8 +208,8 @@ async def test_library_search_rag_mode_mounts_native_panel_without_leaving_libra
         ):
             assert screen.query_one(selector)
 
-        fallback_route_button = screen.query_one("#library-open-search", Button)
-        assert str(fallback_route_button.label) == "Search/RAG"
+        search_mode_chip = screen.query_one("#library-mode-search", Button)
+        assert str(search_mode_chip.label) == "Search/RAG"
         assert "Search/RAG mode" in _visible_text(screen)
 
 

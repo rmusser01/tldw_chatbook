@@ -170,7 +170,7 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
             assert "Import/Export Sources" in library_text
             assert "Collections" in library_text
 
-            app.screen.query_one("#library-open-search", Button).press()
+            app.screen.query_one("#library-mode-search", Button).press()
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == "library" and "Search/RAG mode" in _screen_text(app),

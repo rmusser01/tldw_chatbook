@@ -325,7 +325,7 @@ async def test_library_mode_strip_is_compact_and_workbench_visible():
             workbench="#library-contract-grid",
             panes=("#library-source-browser", "#library-source-detail", "#library-source-inspector"),
             strip="#library-mode-bar",
-            actions=("#library-open-notes", "#library-open-media", "#library-open-search", "#library-use-in-console"),
+            actions=("#library-open-notes", "#library-open-media", "#library-mode-search", "#library-use-in-console"),
             height=42,
         )
 
@@ -396,11 +396,13 @@ async def test_library_empty_state_reports_empty_with_next_action():
         await _wait_for_selector(library, pilot, "#library-source-empty")
 
         status_row = str(library.query_one("#library-status-row", Static).renderable)
-        visible_text = " ".join(str(widget.renderable) for widget in library.query(Static))
+        import_button_label = str(
+            library.query_one("#library-empty-import-sources", Button).label
+        )
 
     assert "Empty" in status_row
     assert "Ready" not in status_row
-    assert "Import/Export Sources or Open Notes/Media to add content." in visible_text
+    assert import_button_label == "Import Sources"
 
 
 @pytest.mark.asyncio
@@ -414,18 +416,21 @@ async def test_library_inspector_uses_empty_state_until_item_selected():
         library = _active_destination_screen(host)
         await _wait_for_selector(library, pilot, "#library-source-empty")
 
-        inspector_title = str(library.query_one("#library-inspector-title", Static).renderable)
+        inspector_title = str(
+            library.query_one("#library-source-inspector-title", Static).renderable
+        )
         inspector_text = " ".join(
             str(widget.renderable)
             for widget in library.query("#library-source-inspector Static")
         )
         has_source_authority = bool(list(library.query("#library-source-authority")))
+        duplicate_inspector_headings = list(library.query("#library-inspector-title"))
 
     assert inspector_title == "Inspector"
     assert "No source selected." in inspector_text
-    assert "Select a note, media item, conversation, collection, or RAG result to inspect." in inspector_text
     assert "Source Inspector" not in inspector_text
     assert not has_source_authority
+    assert not duplicate_inspector_headings
 
 
 @pytest.mark.asyncio
@@ -434,9 +439,9 @@ async def test_library_source_browser_collections_action_switches_to_collections
     host = DestinationHarness(app, "library")
     async with host.run_test(size=(140, 42)) as pilot:
         library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-open-collections")
+        await _wait_for_selector(library, pilot, "#library-mode-collections")
 
-        library.query_one("#library-open-collections", Button).press()
+        library.query_one("#library-mode-collections", Button).press()
         await _wait_for_selector(library, pilot, "#library-collections-panel")
 
         active_mode_title = str(library.query_one("#library-active-mode-title", Static).renderable)
@@ -452,9 +457,9 @@ async def test_library_source_browser_search_action_switches_to_search_mode():
     host = DestinationHarness(app, "library")
     async with host.run_test(size=(140, 42)) as pilot:
         library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-open-search")
+        await _wait_for_selector(library, pilot, "#library-mode-search")
 
-        library.query_one("#library-open-search", Button).press()
+        library.query_one("#library-mode-search", Button).press()
         await _wait_for_selector(library, pilot, "#library-search-rag-panel")
 
         active_mode_title = str(library.query_one("#library-active-mode-title", Static).renderable)
@@ -584,7 +589,7 @@ async def test_library_service_call_awaits_coroutine_functions_without_worker(mo
             lambda app: DestinationHarness(app, "library"),
             "#library-contract-grid",
             ("#library-source-browser", "#library-source-detail", "#library-source-inspector"),
-            ("#library-open-notes", "#library-open-media", "#library-open-search", "#library-use-in-console"),
+            ("#library-open-notes", "#library-open-media", "#library-mode-search", "#library-use-in-console"),
             ("#library-source-empty", "#library-source-error", "#library-source-loading"),
             "#library-source-detail",
         ),
@@ -631,7 +636,7 @@ async def test_library_loading_state_preserves_workbench_geometry(monkeypatch):
             workbench="#library-contract-grid",
             panes=("#library-source-browser", "#library-source-detail", "#library-source-inspector"),
             strip="#library-mode-bar",
-            actions=("#library-open-notes", "#library-open-media", "#library-open-search"),
+            actions=("#library-open-notes", "#library-open-media", "#library-mode-search"),
             height=42,
         )
         _assert_marker_inside_container(
@@ -1508,7 +1513,7 @@ COMPACT_DESTINATION_CONTRACTS = {
         "workbench": "#library-contract-grid",
         "object": "#library-source-browser",
         "detail": "#library-source-detail",
-        "actions": ("#library-open-search", "#library-use-in-console", "#library-open-notes"),
+        "actions": ("#library-mode-search", "#library-use-in-console", "#library-open-notes"),
     },
     "artifacts": {
         "identity": "#artifacts-title",
@@ -1624,7 +1629,7 @@ async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_
 VISIBLE_FOCUS_TARGETS = {
     "home": {"home-primary-action", "home-open-details", "home-open-in-console", "home-open-chatbook-details"},
     "chat": {"console-send-message", "console-attach-context", "console-save-chatbook", "console-run-library-rag"},
-    "library": {"library-open-notes", "library-open-media", "library-open-search", "library-use-in-console"},
+    "library": {"library-open-notes", "library-open-media", "library-mode-search", "library-use-in-console"},
     "artifacts": {
         "artifacts-open-chatbooks",
         "artifacts-open-console",

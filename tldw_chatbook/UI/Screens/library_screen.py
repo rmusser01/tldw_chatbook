@@ -13,7 +13,6 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.geometry import Spacing
 from textual.widgets import Button, Input, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -54,22 +53,9 @@ LIBRARY_SOURCE_PAGE_SIZE = 5
 LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
 LIBRARY_SERVICE_UNAVAILABLE_COPY = "Library source services are unavailable in this runtime."
 LIBRARY_EMPTY_COPY = "No local Library sources are available yet."
-LIBRARY_EMPTY_NEXT_ACTION_COPY = "Import/Export Sources or Open Notes/Media to add content."
 LIBRARY_INSPECTOR_EMPTY_COPY = "No source selected."
-LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
-    "Select a note, media item, conversation, collection, or RAG result to inspect."
-)
-LIBRARY_FRAME_BORDER = ("solid", "#6f7782")
-LIBRARY_FRAME_PADDING = Spacing(1, 1, 1, 1)
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
-LIBRARY_MODE_BAR_HEIGHT = 3
-LIBRARY_MODE_LABEL_WIDTH = 7
-LIBRARY_MODE_CHIP_MIN_WIDTH = 9
-LIBRARY_MODE_CHIP_WIDTH_PADDING = 7
-LIBRARY_SOURCE_BROWSER_WIDTH = "2fr"
-LIBRARY_SOURCE_DETAIL_WIDTH = "5fr"
-LIBRARY_SOURCE_INSPECTOR_WIDTH = "2fr"
 LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH = 30
 LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
 LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
@@ -89,55 +75,44 @@ LIBRARY_MODES = {
         "label": "Sources",
         "button_id": "library-mode-sources",
         "description": "Sources mode: browse notes, media, and conversations as reusable context.",
-        "next_action": "Use in Console stages the visible source snapshot for grounded chat.",
     },
     "search": {
         "label": "Search/RAG",
         "button_id": "library-mode-search",
-        "description": (
-            "Search/RAG mode: ask over selected Library sources inside Library; "
-            "standalone Search/RAG remains available from Source Browser."
-        ),
-        "next_action": "Run Search/RAG, inspect cited evidence, then Use in Console.",
+        "description": "Search/RAG mode: ask over selected Library sources inside Library.",
     },
     "import-export": {
         "label": "Import/Export",
         "button_id": "library-mode-import-export",
         "description": "Import/Export mode: bring source material into Library or export it out.",
-        "next_action": "Import/Export tools stay under Library, not Artifacts.",
     },
     "workspaces": {
         "label": "Workspaces",
         "button_id": "library-mode-workspaces",
         "description": "Workspaces mode: scope Library material to project or task contexts.",
-        "next_action": "Workspace scoping is shown here before material is staged in Console.",
     },
     "collections": {
         "label": "Collections",
         "button_id": "library-mode-collections",
-        "description": "Collections mode: manage Library-owned reusable source sets.",
-        "next_action": (
-            "Create local source groups now; Collection-scoped Search/RAG citations/snippets, "
-            "Study, and Console are later-stage."
+        "description": (
+            "Collections mode: manage Library-owned reusable source sets. "
+            "Collection-scoped Search/RAG citations/snippets, Study, and Console are later-stage."
         ),
     },
     "study": {
         "label": "Study",
         "button_id": "library-mode-study",
         "description": "Study mode: turn Library material into study sessions.",
-        "next_action": "Open Study Dashboard to continue due cards, decks, and quizzes.",
     },
     "flashcards": {
         "label": "Flashcards",
         "button_id": "library-mode-flashcards",
         "description": "Flashcards mode: generate or review cards from Library sources.",
-        "next_action": "Open Flashcards to work with the current source snapshot.",
     },
     "quizzes": {
         "label": "Quizzes",
         "button_id": "library-mode-quizzes",
         "description": "Quizzes mode: generate or resume quizzes from Library sources.",
-        "next_action": "Open Quizzes to test recall against the current source snapshot.",
     },
 }
 
@@ -247,6 +222,66 @@ def _collection_scoped_conflicts(
 class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
 
+    # Baseline workbench geometry so the screen renders correctly even without
+    # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
+    # equal-specificity selectors and takes precedence when loaded.
+    DEFAULT_CSS = """
+    #library-mode-bar {
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        overflow: hidden;
+    }
+
+    #library-mode-label {
+        width: 8;
+        min-width: 8;
+        height: 1;
+        min-height: 1;
+    }
+
+    Button.library-mode-chip {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+    }
+
+    .library-mode-chip.is-active {
+        border: none;
+        text-style: bold underline;
+    }
+
+    #library-contract-grid {
+        height: 1fr;
+        min-height: 20;
+        padding: 1;
+        border: solid $surface-lighten-1;
+    }
+
+    .library-region {
+        min-width: 0;
+        height: 100%;
+        min-height: 20;
+        padding: 1;
+        border: solid $surface-lighten-1;
+    }
+
+    #library-source-browser {
+        width: 2fr;
+    }
+
+    #library-source-detail {
+        width: 5fr;
+    }
+
+    #library-source-inspector {
+        width: 2fr;
+    }
+    """
+
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(app_instance, "library", **kwargs)
         self._local_source_records: dict[str, tuple[Mapping[str, Any], ...]] = {
@@ -331,13 +366,6 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_SERVICE_ERROR_COPY,
             None,
         )
-
-    @staticmethod
-    def _frame_library_region(widget: Any) -> Any:
-        """Apply visible terminal workbench framing to Library panes."""
-        widget.styles.border = LIBRARY_FRAME_BORDER
-        widget.styles.padding = LIBRARY_FRAME_PADDING
-        return widget
 
     @staticmethod
     async def _run_library_service_call(
@@ -1108,52 +1136,32 @@ class LibraryScreen(BaseAppScreen):
                 classes="destination-purpose",
             )
             yield Static(
-                f"Library | Sources, imports, Search/RAG, Workspaces, Collections, Study | {status_label} | Local",
+                f"{status_label} | Local",
                 id="library-status-row",
                 classes="destination-status-row",
             )
-            mode_bar = DestinationModeStrip(id="library-mode-bar", classes="destination-mode-strip")
-            mode_bar.styles.height = LIBRARY_MODE_BAR_HEIGHT
-            mode_bar.styles.min_height = LIBRARY_MODE_BAR_HEIGHT
-            with mode_bar:
-                mode_label = Static(
+            with DestinationModeStrip(id="library-mode-bar", classes="destination-mode-strip"):
+                yield Static(
                     "Modes:",
                     id="library-mode-label",
                     classes="destination-section",
                 )
-                mode_label.styles.width = LIBRARY_MODE_LABEL_WIDTH
-                mode_label.styles.min_width = LIBRARY_MODE_LABEL_WIDTH
-                mode_label.styles.height = LIBRARY_MODE_BAR_HEIGHT
-                mode_label.styles.min_height = LIBRARY_MODE_BAR_HEIGHT
-                yield mode_label
                 for mode_id, mode in LIBRARY_MODES.items():
                     classes = "library-mode-chip"
                     if mode_id == self._active_mode:
                         classes = f"{classes} is-active"
-                    mode_button = Button(
+                    yield Button(
                         mode["label"],
                         id=mode["button_id"],
                         classes=classes,
                         tooltip=mode["description"],
                     )
-                    mode_button.styles.width = max(
-                        len(mode["label"]) + LIBRARY_MODE_CHIP_WIDTH_PADDING,
-                        LIBRARY_MODE_CHIP_MIN_WIDTH,
-                    )
-                    mode_button.styles.min_width = 0
-                    mode_button.styles.height = LIBRARY_MODE_BAR_HEIGHT
-                    mode_button.styles.min_height = LIBRARY_MODE_BAR_HEIGHT
-                    yield mode_button
 
-            contract_grid = self._frame_library_region(
-                Horizontal(id="library-contract-grid", classes="ds-panel destination-workbench")
-            )
-            with contract_grid:
-                source_browser = self._frame_library_region(
-                    Vertical(id="library-source-browser", classes="library-region destination-workbench-pane")
-                )
-                source_browser.styles.width = LIBRARY_SOURCE_BROWSER_WIDTH
-                with source_browser:
+            with Horizontal(id="library-contract-grid", classes="ds-panel destination-workbench"):
+                with Vertical(
+                    id="library-source-browser",
+                    classes="library-region destination-workbench-pane",
+                ):
                     yield Static(
                         source_column_title,
                         id="library-source-browser-title",
@@ -1183,18 +1191,6 @@ class LibraryScreen(BaseAppScreen):
                         classes="library-source-action",
                         tooltip="Open source import and export tools.",
                     )
-                    yield Button(
-                        "Search/RAG",
-                        id="library-open-search",
-                        classes="library-source-action",
-                        tooltip="Search or ask over indexed sources.",
-                    )
-                    yield Button(
-                        "Collections",
-                        id="library-open-collections",
-                        classes="library-source-action",
-                        tooltip="Manage Library-owned reusable source sets.",
-                    )
                     yield Static(
                         Text.from_markup(
                             "Active workspace: "
@@ -1204,11 +1200,10 @@ class LibraryScreen(BaseAppScreen):
                         id="library-workspace-scope",
                     )
 
-                source_detail = self._frame_library_region(
-                    Vertical(id="library-source-detail", classes="library-region destination-workbench-pane")
-                )
-                source_detail.styles.width = LIBRARY_SOURCE_DETAIL_WIDTH
-                with source_detail:
+                with Vertical(
+                    id="library-source-detail",
+                    classes="library-region destination-workbench-pane",
+                ):
                     yield Static(
                         detail_column_title,
                         id="library-source-detail-title",
@@ -1232,12 +1227,6 @@ class LibraryScreen(BaseAppScreen):
                     )
                     active_mode_description.display = self._active_mode != "workspaces"
                     yield active_mode_description
-                    active_mode_next_action = Static(
-                        active_mode["next_action"],
-                        id="library-active-mode-next-action",
-                    )
-                    active_mode_next_action.display = self._active_mode != "workspaces"
-                    yield active_mode_next_action
                     if search_rag_panel_state is not None:
                         yield LibrarySearchRagPanel(
                             search_rag_panel_state,
@@ -1275,9 +1264,12 @@ class LibraryScreen(BaseAppScreen):
                                 LIBRARY_EMPTY_COPY,
                                 id="library-source-empty",
                             )
-                            yield Static(
-                                LIBRARY_EMPTY_NEXT_ACTION_COPY,
-                                id="library-source-empty-next-action",
+                            yield Button(
+                                "Import Sources",
+                                id="library-empty-import-sources",
+                                variant="primary",
+                                classes="destination-action-button",
+                                tooltip="Open source import and export tools.",
                             )
                         else:
                             for source_type, label, widget_id in (
@@ -1297,11 +1289,10 @@ class LibraryScreen(BaseAppScreen):
                                         id=f"library-{source_type}-source-{index}",
                                     )
 
-                source_inspector = self._frame_library_region(
-                    Vertical(id="library-source-inspector", classes="library-region destination-workbench-pane")
-                )
-                source_inspector.styles.width = LIBRARY_SOURCE_INSPECTOR_WIDTH
-                with source_inspector:
+                with Vertical(
+                    id="library-source-inspector",
+                    classes="library-region destination-workbench-pane",
+                ):
                     yield Static(
                         inspector_column_title,
                         id="library-source-inspector-title",
@@ -1319,12 +1310,7 @@ class LibraryScreen(BaseAppScreen):
                         elif self._active_mode == "workspaces":
                             yield from self._workspaces_inspector_rows(workspace_depth_state)
                         else:
-                            yield Static("Inspector", id="library-inspector-title", classes="destination-section")
                             yield Static(LIBRARY_INSPECTOR_EMPTY_COPY, id="library-inspector-empty")
-                            yield Static(
-                                LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY,
-                                id="library-inspector-empty-next-action",
-                            )
                     with Vertical(id="library-action-region"):
                         yield from self._library_action_widgets(
                             workspace_depth_state=workspace_depth_state,
@@ -1356,11 +1342,9 @@ class LibraryScreen(BaseAppScreen):
         self.query_one("#library-source-inspector-title", Static).update(inspector_column_title)
         self.query_one("#library-active-mode-title", Static).update(f"{active_mode['label']} mode")
         self.query_one("#library-active-mode-description", Static).update(active_mode["description"])
-        self.query_one("#library-active-mode-next-action", Static).update(active_mode["next_action"])
         active_mode_copy_visible = self._active_mode != "workspaces"
         self.query_one("#library-active-mode-title", Static).display = active_mode_copy_visible
         self.query_one("#library-active-mode-description", Static).display = active_mode_copy_visible
-        self.query_one("#library-active-mode-next-action", Static).display = active_mode_copy_visible
         local_snapshot_regions = list(self.query("#library-local-snapshot-region"))
         if local_snapshot_regions:
             local_snapshot_regions[0].display = active_mode_copy_visible
@@ -1393,7 +1377,7 @@ class LibraryScreen(BaseAppScreen):
         detail = self.query_one("#library-source-detail", Vertical)
         await detail.mount(
             LibrarySearchRagPanel(panel_state, id="library-search-rag-panel"),
-            after="#library-active-mode-next-action",
+            after="#library-active-mode-description",
         )
         await self._sync_inspector_mode_region(panel_state)
 
@@ -1426,16 +1410,7 @@ class LibraryScreen(BaseAppScreen):
             for row in self._workspaces_inspector_rows(state):
                 await region.mount(row)
             return
-        await region.mount(
-            Static("Inspector", id="library-inspector-title", classes="destination-section")
-        )
         await region.mount(Static(LIBRARY_INSPECTOR_EMPTY_COPY, id="library-inspector-empty"))
-        await region.mount(
-            Static(
-                LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY,
-                id="library-inspector-empty-next-action",
-            )
-        )
 
     async def _sync_collections_panel(self, *, refresh_snapshot: bool = False) -> None:
         for widget in list(self.query("#library-collections-panel")):
@@ -1455,7 +1430,7 @@ class LibraryScreen(BaseAppScreen):
                 delete_pending=bool(self._library_collection_pending_delete_id),
                 id="library-collections-panel",
             ),
-            after="#library-active-mode-next-action",
+            after="#library-active-mode-description",
         )
         await self._sync_inspector_mode_region(None)
 
@@ -2049,22 +2024,13 @@ class LibraryScreen(BaseAppScreen):
         self.post_message(NavigateToScreen("conversation"))
 
     @on(Button.Pressed, "#library-open-import-export")
+    @on(Button.Pressed, "#library-empty-import-sources")
     def open_import_export(self) -> None:
         self.post_message(NavigateToScreen("ingest"))
 
     @on(Button.Pressed, "#library-workspace-import-sources")
     def open_workspace_import_sources(self) -> None:
         self.post_message(NavigateToScreen("ingest"))
-
-    @on(Button.Pressed, "#library-open-search")
-    async def open_search_mode(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._set_active_mode("search")
-
-    @on(Button.Pressed, "#library-open-collections")
-    async def open_collections_mode(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._set_active_mode("collections")
 
     def _open_study_section(self, initial_section: str = "dashboard") -> None:
         open_study_screen = getattr(self.app_instance, "open_study_screen", None)

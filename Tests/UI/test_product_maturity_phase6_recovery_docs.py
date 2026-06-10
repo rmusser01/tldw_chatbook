@@ -205,7 +205,6 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             library_text = _screen_text(app)
             assert "Library source services unavailable; retry Library later." in library_text
             assert "No source selected." in library_text
-            assert "Select a note, media item, conversation, collection, or RAG result to inspect." in library_text
 
 
 def test_phase6_recovery_docs_evidence_and_tracking_are_current() -> None:

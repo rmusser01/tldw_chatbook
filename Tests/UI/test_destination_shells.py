@@ -1191,7 +1191,7 @@ async def test_library_exposes_source_sections_and_import_export_boundary():
             "#library-open-media",
             "#library-open-conversations",
             "#library-open-import-export",
-            "#library-open-search",
+            "#library-mode-search",
         ]:
             assert screen.query_one(selector)
 
@@ -1477,7 +1477,7 @@ async def test_library_search_action_switches_to_search_mode_without_route_hando
     async with host.run_test(size=(160, 40)) as pilot:
         await pilot.pause(0.1)
         screen = _active_destination_screen(host)
-        await pilot.click("#library-open-search")
+        await pilot.click("#library-mode-search")
         await pilot.pause(0.1)
 
         assert getattr(screen, "_active_mode") == "search"
