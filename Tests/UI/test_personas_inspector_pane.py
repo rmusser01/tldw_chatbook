@@ -115,16 +115,34 @@ async def test_conversations_panel_rows_post_selection():
         await pane.show_conversations((("conv-1", "First case"), ("conv-2", "Cold trail")))
         await pilot.pause()
         assert len(pilot.app.query(".personas-conversation-row")) == 2
-        await pilot.click("#personas-conversation-row-0")
+        await pilot.click("#personas-conversation-row-conv-1")
         await pilot.pause()
     assert received == ["conv-1"]
+
+
+async def test_conversation_click_after_rerender_posts_new_id():
+    received = []
+
+    class CaptureApp(InspectorApp):
+        def on_conversation_row_selected(self, message: ConversationRowSelected) -> None:
+            received.append(message.conversation_id)
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        await pane.show_conversations((("conv-1", "First case"),))
+        await pane.show_conversations((("conv-9", "New case"),))
+        await pilot.pause()
+        await pilot.click("#personas-conversation-row-conv-9")
+        await pilot.pause()
+    assert received == ["conv-9"]
 
 
 async def test_clear_selection_resets_everything():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
-        pane.show_selection(name="Detective Sam", kind="character", authority="Local")
+        pane.show_selection(name="Detective Sam", kind="character", authority="Server")
         await pane.show_conversations((("conv-1", "First case"),))
         pane.set_unsaved(True)
         await pilot.pause()
@@ -132,6 +150,10 @@ async def test_clear_selection_resets_everything():
         await pilot.pause()
         assert "Selected: none" in str(
             pilot.app.query_one("#personas-selected-name", Static).renderable
+        )
+        assert (
+            str(pilot.app.query_one("#personas-selected-authority", Static).renderable)
+            == "Authority: Local"
         )
         assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         assert len(pilot.app.query(".personas-conversation-row")) == 0

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
@@ -10,6 +12,8 @@ from textual.widgets import Button, Static
 from .personas_pane_messages import ConversationRowSelected
 
 _UNSAVED_TOOLTIP = "Save before using this action; the selection has unsaved edits."
+
+_ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
 
 class PersonasInspectorPane(Vertical):
@@ -20,7 +24,7 @@ class PersonasInspectorPane(Vertical):
         self._has_selection = False
         self._is_unsaved = False
         self._selected_kind: str | None = None
-        self._conversation_ids: list[str] = []
+        self._conversation_lookup: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         yield Static("Inspector", classes="destination-section personas-column-title")
@@ -58,6 +62,7 @@ class PersonasInspectorPane(Vertical):
         self._selected_kind = None
         self.query_one("#personas-selected-name", Static).update("Selected: none")
         self.query_one("#personas-selected-kind", Static).update("Type: -")
+        self.query_one("#personas-selected-authority", Static).update("Authority: Local")
         await self.show_conversations(())
         self.show_validation(())
         self._apply_action_state()
@@ -77,15 +82,21 @@ class PersonasInspectorPane(Vertical):
         """Render (conversation_id, title) rows; empty tuple clears the panel."""
         container = self.query_one("#personas-conversations-list", VerticalScroll)
         await container.remove_children()
-        self._conversation_ids = [conversation_id for conversation_id, _title in rows]
-        buttons = [
-            Button(
-                title,
-                id=f"personas-conversation-row-{index}",
-                classes="personas-conversation-row",
+        self._conversation_lookup = {}
+        buttons: list[Button] = []
+        seen: set[str] = set()
+        for conversation_id, title in rows:
+            dom_id = f"personas-conversation-row-{_ID_SAFE.sub('-', str(conversation_id))}"
+            if dom_id in seen:
+                suffix = 2
+                while f"{dom_id}-{suffix}" in seen:
+                    suffix += 1
+                dom_id = f"{dom_id}-{suffix}"
+            seen.add(dom_id)
+            self._conversation_lookup[dom_id] = conversation_id
+            buttons.append(
+                Button(title, id=dom_id, classes="personas-conversation-row")
             )
-            for index, (_conversation_id, title) in enumerate(rows)
-        ]
         if buttons:
             await container.mount_all(buttons)
 
@@ -117,7 +128,6 @@ class PersonasInspectorPane(Vertical):
     @on(Button.Pressed, ".personas-conversation-row")
     def _conversation_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        button_id = str(event.button.id or "")
-        index = int(button_id.rsplit("-", 1)[-1])
-        if 0 <= index < len(self._conversation_ids):
-            self.post_message(ConversationRowSelected(self._conversation_ids[index]))
+        conversation_id = self._conversation_lookup.get(str(event.button.id or ""))
+        if conversation_id is not None:
+            self.post_message(ConversationRowSelected(conversation_id))
