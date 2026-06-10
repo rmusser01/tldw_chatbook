@@ -10,6 +10,7 @@ from unittest.mock import Mock
 import pytest
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -169,6 +170,37 @@ def test_gate16_library_search_rag_evidence_is_tracked() -> None:
     assert "Closed Gate 1.6 with TASK-10.8" in task_10
 
 
+def test_library_search_rag_provenance_labels_escape_rich_markup() -> None:
+    result = LibraryRagResultRow.from_result(
+        {
+            "document_title": "Markup Attempt",
+            "snippet": "Adapter provenance should render literally.",
+            "source_id": "note-markup",
+            "chunk_id": "chunk-markup",
+            "provenance": {
+                "source_type": "[bold]spoof[/]",
+                "workspace_ids": ("[red]workspace[/]",),
+                "authority_label": "[green]trusted[/]",
+                "eligibility_reason": "[blink]blocked[/]",
+            },
+        }
+    )
+
+    combined = " ".join(
+        (
+            result.row_badge_label,
+            result.authority_display_label,
+            result.eligibility_label,
+        )
+    )
+    assert "[bold]spoof[/]" not in combined
+    assert "[red]workspace[/]" not in combined
+    assert "[green]trusted[/]" not in combined
+    assert r"\[bold]spoof\[/]" in combined
+    assert r"\[red]workspace\[/]" in combined
+    assert r"\[green]trusted\[/]" in combined
+
+
 @pytest.mark.asyncio
 async def test_library_search_rag_mode_mounts_native_panel_without_leaving_library() -> None:
     app = _build_test_app()
@@ -208,9 +240,9 @@ async def test_library_search_rag_mode_mounts_native_panel_without_leaving_libra
         ):
             assert screen.query_one(selector)
 
-        fallback_route_button = screen.query_one("#library-open-search", Button)
-        assert str(fallback_route_button.label) == "Search/RAG"
-        assert "Search/RAG mode" in _visible_text(screen)
+        active_mode_button = screen.query_one("#library-mode-search", Button)
+        assert str(active_mode_button.label) == "Search/RAG"
+        assert "Ask Library sources, inspect evidence, then send selected snippets to Console." in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -236,12 +268,102 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
         assert run_button.disabled is True
         assert "Enter a question or search query" in str(run_button.tooltip)
         assert console_button.disabled is True
-        assert "Source Scope: All local sources" in visible_text
-        assert "Notes: 1 source" in visible_text
-        assert "Media: 1 source" in visible_text
-        assert "Conversations: 1 source" in visible_text
+        assert "Library | Search/RAG | Blocked: Enter a question or search query. | Local" in visible_text
+        assert "Scope: all local | Notes 1 | Media 1 | Conversations 1" in visible_text
+        assert "Query" in visible_text
+        assert "Enter: run query | Tab: move panes | Enter on result: select | u: Use in Console" in visible_text
         assert "Enter a question or search query" in visible_text
         assert "Run a query and select usable evidence before sending to Console" in visible_text
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_task_loop_orders_query_before_scope_and_results() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+
+        panel = screen.query_one("#library-search-rag-panel")
+        child_ids = [child.id for child in panel.children]
+        assert child_ids.index("library-rag-query-controls") < child_ids.index(
+            "library-rag-source-scope"
+        )
+        assert child_ids.index("library-rag-source-scope") < child_ids.index(
+            "library-rag-results"
+        )
+        assert "Scope: all local | Notes 1 | Media 1 | Conversations 1" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_mode_hides_generic_hub_and_study_actions() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        assert len(screen.query("#library-content-hub-title")) == 1
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+
+        visible_text = _visible_text(screen)
+        assert len(screen.query("#library-content-hub-title")) == 0
+        assert len(screen.query("#library-hub-study-card")) == 0
+        assert len(screen.query("#library-use-in-console")) == 0
+        assert len(screen.query("#library-open-study")) == 0
+        open_search_button = screen.query_one("#library-open-search", Button)
+        assert open_search_button.display is False
+        assert "Library Content Hub" not in visible_text
+        assert "Knowledge workflow" not in visible_text
+        assert "Study Dashboard" not in visible_text
+        assert "Retrieval Inspector" in visible_text
+
+        screen.query_one("#library-mode-sources", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-content-hub-title")
+        assert screen.query_one("#library-open-search", Button) is open_search_button
+        assert open_search_button.display is True
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_empty_sources_has_mode_local_blocked_status() -> None:
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+
+        visible_text = _visible_text(screen)
+        assert "Library | Search/RAG | Blocked: no Library sources | Local" in visible_text
+        assert "No sources." in visible_text
+        assert "Next: Add or import Library sources before querying." in visible_text
+        assert "Recovery checklist" in visible_text
+        assert "1. Import Library sources." in visible_text
+        assert "2. Run Search/RAG." in visible_text
+        assert "3. Select evidence, then Use in Console." in visible_text
+        assert "Why: Enter a question or search query." not in visible_text
+        assert screen.query_one("#library-rag-open-import-export", Button)
+        assert len(screen.query("#library-content-hub-title")) == 0
+
+        screen.query_one("#library-rag-open-import-export", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-import-export-workflow-title")
+
+        assert "Library | Import/Export | Empty | Local" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -407,6 +529,180 @@ async def test_library_search_rag_selected_result_launches_console_live_work() -
     assert evidence_reference["authority_label"] == "Workspace: workspace-a"
     assert evidence_reference["metadata"]["active_context_eligible"] is True
     assert evidence_reference["metadata"]["global_browse_visible"] is True
+    app.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_selected_result_inspector_exposes_evidence_metadata() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Incident Review",
+                    "snippet": "Expired credential caused the incident.",
+                    "score": 0.93,
+                    "source_id": "note-42",
+                    "chunk_id": "chunk-7",
+                    "runtime_backend": "local-fts",
+                    "citations": [{"label": "Incident Review p.2"}],
+                    "provenance": {
+                        "source_type": "note",
+                        "workspace_ids": ("workspace-a",),
+                        "active_workspace_id": "workspace-a",
+                        "active_context_eligible": True,
+                        "eligibility_reason": "active_workspace_match",
+                    },
+                }
+            ],
+            "runtime_backend": "local-fts",
+        }
+    )
+    host = DestinationHarness(app, "library")
+    query = "Why did the incident happen?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_query_ready(screen, pilot, query)
+
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+        screen.query_one("#library-rag-select-result-0", Button).press()
+        await _wait_for_inspector_selection(screen, pilot, "Incident Review")
+
+        for selector in (
+            "#library-rag-selected-snippet",
+            "#library-rag-selected-citations",
+            "#library-rag-selected-source",
+            "#library-rag-selected-authority",
+            "#library-rag-selected-eligibility",
+            "#library-rag-selected-handoff",
+        ):
+            assert screen.query_one(selector, Static).display is True
+
+        visible_text = _visible_text(screen)
+        assert "note | workspace-a | 1 citation | eligible" in visible_text
+        assert screen.query_one("#library-rag-use-selected-in-console", Button).disabled is False
+        assert "Snippet: Expired credential caused the incident." in visible_text
+        assert "Citations: Incident Review p.2" in visible_text
+        assert "Source: note-42 / chunk-7" in visible_text
+        assert "Score: 0.930" in visible_text
+        assert "Runtime: local-fts" in visible_text
+        assert "Retrieval" in visible_text
+        assert "Selected Evidence" in visible_text
+        assert "Authority & eligibility" in visible_text
+        assert "Authority: Workspace: workspace-a" in visible_text
+        assert "Eligibility: available for active workspace" in visible_text
+        assert "Console handoff" in visible_text
+        assert "Handoff: snippet + citations + source/chunk IDs" in visible_text
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_keyboard_enter_runs_query_and_handoff_button() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Keyboard Evidence",
+                    "snippet": "Keyboard-only users can run and stage evidence.",
+                    "source_id": "note-keyboard",
+                    "chunk_id": "chunk-1",
+                }
+            ],
+        }
+    )
+    app.open_console_for_live_work = Mock()
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "library")
+    query = "Can keyboard-only users stage evidence?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = query
+        await _wait_for_query_ready(screen, pilot, query)
+
+        query_input.focus()
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+
+        select_button = screen.query_one("#library-rag-select-result-0", Button)
+        select_button.focus()
+        await pilot.press("enter")
+        await _wait_for_inspector_selection(screen, pilot, "Keyboard Evidence")
+
+        console_button = screen.query_one("#library-rag-use-in-console", Button)
+        console_button.focus()
+        await pilot.press("enter")
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once()
+    payload = app.open_console_for_live_work.call_args.kwargs["payload"]
+    assert payload["query"] == query
+    assert payload["source_id"] == "note-keyboard"
+    app.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_library_search_rag_keyboard_u_shortcut_uses_selected_evidence() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Shortcut Evidence",
+                    "snippet": "The u shortcut stages selected evidence.",
+                    "source_id": "note-shortcut",
+                    "chunk_id": "chunk-u",
+                }
+            ],
+        }
+    )
+    app.open_console_for_live_work = Mock()
+    app.open_chat_with_handoff = Mock()
+    host = DestinationHarness(app, "library")
+    query = "Can the u shortcut stage evidence?"
+
+    async with host.run_test(size=(170, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = query
+        await _wait_for_query_ready(screen, pilot, query)
+
+        query_input.focus()
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
+
+        select_button = screen.query_one("#library-rag-select-result-0", Button)
+        select_button.focus()
+        await pilot.press("enter")
+        await _wait_for_inspector_selection(screen, pilot, "Shortcut Evidence")
+
+        await pilot.press("u")
+        await pilot.pause(0.1)
+
+    app.open_console_for_live_work.assert_called_once()
+    payload = app.open_console_for_live_work.call_args.kwargs["payload"]
+    assert payload["query"] == query
+    assert payload["source_id"] == "note-shortcut"
+    assert payload["chunk_id"] == "chunk-u"
     app.open_chat_with_handoff.assert_not_called()
 
 
