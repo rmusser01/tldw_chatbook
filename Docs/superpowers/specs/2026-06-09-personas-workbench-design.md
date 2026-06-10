@@ -119,7 +119,10 @@ Reused in place (import path unchanged, restyled to `ds-*` classes):
 
 Handlers keep their parent-screen reference pattern; where they query legacy widget IDs
 (e.g. `#ccp-character-list`), the new panes adopt those stable IDs rather than rewriting
-the handlers.
+the handlers. Verified exception: `ccp_character_handler` queries the sidebar-era
+`#conv-char-character-select` Select in two refresh paths; that widget does not exist in
+the new layout, so those two call sites get guarded or removed. The handlers have no
+coupling to `CCPScreenState`, so the slim state replacement is safe.
 
 Retired at the end: `ccp_screen.py` (+ `.bak`), `ccp_sidebar_widget.py`,
 `ccp_sidebar_handler.py`, the thin snapshot shell content of the old `personas_screen.py`,
@@ -129,8 +132,12 @@ and their dead tests.
 
 A slim `PersonasWorkbenchState` dataclass on the screen replaces `CCPScreenState`:
 `active_mode`, `selected_kind`, `selected_id`, `edit_mode` (view/edit/create),
-`is_unsaved`, `search_query`. Panes communicate upward via existing message classes
-(`CharacterSelected`, ...) plus new `PreviewReplyRequested` and `LibrarySearchChanged`.
+`is_unsaved`, `search_query`. The selection/search/preview message classes
+(`CharacterSelected`, `PersonaSelected`, `PreviewReplyRequested`, `LibrarySearchChanged`,
+...) are defined in the new `Persona_Widgets` package - NOT imported from
+`ccp_screen.py`, where the current equivalents live, because that file is retired in
+migration step 4. The richer `CCP_Modules/ccp_messages.py` hierarchy stays for
+handler-level events.
 
 ```
 pane widget --post_message()--> screen @on() handler --> handler module
@@ -145,12 +152,16 @@ pane widget --post_message()--> screen @on() handler --> handler module
   failure.
 - Preview flow: the preview pane builds an ephemeral message list (greeting + user
   turns), calls the same provider gateway Console uses, and streams the reply into the
-  pane. Nothing persists. "Open in Console" converts the preview into a
-  `ChatHandoffPayload`.
+  pane. Verified: `ConsoleProviderGateway` is dependency-injected (http client, config
+  provider, `chat_api_call` fn) with no Console-screen coupling, so the preview pane
+  constructs its own instance from app config. Nothing persists. "Open in Console"
+  converts the preview into a `ChatHandoffPayload`.
 - Routing: `shell_destinations.py` canonical overrides flip so `ccp`, `characters`, and
   `prompts` resolve to `personas`. Command-palette entries keep working.
 - Footer: the screen registers a `ShortcutContext` on mount (New / Search / Save /
-  Attach) and clears it on unmount per the contract.
+  Attach) and clears it on unmount per the contract. The key choices shown in the layout
+  diagram are illustrative; final bindings are resolved against existing global bindings
+  at implementation time.
 
 ## Workflows
 
@@ -166,8 +177,10 @@ guard.
 the new character in view mode. Parse/validation failure shows a recovery callout with
 the parser's reason. Duplicate names follow existing lib behavior and report the outcome.
 
-**Export.** Inspector action, enabled when a saved character is selected. Exports ccv3
-JSON via a save-file dialog. Personas export as plain profile JSON. Unsaved edits disable
+**Export.** Inspector action, enabled when a saved character is selected. Offers both
+JSON and PNG card formats via the existing `export_character_card_to_json` /
+`export_character_card_to_png` functions and a save-file dialog (PNG is the de-facto
+card interchange format). Personas export as plain profile JSON. Unsaved edits disable
 Export with a "Save before exporting" tooltip.
 
 **Preview conversation.** Collapsed by default. Expanding seeds the greeting
