@@ -65,7 +65,7 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
                 reason = f"\n{destination.reason}" if destination.reason else ""
                 yield Static(
                     f"{destination.label} [WIP]{reason}",
-                    id=destination_id.replace("destination", "wip", 1),
+                    id=_destination_id(destination.label, prefix="wip"),
                     classes="console-save-as-wip",
                 )
             yield Button("Close", id="console-save-as-close")
@@ -85,7 +85,7 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
                 return
 
 
-def _destination_id(label: str) -> str:
+def _destination_id(label: str, prefix: str = "destination") -> str:
     safe_label = "".join(character.lower() if character.isalnum() else "-" for character in label)
     safe_label = "-".join(part for part in safe_label.split("-") if part)
-    return f"console-save-as-destination-{safe_label}"
+    return f"console-save-as-{prefix}-{safe_label}"
