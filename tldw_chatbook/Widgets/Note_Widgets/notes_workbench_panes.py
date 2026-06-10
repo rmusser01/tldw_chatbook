@@ -140,10 +140,32 @@ class NotesNavigatorPane(NotesListPopulateMixin, VerticalScroll):
         color: $text-muted;
         margin-top: 1;
     }
+    NotesNavigatorPane .console-rail-header {
+        height: 1;
+        min-height: 1;
+    }
     """
 
     def compose(self) -> ComposeResult:
-        yield Static("Notes Navigator", classes="destination-section", id="notes-sidebar-title-main")
+        with Horizontal(classes="console-rail-header"):
+            title = Static(
+                "Notes Navigator",
+                classes="console-rail-title",
+                id="notes-sidebar-title-main",
+            )
+            title.styles.width = "1fr"
+            yield title
+            collapse_button = Button(
+                "<",
+                id="notes-navigator-rail-collapse",
+                classes="console-rail-collapse-button",
+                compact=True,
+            )
+            collapse_button.tooltip = "Collapse Navigator rail"
+            collapse_button.styles.width = 3
+            collapse_button.styles.min_width = 3
+            collapse_button.styles.max_width = 3
+            yield collapse_button
 
         yield Input(placeholder="Search notes content...", id="notes-search-input")
         yield Input(placeholder="Keywords (e.g., projectA, urgent)", id="notes-keyword-filter-input")
@@ -254,6 +276,10 @@ class NotesInspectorPane(VerticalScroll):
         color: $text-muted;
         margin-bottom: 1;
     }
+    NotesInspectorPane .console-rail-header {
+        height: 1;
+        min-height: 1;
+    }
     NotesInspectorPane > .auto-save-container {
         layout: horizontal;
         height: 3;
@@ -274,7 +300,25 @@ class NotesInspectorPane(VerticalScroll):
         self._auto_save_enabled = True
 
     def compose(self) -> ComposeResult:
-        yield Static("Note Details", classes="destination-section", id="notes-details-sidebar-title")
+        with Horizontal(classes="console-rail-header"):
+            title = Static(
+                "Note Details",
+                classes="console-rail-title",
+                id="notes-details-sidebar-title",
+            )
+            title.styles.width = "1fr"
+            yield title
+            collapse_button = Button(
+                ">",
+                id="notes-inspector-rail-collapse",
+                classes="console-rail-collapse-button",
+                compact=True,
+            )
+            collapse_button.tooltip = "Collapse Details rail"
+            collapse_button.styles.width = 3
+            collapse_button.styles.min_width = 3
+            collapse_button.styles.max_width = 3
+            yield collapse_button
         yield Static("No note selected.", id="notes-detail-meta")
 
         yield Static("Keywords:", classes="notes-pane-section", id="notes-keywords-label")

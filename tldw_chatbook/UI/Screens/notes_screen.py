@@ -26,6 +26,7 @@ from ...Chat.chat_handoff_messages import (
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Event_Handlers.Audio_Events.dictation_integration_events import InsertDictationTextEvent
 from ...Third_Party.textual_fspicker import FileOpen, FileSave
+from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
 from ...Widgets.delete_confirmation_dialog import create_delete_confirmation
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Note_Widgets.notes_sync_widget_improved import NotesSyncWidgetImproved
@@ -257,18 +258,54 @@ class NotesScreen(BaseAppScreen):
             )
             notes_region.display = self.state.active_mode == "notes"
             with notes_region:
-                yield NotesNavigatorPane(
+                navigator_handle = ConsoleRailHandle(
+                    label="Notes",
+                    button_id="notes-navigator-rail-open",
+                    badge_id="notes-navigator-rail-badge",
+                    side="left",
+                    id="notes-navigator-rail-handle",
+                )
+                navigator_handle.styles.width = 13
+                navigator_handle.styles.min_width = 13
+                navigator_handle.styles.max_width = 13
+                if not self.state.left_sidebar_collapsed:
+                    navigator_handle.styles.display = "none"
+                yield navigator_handle
+
+                navigator_pane = NotesNavigatorPane(
                     id="notes-navigator-pane",
                     classes="notes-workbench-pane destination-workbench-pane",
                 )
+                if self.state.left_sidebar_collapsed:
+                    navigator_pane.styles.display = "none"
+                yield navigator_pane
+
                 yield NotesEditorPane(
                     id="notes-editor-pane",
                     classes="notes-workbench-pane destination-workbench-pane",
                 )
-                yield NotesInspectorPane(
+
+                inspector_pane = NotesInspectorPane(
                     id="notes-inspector-pane",
                     classes="notes-workbench-pane destination-workbench-pane",
                 )
+                if self.state.right_sidebar_collapsed:
+                    inspector_pane.styles.display = "none"
+                yield inspector_pane
+
+                inspector_handle = ConsoleRailHandle(
+                    label="Details",
+                    button_id="notes-inspector-rail-open",
+                    badge_id="notes-inspector-rail-badge",
+                    side="right",
+                    id="notes-inspector-rail-handle",
+                )
+                inspector_handle.styles.width = 11
+                inspector_handle.styles.min_width = 11
+                inspector_handle.styles.max_width = 11
+                if not self.state.right_sidebar_collapsed:
+                    inspector_handle.styles.display = "none"
+                yield inspector_handle
 
             sync_region = Vertical(id="notes-mode-region-sync", classes="ds-panel")
             sync_region.display = self.state.active_mode == "sync"
@@ -303,6 +340,11 @@ class NotesScreen(BaseAppScreen):
         if old_state.active_mode != new_state.active_mode:
             self._apply_active_mode_visibility()
         if (
+            old_state.left_sidebar_collapsed != new_state.left_sidebar_collapsed
+            or old_state.right_sidebar_collapsed != new_state.right_sidebar_collapsed
+        ):
+            self._sync_notes_rails()
+        if (
             old_state.scope_type != new_state.scope_type
             or old_state.workspace_subview != new_state.workspace_subview
         ):
@@ -327,6 +369,28 @@ class NotesScreen(BaseAppScreen):
     def _update_status_row(self) -> None:
         try:
             self.query_one("#notes-status-row", Static).update(self._status_row_label())
+        except QueryError:
+            return
+
+    def _sync_notes_rails(self) -> None:
+        """Mirror Console's collapsible-rail behavior for navigator/inspector."""
+        if not self.is_mounted:
+            return
+        try:
+            left_open = not self.state.left_sidebar_collapsed
+            right_open = not self.state.right_sidebar_collapsed
+            self.query_one("#notes-navigator-pane").styles.display = (
+                "block" if left_open else "none"
+            )
+            self.query_one("#notes-navigator-rail-handle").styles.display = (
+                "none" if left_open else "block"
+            )
+            self.query_one("#notes-inspector-pane").styles.display = (
+                "block" if right_open else "none"
+            )
+            self.query_one("#notes-inspector-rail-handle").styles.display = (
+                "none" if right_open else "block"
+            )
         except QueryError:
             return
 
@@ -2489,6 +2553,26 @@ class NotesScreen(BaseAppScreen):
         self._set_state(is_preview_mode=not self.state.is_preview_mode)
         await self._toggle_preview_mode()
 
+    @on(Button.Pressed, "#notes-navigator-rail-collapse")
+    def handle_navigator_rail_collapse(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._set_state(left_sidebar_collapsed=True)
+
+    @on(Button.Pressed, "#notes-navigator-rail-open")
+    def handle_navigator_rail_open(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._set_state(left_sidebar_collapsed=False)
+
+    @on(Button.Pressed, "#notes-inspector-rail-collapse")
+    def handle_inspector_rail_collapse(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._set_state(right_sidebar_collapsed=True)
+
+    @on(Button.Pressed, "#notes-inspector-rail-open")
+    def handle_inspector_rail_open(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._set_state(right_sidebar_collapsed=False)
+
     @on(Button.Pressed, ".notes-mode-chip")
     def handle_mode_chip(self, event: Button.Pressed) -> None:
         event.stop()
@@ -2893,6 +2977,11 @@ class NotesScreen(BaseAppScreen):
     async def on_mount(self) -> None:
         super().on_mount()
         logger.info("NotesScreen mounted")
+        try:
+            self.query_one("#notes-navigator-rail-open", Button).tooltip = "Open Navigator rail"
+            self.query_one("#notes-inspector-rail-open", Button).tooltip = "Open Details rail"
+        except QueryError:
+            pass
         self._consume_pending_workspace_return_context()
         await self.refresh_current_scope()
         self._skip_next_resume_refresh = True

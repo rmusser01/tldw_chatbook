@@ -218,3 +218,65 @@ async def test_notes_active_mode_round_trips_through_save_restore():
 
 def test_notes_state_defaults_include_notes_mode():
     assert NotesScreenState().active_mode == "notes"
+
+
+@pytest.mark.asyncio
+async def test_notes_rails_collapse_to_console_style_handles():
+    screen = NotesScreen(_mock_app_instance())
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+
+        navigator = screen.query_one("#notes-navigator-pane")
+        inspector = screen.query_one("#notes-inspector-pane")
+        navigator_handle = screen.query_one("#notes-navigator-rail-handle")
+        inspector_handle = screen.query_one("#notes-inspector-rail-handle")
+        editor_pane = screen.query_one("#notes-editor-pane")
+
+        assert navigator.display is True
+        assert inspector.display is True
+        assert navigator_handle.display is False
+        assert inspector_handle.display is False
+        editor_width_open = editor_pane.region.width
+
+        screen.query_one("#notes-navigator-rail-collapse", Button).press()
+        screen.query_one("#notes-inspector-rail-collapse", Button).press()
+        await pilot.pause()
+
+        assert screen.state.left_sidebar_collapsed is True
+        assert screen.state.right_sidebar_collapsed is True
+        assert navigator.display is False
+        assert inspector.display is False
+        assert navigator_handle.display is True
+        assert inspector_handle.display is True
+        assert editor_pane.region.width > editor_width_open
+
+        screen.query_one("#notes-navigator-rail-open", Button).press()
+        screen.query_one("#notes-inspector-rail-open", Button).press()
+        await pilot.pause()
+
+        assert navigator.display is True
+        assert inspector.display is True
+        assert navigator_handle.display is False
+        assert inspector_handle.display is False
+
+
+@pytest.mark.asyncio
+async def test_notes_rail_collapse_state_round_trips_through_save_restore():
+    screen = NotesScreen(_mock_app_instance())
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen.query_one("#notes-navigator-rail-collapse", Button).press()
+        await pilot.pause()
+        saved = screen.save_state()
+
+    assert saved["notes_state"]["left_sidebar_collapsed"] is True
+
+    restored_screen = NotesScreen(_mock_app_instance())
+    restored_screen.restore_state(saved)
+    restored_app = NotesWorkbenchHarness(restored_screen)
+    async with restored_app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        assert restored_screen.query_one("#notes-navigator-pane").display is False
+        assert restored_screen.query_one("#notes-navigator-rail-handle").display is True
