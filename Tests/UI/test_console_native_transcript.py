@@ -1,6 +1,6 @@
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -46,10 +46,19 @@ class MutableTranscriptHarness(App):
 
 
 class SaveAsModalHarness(App):
+    def __init__(self, destinations: list[ConsoleSaveDestination] | None = None) -> None:
+        super().__init__()
+        self.destinations = destinations or save_as_modal_destinations()
+        self.selected_destination: str | None = None
+
     def on_mount(self) -> None:
         self.push_screen(
-            ConsoleSaveAsModal(destinations=save_as_modal_destinations())
+            ConsoleSaveAsModal(destinations=self.destinations),
+            self._capture_destination,
         )
+
+    def _capture_destination(self, destination: str | None) -> None:
+        self.selected_destination = destination
 
 
 def save_as_modal_destinations() -> list[ConsoleSaveDestination]:
@@ -468,6 +477,34 @@ async def test_save_as_modal_lists_available_and_wip_destinations():
     assert "Chatbook" in text
     assert "Note" in text
     assert "WIP: save as Note is not wired yet." in text
+
+
+@pytest.mark.asyncio
+async def test_save_as_modal_available_destination_is_clickable_control():
+    app = SaveAsModalHarness(
+        destinations=[
+            ConsoleSaveDestination(label="Chatbook", available=True, reason=""),
+            ConsoleSaveDestination(
+                label="Note",
+                available=False,
+                reason="WIP: save as Note is not wired yet.",
+            ),
+        ]
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _wait_for_selector(app.screen, pilot, "#console-save-as-destination-chatbook")
+        destination_button = app.screen.query_one("#console-save-as-destination-chatbook", Button)
+        text = _visible_text(app.screen)
+
+        assert destination_button.disabled is False
+        assert "Note [WIP]" in text
+        assert not app.screen.query("#console-save-as-destination-note")
+
+        await pilot.click("#console-save-as-destination-chatbook")
+        await pilot.pause(0.1)
+
+    assert app.selected_destination == "Chatbook"
 
 
 @pytest.mark.asyncio
