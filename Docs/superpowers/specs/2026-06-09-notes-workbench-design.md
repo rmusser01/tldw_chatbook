@@ -37,6 +37,13 @@ or cross-module boundary changes.
 - **Mode switching by display-toggling pre-composed regions**, not remount, so unsaved
   editor content survives mode flips. (Library's remount approach is fine for copy panes,
   wrong for a live editor.)
+- **Console-style collapsible rails.** Per user direction, Notes follows the Console
+  screen's UI principles: the navigator and inspector panes are collapsible rails with
+  Console rail headers (title + compact collapse button) that collapse to
+  `ConsoleRailHandle` handles, reusing the `console-rail-*` design-system classes. The
+  editor is the primary surface, expanding when rails are collapsed — mirroring Console's
+  Context/Inspector rails. Rail state persists via the existing
+  `left/right_sidebar_collapsed` fields.
 - **Library issues get fixed, not just documented** (user choice), as an independent PR
   that lands first; the Notes screen reuses its slimmed header pattern and a generalized
   `.destination-mode-chip` style.
