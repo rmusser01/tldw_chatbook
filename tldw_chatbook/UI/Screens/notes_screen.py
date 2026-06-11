@@ -96,7 +96,7 @@ class NotesScreen(BaseAppScreen):
         ("s", "notes_save_note", "Save Note"),
         ("n", "notes_new_note", "New Note"),
         ("slash", "notes_focus_search", "Search Notes"),
-        ("e", "notes_focus_editor", "Edit Note"),
+        ("e", "notes_focus_editor", "Focus Editor"),
     ]
 
     # Baseline workbench geometry so the screen renders correctly even without
@@ -223,6 +223,11 @@ class NotesScreen(BaseAppScreen):
     .word-count {
         color: $text-muted;
         margin: 0 1;
+    }
+
+    .notes-action-bar-sep {
+        color: $text-muted;
+        width: 1;
     }
 
     #notes-preview-toggle {
@@ -365,7 +370,8 @@ class NotesScreen(BaseAppScreen):
                 notes_bar.display = self.state.active_mode == "notes"
                 with notes_bar:
                     yield Label("Ready", id="notes-unsaved-indicator", classes="unsaved-indicator")
-                    yield Label("Words: 0", id="notes-word-count", classes="word-count")
+                    yield Label("|", classes="notes-action-bar-sep")
+                    yield Label("0 words", id="notes-word-count", classes="word-count")
                     yield Static("", classes="notes-action-bar-spacer")
                     yield Button(
                         "Save",
@@ -440,6 +446,22 @@ class NotesScreen(BaseAppScreen):
     _scope_item_count: int = 0
 
     def _status_row_label(self) -> str:
+        # Each mode summarizes its own context; carrying the editor's
+        # "saved" state into Sync or Templates would be misleading.
+        if self.state.active_mode == "sync":
+            last_sync = getattr(self.app_instance, "last_sync_time", None)
+            last_text = (
+                last_sync.strftime("%Y-%m-%d %H:%M")
+                if isinstance(last_sync, datetime)
+                else "never"
+            )
+            return f"Sync | last sync: {last_text}"
+        if self.state.active_mode == "templates":
+            from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
+
+            count = len(NOTE_TEMPLATES)
+            noun = "template" if count == 1 else "templates"
+            return f"Templates | {count} {noun}"
         scope_labels = {
             ScopeType.LOCAL_NOTE: "Local",
             ScopeType.SERVER_NOTE: "Server",
@@ -501,6 +523,7 @@ class NotesScreen(BaseAppScreen):
             )
         except QueryError:
             return
+        self._update_status_row()
 
     def _set_state(self, **changes: Any) -> None:
         self.state = self.validate_state(replace(self.state, **changes))
@@ -1710,7 +1733,10 @@ class NotesScreen(BaseAppScreen):
 
     def _update_word_count_display(self) -> None:
         try:
-            self.query_one("#notes-word-count", Label).update(f"Words: {self.state.word_count}")
+            word_noun = "word" if self.state.word_count == 1 else "words"
+            self.query_one("#notes-word-count", Label).update(
+                f"{self.state.word_count} {word_noun}"
+            )
         except QueryError:
             return
 
@@ -2773,6 +2799,15 @@ class NotesScreen(BaseAppScreen):
         except QueryError:
             return
         created = await self._create_local_note_from_template(pane.selected_template_key)
+        if created:
+            self._set_state(active_mode="notes")
+
+    @on(NotesTemplatesPane.CreateRequested)
+    async def handle_templates_pane_create_requested(
+        self, event: NotesTemplatesPane.CreateRequested
+    ) -> None:
+        event.stop()
+        created = await self._create_local_note_from_template(event.template_key)
         if created:
             self._set_state(active_mode="notes")
 

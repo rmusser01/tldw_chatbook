@@ -10,6 +10,7 @@ List-population logic is shared with the legacy ``NotesSidebarLeft`` via
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -18,6 +19,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
+from textual.message import Message
 from textual.widgets import (
     Button,
     Input,
@@ -31,6 +33,24 @@ from textual.widgets import (
 )
 
 from tldw_chatbook.Widgets.Note_Widgets.workspace_context_panel import WorkspaceContextPanel
+
+
+def template_display_label(key: str, template: dict[str, Any]) -> str:
+    """Human label for a note template.
+
+    Template descriptions all carry redundant "template" wording ("Empty note
+    template", "Template for meeting notes"); inside a Templates list that word
+    is pure noise, so strip it and normalize the word order.
+    """
+    raw = str(
+        template.get("description")
+        or template.get("title")
+        or key.replace("_", " ")
+    )
+    label = re.sub(r"^\s*templates?\s+for\s+", "", raw, flags=re.IGNORECASE)
+    label = re.sub(r"\s*\btemplates?\b\s*$", "", label, flags=re.IGNORECASE)
+    label = label.strip(" -–:") or key.replace("_", " ")
+    return label[:1].upper() + label[1:]
 
 
 class NotesListPopulateMixin:
@@ -160,6 +180,7 @@ class NotesNavigatorPane(NotesListPopulateMixin, VerticalScroll):
         min-height: 1;
     }
     NotesNavigatorPane > Button {
+        width: 100%;
         margin-bottom: 1;
     }
     NotesNavigatorPane ListView {
@@ -251,11 +272,11 @@ class NotesNavigatorPane(NotesListPopulateMixin, VerticalScroll):
 
         from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
 
-        template_options = []
-        for key, template in NOTE_TEMPLATES.items():
-            label = template.get("description", template.get("title", key.replace("_", " ").title()))
-            template_options.append((label, key))
-        template_options.sort(key=lambda option: option[1])
+        template_options = [
+            (template_display_label(key, template), key)
+            for key, template in NOTE_TEMPLATES.items()
+        ]
+        template_options.sort(key=lambda option: option[0].lower())
 
         yield Select(
             options=template_options,
@@ -281,6 +302,13 @@ class NotesNavigatorPane(NotesListPopulateMixin, VerticalScroll):
             classes="destination-action-button console-action-secondary",
             tooltip="Import a note file into the current Notes scope.",
         )
+
+    async def on_mount(self) -> None:
+        # The screen's mount path only populates the active scope's list; seed
+        # the other sections so their one-line empty hints render instead of
+        # bare "(0)" headings over blank space. Real populates replace these.
+        await self.populate_server_notes_list([])
+        await self.populate_workspaces_list([])
 
 
 class NotesEditorPane(Vertical):
@@ -340,6 +368,9 @@ class NotesInspectorPane(VerticalScroll):
     NotesInspectorPane > .notes-keywords-textarea {
         width: 100%;
         height: 4;
+    }
+    NotesInspectorPane > .notes-keywords-hint {
+        color: $text-muted;
         margin-bottom: 1;
     }
     NotesInspectorPane .notes-pane-section {
@@ -402,6 +433,11 @@ class NotesInspectorPane(VerticalScroll):
 
         yield Static("Keywords", classes="notes-pane-section", id="notes-keywords-label")
         yield TextArea("", id="notes-keywords-area", classes="notes-keywords-textarea")
+        yield Static(
+            "Comma-separated · saved with the note",
+            classes="notes-keywords-hint",
+            id="notes-keywords-hint",
+        )
 
         with Horizontal(classes="auto-save-container", id="notes-auto-save-container"):
             yield Switch(id="notes-auto-save-toggle", value=self._auto_save_enabled, tooltip="Auto-save")
@@ -418,32 +454,35 @@ class NotesInspectorPane(VerticalScroll):
             )
 
         with Vertical(id="notes-export-actions", classes="notes-inspector-section"):
-            yield Static("Export", classes="notes-pane-section")
+            # Two labeled rows so file exports and clipboard copies read as
+            # distinct outcomes instead of four near-identical buttons.
+            yield Static("Export to file", classes="notes-pane-section")
             with Horizontal(classes="notes-action-row"):
                 yield Button(
-                    "Markdown",
+                    ".md file",
                     id="notes-export-markdown-button",
                     compact=True,
                     classes="destination-action-button console-action-secondary",
                     tooltip="Export the note as a Markdown file.",
                 )
                 yield Button(
-                    "Text",
+                    ".txt file",
                     id="notes-export-text-button",
                     compact=True,
                     classes="destination-action-button console-action-secondary",
                     tooltip="Export the note as a plain-text file.",
                 )
+            yield Static("Copy to clipboard", classes="notes-pane-section")
             with Horizontal(classes="notes-action-row"):
                 yield Button(
-                    "Copy MD",
+                    "Markdown",
                     id="notes-copy-markdown-button",
                     compact=True,
                     classes="destination-action-button console-action-secondary",
                     tooltip="Copy the note as Markdown.",
                 )
                 yield Button(
-                    "Copy Text",
+                    "Plain text",
                     id="notes-copy-text-button",
                     compact=True,
                     classes="destination-action-button console-action-secondary",
@@ -490,6 +529,23 @@ class NotesInspectorPane(VerticalScroll):
         }
         return display_map.get(canonical_scope, canonical_scope.replace("_", " ").title())
 
+    @staticmethod
+    def _format_timestamp(value: Any) -> str:
+        """Render a stored timestamp as local 'YYYY-MM-DD HH:MM' for humans."""
+        from datetime import datetime, timezone
+
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            try:
+                parsed = datetime.fromisoformat(str(value))
+            except (TypeError, ValueError):
+                return str(value)
+        if parsed.tzinfo is None:
+            # Stored timestamps are UTC; some rows carry no explicit offset.
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone().strftime("%Y-%m-%d %H:%M")
+
     def update_note_meta(self, details: dict[str, Any] | None) -> None:
         """Render created/modified/version/sync metadata for the selected note."""
         try:
@@ -504,9 +560,9 @@ class NotesInspectorPane(VerticalScroll):
         modified = details.get("last_modified") or details.get("updated_at")
         version = details.get("version")
         if created:
-            lines.append(f"Created: {created}")
+            lines.append(f"Created: {self._format_timestamp(created)}")
         if modified:
-            lines.append(f"Modified: {modified}")
+            lines.append(f"Modified: {self._format_timestamp(modified)}")
         if version is not None:
             lines.append(f"Version: {version}")
         if details.get("is_externally_synced"):
@@ -672,11 +728,14 @@ class NotesSyncPane(Horizontal):
     }
     """
 
+    AUTO_SYNC_INTERVAL_SECONDS = 300
+
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.sync_service: Any = None
         self.sync_in_progress = False
+        self._auto_sync_timer: Any = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="notes-sync-setup"):
@@ -710,7 +769,10 @@ class NotesSyncPane(Horizontal):
             yield Select(
                 [
                     ("Keep newer version", "newer_wins"),
-                    ("Ask me each time", "ask"),
+                    # The engine's "ask" strategy records the conflict and skips
+                    # the note; no interactive prompt exists yet, so the label
+                    # must not promise one.
+                    ("Skip and record for review", "ask"),
                     ("Always use file version", "disk_wins"),
                     ("Always use app version", "db_wins"),
                 ],
@@ -721,7 +783,11 @@ class NotesSyncPane(Horizontal):
 
             with Horizontal(id="notes-sync-auto-row"):
                 yield Static("Auto-sync", classes="notes-sync-auto-label")
-                yield Switch(id="auto-sync-switch", value=False, tooltip="Sync automatically in the background.")
+                yield Switch(
+                    id="auto-sync-switch",
+                    value=False,
+                    tooltip="Sync this folder every 5 minutes while the app is open.",
+                )
 
             yield Static("Status: ready", id="sync-status")
             yield Static("Last synced: never", id="last-sync-time")
@@ -733,6 +799,10 @@ class NotesSyncPane(Horizontal):
             with VerticalScroll(id="notes-sync-activity-log"):
                 yield Static(
                     "No sync runs yet.",
+                    classes="notes-sync-activity-line",
+                )
+                yield Static(
+                    "Choose a folder and press Sync Now.",
                     classes="notes-sync-activity-line",
                 )
 
@@ -759,6 +829,15 @@ class NotesSyncPane(Horizontal):
             )
         except Exception:
             pass
+        try:
+            from tldw_chatbook.config import get_cli_setting as _get_setting
+
+            if bool(_get_setting("notes", "auto_sync", False)):
+                # Assigning the value posts Switch.Changed, which routes
+                # through handle_auto_sync_toggled and starts the timer.
+                self.query_one("#auto-sync-switch", Switch).value = True
+        except Exception:
+            pass
         self.update_status()
 
     def update_status(self) -> None:
@@ -773,11 +852,12 @@ class NotesSyncPane(Horizontal):
             else:
                 self.query_one("#last-sync-time", Static).update("Last synced: never")
             if self.sync_service is None:
-                self.query_one("#sync-status", Static).update(
-                    "Status: sync service unavailable"
-                )
+                status = "sync service unavailable"
             else:
-                self.query_one("#sync-status", Static).update("Status: ready")
+                status = "ready"
+            if self._auto_sync_timer is not None:
+                status += " · auto-sync every 5 min"
+            self.query_one("#sync-status", Static).update(f"Status: {status}")
         except Exception:
             return
 
@@ -832,6 +912,54 @@ class NotesSyncPane(Horizontal):
             SelectDirectory(str(current_path), title="Select Notes Folder"),
             callback=folder_selected,
         )
+
+    @on(Switch.Changed, "#auto-sync-switch")
+    def handle_auto_sync_toggled(self, event: Switch.Changed) -> None:
+        event.stop()
+        enabled = event.value
+        try:
+            from tldw_chatbook.config import save_setting_to_cli_config
+
+            save_setting_to_cli_config("notes", "auto_sync", enabled)
+        except Exception:
+            pass
+        if enabled:
+            if self._auto_sync_timer is None:
+                self._auto_sync_timer = self.set_interval(
+                    self.AUTO_SYNC_INTERVAL_SECONDS, self._auto_sync_tick
+                )
+            self._add_activity(
+                "Auto-sync on: syncs every 5 minutes while the app is open.", "info"
+            )
+            if self._auto_sync_folder() is None:
+                self._add_activity(
+                    "Set a valid folder above for auto-sync to run.", "error"
+                )
+        else:
+            if self._auto_sync_timer is not None:
+                self._auto_sync_timer.stop()
+                self._auto_sync_timer = None
+            self._add_activity("Auto-sync off.", "info")
+        self.update_status()
+
+    def _auto_sync_folder(self) -> Optional[Path]:
+        """Return the configured sync folder if it exists, else None."""
+        try:
+            folder_value = self.query_one("#sync-folder-input", Input).value
+        except QueryError:
+            return None
+        if not folder_value:
+            return None
+        folder = Path(folder_value).expanduser()
+        return folder if folder.is_dir() else None
+
+    def _auto_sync_tick(self) -> None:
+        # Skip quietly when busy or misconfigured; a notify() every five
+        # minutes would be noise, and enabling the switch already warned.
+        if self.sync_in_progress or self._auto_sync_folder() is None:
+            return
+        self._add_activity("Auto-sync run starting.", "info")
+        self.start_sync()
 
     def start_sync(self) -> None:
         """Kick off a sync run; called from the screen's docked Sync Now action."""
@@ -907,8 +1035,19 @@ class NotesSyncPane(Horizontal):
             self._add_activity(f"Sync complete: {summary}", "success")
             if results.conflicts:
                 self._add_activity(
-                    f"{len(results.conflicts)} conflicts recorded", "info"
+                    f"{len(results.conflicts)} conflicts recorded for review", "error"
                 )
+                max_listed = 20
+                for conflict in results.conflicts[:max_listed]:
+                    self._add_activity(
+                        f"Conflict: {conflict.file_path} ({conflict.conflict_type})",
+                        "error",
+                    )
+                if len(results.conflicts) > max_listed:
+                    self._add_activity(
+                        f"...and {len(results.conflicts) - max_listed} more conflicts",
+                        "error",
+                    )
             if results.errors:
                 self._add_activity(f"{len(results.errors)} errors during sync", "error")
             from datetime import datetime as _datetime
@@ -979,6 +1118,13 @@ class NotesTemplatesPane(Horizontal):
     }
     """
 
+    class CreateRequested(Message):
+        """User confirmed a template in the list (second Enter/click)."""
+
+        def __init__(self, template_key: str) -> None:
+            super().__init__()
+            self.template_key = template_key
+
     def compose(self) -> ComposeResult:
         with Vertical(id="notes-templates-list-pane"):
             with Horizontal(classes="console-rail-header"):
@@ -986,7 +1132,11 @@ class NotesTemplatesPane(Horizontal):
             yield ListView(id="notes-templates-list")
         with Vertical(id="notes-template-preview-pane"):
             with Horizontal(classes="console-rail-header"):
-                yield Static("Preview", classes="console-rail-title")
+                yield Static(
+                    "Preview",
+                    classes="console-rail-title",
+                    id="notes-template-preview-title",
+                )
             with VerticalScroll(id="notes-template-preview-scroll"):
                 yield Static("Select a template to preview it.", id="notes-template-preview")
 
@@ -997,23 +1147,30 @@ class NotesTemplatesPane(Horizontal):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._selected_template_key: Optional[str] = None
+        # Two-step activation: the first Enter/click on an item arms it, the
+        # second creates. A bare ListView.Selected also fires on single click,
+        # so creating immediately would punish browsing with stray notes.
+        self._armed_template_key: Optional[str] = None
 
     async def on_mount(self) -> None:
         from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
 
         list_view = self.query_one("#notes-templates-list", ListView)
         items: list[ListItem] = []
-        for key in sorted(NOTE_TEMPLATES):
-            template = NOTE_TEMPLATES[key]
-            label = template.get(
-                "description", template.get("title", key.replace("_", " ").title())
-            )
-            item = ListItem(Label(str(label)))
+        labeled = sorted(
+            (
+                (template_display_label(key, template), key)
+                for key, template in NOTE_TEMPLATES.items()
+            ),
+            key=lambda pair: pair[0].lower(),
+        )
+        for label, key in labeled:
+            item = ListItem(Label(label))
             setattr(item, "template_key", key)
             items.append(item)
         await list_view.extend(items)
 
-    def _show_preview(self, item: Any) -> None:
+    def _show_preview(self, item: Any, *, armed: bool = False) -> None:
         from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
 
         key = getattr(item, "template_key", None)
@@ -1024,9 +1181,23 @@ class NotesTemplatesPane(Horizontal):
         title = template.get("title", key)
         content = str(template.get("content", "")).strip() or "(blank note)"
         keywords = template.get("keywords", "")
+        try:
+            self.query_one("#notes-template-preview-title", Static).update(
+                f"Preview — {template_display_label(key, template)}"
+            )
+        except QueryError:
+            pass
         preview_lines = [f"Title: {title}"]
         if keywords:
             preview_lines.append(f"Keywords: {keywords}")
+        if "{date}" in f"{title}{content}" or "{time}" in f"{title}{content}":
+            preview_lines.append(
+                "Placeholders like {date} and {time} fill in when the note is created."
+            )
+        if armed:
+            preview_lines.append(
+                "Press Enter again (or click again) to create a note from this template."
+            )
         preview_lines.append("")
         preview_lines.append(content)
         self.query_one("#notes-template-preview", Static).update(
@@ -1036,8 +1207,17 @@ class NotesTemplatesPane(Horizontal):
     @on(ListView.Highlighted, "#notes-templates-list")
     def handle_template_highlighted(self, event: ListView.Highlighted) -> None:
         if event.item is not None:
-            self._show_preview(event.item)
+            key = getattr(event.item, "template_key", None)
+            if key != self._armed_template_key:
+                self._armed_template_key = None
+            self._show_preview(event.item, armed=self._armed_template_key is not None)
 
     @on(ListView.Selected, "#notes-templates-list")
     def handle_template_selected(self, event: ListView.Selected) -> None:
-        self._show_preview(event.item)
+        key = getattr(event.item, "template_key", None)
+        if key and key == self._armed_template_key:
+            self._armed_template_key = None
+            self.post_message(self.CreateRequested(key))
+            return
+        self._armed_template_key = key
+        self._show_preview(event.item, armed=key is not None)
