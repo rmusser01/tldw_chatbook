@@ -247,16 +247,26 @@ def test_service_backed_policy_destinations_use_async_workers_without_asyncio_ru
         Path("tldw_chatbook/UI/Screens/skills_screen.py"),
     ]
 
+    # asyncio.run on the UI thread is banned. A worker-thread usage is
+    # legitimate (no running loop there) but must carry an explicit
+    # annotation AND appear in this allowlist with an exact count, so
+    # exceptions cannot proliferate silently.
+    allowed_annotated_asyncio_run = {
+        Path("tldw_chatbook/UI/Screens/library_screen.py"): 1,
+    }
     for screen_path in screen_paths:
         source = _text(screen_path)
         assert "thread=True" not in source, screen_path
-        # asyncio.run on the UI thread is banned; a worker-thread usage is
-        # legitimate (no running loop there) but must carry an explicit
-        # annotation so each exception is deliberate and reviewable.
+        annotated = 0
         for line in source.splitlines():
             if "asyncio.run" in line:
                 assert "policy-exception: worker-thread loop" in line, (
                     screen_path,
                     line.strip(),
                 )
+                annotated += 1
+        assert annotated == allowed_annotated_asyncio_run.get(screen_path, 0), (
+            screen_path,
+            annotated,
+        )
         assert "_run_maybe_awaitable" not in source, screen_path
