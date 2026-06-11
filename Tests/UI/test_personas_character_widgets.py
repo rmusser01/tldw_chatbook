@@ -90,8 +90,11 @@ class TestCharacterCard:
             def text(selector: str) -> str:
                 return str(pilot.app.query_one(selector, Static).renderable)
 
-            assert "Detective Sam" in text("#personas-character-card-name")
-            assert "Noir detective" in text("#personas-character-card-description")
+            # Each field renders as ONE Static with the label inline.
+            assert text("#personas-character-card-name") == "Name: Detective Sam"
+            assert text("#personas-character-card-description") == (
+                "Description: Noir detective"
+            )
             assert "Wry, persistent" in text("#personas-character-card-personality")
             assert "rainy night" in text("#personas-character-card-scenario")
             assert "Who's asking?" in text("#personas-character-card-first-message")
@@ -145,6 +148,33 @@ class TestCharacterCard:
             widget = pilot.app.query_one("#ccp-character-card-view")
             assert isinstance(widget, PersonasCharacterCardWidget)
             assert hasattr(widget, "load_character")
+
+    async def test_card_has_no_label_widgets(self):
+        """Card fields are single inline Statics, not Label+value pairs."""
+        from textual.widgets import Label
+
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            card = pilot.app.query_one(PersonasCharacterCardWidget)
+            assert not list(card.query(Label))
+
+    async def test_empty_field_renders_bare_label(self):
+        """Empty values render just 'Label:' with no trailing space."""
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            card = pilot.app.query_one(PersonasCharacterCardWidget)
+            data = dict(CHARACTER)
+            data["scenario"] = ""
+            card.load_character(data)
+            await pilot.pause()
+            assert (
+                str(
+                    pilot.app.query_one(
+                        "#personas-character-card-scenario", Static
+                    ).renderable
+                )
+                == "Scenario:"
+            )
 
     async def test_load_with_markup_like_content_does_not_raise(self):
         """Field values with Rich-markup-looking text must render literally."""
@@ -370,6 +400,19 @@ class TestCharacterEditor:
         async with app.run_test() as pilot:
             widget = pilot.app.query_one("#ccp-character-editor-view")
             assert isinstance(widget, PersonasCharacterEditorWidget)
+
+    async def test_validation_and_save_toolbar_are_outside_scroll_body(self):
+        """Validation + Save/Cancel anchor below the scrollable fields region."""
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            body = pilot.app.query_one("#personas-char-editor-body")
+            body_descendants = set(body.query("*"))
+            for selector in (
+                "#personas-char-editor-validation",
+                "#personas-char-editor-save",
+                "#personas-char-editor-cancel",
+            ):
+                assert pilot.app.query_one(selector) not in body_descendants
 
 
 # ===== Transcript =====

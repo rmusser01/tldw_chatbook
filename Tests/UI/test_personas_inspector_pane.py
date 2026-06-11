@@ -54,6 +54,15 @@ async def test_action_buttons_carry_shared_flat_button_classes():
         assert delete.has_class("personas-destructive")
 
 
+async def test_conversations_list_is_height_capped():
+    """The conversations list must never push readiness/actions off-pane."""
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        styles = pilot.app.query_one("#personas-conversations-list").styles
+        assert styles.max_height is not None
+        assert styles.max_height.value <= 10
+
+
 async def test_conversation_rows_carry_subdued_class():
     app = InspectorApp()
     async with app.run_test() as pilot:

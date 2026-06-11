@@ -19,6 +19,38 @@ _ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 class PersonasInspectorPane(Vertical):
     """Identity, validation, conversations, readiness, and actions."""
 
+    # Structure only: colors come from the app stylesheet. The conversations
+    # list is CAPPED (scrolls past 10 rows) so the Readiness section and the
+    # action buttons below it are always visible when the pane renders.
+    DEFAULT_CSS = """
+    PersonasInspectorPane #personas-conversations-list {
+        height: auto;
+        max-height: 10;
+    }
+
+    PersonasInspectorPane .personas-conversation-row {
+        width: 100%;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+    }
+
+    PersonasInspectorPane #personas-inspector-actions {
+        height: auto;
+    }
+
+    PersonasInspectorPane #personas-inspector-actions Button {
+        width: 100%;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+    }
+    """
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._has_selection = False

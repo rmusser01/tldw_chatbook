@@ -13,8 +13,8 @@ from typing import Any, Dict
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Label, Static
+from textual.containers import Container, Horizontal, VerticalScroll
+from textual.widgets import Button, Static
 
 from ..CCP_Widgets.ccp_character_card_widget import EditCharacterRequested
 
@@ -55,7 +55,8 @@ class PersonasCharacterCardWidget(Container):
     }
     """
 
-    #: (label, value-Static id suffix) pairs rendered as ds-field-rows.
+    #: (label, value-Static id suffix) pairs, each rendered as ONE Static with
+    #: the label inline ("Name: Detective Sam") for a clean read-only card.
     _FIELD_ROWS: tuple[tuple[str, str], ...] = (
         ("Name", "name"),
         ("Description", "description"),
@@ -83,12 +84,15 @@ class PersonasCharacterCardWidget(Container):
             # markup=False: these Statics render character-card content, which
             # must display literally (an unmatched [/tag] would raise
             # MarkupError at render time with markup enabled).
+            # One Static per field ("Label: value") rather than Label+value
+            # pairs: the read-only card reads as clean left-aligned lines.
             for label, suffix in self._FIELD_ROWS:
-                with Vertical(classes="ds-field-row"):
-                    yield Label(label)
-                    yield Static(
-                        "", id=f"personas-character-card-{suffix}", markup=False
-                    )
+                yield Static(
+                    f"{label}:",
+                    id=f"personas-character-card-{suffix}",
+                    classes="ds-field-row",
+                    markup=False,
+                )
             yield Static("Tags: none", id="personas-character-card-tags", markup=False)
             yield Static(
                 "Alternate greetings: 0",
@@ -120,7 +124,13 @@ class PersonasCharacterCardWidget(Container):
         raw_id = record.get("id")
         self._character_id = str(raw_id) if raw_id is not None else None
 
+        labels = {suffix: label for label, suffix in self._FIELD_ROWS}
+
         def _set(suffix: str, value: str) -> None:
+            label = labels.get(suffix)
+            if label is not None:
+                # Label inline with the value: "Name: Detective Sam".
+                value = f"{label}: {value}" if value else f"{label}:"
             self.query_one(f"#personas-character-card-{suffix}", Static).update(value)
 
         _set("name", str(record.get("name") or "Unnamed Character"))

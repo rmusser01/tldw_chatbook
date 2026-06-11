@@ -88,11 +88,14 @@
     color: $ds-text-primary;
 }
 
+/* Field rows are label-above-value: every current user (Personas card and
+   editors) composes them as Vertical containers, so the row must not force a
+   horizontal layout (it jammed "Name"+value side by side and squeezed Inputs
+   into the leftover width). */
 .ds-field-row {
     height: auto;
     min-height: 2;
     padding: 0 1;
-    layout: horizontal;
 }
 
 .ds-toolbar {
@@ -1353,6 +1356,19 @@ Button.notes-mode-chip {
     min-width: 30;
     border: solid $ds-grid-line;
     padding: 1;
+}
+
+/* Workbench column split (2:4:2). Required here because the generic
+   .destination-workbench-pane width (1fr) outranks the screen's DEFAULT_CSS,
+   which would squeeze the work area to a third of its intended width. */
+#personas-library-pane {
+    width: 2fr;
+    min-width: 24;
+}
+
+#personas-work-area {
+    width: 4fr;
+    min-width: 40;
 }
 
 #schedules-list-pane,
