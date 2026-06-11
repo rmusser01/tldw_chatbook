@@ -55,6 +55,9 @@ def stub_scope_service(mock_app_instance):
     service.update_persona_profile = AsyncMock(
         return_value={"id": "p-1", "name": "Archivist 2"}
     )
+    service.delete_persona_profile = AsyncMock(
+        return_value={"status": "deleted", "persona_id": "p-1"}
+    )
     mock_app_instance.character_persona_scope_service = service
     return service
 
@@ -1906,3 +1909,208 @@ class TestPreviewIntegration:
                 m for m in fake.requests[1] if m["role"] == "user"
             ]
             assert user_messages == [{"role": "user", "content": "Hi\nAgain"}]
+
+
+class TestDelete:
+    """Confirmed delete for characters and persona profiles (Task 14).
+
+    The confirmation dialog itself is bypassed by replacing the screen's
+    ``_confirm_delete`` helper, the same way the import/export tests bypass
+    the file dialogs by calling the path-based methods directly.
+    """
+
+    @pytest.fixture
+    def stub_conversations(self, monkeypatch):
+        monkeypatch.setattr(
+            character_handler_module, "_default_character_db", lambda: object()
+        )
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [
+                {"id": "conv-1", "title": "First case"}
+            ],
+        )
+
+    @staticmethod
+    def _capture_notifications(app) -> list[tuple[str, str]]:
+        captured: list[tuple[str, str]] = []
+        app.notify = lambda message, severity="information", **kwargs: captured.append(
+            (str(message), severity)
+        )
+        return captured
+
+    @staticmethod
+    def _bypass_confirm(screen, result: bool) -> None:
+        async def _confirm(name: str) -> bool:
+            return result
+
+        screen._confirm_delete = _confirm
+
+    async def _select_first_character(self, pilot):
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-library-row-character-1")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        return screen
+
+    async def _select_profile(self, pilot):
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-mode-personas")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.click("#personas-library-row-persona_profile-p-1")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        return screen
+
+    @staticmethod
+    async def _press_delete(pilot, screen):
+        screen.query_one("#personas-delete", Button).press()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_delete_character_soft_deletes_and_clears(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        deleted: list[tuple] = []
+
+        def fake_delete(character_id, expected_version):
+            deleted.append((character_id, expected_version))
+            return True
+
+        monkeypatch.setattr(character_handler_module, "delete_character", fake_delete)
+
+        def fetch_all_post_delete():
+            characters = [dict(c) for c in CHARACTERS]
+            if deleted:
+                characters = [c for c in characters if str(c["id"]) != "1"]
+            return characters
+
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", fetch_all_post_delete
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            # Sanity: the conversations panel has rows before the delete.
+            assert screen.query_one("#personas-conversations-list").children
+            self._bypass_confirm(screen, True)
+            await self._press_delete(pilot, screen)
+            # delete_character received the id and the FULL record's version.
+            assert deleted == [("1", 1)]
+            # Selection cleared, view mode, center pane empty.
+            assert screen.state.selected_entity_id is None
+            assert screen.state.selected_entity_kind is None
+            assert screen._edit_mode == "view"
+            assert screen.query_one("#ccp-character-card-view").display is False
+            assert "Selected: none" in str(
+                screen.query_one("#personas-selected-name", Static).renderable
+            )
+            # Conversations panel emptied.
+            assert not screen.query_one("#personas-conversations-list").children
+            # Library refreshed without the deleted record.
+            rows = screen.query(".personas-library-row")
+            assert [str(r.label) for r in rows] == ["Lab Assistant"]
+        assert ("Deleted.", "information") in notifications
+
+    async def test_delete_conflict_shows_recovery_copy(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        monkeypatch.setattr(
+            character_handler_module,
+            "delete_character",
+            lambda character_id, expected_version: False,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            self._bypass_confirm(screen, True)
+            await self._press_delete(pilot, screen)
+            assert any(
+                "changed since it was loaded" in message and severity == "error"
+                for message, severity in notifications
+            )
+            # The selection is retained so the user can reselect/retry.
+            assert screen.state.selected_entity_id == "1"
+            assert not any(message == "Deleted." for message, _ in notifications)
+
+    async def test_delete_cancelled_is_noop(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        deleted: list[tuple] = []
+        monkeypatch.setattr(
+            character_handler_module,
+            "delete_character",
+            lambda character_id, expected_version: deleted.append(
+                (character_id, expected_version)
+            )
+            or True,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            self._bypass_confirm(screen, False)
+            await self._press_delete(pilot, screen)
+            assert deleted == []
+            assert screen.state.selected_entity_id == "1"
+            assert screen.query_one("#ccp-character-card-view").display is True
+            assert not any(message == "Deleted." for message, _ in notifications)
+
+    async def test_delete_profile_calls_scope_service(
+        self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
+    ):
+        # The full record (with version) comes from get_persona_profile.
+        stub_scope_service.get_persona_profile = AsyncMock(
+            return_value={**PROFILE, "version": 3}
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_profile(pilot)
+            self._bypass_confirm(screen, True)
+            await self._press_delete(pilot, screen)
+            stub_scope_service.delete_persona_profile.assert_awaited_once()
+            await_args = stub_scope_service.delete_persona_profile.await_args
+            assert await_args.args[0] == "p-1"
+            assert await_args.kwargs == {"expected_version": 3, "mode": "local"}
+            assert screen.state.selected_entity_id is None
+            assert screen.query_one("#ccp-persona-card-view").display is False
+        assert ("Deleted.", "information") in notifications
+
+    async def test_delete_blocked_when_full_record_missing(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        deleted: list[tuple] = []
+        monkeypatch.setattr(
+            character_handler_module,
+            "delete_character",
+            lambda character_id, expected_version: deleted.append(
+                (character_id, expected_version)
+            )
+            or True,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            # Simulate a stale handler: the loaded record is another character,
+            # so the optimistic-lock version cannot be sourced.
+            screen.character_handler.current_character_id = "999"
+            self._bypass_confirm(screen, True)
+            await self._press_delete(pilot, screen)
+            assert deleted == []
+            assert screen.state.selected_entity_id == "1"
+            assert any(
+                "not loaded" in message and severity == "warning"
+                for message, severity in notifications
+            )

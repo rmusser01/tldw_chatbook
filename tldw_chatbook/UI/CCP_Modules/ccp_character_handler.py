@@ -112,6 +112,23 @@ def update_character(character_id: CharacterId, data: Dict[str, Any]) -> bool:
     )
 
 
+def delete_character(character_id: CharacterId, expected_version: int) -> bool:
+    """Soft-delete a character card with optimistic locking.
+
+    Thin seam over ``soft_delete_character_card`` for the destination
+    workbench. Returns ``True`` on success (including the already-deleted
+    idempotent case, which the DB API also reports as ``True``).
+
+    Raises:
+        ConflictError: When ``expected_version`` no longer matches the DB
+            record (or the record disappeared) - the optimistic lock was lost.
+        CharactersRAGDBError: For other database failures.
+    """
+    local_id = _coerce_local_character_id(character_id)
+    db = _default_character_db()
+    return bool(db.soft_delete_character_card(int(local_id), int(expected_version)))
+
+
 def import_character_card(file_path: str) -> Any:
     """Compatibility helper for character import.
 

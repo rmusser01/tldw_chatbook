@@ -24,8 +24,9 @@ from ...Character_Chat.Character_Chat_Lib import (
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_chat_models import ConsoleProviderSelection
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
+from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
-from ...Widgets.confirmation_dialog import UnsavedChangesDialog
+from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.CCP_Widgets.ccp_character_card_widget import (
     CCPCharacterCardWidget,
     EditCharacterRequested,
@@ -220,6 +221,8 @@ class PersonasScreen(BaseAppScreen):
         # set_result on a cancelled future (InvalidStateError on Textual
         # 8.2.7), so a second request is ignored instead.
         self._io_dialog_active: bool = False
+        # Same refuse-reentry idiom for the delete confirmation dialog.
+        self._delete_dialog_active: bool = False
         self._profile_save_inflight: bool = False
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
@@ -1283,6 +1286,155 @@ class PersonasScreen(BaseAppScreen):
     @staticmethod
     def _write_text_file(target_path: str, content: str) -> None:
         Path(target_path).expanduser().write_text(content, encoding="utf-8")
+
+    # ===== Delete =====
+
+    @on(Button.Pressed, "#personas-delete")
+    async def _handle_delete_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        # The inspector enables Delete whenever a selection exists, even with
+        # unsaved edits - deleting discards them by definition. The flow still
+        # routes through the unsaved guard so a dirty session shows the
+        # discard dialog FIRST, then the delete confirm. Two dialogs in
+        # sequence is deliberate: the user explicitly approves both losses.
+        await self._run_guarded(self._begin_delete_selection)
+
+    async def _begin_delete_selection(self) -> None:
+        """Validate the selection and launch the delete-confirm dialog worker."""
+        kind = self.state.selected_entity_kind
+        entity_id = str(self.state.selected_entity_id or "")
+        if not entity_id or kind not in ("character", "persona_profile"):
+            # The inspector disables Delete without a selection; defensive.
+            self._notify("Select a saved item before deleting.", "warning")
+            return
+        name = self.state.selected_entity_name or "Unnamed"
+        if kind == "character":
+            # The sparse list rows do not carry `version` reliably; the
+            # optimistic-lock delete needs the handler's fully loaded card.
+            record = self._full_character_record(entity_id)
+            if record is None:
+                self._notify("Character data is not loaded yet.", "warning")
+                return
+            version: int | None = int(record.get("version") or 1)
+        else:
+            record = await self._fetch_profile_record(entity_id)
+            raw_version = record.get("version")
+            version = int(raw_version) if raw_version is not None else None
+        if self._delete_dialog_active:
+            logger.debug("Delete dialog already active; ignoring delete request.")
+            return
+        self._delete_dialog_active = True
+        self.run_worker(
+            self._delete_dialog_worker(kind, entity_id, name, version),
+            group="personas-io",
+        )
+
+    async def _delete_dialog_worker(
+        self, kind: str, entity_id: str, name: str, version: int | None
+    ) -> None:
+        try:
+            if not await self._confirm_delete(name):
+                return
+            await self._delete_entity(kind, entity_id, version)
+        finally:
+            self._delete_dialog_active = False
+
+    async def _confirm_delete(self, name: str) -> bool:
+        """True when the user confirmed the delete (requires a worker context)."""
+        dialog = ConfirmationDialog(
+            title="Delete",
+            message=f"Delete {name}? This cannot be undone here.",
+            confirm_label="Delete",
+            cancel_label="Cancel",
+        )
+        try:
+            return bool(await self.app.push_screen_wait(dialog))
+        except Exception:
+            logger.warning(
+                "Could not show the delete confirmation dialog; keeping the item.",
+                exc_info=True,
+            )
+            return False
+
+    async def _delete_entity(self, kind: str, entity_id: str, version: int | None) -> None:
+        """Perform the confirmed delete, then clean up selection-coupled state."""
+        conflict_copy = (
+            "Delete failed: the {noun} changed since it was loaded. "
+            "Reselect and try again."
+        )
+        if kind == "character":
+            try:
+                # Sync DB call; same threading choice as import/export.
+                ok = await asyncio.to_thread(
+                    ccp_character_handler.delete_character, entity_id, int(version or 1)
+                )
+            except ConflictError:
+                logger.warning(f"Optimistic-lock conflict deleting character {entity_id}.")
+                self._notify(conflict_copy.format(noun="character"), "error")
+                return
+            except Exception as exc:
+                logger.error(f"Error deleting character {entity_id}: {exc}", exc_info=True)
+                self._notify(f"Delete failed: {exc}", "error")
+                return
+            if not ok:
+                # The DB API signals conflicts by raising; treat a False/None
+                # return (e.g. stubbed/alternate backends) the same way.
+                self._notify(conflict_copy.format(noun="character"), "error")
+                return
+        else:
+            service = getattr(self.app_instance, "character_persona_scope_service", None)
+            if service is None or not hasattr(service, "delete_persona_profile"):
+                self._notify("Delete failed: persona profiles are unavailable.", "error")
+                return
+            try:
+                await service.delete_persona_profile(
+                    entity_id,
+                    expected_version=version,
+                    mode=self.persona_handler.current_mode(),
+                )
+            except Exception as exc:
+                logger.error(
+                    f"Error deleting persona profile {entity_id}: {exc}", exc_info=True
+                )
+                # The local backend signals optimistic-lock loss with a
+                # `..._version_conflict:` ValueError marker; map it onto the
+                # same recovery copy the character path uses.
+                if "version_conflict" in str(exc):
+                    self._notify(conflict_copy.format(noun="persona profile"), "error")
+                else:
+                    self._notify(f"Delete failed: {exc}", "error")
+                return
+        await self._after_delete(kind)
+
+    async def _after_delete(self, kind: str) -> None:
+        if kind == "character":
+            # The handler still holds the deleted card; drop it so
+            # _full_character_record cannot serve stale data.
+            self.character_handler.current_character_id = None
+            self.character_handler.current_character_data = {}
+        expected_mode = "characters" if kind == "character" else "personas"
+        stale = not self.is_mounted or self.state.active_mode != expected_mode
+        if not stale:
+            self.state.clear_selection()
+            self.state.has_unsaved_changes = False
+            self._edit_mode = "view"
+            # clear_selection on the inspector also empties the conversations
+            # panel; drop the controller caches and the ephemeral preview too.
+            self.conversations.reset()
+            await self._reset_preview("")
+            await self.query_one(PersonasInspectorPane).clear_selection()
+            self._show_center(None)
+        # Refresh the cached rows even when the user already left the screen
+        # or switched modes (the render paths are mode-guarded downstream).
+        if kind == "character":
+            try:
+                await self.character_handler.refresh_character_list()
+            except Exception:
+                logger.warning("Could not refresh characters after a delete.", exc_info=True)
+        else:
+            self._refresh_profile_rows_worker()
+        if not stale:
+            self._notify("Deleted.", "information")
 
     # ===== Save =====
 
