@@ -128,6 +128,7 @@ from ...Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     build_console_workspace_state,
 )
+from ...Workspaces import DEFAULT_WORKSPACE_ID
 from ...Widgets.compact_model_bar import CompactModelBar
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
 
@@ -435,6 +436,7 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_chat_core_state()
             self._activate_console_session_for_workspace(workspace_id)
             self._sync_console_workspace_context()
+            self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
         self.app.push_screen(
             ConsoleWorkspaceSwitcherModal(
@@ -663,8 +665,10 @@ class ChatScreen(BaseAppScreen):
     def _ensure_active_console_session_settings(self) -> ConsoleSessionSettings:
         """Ensure the active native Console session owns a settings snapshot."""
         store = self._ensure_console_chat_store()
+        workspace_id = store.workspace_context.active_workspace_id
         session = store.ensure_session(
-            workspace_id=store.workspace_context.active_workspace_id,
+            title=self._console_initial_session_title_for_workspace(workspace_id),
+            workspace_id=workspace_id,
             settings=self._default_console_session_settings(),
         )
         if session.settings is None:
@@ -679,8 +683,10 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Replace settings for only the active native Console session."""
         store = self._ensure_console_chat_store()
+        workspace_id = store.workspace_context.active_workspace_id
         session = store.ensure_session(
-            workspace_id=store.workspace_context.active_workspace_id,
+            title=self._console_initial_session_title_for_workspace(workspace_id),
+            workspace_id=workspace_id,
             settings=self._default_console_session_settings(),
         )
         store.replace_session_settings(session.id, settings)
@@ -1024,6 +1030,13 @@ class ChatScreen(BaseAppScreen):
             workspace_name = "Workspace"
         return f"{workspace_name} Chat"
 
+    def _console_initial_session_title_for_workspace(self, workspace_id: str | None) -> str:
+        """Return the first Console tab title for the active workspace."""
+        target_workspace_id = str(workspace_id or "").strip()
+        if not target_workspace_id or target_workspace_id in {"global", DEFAULT_WORKSPACE_ID}:
+            return "Chat 1"
+        return self._console_workspace_session_title(target_workspace_id)
+
     def _set_active_workspace_for_console_session(self, session_id: str) -> None:
         """Keep workspace context aligned when switching Console tabs."""
         store = self._ensure_console_chat_store()
@@ -1069,6 +1082,9 @@ class ChatScreen(BaseAppScreen):
         """
         store = self._ensure_console_chat_store()
         session = store.ensure_session(
+            title=self._console_initial_session_title_for_workspace(
+                store.workspace_context.active_workspace_id
+            ),
             workspace_id=store.workspace_context.active_workspace_id,
             settings=self._default_console_session_settings(),
         )
@@ -3063,6 +3079,9 @@ class ChatScreen(BaseAppScreen):
             return
         store = self._ensure_console_chat_store()
         store.ensure_session(
+            title=self._console_initial_session_title_for_workspace(
+                store.workspace_context.active_workspace_id
+            ),
             workspace_id=store.workspace_context.active_workspace_id,
             settings=self._default_console_session_settings(),
         )
@@ -3076,6 +3095,9 @@ class ChatScreen(BaseAppScreen):
         """Append a system message to native Console state and refresh the bridge."""
         store = self._ensure_console_chat_store()
         session = store.ensure_session(
+            title=self._console_initial_session_title_for_workspace(
+                store.workspace_context.active_workspace_id
+            ),
             workspace_id=store.workspace_context.active_workspace_id,
         )
         store.append_message(

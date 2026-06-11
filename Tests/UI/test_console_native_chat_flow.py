@@ -820,6 +820,54 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_switch_refreshes_visible_session_tabs():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-change-workspace")
+        store = console._ensure_console_chat_store()
+        first_session = store.ensure_session()
+        assert first_session.workspace_id == "ws-a"
+
+        console.query_one("#console-change-workspace", Button).press()
+        modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
+        switch_button = next(
+            button
+            for button in modal_screen.query(Button)
+            if str(button.label) == "Workspace B"
+        )
+        switch_button.press()
+        await _wait_for_console_screen(host, console, pilot)
+
+        active_session = store.switch_session(store.active_session_id)
+        assert active_session.workspace_id == "ws-b"
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{active_session.id}")
+        assert "Workspace B Chat" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_mount_uses_active_workspace_title_for_initial_session():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_text(console, pilot, "Workspace A Chat")
+        assert "Workspace A" in _visible_text(console)
+
+
+@pytest.mark.asyncio
 async def test_console_tab_switch_aligns_active_workspace_context():
     app = _build_test_app()
     service = app.workspace_registry_service

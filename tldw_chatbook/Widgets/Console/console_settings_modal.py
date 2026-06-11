@@ -6,6 +6,7 @@ from typing import Mapping
 
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
@@ -31,6 +32,21 @@ from tldw_chatbook.Chat.console_session_settings import (
 
 
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
+
+
+class ConsoleSettingsInput(Input):
+    """Input field with browser-friendly select-all behavior."""
+
+    BINDINGS = [
+        (
+            Binding("home", "home", binding.description, show=binding.show)
+            if binding.key == "home,ctrl+a"
+            else binding
+        )
+        for binding in Input.BINDINGS
+    ] + [
+        Binding("ctrl+a,super+a", "select_all", "Select all", show=False),
+    ]
 
 
 class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
@@ -117,7 +133,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         )
                         model_select.display = has_model_options
                         yield model_select
-                        model_input = Input(
+                        model_input = ConsoleSettingsInput(
                             value=selected_model or "",
                             placeholder=MODEL_INPUT_PLACEHOLDER,
                             id="console-settings-model-input",
@@ -128,7 +144,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         yield model_input
                     with Horizontal(classes="console-settings-modal-row"):
                         yield Static("Base URL", classes="console-settings-modal-label")
-                        base_url_input = Input(
+                        base_url_input = ConsoleSettingsInput(
                             value=base_url or "",
                             id="console-settings-base-url",
                             disabled=not uses_base_url,
@@ -141,35 +157,35 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                     yield Static("Sampling", classes="destination-section")
                     with Horizontal(classes="console-settings-modal-row"):
                         yield Static("Temperature", classes="console-settings-modal-label")
-                        yield Input(
+                        yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.temperature),
                             id="console-settings-temperature",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
                         yield Static("Top P", classes="console-settings-modal-label")
-                        yield Input(
+                        yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.top_p),
                             id="console-settings-top-p",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
                         yield Static("Min P", classes="console-settings-modal-label")
-                        yield Input(
+                        yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.min_p),
                             id="console-settings-min-p",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
                         yield Static("Top K", classes="console-settings-modal-label")
-                        yield Input(
+                        yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.top_k),
                             id="console-settings-top-k",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
                         yield Static("Max tokens", classes="console-settings-modal-label")
-                        yield Input(
+                        yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.max_tokens),
                             id="console-settings-max-tokens",
                             classes="console-settings-control",
