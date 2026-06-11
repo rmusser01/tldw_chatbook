@@ -86,6 +86,7 @@ class NotesScreenState:
     sort_ascending: bool = False
 
     # UI state.
+    active_mode: str = "notes"
     left_sidebar_collapsed: bool = False
     right_sidebar_collapsed: bool = False
 

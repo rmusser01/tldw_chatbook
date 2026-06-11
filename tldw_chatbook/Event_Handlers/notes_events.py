@@ -366,9 +366,6 @@ def _parse_note_from_file_content(file_path: Path, file_content_str: str) -> Tup
         logger_instance.debug(f"Note file '{file_path.name}' is empty. Using filename as title.")
         return filename_as_title, ""
 
-    parsed_title: Optional[str] = None
-    parsed_content: str = full_file_content  # Default to full content
-
     file_suffix = file_path.suffix.lower()
 
     # 1. Specific handling for .txt and .md files
@@ -401,9 +398,8 @@ def _parse_note_from_file_content(file_path: Path, file_content_str: str) -> Tup
             yaml_content = data.get("content")
             if yaml_title is not None:  # YAML has a "title" key
                 logger_instance.debug(f"Parsed note file '{file_path.name}' as YAML.")
-                return parsed_title, parsed_content
-            return yaml_title, yaml_content if yaml_content is not None else full_file_content
-            # If YAML is valid dict but no "title", fall through to filename fallback logic
+                return yaml_title, yaml_content if yaml_content is not None else full_file_content
+            # If YAML is a valid dict but has no "title", fall through to filename fallback logic
     except yaml.YAMLError:
         logger_instance.debug(f"Note file '{file_path.name}' is not valid YAML. Using filename as title.")
     except Exception as e_yaml_other:
