@@ -3,15 +3,15 @@
 Replaces ``CCPCharacterEditorWidget`` on the Personas screen only. It keeps
 the legacy widget's external contract — the ``ccp-character-editor-view``
 default id, the ``load_character``/``new_character``/``get_character_data``
-API, and the legacy ``CharacterSaveRequested``/``CharacterEditorCancelled``/
-``CharacterImageUploadRequested`` messages — while rendering with the
-workbench's flat ds vocabulary (primary fields up top, an Advanced section
-for the long tail, no image box).
+API, and the legacy ``CharacterSaveRequested``/``CharacterEditorCancelled``
+messages — while rendering with the workbench's flat ds vocabulary (primary
+fields up top, an Advanced section for the long tail, a read-only avatar
+status line, no image box).
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from textual import on
 from textual.app import ComposeResult
@@ -20,7 +20,6 @@ from textual.widgets import Button, Input, Label, Static, TextArea
 
 from ..CCP_Widgets.ccp_character_editor_widget import (
     CharacterEditorCancelled,
-    CharacterImageUploadRequested,
     CharacterSaveRequested,
 )
 
@@ -75,8 +74,7 @@ class PersonasCharacterEditorWidget(Container):
         height: 3;
     }
 
-    PersonasCharacterEditorWidget #personas-char-editor-advanced-toggle,
-    PersonasCharacterEditorWidget #personas-char-editor-avatar-upload {
+    PersonasCharacterEditorWidget #personas-char-editor-advanced-toggle {
         width: auto;
         min-width: 0;
         height: 1;
@@ -119,6 +117,12 @@ class PersonasCharacterEditorWidget(Container):
         # id/version (and any keys the form does not edit, e.g.
         # character_book) survive a load -> save round trip.
         self._character_data: Dict[str, Any] = {}
+        # Greeting fidelity: the loaded greetings list and its joined TextArea
+        # form. An untouched save must return the original list verbatim —
+        # re-splitting the joined text would corrupt any greeting that itself
+        # contains newlines (one multi-paragraph greeting becomes N greetings).
+        self._loaded_greetings: List[str] = []
+        self._loaded_greetings_text: str = ""
 
     def compose(self) -> ComposeResult:
         yield Static("Character Editor", classes="destination-section")
@@ -139,7 +143,7 @@ class PersonasCharacterEditorWidget(Container):
                 yield Label("System prompt")
                 yield TextArea(id="personas-char-editor-system-prompt")
             yield Button(
-                "Advanced",
+                "Advanced ▸",
                 id="personas-char-editor-advanced-toggle",
                 classes="console-action-subdued",
             )
@@ -167,11 +171,6 @@ class PersonasCharacterEditorWidget(Container):
                     yield TextArea(id="personas-char-editor-alt-greetings")
             with Horizontal(id="personas-char-editor-avatar-row"):
                 yield Static("Avatar: none", id="personas-char-editor-avatar-status")
-                yield Button(
-                    "Upload Avatar",
-                    id="personas-char-editor-avatar-upload",
-                    classes="console-action-subdued",
-                )
         yield Static("", id="personas-char-editor-validation")
         with Horizontal(classes="ds-toolbar"):
             yield Button(
@@ -216,14 +215,17 @@ class PersonasCharacterEditorWidget(Container):
         self._input("tags").value = ", ".join(
             str(tag) for tag in (record.get("tags") or [])
         )
-        self._area("alt-greetings").text = "\n".join(
+        self._loaded_greetings = [
             str(greeting) for greeting in (record.get("alternate_greetings") or [])
-        )
+        ]
+        self._loaded_greetings_text = "\n".join(self._loaded_greetings)
+        self._area("alt-greetings").text = self._loaded_greetings_text
         avatar = "embedded" if (record.get("image") or record.get("avatar")) else "none"
         self.query_one("#personas-char-editor-avatar-status", Static).update(
             f"Avatar: {avatar}"
         )
         self.query_one("#personas-char-editor-validation", Static).update("")
+        self._set_advanced_open(False)
 
     def new_character(self) -> None:
         """Clear the form for a new (unsaved) character; version defaults 1.0."""
@@ -251,29 +253,43 @@ class PersonasCharacterEditorWidget(Container):
         data["system_prompt"] = self._area("system-prompt").text
         data["post_history_instructions"] = self._area("post-history").text
         data["creator"] = self._input("creator").value
-        data["character_version"] = self._input("version").value
-        data["alternate_greetings"] = [
-            line.strip()
-            for line in self._area("alt-greetings").text.splitlines()
-            if line.strip()
-        ]
+        # Empty/whitespace Version falls back to the new_character default.
+        version = self._input("version").value
+        data["character_version"] = version if version.strip() else "1.0"
+        # Greeting fidelity rule: if the TextArea text is exactly the joined
+        # form of the loaded list, the user did not edit it — return the
+        # ORIGINAL list verbatim so multi-line greetings survive the round
+        # trip. Only when the text was edited do we re-parse one greeting per
+        # non-blank line.
+        greetings_text = self._area("alt-greetings").text
+        if greetings_text == self._loaded_greetings_text:
+            data["alternate_greetings"] = list(self._loaded_greetings)
+        else:
+            data["alternate_greetings"] = [
+                line.strip() for line in greetings_text.splitlines() if line.strip()
+            ]
         data["tags"] = [
             tag.strip() for tag in self._input("tags").value.split(",") if tag.strip()
         ]
         return data
+
+    # ===== Internals =====
+
+    def _set_advanced_open(self, open_: bool) -> None:
+        """Show/hide the Advanced section and keep the toggle label in sync."""
+        self.query_one("#personas-char-editor-advanced").display = open_
+        self.query_one("#personas-char-editor-advanced-toggle", Button).label = (
+            "Advanced ▾" if open_ else "Advanced ▸"
+        )
 
     # ===== Events =====
 
     @on(Button.Pressed, "#personas-char-editor-advanced-toggle")
     def _toggle_advanced(self, event: Button.Pressed) -> None:
         event.stop()
-        advanced = self.query_one("#personas-char-editor-advanced")
-        advanced.display = not advanced.display
-
-    @on(Button.Pressed, "#personas-char-editor-avatar-upload")
-    def _upload_avatar_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(CharacterImageUploadRequested())
+        self._set_advanced_open(
+            not self.query_one("#personas-char-editor-advanced").display
+        )
 
     @on(Button.Pressed, "#personas-char-editor-save")
     def _save_pressed(self, event: Button.Pressed) -> None:

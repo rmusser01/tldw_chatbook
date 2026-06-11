@@ -39,8 +39,14 @@ class PersonasConversationTranscriptWidget(Container):
         super().__init__(**kwargs)
 
     def compose(self) -> ComposeResult:
+        # markup=False: the title carries a user-provided conversation title,
+        # which must render literally (an unmatched [/tag] would raise
+        # MarkupError at render time with markup enabled).
         yield Static(
-            "Conversation", id="personas-transcript-title", classes="destination-section"
+            "Conversation",
+            id="personas-transcript-title",
+            classes="destination-section",
+            markup=False,
         )
         yield VerticalScroll(id="personas-transcript-scroll")
 
@@ -58,15 +64,20 @@ class PersonasConversationTranscriptWidget(Container):
         for message in messages or []:
             role = str(message.get("role") or "unknown")
             content = str(message.get("content") or "")
+            # Role styling is intentionally binary: "user" vs assistant-style
+            # for every other role (assistant, system, tool, unknown, ...).
             role_class = (
                 "personas-transcript-line-user"
                 if role == "user"
                 else "personas-transcript-line-assistant"
             )
             widgets.append(
+                # markup=False: message content must render literally, never
+                # as Rich markup (unmatched tags raise MarkupError at render).
                 Static(
                     f"{role}: {content}",
                     classes=f"personas-transcript-line {role_class}",
+                    markup=False,
                 )
             )
         if not widgets:

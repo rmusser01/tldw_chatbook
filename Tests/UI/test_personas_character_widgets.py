@@ -9,7 +9,6 @@ from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
 )
 from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
     CharacterEditorCancelled,
-    CharacterImageUploadRequested,
     CharacterSaveRequested,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_card_widget import (
@@ -147,6 +146,22 @@ class TestCharacterCard:
             assert isinstance(widget, PersonasCharacterCardWidget)
             assert hasattr(widget, "load_character")
 
+    async def test_load_with_markup_like_content_does_not_raise(self):
+        """Field values with Rich-markup-looking text must render literally."""
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            card = pilot.app.query_one(PersonasCharacterCardWidget)
+            data = dict(CHARACTER)
+            data["name"] = "[/x]"
+            data["description"] = "[bold]unclosed"
+            data["tags"] = ["[/tag]"]
+            data["alternate_greetings"] = ["[/oops] hi"]
+            card.load_character(data)
+            await pilot.pause()  # would raise MarkupError at render with markup on
+            assert "[/x]" in str(
+                pilot.app.query_one("#personas-character-card-name", Static).renderable
+            )
+
 
 # ===== Editor =====
 
@@ -175,6 +190,44 @@ class TestCharacterEditor:
             assert data["creator"] == "rmusser"
             assert data["creator_notes"] == "Keep it 1940s."
             assert data["post_history_instructions"] == "Stay terse."
+
+    async def test_multiline_greeting_survives_untouched_roundtrip(self):
+        """A multi-paragraph greeting must not be re-split on an untouched save."""
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            editor = pilot.app.query_one(PersonasCharacterEditorWidget)
+            data = dict(CHARACTER)
+            data["alternate_greetings"] = ["para1\n\npara2"]
+            editor.load_character(data)
+            await pilot.pause()
+            collected = editor.get_character_data()
+            assert collected["alternate_greetings"] == ["para1\n\npara2"]
+
+    async def test_edited_greetings_are_reparsed_per_line(self):
+        """Once the TextArea is edited, greetings re-parse one per line."""
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            editor = pilot.app.query_one(PersonasCharacterEditorWidget)
+            data = dict(CHARACTER)
+            data["alternate_greetings"] = ["para1\n\npara2"]
+            editor.load_character(data)
+            await pilot.pause()
+            pilot.app.query_one(
+                "#personas-char-editor-alt-greetings", TextArea
+            ).text = "first\n\nsecond"
+            collected = editor.get_character_data()
+            assert collected["alternate_greetings"] == ["first", "second"]
+
+    async def test_empty_version_defaults_to_1_0(self):
+        """Empty/whitespace Version collects as the new-character default."""
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            editor = pilot.app.query_one(PersonasCharacterEditorWidget)
+            editor.load_character(dict(CHARACTER))
+            await pilot.pause()
+            pilot.app.query_one("#personas-char-editor-version", Input).value = "   "
+            data = editor.get_character_data()
+            assert data["character_version"] == "1.0"
 
     async def test_first_message_edit_updates_both_aliases(self):
         app = WidgetApp()
@@ -262,28 +315,55 @@ class TestCharacterEditor:
         app = WidgetApp()
         async with app.run_test() as pilot:
             advanced = pilot.app.query_one("#personas-char-editor-advanced")
+            toggle = pilot.app.query_one("#personas-char-editor-advanced-toggle", Button)
             assert advanced.display is False
-            pilot.app.query_one("#personas-char-editor-advanced-toggle", Button).press()
+            assert str(toggle.label) == "Advanced ▸"
+            toggle.press()
             await pilot.pause()
             assert advanced.display is True
-            pilot.app.query_one("#personas-char-editor-advanced-toggle", Button).press()
+            assert str(toggle.label) == "Advanced ▾"
+            toggle.press()
             await pilot.pause()
             assert advanced.display is False
+            assert str(toggle.label) == "Advanced ▸"
 
-    async def test_upload_avatar_posts_legacy_message(self):
-        received = []
-
-        class CaptureApp(WidgetApp):
-            def on_character_image_upload_requested(
-                self, message: CharacterImageUploadRequested
-            ) -> None:
-                received.append(message)
-
-        app = CaptureApp()
+    async def test_load_character_collapses_advanced_section(self):
+        """Loading (or starting) a character resets Advanced to collapsed."""
+        app = WidgetApp()
         async with app.run_test() as pilot:
-            pilot.app.query_one("#personas-char-editor-avatar-upload", Button).press()
+            editor = pilot.app.query_one(PersonasCharacterEditorWidget)
+            advanced = pilot.app.query_one("#personas-char-editor-advanced")
+            toggle = pilot.app.query_one("#personas-char-editor-advanced-toggle", Button)
+            toggle.press()
             await pilot.pause()
-        assert len(received) == 1
+            assert advanced.display is True
+            editor.load_character(dict(CHARACTER))
+            await pilot.pause()
+            assert advanced.display is False
+            assert str(toggle.label) == "Advanced ▸"
+            toggle.press()
+            await pilot.pause()
+            editor.new_character()
+            await pilot.pause()
+            assert advanced.display is False
+            assert str(toggle.label) == "Advanced ▸"
+
+    async def test_no_upload_button_and_avatar_status_is_read_only(self):
+        """No handler exists for avatar upload, so the editor must not offer it."""
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            assert not list(pilot.app.query("#personas-char-editor-avatar-upload"))
+            editor = pilot.app.query_one(PersonasCharacterEditorWidget)
+            editor.load_character(dict(CHARACTER))
+            await pilot.pause()
+            assert (
+                str(
+                    pilot.app.query_one(
+                        "#personas-char-editor-avatar-status", Static
+                    ).renderable
+                )
+                == "Avatar: embedded"
+            )
 
     async def test_default_id_matches_screen_query(self):
         app = WidgetApp()
@@ -351,6 +431,18 @@ class TestConversationTranscript:
             assert "Case File 7" in str(
                 pilot.app.query_one("#personas-transcript-title", Static).renderable
             )
+
+    async def test_markup_like_content_renders_without_raising(self):
+        """Message content/titles with Rich-markup-looking text render literally."""
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            view = pilot.app.query_one(PersonasConversationTranscriptWidget)
+            view.set_title("[/bad title]")
+            await view.load_messages([{"role": "user", "content": "[/bad]"}])
+            await pilot.pause()  # would raise MarkupError at render with markup on
+            lines = list(view.query(".personas-transcript-line"))
+            assert len(lines) == 1
+            assert "user: [/bad]" in str(lines[0].renderable)
 
     async def test_default_id(self):
         app = WidgetApp()

@@ -143,9 +143,12 @@ class PersonasPreviewPane(Vertical):
             line = f"character: {self._greeting}"
             self._lines.append(line)
             widgets.append(
+                # markup=False: greeting text must render literally, never as
+                # Rich markup (unmatched tags raise MarkupError at render).
                 Static(
                     line,
                     classes="personas-preview-line personas-preview-line-character",
+                    markup=False,
                 )
             )
         if widgets:
@@ -153,8 +156,10 @@ class PersonasPreviewPane(Vertical):
 
     def _append_line(self, line: str, role_class: str) -> None:
         self._lines.append(line)
+        # markup=False: user/character text must render literally, never as
+        # Rich markup (unmatched tags raise MarkupError at render).
         self.query_one("#personas-preview-transcript", VerticalScroll).mount(
-            Static(line, classes=f"personas-preview-line {role_class}")
+            Static(line, classes=f"personas-preview-line {role_class}", markup=False)
         )
 
     # ===== Events =====

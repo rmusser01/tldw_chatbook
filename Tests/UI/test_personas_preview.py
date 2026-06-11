@@ -186,6 +186,23 @@ async def test_open_in_console_posts_message():
         assert pilot.app.opens == 1
 
 
+async def test_markup_like_transcript_content_renders_without_raising():
+    """Greeting/user/reply text with Rich-markup-looking content renders literally."""
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        pane.expand()
+        await pane.seed_greeting("[/oops]")
+        pane.append_user("[/bad user]")
+        pane.append_reply("[bold]unclosed")
+        await pilot.pause()  # would raise MarkupError at render with markup on
+        assert _line_texts(pilot.app) == [
+            "character: [/oops]",
+            "you: [/bad user]",
+            "character: [bold]unclosed",
+        ]
+
+
 async def test_status_is_readable():
     app = PreviewApp()
     async with app.run_test() as pilot:

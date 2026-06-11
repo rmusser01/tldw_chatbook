@@ -80,15 +80,24 @@ class PersonasCharacterCardWidget(Container):
             id="personas-character-card-empty",
         )
         with VerticalScroll(id="personas-character-card-body"):
+            # markup=False: these Statics render character-card content, which
+            # must display literally (an unmatched [/tag] would raise
+            # MarkupError at render time with markup enabled).
             for label, suffix in self._FIELD_ROWS:
                 with Vertical(classes="ds-field-row"):
                     yield Label(label)
-                    yield Static("", id=f"personas-character-card-{suffix}")
-            yield Static("Tags: none", id="personas-character-card-tags")
+                    yield Static(
+                        "", id=f"personas-character-card-{suffix}", markup=False
+                    )
+            yield Static("Tags: none", id="personas-character-card-tags", markup=False)
             yield Static(
-                "Alternate greetings: 0", id="personas-character-card-alt-greetings"
+                "Alternate greetings: 0",
+                id="personas-character-card-alt-greetings",
+                markup=False,
             )
-            yield Static("", id="personas-character-card-greeting-preview")
+            yield Static(
+                "", id="personas-character-card-greeting-preview", markup=False
+            )
             yield Static("Avatar: none", id="personas-card-avatar-status")
         with Horizontal(classes="ds-toolbar"):
             yield Button(
