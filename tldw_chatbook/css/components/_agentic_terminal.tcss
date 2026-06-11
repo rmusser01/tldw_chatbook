@@ -1909,14 +1909,14 @@ Button.settings-category-button.settings-secondary-search-match {
     text-style: bold underline;
 }
 
-Button.personas-library-row.is-active {
+ListItem.personas-library-row.is-active {
     border: none;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold;
 }
 
-Button.personas-library-row.is-active:focus {
+ListItem.personas-library-row.is-active.--highlight {
     outline: none;
     border: none;
     background: $ds-focus-bg;

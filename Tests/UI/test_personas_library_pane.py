@@ -2,7 +2,7 @@
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, ListItem, ListView, Static
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
     LibraryRow,
@@ -15,6 +15,11 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+def _row_text(item: ListItem) -> str:
+    """Visible text of a library row (the ListItem's inner Static)."""
+    return str(item.query_one(Static).renderable)
 
 
 class LibraryPaneApp(App):
@@ -45,10 +50,10 @@ async def test_update_rows_renders_rows_and_count():
         )
         await pane.update_rows(rows, total=2, noun="characters")
         await pilot.pause()
-        buttons = pilot.app.query(".personas-library-row")
-        assert len(buttons) == 2
+        items = pilot.app.query(".personas-library-row")
+        assert len(items) == 2
         assert "is-unsaved" in pilot.app.query_one(
-            "#personas-library-row-character-2", Button
+            "#personas-library-row-character-2", ListItem
         ).classes
         count = pilot.app.query_one("#personas-library-count", Static)
         assert "2 characters" in str(count.renderable)
@@ -128,8 +133,11 @@ async def test_mark_active_row_applies_is_active_to_selected_only():
         )
         await pilot.pause()
         pane.mark_active_row("character", "2")
-        assert "is-active" in pilot.app.query_one("#personas-library-row-character-2", Button).classes
-        assert "is-active" not in pilot.app.query_one("#personas-library-row-character-1", Button).classes
+        assert "is-active" in pilot.app.query_one("#personas-library-row-character-2", ListItem).classes
+        assert "is-active" not in pilot.app.query_one("#personas-library-row-character-1", ListItem).classes
+        # The list highlight follows the active row for keyboard continuity.
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        assert list_view.index == 1
 
 
 async def test_toolbar_and_rows_carry_shared_flat_button_classes():
@@ -148,13 +156,13 @@ async def test_toolbar_and_rows_carry_shared_flat_button_classes():
             noun="characters",
         )
         await pilot.pause()
-        row = pilot.app.query_one("#personas-library-row-character-1", Button)
+        row = pilot.app.query_one("#personas-library-row-character-1", ListItem)
         assert row.has_class("personas-library-row")
         assert row.has_class("console-action-subdued")
 
 
 async def test_active_row_keeps_subdued_and_is_active_markers():
-    """The bundle's user-tier rule ``Button.personas-library-row.is-active``
+    """The bundle's user-tier rule ``ListItem.personas-library-row.is-active``
     (in _agentic_terminal.tcss) wins over ``.console-action-subdued`` by
     higher specificity (type + two classes vs. one class) within the same
     origin tier, so the active row is styled correctly; the widget must
@@ -172,10 +180,10 @@ async def test_active_row_keeps_subdued_and_is_active_markers():
         )
         await pilot.pause()
         pane.mark_active_row("character", "1")
-        active = pilot.app.query_one("#personas-library-row-character-1", Button)
+        active = pilot.app.query_one("#personas-library-row-character-1", ListItem)
         assert active.has_class("console-action-subdued")
         assert active.has_class("is-active")
-        inactive = pilot.app.query_one("#personas-library-row-character-2", Button)
+        inactive = pilot.app.query_one("#personas-library-row-character-2", ListItem)
         assert inactive.has_class("console-action-subdued")
         assert not inactive.has_class("is-active")
 
@@ -207,10 +215,94 @@ async def test_update_rows_twice_in_same_tick_does_not_crash():
         await pane.update_rows(rows_a, total=1, noun="characters")
         await pane.update_rows(rows_b, total=1, noun="characters")
         await pilot.pause()
-        buttons = pilot.app.query(".personas-library-row")
-        assert len(buttons) == 1
-        assert buttons.first(Button).id == "personas-library-row-character-2"
-        assert str(buttons.first(Button).label) == "Second"
+        items = pilot.app.query(".personas-library-row")
+        assert len(items) == 1
+        assert items.first(ListItem).id == "personas-library-row-character-2"
+        assert _row_text(items.first(ListItem)) == "Second"
+
+
+async def test_arrow_navigation_and_enter_selects():
+    """Down/Down highlights the second row without selecting; Enter selects it."""
+    received = []
+
+    class CaptureApp(LibraryPaneApp):
+        def on_persona_entity_selected(self, message: PersonaEntitySelected) -> None:
+            received.append((message.entity_kind, message.entity_id, message.entity_name))
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="1", kind="character", name="Detective Sam"),
+                LibraryRow(item_id="2", kind="character", name="Tutor"),
+                LibraryRow(item_id="3", kind="character", name="Navigator"),
+            ),
+            total=3,
+            noun="characters",
+        )
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.press("down")
+        await pilot.pause()
+        # Arrow browsing alone must never fire a selection (guards/dirty
+        # prompts stay quiet until the user explicitly commits with Enter).
+        assert received == []
+        await pilot.press("enter")
+        await pilot.pause()
+    assert received == [("character", "2", "Tutor")]
+
+
+async def test_search_enter_jumps_to_results():
+    """Enter in the search input focuses the list and highlights the first row."""
+    received = []
+
+    class CaptureApp(LibraryPaneApp):
+        def on_persona_entity_selected(self, message: PersonaEntitySelected) -> None:
+            received.append(message.entity_id)
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="1", kind="character", name="Detective Sam"),
+                LibraryRow(item_id="2", kind="character", name="Tutor"),
+            ),
+            total=2,
+            noun="characters",
+        )
+        await pilot.pause()
+        search = pilot.app.query_one("#personas-library-search", Input)
+        search.focus()
+        await pilot.pause()
+        search.value = "sam"
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        assert pilot.app.focused is list_view
+        assert list_view.index == 0
+        # Jumping into the results highlights only; it must not select.
+        assert received == []
+
+
+async def test_search_enter_with_no_rows_does_not_crash():
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows((), total=0, noun="characters")
+        await pilot.pause()
+        search = pilot.app.query_one("#personas-library-search", Input)
+        search.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        assert pilot.app.focused is list_view
 
 
 async def test_colliding_item_ids_render_without_crash():

@@ -2,7 +2,7 @@
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Static
+from textual.widgets import Button, ListItem, ListView, Static
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
     PersonasInspectorPane,
@@ -12,6 +12,11 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+def _row_text(item: ListItem) -> str:
+    """Visible text of a conversation row (the ListItem's inner Static)."""
+    return str(item.query_one(Static).renderable)
 
 
 class InspectorApp(App):
@@ -69,7 +74,7 @@ async def test_conversation_rows_carry_subdued_class():
         pane = pilot.app.query_one(PersonasInspectorPane)
         await pane.show_conversations((("conv-1", "First case"),))
         await pilot.pause()
-        row = pilot.app.query_one("#personas-conversation-row-conv-1", Button)
+        row = pilot.app.query_one("#personas-conversation-row-conv-1", ListItem)
         assert row.has_class("personas-conversation-row")
         assert row.has_class("console-action-subdued")
 
@@ -174,6 +179,34 @@ async def test_conversation_click_after_rerender_posts_new_id():
     assert received == ["conv-9"]
 
 
+async def test_conversation_list_arrow_enter():
+    """Down/Down highlights without selecting; Enter posts the row's id."""
+    received = []
+
+    class CaptureApp(InspectorApp):
+        def on_conversation_row_selected(self, message: ConversationRowSelected) -> None:
+            received.append(message.conversation_id)
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        await pane.show_conversations(
+            (("conv-1", "First case"), ("conv-2", "Cold trail"), ("conv-3", "Closed file"))
+        )
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-conversations-list", ListView)
+        list_view.focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.press("down")
+        await pilot.pause()
+        # Arrow browsing must not open a conversation.
+        assert received == []
+        await pilot.press("enter")
+        await pilot.pause()
+    assert received == ["conv-2"]
+
+
 async def test_clear_selection_resets_everything():
     app = InspectorApp()
     async with app.run_test() as pilot:
@@ -207,4 +240,4 @@ async def test_show_conversations_twice_in_same_tick_does_not_crash():
         await pilot.pause()
         rows = pilot.app.query(".personas-conversation-row")
         assert len(rows) == 1
-        assert str(rows.first().label) == "Cold trail"
+        assert _row_text(rows.first(ListItem)) == "Cold trail"

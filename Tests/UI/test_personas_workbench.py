@@ -101,6 +101,11 @@ class PersonasTestApp(App):
         self.push_screen(PersonasScreen(self))
 
 
+def _row_text(item) -> str:
+    """Visible text of a library/conversation row (the ListItem's inner Static)."""
+    return str(item.query_one(Static).renderable)
+
+
 async def _mounted(pilot):
     await pilot.pause()
     return pilot.app.screen
@@ -125,7 +130,7 @@ class TestWorkbenchShell:
             screen = await _mounted(pilot)
             await pilot.pause()
             rows = screen.query(".personas-library-row")
-            assert [str(r.label) for r in rows] == ["Detective Sam", "Lab Assistant"]
+            assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
 
     async def test_footer_shortcut_context_set_and_cleared(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
@@ -406,7 +411,7 @@ class TestPersonasMode:
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
             rows = screen.query(".personas-library-row")
-            assert [str(r.label) for r in rows] == ["Archivist"]
+            assert [_row_text(r) for r in rows] == ["Archivist"]
 
     async def test_profile_selection_shows_card(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -533,7 +538,7 @@ class TestPersonasMode:
             await pilot.pause()
             assert screen.state.active_mode == "characters"
             rows = screen.query(".personas-library-row")
-            assert [str(r.label) for r in rows] == ["Detective Sam", "Lab Assistant"]
+            assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
 
 
 PROFILES_FOR_SEARCH = [
@@ -553,7 +558,7 @@ class TestSearch:
             search_input.value = "sam"
             await pilot.pause()
             rows = screen.query(".personas-library-row")
-            assert [str(r.label) for r in rows] == ["Detective Sam"]
+            assert [_row_text(r) for r in rows] == ["Detective Sam"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
             assert "1 of 2 characters" in count
 
@@ -570,7 +575,7 @@ class TestSearch:
             search_input.value = ""
             await pilot.pause()
             rows = screen.query(".personas-library-row")
-            assert [str(r.label) for r in rows] == ["Detective Sam", "Lab Assistant"]
+            assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
             assert "2 characters" in count
             assert "of" not in count
@@ -584,7 +589,7 @@ class TestSearch:
             search_input.value = "LAB"
             await pilot.pause()
             rows = screen.query(".personas-library-row")
-            assert [str(r.label) for r in rows] == ["Lab Assistant"]
+            assert [_row_text(r) for r in rows] == ["Lab Assistant"]
 
     async def test_search_filters_profiles_in_personas_mode(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -607,7 +612,7 @@ class TestSearch:
             search_input.value = "nav"
             await pilot.pause()
             rows = screen.query(".personas-library-row")
-            assert [str(r.label) for r in rows] == ["Navigator"]
+            assert [_row_text(r) for r in rows] == ["Navigator"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
             assert "1 of 2 persona profiles" in count
 
@@ -634,7 +639,7 @@ class TestSearch:
             await pilot.pause()
             # All rows visible after round-trip
             rows = screen.query(".personas-library-row")
-            assert [str(r.label) for r in rows] == ["Detective Sam", "Lab Assistant"]
+            assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
             # Search input is cleared
             assert screen.query_one("#personas-library-search").value == ""
 
@@ -660,7 +665,7 @@ class TestSearch:
             await pilot.pause()
             assert fts_calls == ["sam"]
             rows = screen.query(".personas-library-row")
-            assert [str(r.label) for r in rows] == ["Detective Sam"]
+            assert [_row_text(r) for r in rows] == ["Detective Sam"]
 
     async def test_concurrent_renders_do_not_duplicate_rows(
         self, mock_app_instance, stub_characters
@@ -677,7 +682,7 @@ class TestSearch:
             )
             await pilot.pause()
             rows = screen.query(".personas-library-row")
-            assert [str(r.label) for r in rows] == ["Detective Sam", "Lab Assistant"]
+            assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
 
 
 class TestImportExport:
@@ -749,7 +754,7 @@ class TestImportExport:
             assert screen.state.selected_entity_id == "3"
             assert screen.query_one("#personas-library-search").value == ""
             rows = screen.query(".personas-library-row")
-            assert "Imported Hero" in [str(r.label) for r in rows]
+            assert "Imported Hero" in [_row_text(r) for r in rows]
 
     async def test_second_import_request_ignored_while_dialog_active(
         self, mock_app_instance, stub_characters
@@ -1046,7 +1051,7 @@ class TestConversationsPanel:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
             rows = screen.query(".personas-conversation-row")
-            assert [str(r.label) for r in rows] == ["First case"]
+            assert [_row_text(r) for r in rows] == ["First case"]
 
     async def test_conversation_listing_failure_is_tolerant(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
@@ -1126,7 +1131,7 @@ class TestConversationsPanel:
             await screen.conversations.apply_conversation_rows("999", (("conv-x", "X"),))
             await pilot.pause()
             rows = screen.query(".personas-conversation-row")
-            assert [str(r.label) for r in rows] == ["First case"]
+            assert [_row_text(r) for r in rows] == ["First case"]
             assert "conv-x" not in screen.conversations._conversation_rows
 
     async def test_stale_conversation_view_is_skipped(
@@ -2077,7 +2082,7 @@ class TestDelete:
             assert not screen.query_one("#personas-conversations-list").children
             # Library refreshed without the deleted record.
             rows = screen.query(".personas-library-row")
-            assert [str(r.label) for r in rows] == ["Lab Assistant"]
+            assert [_row_text(r) for r in rows] == ["Lab Assistant"]
         assert ("Deleted.", "information") in notifications
 
     async def test_delete_conflict_shows_recovery_copy(

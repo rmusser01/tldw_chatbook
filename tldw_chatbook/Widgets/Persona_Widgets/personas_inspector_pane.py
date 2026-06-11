@@ -6,8 +6,8 @@ import re
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Button, Static
+from textual.containers import Vertical
+from textual.widgets import Button, ListItem, ListView, Static
 
 from .personas_pane_messages import ConversationRowSelected
 
@@ -22,6 +22,7 @@ class PersonasInspectorPane(Vertical):
     # Structure only: colors come from the app stylesheet. The conversations
     # list is CAPPED (scrolls past 10 rows) so the Readiness section and the
     # action buttons below it are always visible when the pane renders.
+    # Rows are ListItems in a ListView (keyboard-first, Notes idiom).
     DEFAULT_CSS = """
     PersonasInspectorPane #personas-conversations-list {
         height: auto;
@@ -35,6 +36,13 @@ class PersonasInspectorPane(Vertical):
         min-height: 1;
         padding: 0 1;
         border: none;
+    }
+
+    PersonasInspectorPane .personas-conversation-row Static {
+        width: 100%;
+        height: 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
 
     PersonasInspectorPane #personas-inspector-actions {
@@ -65,7 +73,7 @@ class PersonasInspectorPane(Vertical):
         yield Static("Authority: Local", id="personas-selected-authority")
         yield Static("Validation: OK", id="personas-validation-summary")
         yield Static("Conversations", classes="destination-section")
-        yield VerticalScroll(id="personas-conversations-list")
+        yield ListView(id="personas-conversations-list")
         yield Static("Readiness", classes="destination-section")
         yield Static("Console: Blocked - select an item", id="personas-readiness-console")
         with Vertical(id="personas-inspector-actions"):
@@ -132,10 +140,10 @@ class PersonasInspectorPane(Vertical):
 
     async def show_conversations(self, rows: tuple[tuple[str, str], ...]) -> None:
         """Render (conversation_id, title) rows; empty tuple clears the panel."""
-        container = self.query_one("#personas-conversations-list", VerticalScroll)
-        await container.remove_children()
+        list_view = self.query_one("#personas-conversations-list", ListView)
+        await list_view.clear()
         self._conversation_lookup = {}
-        buttons: list[Button] = []
+        items: list[ListItem] = []
         seen: set[str] = set()
         for conversation_id, title in rows:
             dom_id = f"personas-conversation-row-{_ID_SAFE.sub('-', str(conversation_id))}"
@@ -146,15 +154,15 @@ class PersonasInspectorPane(Vertical):
                 dom_id = f"{dom_id}-{suffix}"
             seen.add(dom_id)
             self._conversation_lookup[dom_id] = conversation_id
-            buttons.append(
-                Button(
-                    title,
+            items.append(
+                ListItem(
+                    Static(title, markup=False),
                     id=dom_id,
                     classes="personas-conversation-row console-action-subdued",
                 )
             )
-        if buttons:
-            await container.mount_all(buttons)
+        if items:
+            await list_view.extend(items)
 
     def _apply_action_state(self) -> None:
         selected = self._has_selection
@@ -181,9 +189,9 @@ class PersonasInspectorPane(Vertical):
         png_button.tooltip = tooltip
         self.query_one("#personas-delete", Button).disabled = not selected
 
-    @on(Button.Pressed, ".personas-conversation-row")
-    def _conversation_pressed(self, event: Button.Pressed) -> None:
+    @on(ListView.Selected, "#personas-conversations-list")
+    def _conversation_selected(self, event: ListView.Selected) -> None:
         event.stop()
-        conversation_id = self._conversation_lookup.get(str(event.button.id or ""))
+        conversation_id = self._conversation_lookup.get(str(event.item.id or ""))
         if conversation_id is not None:
             self.post_message(ConversationRowSelected(conversation_id))

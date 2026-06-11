@@ -7,9 +7,8 @@ from dataclasses import dataclass
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widget import Widget
-from textual.widgets import Button, Input, Static
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Button, Input, ListItem, ListView, Static
 
 from .personas_messages import (
     PersonaActionRequested,
@@ -36,7 +35,33 @@ class LibraryRow:
 
 
 class PersonasLibraryPane(Vertical):
-    """Search, create/import toolbar, and selectable item rows."""
+    """Search, create/import toolbar, and a keyboard-first item list.
+
+    Rows live in a ``ListView`` (the Notes-workbench idiom): arrow keys move
+    the highlight, Enter (or click) selects. Selection is explicit - mere
+    highlighting never posts ``PersonaEntitySelected``, so unsaved-edit
+    guards stay quiet while the user browses.
+    """
+
+    # Structure only: colors come from the app stylesheet
+    # (.console-action-subdued rows, ListView ListItem.--highlight, and
+    # ListItem.personas-library-row.is-active in the bundle).
+    DEFAULT_CSS = """
+    PersonasLibraryPane #personas-library-rows ListItem {
+        width: 100%;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+    }
+
+    PersonasLibraryPane #personas-library-rows ListItem Static {
+        width: 100%;
+        height: 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+    """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -59,7 +84,7 @@ class PersonasLibraryPane(Vertical):
                 tooltip="Import a character card (PNG or JSON).",
                 classes="console-action-secondary",
             )
-        yield VerticalScroll(id="personas-library-rows")
+        yield ListView(id="personas-library-rows")
         yield Static("", id="personas-library-count", classes="destination-purpose")
 
     def set_mode(self, mode: str) -> None:
@@ -76,16 +101,20 @@ class PersonasLibraryPane(Vertical):
         filtered: bool = False,
     ) -> None:
         """Replace the visible rows and count line."""
-        container = self.query_one("#personas-library-rows", VerticalScroll)
-        await container.remove_children()
+        list_view = self.query_one("#personas-library-rows", ListView)
+        await list_view.clear()
         self._row_lookup = {}
-        widgets: list[Widget] = []
+        items: list[ListItem] = []
         if not rows:
             hint = "use New or Import" if self._import_visible else "use New"
-            widgets.append(
-                Static(
-                    f"No {noun} yet - {hint} to add one.",
-                    id="personas-library-empty",
+            items.append(
+                ListItem(
+                    Static(
+                        f"No {noun} yet - {hint} to add one.",
+                        id="personas-library-empty",
+                        markup=False,
+                    ),
+                    disabled=True,
                 )
             )
         seen: set[str] = set()
@@ -101,26 +130,41 @@ class PersonasLibraryPane(Vertical):
             classes = "personas-library-row console-action-subdued"
             if row.is_unsaved:
                 classes += " is-unsaved"
-            widgets.append(Button(row.name, id=dom_id, classes=classes))
-        await container.mount_all(widgets)
+            items.append(
+                ListItem(Static(row.name, markup=False), id=dom_id, classes=classes)
+            )
+        await list_view.extend(items)
         count = f"{len(rows)} of {total} {noun}" if filtered else f"{total} {noun}"
         self.query_one("#personas-library-count", Static).update(count)
 
     def mark_active_row(self, kind: str, item_id: str) -> None:
-        """Apply .is-active to the selected row only."""
+        """Move the list highlight and the .is-active marker to one row."""
         active_id = _row_dom_id(kind, item_id)
-        for button in self.query(".personas-library-row"):
-            button.set_class(button.id == active_id, "is-active")
+        list_view = self.query_one("#personas-library-rows", ListView)
+        for index, item in enumerate(list_view.children):
+            is_active = item.id == active_id
+            item.set_class(is_active, "is-active")
+            if is_active:
+                list_view.index = index
 
     @on(Input.Changed, "#personas-library-search")
     def _search_changed(self, event: Input.Changed) -> None:
         event.stop()
         self.post_message(PersonaSearchChanged(query=event.value))
 
-    @on(Button.Pressed, ".personas-library-row")
-    def _row_pressed(self, event: Button.Pressed) -> None:
+    @on(Input.Submitted, "#personas-library-search")
+    def _search_submitted(self, event: Input.Submitted) -> None:
+        """Enter in the search box jumps into the results list."""
         event.stop()
-        row = self._row_lookup.get(str(event.button.id or ""))
+        list_view = self.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        if self._row_lookup:
+            list_view.index = 0
+
+    @on(ListView.Selected, "#personas-library-rows")
+    def _row_selected(self, event: ListView.Selected) -> None:
+        event.stop()
+        row = self._row_lookup.get(str(event.item.id or ""))
         if row is not None:
             self.post_message(
                 PersonaEntitySelected(

@@ -183,7 +183,7 @@ class PersonasScreen(BaseAppScreen):
         min-height: 3;
     }
 
-    #personas-library-pane Button.personas-library-row {
+    #personas-library-pane ListItem.personas-library-row {
         width: 100%;
         min-width: 0;
         height: 1;
