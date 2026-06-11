@@ -273,9 +273,9 @@ class WizardProgress(Horizontal):
     }
     
     WizardProgress .step-number.active {
-        background: $surface;
-        color: $text;
-        border: round $primary;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        border: round $ds-focus-accent;
         text-style: bold underline;
     }
     
@@ -289,7 +289,7 @@ class WizardProgress(Horizontal):
     }
     
     WizardProgress .step-title.active {
-        color: $text;
+        color: $ds-focus-fg;
         text-style: bold underline;
     }
     

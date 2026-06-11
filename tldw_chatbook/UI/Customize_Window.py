@@ -59,8 +59,8 @@ class CustomizeWindow(Container):
     }
     
     .customize-nav-button.active-nav {
-        background: $surface;
-        color: $text;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
         text-style: bold underline;
     }
     

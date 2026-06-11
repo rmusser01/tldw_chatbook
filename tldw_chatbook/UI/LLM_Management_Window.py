@@ -60,13 +60,13 @@ class LLMManagementWindow(Container):
     }
     
     .llm-nav-button:hover {
-        background: $surface;
-        color: $text;
+        background: $ds-surface-raised;
+        color: $ds-text-primary;
     }
     
     .llm-nav-button.-active {
-        background: $surface;
-        color: $text;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
         text-style: bold underline;
     }
     

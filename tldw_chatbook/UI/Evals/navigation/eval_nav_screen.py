@@ -133,9 +133,9 @@ class EvalNavigationScreen(Screen):
     }
 
     .nav-card:focus {
-        background: $surface;
-        border: round $primary;
-        color: $text;
+        background: $ds-focus-bg;
+        border: round $ds-focus-accent;
+        color: $ds-focus-fg;
         text-style: bold underline;
     }
 
