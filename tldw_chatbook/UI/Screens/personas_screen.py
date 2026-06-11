@@ -228,6 +228,10 @@ class PersonasScreen(BaseAppScreen):
         self._render_lock = asyncio.Lock()
         # Ephemeral preview conversation: in-memory only, never persisted.
         self._preview_history: list[dict[str, str]] = []
+        # Monotonic generation for the preview: every reset/reseed bumps it,
+        # invalidating in-flight preview workers whose snapshot is older
+        # (the selection key alone cannot catch a Reset of the SAME selection).
+        self._preview_generation: int = 0
         # Character id whose greeting last seeded the preview; the
         # CharacterMessage.Loaded handler uses it to avoid double-seeding.
         self._preview_seeded_for: str | None = None
@@ -765,9 +769,22 @@ class PersonasScreen(BaseAppScreen):
     # transcript lives in the pane, and the provider call goes straight
     # through the Console gateway. Nothing is ever written to a database.
 
+    def _invalidate_preview(self) -> None:
+        """Drop the preview history and invalidate in-flight preview replies.
+
+        Every path that clears the history (Reset, mode switch, selection
+        change, greeting reseed) must come through here so a late-landing
+        reply can never be appended to the cleared state: the generation bump
+        makes any running worker's snapshot stale, and the group cancel stops
+        the stream outright instead of letting it finish for nothing.
+        """
+        self._preview_generation += 1
+        self.workers.cancel_group(self, "personas-preview")
+        self._preview_history.clear()
+
     async def _reset_preview(self, greeting: str) -> None:
         """Clear the preview history and reseed the pane's transcript."""
-        self._preview_history.clear()
+        self._invalidate_preview()
         self._preview_seeded_for = None
         try:
             await self.query_one(PersonasPreviewPane).seed_greeting(greeting)
@@ -810,8 +827,8 @@ class PersonasScreen(BaseAppScreen):
         greeting = replace_placeholders(
             str(record.get("first_message") or ""), name, "User"
         )
-        # Greeting reseed implies fresh preview state.
-        self._preview_history.clear()
+        # Greeting reseed implies fresh preview state (history + workers).
+        self._invalidate_preview()
         await pane.seed_greeting(greeting)
         self._preview_seeded_for = character_id
 
@@ -855,6 +872,18 @@ class PersonasScreen(BaseAppScreen):
         self._preview_history.append({"role": "user", "content": message.user_message})
         self._run_preview_reply()
 
+    def _pop_orphaned_preview_user_turn(self) -> None:
+        """Drop a trailing unanswered user entry from the preview history.
+
+        Called on failure paths: _handle_preview_reply appends the user turn
+        before the worker runs, so a failed reply would otherwise leave an
+        orphan that makes a retry send the message twice. The transcript line
+        is deliberately LEFT visible - the user really did say it; only the
+        provider-facing history is corrected.
+        """
+        if self._preview_history and self._preview_history[-1].get("role") == "user":
+            self._preview_history.pop()
+
     @work(exclusive=True, group="personas-preview")
     async def _run_preview_reply(self) -> None:
         """Resolve the configured provider and stream one preview reply."""
@@ -865,52 +894,84 @@ class PersonasScreen(BaseAppScreen):
         model = str(defaults.get("model") or "")
         selection = ConsoleProviderSelection(provider=provider, explicit_model=model or None)
         gateway = self._ensure_preview_gateway()
-        # Staleness key: a reply landing after the selection moved is dropped.
+        # Staleness snapshot: the selection key catches selection moves; the
+        # generation catches a Reset/reseed of the SAME selection, which
+        # clears the history without changing the key. _invalidate_preview
+        # also cancels this worker group, but the snapshot guards any window
+        # where the cancellation has not landed yet.
         selection_key = (self.state.selected_entity_kind, self.state.selected_entity_id)
+        generation = self._preview_generation
+
+        def _stale() -> bool:
+            return (
+                not self.is_mounted
+                or generation != self._preview_generation
+                or (self.state.selected_entity_kind, self.state.selected_entity_id)
+                != selection_key
+            )
+
         try:
             resolution = await gateway.resolve_for_send(selection)
         except Exception:
             logger.error("Preview provider resolution failed.", exc_info=True)
-            pane.set_status("Provider error - try again or configure in Settings")
+            if not _stale():
+                self._pop_orphaned_preview_user_turn()
+                pane.set_status("Provider error - try again or configure in Settings")
             return
         if not resolution.ready:
-            pane.set_status(
-                resolution.visible_copy or "Provider unavailable - configure in Settings"
-            )
+            if not _stale():
+                self._pop_orphaned_preview_user_turn()
+                pane.set_status(
+                    resolution.visible_copy or "Provider unavailable - configure in Settings"
+                )
             return
         pane.set_status("Running")
+        # Coalesce consecutive user turns: an exclusive-cancelled predecessor
+        # worker (double-fired Test Reply) leaves [user, user] in the history,
+        # which strict providers reject; join them into one message instead.
+        history: list[dict[str, str]] = []
+        for entry in self._preview_history:
+            if history and entry["role"] == "user" and history[-1]["role"] == "user":
+                history[-1] = {
+                    "role": "user",
+                    "content": f"{history[-1]['content']}\n{entry['content']}",
+                }
+            else:
+                history.append(dict(entry))
         messages = [
             {"role": "system", "content": self._preview_system_prompt()}
-        ] + list(self._preview_history)
+        ] + history
         reply = ""
         try:
             async for chunk in gateway.stream_chat(resolution, messages):
                 reply += chunk
         except Exception:
             logger.error("Preview provider call failed.", exc_info=True)
-            if (
-                self.is_mounted
-                and (self.state.selected_entity_kind, self.state.selected_entity_id)
-                == selection_key
-            ):
+            if not _stale():
+                # Keep the user's transcript line, but pop the unanswered
+                # history entry so a retry does not duplicate the turn.
+                self._pop_orphaned_preview_user_turn()
                 pane.set_status("Provider error - try again or configure in Settings")
             return
-        if not self.is_mounted or (
-            self.state.selected_entity_kind,
-            self.state.selected_entity_id,
-        ) != selection_key:
-            # The selection changed while the provider was streaming; the
-            # reply belongs to the old selection's history, which is gone.
+        if _stale():
+            # The selection changed or the preview was reset while the
+            # provider was streaming; the reply belongs to state that is gone.
             return
-        self._preview_history.append({"role": "assistant", "content": reply})
-        pane.append_reply(reply)
-        pane.set_status("Ready")
+        if reply:
+            self._preview_history.append({"role": "assistant", "content": reply})
+            pane.append_reply(reply)
+            pane.set_status("Ready")
+        else:
+            # An empty stream must not add a bare "character:" line or an
+            # empty assistant history entry.
+            pane.set_status("No reply received")
 
     @on(PreviewResetRequested)
     def _handle_preview_reset(self, message: PreviewResetRequested) -> None:
         message.stop()
-        # The pane already restored its transcript to the greeting.
-        self._preview_history.clear()
+        # The pane already restored its transcript to the greeting; clear the
+        # history AND invalidate any in-flight reply so it cannot land late.
+        self._invalidate_preview()
 
     @on(PreviewOpenInConsoleRequested)
     def _handle_preview_open_console(self, message: PreviewOpenInConsoleRequested) -> None:

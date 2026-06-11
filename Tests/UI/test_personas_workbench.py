@@ -1445,9 +1445,10 @@ class TestConsoleActions:
 class _FakePreviewGateway:
     """In-memory gateway double: ready resolution + scripted stream."""
 
-    def __init__(self, chunks=("Hello, ", "world."), gate=None):
+    def __init__(self, chunks=("Hello, ", "world."), gate=None, error=None):
         self.chunks = chunks
         self.gate = gate
+        self.error = error
         self.requests: list[list[dict]] = []
         self.closed = False
 
@@ -1462,6 +1463,8 @@ class _FakePreviewGateway:
         self.requests.append([dict(m) for m in messages])
         if self.gate is not None:
             await self.gate.wait()
+        if self.error is not None:
+            raise self.error
         for chunk in self.chunks:
             yield chunk
 
@@ -1729,3 +1732,177 @@ class TestPreviewIntegration:
             await screen._apply_mode("prompts")
             await pilot.pause()
             assert screen._preview_history == []
+
+    async def test_reset_mid_stream_drops_late_reply(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Reset while a reply streams must invalidate the in-flight worker.
+
+        The selection key alone cannot catch this: Reset keeps the same
+        (kind, id), so without a generation bump (and group cancel) the late
+        reply would land in the freshly cleared history/transcript.
+        """
+        import asyncio
+
+        from textual.widgets import Button as _Button
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        gate = asyncio.Event()
+        fake = _FakePreviewGateway(gate=gate)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._ensure_preview_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            # Let the worker reach the gated stream deterministically.
+            for _ in range(50):
+                if fake.requests:
+                    break
+                await pilot.pause()
+            assert fake.requests
+            # Reset while the stream is held at the gate.
+            screen.query_one("#personas-preview-reset", _Button).press()
+            await pilot.pause()
+            gate.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+            assert "character: Hello, world." not in pane.transcript_text()
+            assert not any(
+                entry["role"] == "assistant" for entry in screen._preview_history
+            )
+
+    async def test_error_pops_orphaned_user_history_entry(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A provider error must not leave an unanswered user turn in history.
+
+        The transcript keeps the user's line (they did say it), but the
+        history entry is popped so a retry does not send [user, user].
+        """
+        from textual.widgets import Button as _Button, Static as _Static
+        from textual.widgets import Input as _Input
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        fake = _FakePreviewGateway(error=RuntimeError("provider exploded"))
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._ensure_preview_gateway = lambda: fake
+            pane = screen.query_one(PersonasPreviewPane)
+            pane.expand()
+            await pilot.pause()
+            screen.query_one("#personas-preview-input", _Input).value = "Hi"
+            screen.query_one("#personas-preview-test-reply", _Button).press()
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # History: no trailing unanswered user entry.
+            assert not any(
+                entry["role"] == "user" for entry in screen._preview_history
+            )
+            # Transcript: the user line stays visible.
+            assert "you: Hi" in pane.transcript_text()
+            status = str(
+                screen.query_one("#personas-preview-status", _Static).renderable
+            )
+            assert status.strip()
+            assert "Traceback" not in status
+
+    async def test_empty_reply_sets_status_without_bare_line(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """An empty stream must not append a bare transcript line or history entry."""
+        from textual.widgets import Static as _Static
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        fake = _FakePreviewGateway(chunks=())
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._ensure_preview_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+            assert all(
+                line.strip() != "character:"
+                for line in pane.transcript_text().splitlines()
+            )
+            assert not any(
+                entry["role"] == "assistant" for entry in screen._preview_history
+            )
+            assert (
+                str(screen.query_one("#personas-preview-status", _Static).renderable)
+                == "No reply received"
+            )
+
+    async def test_unmount_closes_gateway(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Leaving the screen releases the preview gateway's HTTP client."""
+        fake = _FakePreviewGateway()
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._preview_gateway = fake
+        assert fake.closed is True
+
+    async def test_double_fire_coalesces_user_turns(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """An exclusive-cancelled predecessor leaves back-to-back user turns;
+        the replacement worker must coalesce them so strict providers never
+        see [user, user]."""
+        import asyncio
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
+        gate = asyncio.Event()
+        fake = _FakePreviewGateway(gate=gate)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._ensure_preview_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            for _ in range(50):
+                if fake.requests:
+                    break
+                await pilot.pause()
+            assert len(fake.requests) == 1
+            # Second request while the first is gated: exclusive=True cancels
+            # the first worker, and the second sees history [user, user].
+            screen.post_message(PreviewReplyRequested("Again"))
+            await pilot.pause()
+            for _ in range(50):
+                if len(fake.requests) >= 2:
+                    break
+                await pilot.pause()
+            assert len(fake.requests) == 2
+            gate.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            user_messages = [
+                m for m in fake.requests[1] if m["role"] == "user"
+            ]
+            assert user_messages == [{"role": "user", "content": "Hi\nAgain"}]
