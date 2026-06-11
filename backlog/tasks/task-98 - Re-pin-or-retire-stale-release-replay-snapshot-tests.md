@@ -4,7 +4,7 @@ title: Re-pin or retire stale release-replay snapshot tests
 status: To Do
 assignee: []
 created_date: '2026-06-11 20:42'
-updated_date: '2026-06-11 21:00'
+updated_date: '2026-06-11 23:08'
 labels: []
 dependencies: []
 ---
@@ -23,5 +23,5 @@ Quarantined (skip-marked) UI tests that pin release-era whole-app copy/evidence 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Also: 6 tests in Tests/UI/test_destination_visual_parity_correction.py (acp runtime columns, console workspace grid, pane titles acp/settings, compact-size chat/settings) pass in isolation but fail in full Tests/UI runs — cross-test pollution, needs an isolation fix. And test_clean_first_run_launches_home_and_exposes_setup_orientation pins Settings 'Appearance' category copy that no longer surfaces in the replay text.
+UPDATE: the six destination-visual-parity tests were NOT order-dependent — fixed for real in 'Fix the last six destination-visual-parity failures' (Console min-widths could not fit the 100-col compact contract; geometry test ran below the 150-col inspector force-collapse threshold; plus three drifted copy/structure pins). Remaining scope of this task: the 13 skip-marked release-replay copy snapshots only. Full Tests/UI: 1974 passed, 0 failed, 31 skipped.
 <!-- SECTION:NOTES:END -->
