@@ -70,7 +70,9 @@ class PersonaProfileEditorWidget(Container):
             with Vertical(classes="ds-field-row"):
                 yield Label("System prompt")
                 yield TextArea(id="personas-editor-system-prompt")
-            yield Static("", id="personas-editor-validation")
+        # Validation stays outside the scroll body so it is always visible
+        # next to Save (anchored-footer principle, same as the character editor).
+        yield Static("", id="personas-editor-validation")
         with Horizontal(classes="ds-toolbar"):
             yield Button("Save", id="personas-editor-save")
             yield Button("Cancel", id="personas-editor-cancel")
