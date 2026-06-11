@@ -23,7 +23,13 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
 pytestmark = pytest.mark.asyncio
 
 CHARACTERS = [
-    {"id": 1, "name": "Detective Sam", "description": "Noir detective", "version": 1},
+    {
+        "id": 1,
+        "name": "Detective Sam",
+        "description": "Noir detective",
+        "first_message": "The name's {{char}}. Who's asking?",
+        "version": 1,
+    },
     {"id": 2, "name": "Lab Assistant", "description": "Helpful scientist", "version": 1},
 ]
 
@@ -1499,6 +1505,55 @@ class TestPreviewIntegration:
             pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
             work_area = screen.query_one("#personas-work-area")
             assert pane in work_area.children
+
+    async def test_greeting_seeds_after_character_load(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """The greeting seeds once the load worker delivers the full card.
+
+        ``load_character`` only schedules a thread worker, so the full record
+        (with ``first_message``) is not available synchronously at selection
+        time; the screen must seed from the load-completion message instead.
+        """
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+            assert (
+                "character: The name's Detective Sam. Who's asking?"
+                in pane.transcript_text()
+            )
+
+    async def test_reselect_does_not_duplicate_greeting(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Re-selecting a character seeds exactly one greeting line."""
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        async def _select(pilot, row_id):
+            await pilot.click(row_id)
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.pause()
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            await pilot.pause()
+            await _select(pilot, "#personas-library-row-character-2")
+            await _select(pilot, "#personas-library-row-character-1")
+            pane = screen.query_one(PersonasPreviewPane)
+            greeting_line = "character: The name's Detective Sam. Who's asking?"
+            lines = [line for line in pane.transcript_text().splitlines() if line]
+            assert lines == [greeting_line]
 
     async def test_blocked_provider_shows_readable_status(
         self, mock_app_instance, stub_characters, stub_conversations

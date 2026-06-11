@@ -59,6 +59,7 @@ from ...Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
 from ...Widgets.Persona_Widgets.personas_state import MODE_LABELS, PersonasWorkbenchState
 from ..CCP_Modules import ccp_character_handler
 from ..CCP_Modules.ccp_character_handler import CCPCharacterHandler
+from ..CCP_Modules.ccp_messages import CharacterMessage
 from ..CCP_Modules.ccp_persona_handler import CCPPersonaHandler
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.shortcut_context import ShortcutAction, ShortcutContext
@@ -227,6 +228,9 @@ class PersonasScreen(BaseAppScreen):
         self._render_lock = asyncio.Lock()
         # Ephemeral preview conversation: in-memory only, never persisted.
         self._preview_history: list[dict[str, str]] = []
+        # Character id whose greeting last seeded the preview; the
+        # CharacterMessage.Loaded handler uses it to avoid double-seeding.
+        self._preview_seeded_for: str | None = None
         self._preview_gateway: ConsoleProviderGateway | None = None
         self.character_handler = CCPCharacterHandler(self)
         self.persona_handler = CCPPersonaHandler(self)
@@ -541,14 +545,21 @@ class PersonasScreen(BaseAppScreen):
         self.conversations.reset()
         await inspector.show_conversations(())
         self.conversations.load_conversations(entity_id)
-        # Seed the ephemeral preview with the character's greeting, drawn
-        # from the FULL record the load worker delivered (list rows are
-        # id/name-only summaries).
-        record = self._full_character_record(entity_id) or {}
-        greeting = replace_placeholders(
-            str(record.get("first_message") or ""), entity_name, "User"
-        )
-        await self._reset_preview(greeting)
+        # Seed the ephemeral preview with the character's greeting. The list
+        # rows are id/name-only summaries and load_character only SCHEDULES a
+        # thread worker, so the full record (with first_message) is usually
+        # not available yet here. Instant path: when the handler already holds
+        # this character's full card (re-selection), seed now; otherwise clear
+        # the preview and let the CharacterMessage.Loaded handler seed it.
+        record = self._full_character_record(entity_id)
+        if record is not None:
+            greeting = replace_placeholders(
+                str(record.get("first_message") or ""), entity_name, "User"
+            )
+            await self._reset_preview(greeting)
+            self._preview_seeded_for = entity_id
+        else:
+            await self._reset_preview("")
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -757,11 +768,52 @@ class PersonasScreen(BaseAppScreen):
     async def _reset_preview(self, greeting: str) -> None:
         """Clear the preview history and reseed the pane's transcript."""
         self._preview_history.clear()
+        self._preview_seeded_for = None
         try:
             await self.query_one(PersonasPreviewPane).seed_greeting(greeting)
         except QueryError:
             # Tolerate calls that race screen teardown.
             pass
+
+    @on(CharacterMessage.Loaded)
+    async def _handle_character_loaded(self, message: CharacterMessage.Loaded) -> None:
+        """Seed the preview greeting once the load worker delivers the card.
+
+        ``load_character`` only schedules a thread worker, so
+        ``_select_character`` usually cannot read ``first_message``
+        synchronously; the handler posts ``CharacterMessage.Loaded`` (with the
+        full card) to this screen when the load completes.
+        """
+        message.stop()
+        character_id = str(message.character_id)
+        # Staleness check: only the current character selection, in
+        # Characters mode, may seed the preview.
+        if (
+            self.state.active_mode != "characters"
+            or self.state.selected_entity_kind != "character"
+            or str(self.state.selected_entity_id or "") != character_id
+        ):
+            return
+        try:
+            pane = self.query_one(PersonasPreviewPane)
+        except QueryError:
+            return
+        # Seeding rule: seed only when the pane transcript is empty OR the
+        # loaded id differs from the last-seeded id. A re-load of the same
+        # already-previewed character (e.g. after a save) mid-conversation
+        # must not wipe the in-progress preview, and the instant path in
+        # _select_character must not be double-seeded.
+        if self._preview_seeded_for == character_id and pane.transcript_text():
+            return
+        record = dict(message.card_data or {})
+        name = str(record.get("name") or self.state.selected_entity_name or "")
+        greeting = replace_placeholders(
+            str(record.get("first_message") or ""), name, "User"
+        )
+        # Greeting reseed implies fresh preview state.
+        self._preview_history.clear()
+        await pane.seed_greeting(greeting)
+        self._preview_seeded_for = character_id
 
     def _ensure_preview_gateway(self) -> ConsoleProviderGateway:
         """Lazy singleton gateway, config-injected like the Console screen's."""
