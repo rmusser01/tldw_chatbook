@@ -21,8 +21,11 @@ async def test_chatbooks_screen_uses_improved_window(monkeypatch):
     app = ChatbooksScreenApp()
     async with app.run_test() as pilot:
         assert app.screen.query_one(ChatbooksWindowImproved) is not None
-        assert app.screen.query_one("#nav-chat") is not None
-        assert app.screen.query_one("#nav-chatbooks") is not None
+        # The master shell's top nav lists owning destinations; chat lives
+        # under Console and chatbooks is reachable via the palette, so the
+        # shared escape is the Home/Console pair rather than per-route links.
+        assert app.screen.query_one("#nav-home") is not None
+        assert app.screen.query_one("#nav-console") is not None
 
 
 @pytest.mark.asyncio
@@ -58,8 +61,8 @@ async def test_chatbooks_empty_state_explains_portable_context_and_escape(monkey
         assert "return to Chat" in empty_text
         assert any("Create Local Pack" in label for label in empty_buttons)
         assert any("Import Local Pack" in label for label in empty_buttons)
-        assert app.screen.query_one("#nav-chat") is not None
-        assert app.screen.query_one("#nav-chatbooks") is not None
+        assert app.screen.query_one("#nav-home") is not None
+        assert app.screen.query_one("#nav-console") is not None
 
 
 @pytest.mark.asyncio

@@ -54,15 +54,10 @@ class SkillsScreen(BaseAppScreen):
         super().on_mount()
         self._refresh_local_skills_context()
 
-    @work(exclusive=True, thread=True)
-    def _refresh_local_skills_context(self) -> None:
-        records, lookup_error, recovery_state = asyncio.run(self._list_local_skills())
-        self.app.call_from_thread(
-            self._apply_local_skills_context,
-            records,
-            lookup_error,
-            recovery_state,
-        )
+    @work(exclusive=True)
+    async def _refresh_local_skills_context(self) -> None:
+        records, lookup_error, recovery_state = await self._list_local_skills()
+        self._apply_local_skills_context(records, lookup_error, recovery_state)
 
     def _apply_local_skills_context(
         self,
@@ -86,7 +81,9 @@ class SkillsScreen(BaseAppScreen):
         if not callable(list_skills):
             return (), SKILLS_SERVICE_UNAVAILABLE_COPY, None
         try:
-            result = list_skills(
+            # The service call may block (local DB); keep it off the UI loop.
+            result = await asyncio.to_thread(
+                list_skills,
                 mode="local",
                 limit=SKILLS_LOCAL_PAGE_SIZE,
                 offset=0,

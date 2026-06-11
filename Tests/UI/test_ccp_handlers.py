@@ -1,5 +1,6 @@
 """Focused CCP handler tests for dual character/persona management."""
 
+from functools import partial
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -177,8 +178,12 @@ class TestCCPCharacterHandler:
 
         mock_window.run_worker.assert_called_once()
         call_args = mock_window.run_worker.call_args
-        assert call_args[0][0] == handler._load_character_sync
-        assert call_args[0][1] == "char.local.alice"
+        # The handler dispatches a functools.partial so worker args travel
+        # with the callable instead of as positional run_worker arguments.
+        worker_callable = call_args[0][0]
+        assert isinstance(worker_callable, partial)
+        assert worker_callable.func == handler._load_character_sync
+        assert worker_callable.args == ("char.local.alice",)
 
     @pytest.mark.asyncio
     async def test_list_chat_greetings_routes_via_scope_service(self, mock_window):

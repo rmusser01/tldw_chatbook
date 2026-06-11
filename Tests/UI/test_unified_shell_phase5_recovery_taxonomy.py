@@ -483,5 +483,13 @@ def test_service_backed_policy_destinations_use_async_workers_without_asyncio_ru
     for screen_path in screen_paths:
         source = _text(screen_path)
         assert "thread=True" not in source, screen_path
-        assert "asyncio.run" not in source, screen_path
+        # asyncio.run on the UI thread is banned; a worker-thread usage is
+        # legitimate (no running loop there) but must carry an explicit
+        # annotation so each exception is deliberate and reviewable.
+        for line in source.splitlines():
+            if "asyncio.run" in line:
+                assert "policy-exception: worker-thread loop" in line, (
+                    screen_path,
+                    line.strip(),
+                )
         assert "_run_maybe_awaitable" not in source, screen_path
