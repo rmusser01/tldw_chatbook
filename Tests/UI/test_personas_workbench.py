@@ -75,6 +75,18 @@ class TestWorkbenchShell:
             rows = screen.query(".personas-library-row")
             assert [str(r.label) for r in rows] == ["Detective Sam", "Lab Assistant"]
 
+    async def test_footer_shortcut_context_set_and_cleared(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            context = screen._shortcut_context()
+            rendered = context.render()
+            assert "new" in rendered.lower()
+            assert "search" in rendered.lower()
+            assert "save" in rendered.lower()
+            assert "attach" in rendered.lower()
+            assert context.source == "personas"
+
     async def test_placeholder_modes_show_placeholder_panel(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:

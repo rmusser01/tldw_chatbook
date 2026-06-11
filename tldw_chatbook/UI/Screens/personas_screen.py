@@ -33,6 +33,7 @@ from ..CCP_Modules import ccp_character_handler
 from ..CCP_Modules.ccp_character_handler import CCPCharacterHandler
 from ..CCP_Modules.ccp_persona_handler import CCPPersonaHandler
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.shortcut_context import ShortcutAction, ShortcutContext
 
 
 logger = logger.bind(module="PersonasScreen")
@@ -207,6 +208,11 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
         self._show_center(None)
         await self.character_handler.refresh_character_list()
+        self._register_footer_shortcuts()
+
+    def on_unmount(self) -> None:
+        super().on_unmount()
+        self._clear_footer_shortcuts()
 
     # ===== Library rendering =====
 
@@ -514,3 +520,34 @@ class PersonasScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity=severity)
+
+    # ===== Footer shortcut context =====
+
+    def _shortcut_context(self) -> ShortcutContext:
+        return ShortcutContext(
+            source="personas",
+            actions=(
+                ShortcutAction("ctrl+n", "new"),
+                ShortcutAction("ctrl+f", "search"),
+                ShortcutAction("ctrl+s", "save"),
+                ShortcutAction("ctrl+enter", "attach"),
+            ),
+        )
+
+    def _register_footer_shortcuts(self) -> None:
+        try:
+            footer = self.app.query_one("AppFooterStatus")
+            set_ctx = getattr(footer, "set_shortcut_context", None)
+            if callable(set_ctx):
+                set_ctx(self._shortcut_context())
+        except Exception:
+            pass
+
+    def _clear_footer_shortcuts(self) -> None:
+        try:
+            footer = self.app.query_one("AppFooterStatus")
+            clear_ctx = getattr(footer, "clear_shortcut_context", None)
+            if callable(clear_ctx):
+                clear_ctx()
+        except Exception:
+            pass
