@@ -18,8 +18,11 @@ from textual.widgets import Button, Input, Static
 from ...Character_Chat.Character_Chat_Lib import (
     export_character_card_to_json,
     export_character_card_to_png,
+    list_character_conversations,
+    retrieve_conversation_messages_for_ui,
     validate_character_book,
 )
+from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
 from ...Widgets.confirmation_dialog import UnsavedChangesDialog
 from ...Widgets.CCP_Widgets.ccp_character_card_widget import (
@@ -31,6 +34,7 @@ from ...Widgets.CCP_Widgets.ccp_character_editor_widget import (
     CharacterEditorCancelled,
     CharacterSaveRequested,
 )
+from ...Widgets.CCP_Widgets.ccp_conversation_view_widget import CCPConversationViewWidget
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import PersonaProfileCardWidget
 from ...Widgets.Persona_Widgets.persona_profile_editor_widget import PersonaProfileEditorWidget
@@ -42,6 +46,7 @@ from ...Widgets.Persona_Widgets.personas_messages import (
     PersonaSearchChanged,
 )
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
+    ConversationRowSelected,
     EditPersonaRequested,
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
@@ -51,6 +56,7 @@ from ..CCP_Modules import ccp_character_handler
 from ..CCP_Modules.ccp_character_handler import CCPCharacterHandler
 from ..CCP_Modules.ccp_persona_handler import CCPPersonaHandler
 from ..Navigation.base_app_screen import BaseAppScreen
+from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.shortcut_context import ShortcutAction, ShortcutContext
 
 
@@ -62,14 +68,21 @@ MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "prompts", "dictio
 
 PLACEHOLDER_COPY = "This mode is not available yet. Characters and Personas are the supported modes."
 
+#: The read-only conversation view (CCPConversationViewWidget's own id).
+_CONVERSATION_VIEW_ID = "#ccp-conversation-messages-view"
+
 #: Center-area widgets toggled by ``_show_center``.
 _CENTER_VIEW_IDS: tuple[str, ...] = (
     "#ccp-character-card-view",
     "#ccp-character-editor-view",
     "#ccp-persona-card-view",
     "#ccp-persona-editor-view",
+    _CONVERSATION_VIEW_ID,
     "#personas-mode-placeholder",
 )
+
+#: Cap on the transcript text staged into a Console handoff body.
+_HANDOFF_TRANSCRIPT_CHAR_LIMIT = 6000
 
 
 class PersonasScreen(BaseAppScreen):
@@ -176,6 +189,19 @@ class PersonasScreen(BaseAppScreen):
         color: $background;
         text-style: bold;
     }
+
+    #personas-conversation-actions {
+        height: 3;
+        min-height: 3;
+        width: 100%;
+    }
+
+    #personas-conversation-actions Button {
+        width: auto;
+        min-width: 0;
+        height: 3;
+        margin-right: 1;
+    }
     """
 
     def __init__(self, app_instance: Any, **kwargs: Any) -> None:
@@ -192,6 +218,12 @@ class PersonasScreen(BaseAppScreen):
         self._profile_save_inflight: bool = False
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
+        # Conversations listed for the selected character (id -> title) and
+        # the conversation currently open in the read-only center view.
+        self._conversation_rows: dict[str, str] = {}
+        self._open_conversation_id: str | None = None
+        self._open_conversation_title: str = ""
+        self._open_conversation_transcript: str = ""
         # Serializes library renders: the pane's update_rows has two
         # suspension points, so interleaved renders could double-mount rows.
         self._render_lock = asyncio.Lock()
@@ -241,6 +273,17 @@ class PersonasScreen(BaseAppScreen):
                         yield CCPCharacterEditorWidget(parent_screen=self)
                         yield PersonaProfileCardWidget()
                         yield PersonaProfileEditorWidget()
+                        with Horizontal(id="personas-conversation-actions"):
+                            yield Button("Back to card", id="personas-conversation-back")
+                            yield Button(
+                                "Continue in Console",
+                                id="personas-conversation-continue-console",
+                            )
+                            yield Button(
+                                "Open in Library",
+                                id="personas-conversation-open-library",
+                            )
+                        yield CCPConversationViewWidget(parent_screen=self)
                         yield Static(PLACEHOLDER_COPY, id="personas-mode-placeholder")
                 yield PersonasInspectorPane(
                     id="personas-inspector-pane",
@@ -423,6 +466,8 @@ class PersonasScreen(BaseAppScreen):
         self.query_one("#personas-status-row", Static).update(self._status_row_text())
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
+        # clear_selection empties the conversations panel; drop the caches too.
+        self._reset_conversation_state()
         await self.query_one(PersonasInspectorPane).clear_selection()
         if mode == "characters":
             await self._render_library_rows()
@@ -467,6 +512,11 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_selection(name=entity_name, kind="character", authority="Local")
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        # Clear any previous character's rows immediately; the worker fills
+        # the panel back in once the listing returns.
+        self._reset_conversation_state()
+        await inspector.show_conversations(())
+        self._load_conversations_worker(entity_id)
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -483,6 +533,172 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_selection(name=entity_name, kind="persona_profile", authority="Local")
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        # Persona profiles have no conversation linkage in the local data.
+        self._reset_conversation_state()
+        await inspector.show_conversations(())
+
+    # ===== Saved conversations =====
+
+    def _character_db(self) -> Any:
+        """Local character DB, via the same resolver import/export uses."""
+        return ccp_character_handler._default_character_db()
+
+    def _reset_conversation_state(self) -> None:
+        self._conversation_rows = {}
+        self._open_conversation_id = None
+        self._open_conversation_title = ""
+        self._open_conversation_transcript = ""
+
+    @work(thread=True, exclusive=True, group="personas-conversations")
+    def _load_conversations_worker(self, character_id: str) -> None:
+        """List the character's saved conversations off the UI thread."""
+        try:
+            records = list_character_conversations(
+                self._character_db(), int(character_id), limit=20
+            ) or []
+        except Exception:
+            logger.warning(
+                f"Could not list conversations for character {character_id}.",
+                exc_info=True,
+            )
+            records = []
+        rows = tuple(
+            (str(record.get("id")), str(record.get("title") or "Untitled conversation"))
+            for record in records
+            if record.get("id") is not None
+        )
+        self.app.call_from_thread(self._apply_conversation_rows, character_id, rows)
+
+    async def _apply_conversation_rows(
+        self, character_id: str, rows: tuple[tuple[str, str], ...]
+    ) -> None:
+        """UI-thread continuation: render rows unless the selection moved on."""
+        if not self.is_mounted or self.state.active_mode != "characters":
+            return
+        if (
+            self.state.selected_entity_kind != "character"
+            or str(self.state.selected_entity_id) != str(character_id)
+        ):
+            return
+        self._conversation_rows = dict(rows)
+        try:
+            await self.query_one(PersonasInspectorPane).show_conversations(rows)
+        except Exception:
+            logger.warning("Could not render the conversations panel.", exc_info=True)
+
+    @on(ConversationRowSelected)
+    async def _handle_conversation_row_selected(self, message: ConversationRowSelected) -> None:
+        message.stop()
+        if (
+            self.state.active_mode != "characters"
+            or self.state.selected_entity_kind != "character"
+        ):
+            return
+        conversation_id = str(message.conversation_id)
+
+        async def _open() -> None:
+            self._edit_mode = "view"
+            self._open_conversation_id = conversation_id
+            self._open_conversation_title = self._conversation_rows.get(
+                conversation_id, "Untitled conversation"
+            )
+            self._open_conversation_transcript = ""
+            self._load_conversation_messages_worker(
+                conversation_id, self.state.selected_entity_name or "Character"
+            )
+
+        await self._run_guarded(_open)
+
+    @work(thread=True, exclusive=True, group="personas-conversation-view")
+    def _load_conversation_messages_worker(
+        self, conversation_id: str, character_name: str
+    ) -> None:
+        """Fetch and shape the conversation's messages off the UI thread."""
+        try:
+            history = retrieve_conversation_messages_for_ui(
+                self._character_db(), conversation_id, character_name, None, limit=200
+            ) or []
+        except Exception:
+            logger.warning(
+                f"Could not load messages for conversation {conversation_id}.",
+                exc_info=True,
+            )
+            history = []
+        messages: list[dict] = []
+        transcript_lines: list[str] = []
+        for user_message, bot_message in history:
+            if user_message:
+                messages.append({"role": "user", "content": user_message})
+                transcript_lines.append(f"User: {user_message}")
+            if bot_message:
+                messages.append({"role": "assistant", "content": bot_message})
+                transcript_lines.append(f"{character_name}: {bot_message}")
+        transcript = "\n".join(transcript_lines)[:_HANDOFF_TRANSCRIPT_CHAR_LIMIT]
+        self.app.call_from_thread(
+            self._show_conversation_view, conversation_id, messages, transcript
+        )
+
+    def _show_conversation_view(
+        self, conversation_id: str, messages: list[dict], transcript: str
+    ) -> None:
+        """UI-thread continuation: display the read-only conversation view."""
+        if not self.is_mounted or self.state.active_mode != "characters":
+            return
+        if (
+            self.state.selected_entity_kind != "character"
+            or self._open_conversation_id != conversation_id
+        ):
+            # The selection or the requested conversation changed mid-flight.
+            return
+        self._open_conversation_transcript = transcript
+        try:
+            view = self.query_one(CCPConversationViewWidget)
+        except QueryError:
+            logger.warning("Conversation view widget is not mounted.")
+            return
+        view.load_conversation_messages(messages)
+        self._show_center(_CONVERSATION_VIEW_ID)
+
+    @on(Button.Pressed, "#personas-conversation-back")
+    def _handle_conversation_back(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._show_center("#ccp-character-card-view")
+
+    @on(Button.Pressed, "#personas-conversation-open-library")
+    def _handle_conversation_open_library(self, event: Button.Pressed) -> None:
+        event.stop()
+        # "conversation" is the Library conversations route in screen_registry.
+        self.post_message(NavigateToScreen("conversation"))
+
+    @on(Button.Pressed, "#personas-conversation-continue-console")
+    def _handle_conversation_continue_console(self, event: Button.Pressed) -> None:
+        event.stop()
+        conversation_id = self._open_conversation_id
+        if not conversation_id:
+            self._notify("Open a conversation before continuing in Console.", "warning")
+            return
+        open_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not callable(open_handoff):
+            self._notify("Console handoff is unavailable.", "warning")
+            return
+        character_name = self.state.selected_entity_name or "Character"
+        title = self._open_conversation_title or "Untitled conversation"
+        payload = ChatHandoffPayload(
+            source="personas",
+            item_type="character-conversation",
+            title=f"{character_name}: {title}",
+            body=self._open_conversation_transcript or "",
+            runtime_backend="local",
+            source_owner="local",
+            source_selector_state="local",
+            metadata={
+                "conversation_id": conversation_id,
+                "selected_kind": "character",
+                "selected_record_id": str(self.state.selected_entity_id or ""),
+            },
+        )
+        open_handoff(payload)
+        self._notify("Conversation staged in Console.", "information")
 
     # ===== Create / edit =====
 
@@ -997,6 +1213,13 @@ class PersonasScreen(BaseAppScreen):
             # The CCP widgets carry a `.hidden` class with display:none !important.
             widget.set_class(not visible, "hidden")
             widget.display = visible
+        # The conversation actions row is chrome shown alongside (not instead
+        # of) the read-only conversation view.
+        try:
+            actions = self.query_one("#personas-conversation-actions")
+        except Exception:
+            return
+        actions.display = visible_id == _CONVERSATION_VIEW_ID
 
     async def _run_guarded(self, continuation: Callable[[], Awaitable[None]]) -> None:
         """Run ``continuation``, confirming first when an edit would be discarded.

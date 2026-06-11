@@ -922,3 +922,148 @@ class TestFtsTermSafety:
         assert character_handler_module.search_characters_fts("") == []
         assert character_handler_module.search_characters_fts("   ") == []
         assert stub_db.calls == []
+
+
+class _NavCaptureApp(PersonasTestApp):
+    """Test app that records NavigateToScreen routes bubbled from the screen."""
+
+    def __init__(self, mock_app_instance):
+        super().__init__(mock_app_instance)
+        self.nav_routes: list[str] = []
+
+    def on_navigate_to_screen(self, message) -> None:
+        self.nav_routes.append(message.screen_name)
+
+
+class TestConversationsPanel:
+    @pytest.fixture
+    def stub_conversations(self, monkeypatch):
+        """Stub the DB resolver, conversation listing, and message retrieval."""
+        monkeypatch.setattr(
+            character_handler_module, "_default_character_db", lambda: object()
+        )
+        monkeypatch.setattr(
+            personas_screen_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [
+                {"id": "conv-1", "title": "First case"}
+            ],
+        )
+        monkeypatch.setattr(
+            personas_screen_module,
+            "retrieve_conversation_messages_for_ui",
+            lambda db, conversation_id, character_name, user_name, **kwargs: [
+                ("Hello there", "Greetings, detective."),
+            ],
+        )
+
+    async def _select_first_character(self, pilot):
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-library-row-character-1")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        return screen
+
+    async def _open_conversation(self, pilot):
+        screen = await self._select_first_character(pilot)
+        await pilot.click("#personas-conversation-row-conv-1")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        return screen
+
+    async def test_selecting_character_lists_conversations(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            rows = screen.query(".personas-conversation-row")
+            assert [str(r.label) for r in rows] == ["First case"]
+
+    async def test_conversation_listing_failure_is_tolerant(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        def boom(db, character_id, limit=50, offset=0):
+            raise RuntimeError("listing failed")
+
+        monkeypatch.setattr(
+            personas_screen_module, "list_character_conversations", boom
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            assert list(screen.query(".personas-conversation-row")) == []
+            # Selection itself still succeeded.
+            assert screen.state.selected_entity_id == "1"
+            assert screen.query_one("#ccp-character-card-view").display is True
+
+    async def test_conversation_row_opens_readonly_view(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            assert screen.query_one("#ccp-conversation-messages-view").display is True
+            assert screen.query_one("#ccp-character-card-view").display is False
+
+    async def test_back_returns_to_card(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            await pilot.click("#personas-conversation-back")
+            await pilot.pause()
+            assert screen.query_one("#ccp-character-card-view").display is True
+            assert screen.query_one("#ccp-conversation-messages-view").display is False
+
+    async def test_continue_in_console_stages_payload(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            await self._open_conversation(pilot)
+            await pilot.click("#personas-conversation-continue-console")
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_called_once()
+        payload = app.open_chat_with_handoff.call_args.args[0]
+        assert payload.source == "personas"
+        assert payload.item_type == "character-conversation"
+        assert payload.metadata["conversation_id"] == "conv-1"
+        assert payload.metadata["selected_kind"] == "character"
+        assert payload.metadata["selected_record_id"] == "1"
+        assert "Detective Sam" in payload.title
+        assert "First case" in payload.title
+        assert "Greetings, detective." in payload.body
+
+    async def test_open_in_library_navigates(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = _NavCaptureApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            await self._open_conversation(pilot)
+            await pilot.click("#personas-conversation-open-library")
+            await pilot.pause()
+            assert app.nav_routes == ["conversation"]
+
+    async def test_profile_selection_shows_no_conversations(
+        self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            assert len(screen.query(".personas-conversation-row")) == 1
+            await pilot.click("#personas-mode-personas")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.click("#personas-library-row-persona_profile-p-1")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_kind == "persona_profile"
+            assert list(screen.query(".personas-conversation-row")) == []

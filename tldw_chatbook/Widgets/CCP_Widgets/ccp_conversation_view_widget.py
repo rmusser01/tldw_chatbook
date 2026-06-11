@@ -87,7 +87,11 @@ class ConversationMessageWidget(Container):
     }
     
     ConversationMessageWidget.system-message {
-        background: $warning-background-darken-1;
+        /* $warning-background-darken-1 is not a Textual design token (it
+           resolves for primary/secondary only) and made any mount of this
+           widget raise UnresolvedVariableError; $warning-muted is the
+           equivalent muted warning background that actually exists. */
+        background: $warning-muted;
         border: round $warning-darken-1;
     }
     
