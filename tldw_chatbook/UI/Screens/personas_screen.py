@@ -97,6 +97,7 @@ class PersonasScreen(BaseAppScreen):
     BINDINGS = [
         Binding("ctrl+n", "personas_new", "New"),
         Binding("ctrl+f", "personas_search", "Search"),
+        Binding("ctrl+enter", "personas_attach", "Attach"),
     ]
 
     # Baseline workbench geometry so the screen renders correctly even without
@@ -695,30 +696,152 @@ class PersonasScreen(BaseAppScreen):
             # (or a newer selection superseded the loaded one).
             self._notify("Conversation is still loading.", "warning")
             return
-        open_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
-        if not callable(open_handoff):
-            self._notify("Console handoff is unavailable.", "warning")
-            return
         character_name = self.state.selected_entity_name or "Character"
         title = self._open_conversation_title or "Untitled conversation"
-        payload = ChatHandoffPayload.from_source_content(
-            source="personas",
+        staged = self._stage_handoff(
             item_type="character-conversation",
             title=f"{character_name}: {title}",
             body=self._open_conversation_transcript or "",
             body_truncated=self._open_conversation_truncated,
             source_id=conversation_id,
+            extra_metadata={"conversation_id": conversation_id},
+        )
+        if staged:
+            self._notify("Conversation staged in Console.", "information")
+
+    # ===== Console handoff (attach / start chat) =====
+
+    def _stage_handoff(
+        self,
+        *,
+        item_type: str,
+        title: str,
+        body: str,
+        body_truncated: bool = False,
+        source_id: str | None = None,
+        suggested_prompt: str = "",
+        display_summary: str = "",
+        extra_metadata: dict | None = None,
+    ) -> bool:
+        """Single seam for staging Personas context into Console.
+
+        Builds a ``ChatHandoffPayload`` with the workbench's fixed
+        source/runtime identity ("personas" / local) and the selection
+        metadata from ``PersonasWorkbenchState.selected_metadata()``, then
+        hands it to the app's ``open_chat_with_handoff``. Returns ``True``
+        when a payload was staged.
+        """
+        open_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not callable(open_handoff):
+            self._notify("Console handoff is unavailable.", "warning")
+            return False
+        payload = ChatHandoffPayload.from_source_content(
+            source="personas",
+            item_type=item_type,
+            title=title,
+            body=body,
+            body_truncated=body_truncated,
+            source_id=source_id,
+            suggested_prompt=suggested_prompt,
+            display_summary=display_summary,
             runtime_backend="local",
             source_owner="local",
             source_selector_state="local",
             metadata={
-                "conversation_id": conversation_id,
-                "selected_kind": "character",
-                "selected_record_id": str(self.state.selected_entity_id or ""),
+                **self.state.selected_metadata(),
+                "backend": "local",
+                **(extra_metadata or {}),
             },
         )
         open_handoff(payload)
-        self._notify("Conversation staged in Console.", "information")
+        return True
+
+    def _console_action_allowed(self) -> bool:
+        """True when a saved character/persona profile selection is attachable."""
+        return bool(
+            self.state.selected_entity_id
+            and self.state.selected_entity_kind in ("character", "persona_profile")
+            and not self.state.has_unsaved_changes
+        )
+
+    async def _selection_handoff_body(self) -> str | None:
+        """Readable card summary for the selected item, or ``None`` when stale."""
+        kind = self.state.selected_entity_kind
+        entity_id = str(self.state.selected_entity_id or "")
+        name = self.state.selected_entity_name or "Unnamed"
+        if kind == "character":
+            record = self._full_character_record(entity_id)
+            if record is None:
+                self._notify("Character data is not loaded yet.", "warning")
+                return None
+            field_specs = (
+                ("Description", "description"),
+                ("Personality", "personality"),
+                ("Scenario", "scenario"),
+                ("System prompt", "system_prompt"),
+            )
+        else:
+            # List rows are summaries; the full record carries system_prompt.
+            record = await self._fetch_profile_record(entity_id)
+            field_specs = (
+                ("Description", "description"),
+                ("System prompt", "system_prompt"),
+            )
+        lines = [f"Name: {name}"]
+        for label, key in field_specs:
+            value = str(record.get(key) or "").strip()
+            if value:
+                lines.append(f"{label}: {value}")
+        return "\n".join(lines)
+
+    async def _attach_selection_to_console(self, *, intent: str) -> None:
+        """Stage the selected card in Console (intent: "attach" or "start_chat")."""
+        if not self._console_action_allowed():
+            # The inspector disables these buttons without a saved selection;
+            # this is a defensive re-check (and the ctrl+enter guard).
+            self._notify("Select a saved item before using Console actions.", "warning")
+            return
+        kind = str(self.state.selected_entity_kind)
+        name = self.state.selected_entity_name or "Unnamed"
+        body = await self._selection_handoff_body()
+        if body is None:
+            return
+        if intent == "start_chat":
+            suggested_prompt = f"Respond as {name}."
+            extra_metadata: dict | None = {"intent": "start_chat"}
+            display_summary = f"{name} staged to start a Console chat."
+            success_copy = "Chat staged in Console."
+        else:
+            suggested_prompt = f"Use {name} to guide the next response."
+            extra_metadata = None
+            display_summary = f"{name} ({kind}) staged."
+            success_copy = "Staged in Console."
+        staged = self._stage_handoff(
+            item_type=f"{kind}-card",
+            title=f"{name} ({kind})",
+            body=body,
+            source_id=str(self.state.selected_entity_id or ""),
+            suggested_prompt=suggested_prompt,
+            display_summary=display_summary,
+            extra_metadata=extra_metadata,
+        )
+        if staged:
+            self._notify(success_copy, "information")
+
+    @on(Button.Pressed, "#personas-attach-to-console")
+    async def _handle_attach_to_console(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._attach_selection_to_console(intent="attach")
+
+    @on(Button.Pressed, "#personas-start-chat")
+    async def _handle_start_chat(self, event: Button.Pressed) -> None:
+        # The legacy CCP route launched a blank main-chat tab directly via the
+        # chat tab container, but that container is only queryable while the
+        # chat screen is mounted - never true from a pushed destination
+        # screen. The workbench therefore routes Start Chat through the
+        # app-level open_chat_with_handoff API with an explicit intent marker.
+        event.stop()
+        await self._attach_selection_to_console(intent="start_chat")
 
     # ===== Create / edit =====
 
@@ -1303,6 +1426,16 @@ class PersonasScreen(BaseAppScreen):
         except QueryError:
             pass
 
+    async def action_personas_attach(self) -> None:
+        """Ctrl+Enter: same path as the inspector Attach button.
+
+        No-ops silently when the attach buttons would be disabled (no saved
+        selection, or unsaved edits) so the shortcut cannot bypass the guard.
+        """
+        if not self._console_action_allowed():
+            return
+        await self._attach_selection_to_console(intent="attach")
+
     # ===== Footer shortcut context =====
 
     def _shortcut_context(self) -> ShortcutContext:
@@ -1311,9 +1444,9 @@ class PersonasScreen(BaseAppScreen):
             actions=(
                 ShortcutAction("ctrl+n", "new"),
                 ShortcutAction("ctrl+f", "search"),
-                # Task 12 (attach) and the editor-save wiring flip these on.
+                # The editor-save wiring flips this on.
                 ShortcutAction("ctrl+s", "save", available=False),
-                ShortcutAction("ctrl+enter", "attach", available=False),
+                ShortcutAction("ctrl+enter", "attach"),
             ),
         )
 

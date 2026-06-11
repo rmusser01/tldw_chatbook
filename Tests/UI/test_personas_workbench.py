@@ -1198,3 +1198,179 @@ class TestConversationsPanel:
             await pilot.pause()
             assert screen.state.selected_entity_kind == "persona_profile"
             assert list(screen.query(".personas-conversation-row")) == []
+
+
+class TestConsoleActions:
+    """Attach to Console and Start Chat from the inspector (Task 12)."""
+
+    @pytest.fixture
+    def stub_conversations(self, monkeypatch):
+        monkeypatch.setattr(
+            character_handler_module, "_default_character_db", lambda: object()
+        )
+        monkeypatch.setattr(
+            personas_screen_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [
+                {"id": "conv-1", "title": "First case"}
+            ],
+        )
+        monkeypatch.setattr(
+            personas_screen_module,
+            "retrieve_conversation_messages_for_ui",
+            lambda db, conversation_id, character_name, user_name, **kwargs: [
+                ("Hello there", "Greetings, detective."),
+            ],
+        )
+
+    async def _select_first_character(self, pilot):
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-library-row-character-1")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        return screen
+
+    async def _select_profile(self, pilot):
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-mode-personas")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.click("#personas-library-row-persona_profile-p-1")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        return screen
+
+    async def test_attach_stages_selected_character_payload(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.query_one("#personas-attach-to-console", Button).press()
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_called_once()
+        payload = app.open_chat_with_handoff.call_args.args[0]
+        assert payload.source == "personas"
+        assert payload.runtime_backend == "local"
+        assert payload.source_owner == "local"
+        assert payload.source_selector_state == "local"
+        assert payload.metadata["selected_kind"] == "character"
+        assert payload.metadata["selected_record_id"] == "1"
+        assert payload.metadata["selected_target_id"] == "local:character:1"
+        assert payload.metadata["backend"] == "local"
+        assert "Detective Sam" in payload.title
+        assert "Noir detective" in payload.body
+        assert "Detective Sam" in payload.suggested_prompt
+
+    async def test_attach_blocked_without_selection(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            await _mounted(pilot)
+            await pilot.pause()
+            await pilot.press("ctrl+enter")
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_not_called()
+
+    async def test_attach_blocked_with_unsaved_edits(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
+            EditCharacterRequested,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.post_message(EditCharacterRequested("1"))
+            await pilot.pause()
+            assert screen._edit_mode == "edit"
+            assert screen.state.has_unsaved_changes is True
+            await pilot.press("ctrl+enter")
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_not_called()
+
+    async def test_start_chat_uses_real_mechanism(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Start Chat stages a handoff with start_chat intent metadata.
+
+        The legacy CCP route launched a blank tab directly via the main chat
+        tab container (`#chat-window` lookup), which is not mounted while a
+        destination screen is active; the workbench therefore uses the
+        app-level ``open_chat_with_handoff`` API with an intent marker.
+        """
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.query_one("#personas-start-chat", Button).press()
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_called_once()
+        payload = app.open_chat_with_handoff.call_args.args[0]
+        assert payload.source == "personas"
+        assert payload.metadata["intent"] == "start_chat"
+        assert payload.metadata["selected_target_id"] == "local:character:1"
+        assert payload.suggested_prompt == "Respond as Detective Sam."
+
+    async def test_attach_stages_profile_payload(
+        self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_profile(pilot)
+            screen.query_one("#personas-attach-to-console", Button).press()
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_called_once()
+        payload = app.open_chat_with_handoff.call_args.args[0]
+        assert payload.metadata["selected_kind"] == "persona_profile"
+        assert payload.metadata["selected_target_id"] == "local:persona_profile:p-1"
+        assert "Archivist" in payload.title
+        assert "You are a meticulous archivist." in payload.body
+
+    async def test_conversation_continue_still_works(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """The refactored shared seam preserves the Continue-in-Console contract."""
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            await self._select_first_character(pilot)
+            await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.click("#personas-conversation-continue-console")
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_called_once()
+        payload = app.open_chat_with_handoff.call_args.args[0]
+        assert payload.source == "personas"
+        assert payload.item_type == "character-conversation"
+        assert payload.source_id == "conv-1"
+        assert payload.metadata["conversation_id"] == "conv-1"
+        assert payload.metadata["selected_kind"] == "character"
+        assert payload.metadata["selected_record_id"] == "1"
+        assert payload.metadata["selected_target_id"] == "local:character:1"
+        assert payload.metadata["backend"] == "local"
+        assert "Greetings, detective." in payload.body
+
+    async def test_footer_shortcut_attach_available(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            context = screen._shortcut_context()
+            attach = next(a for a in context.actions if a.label == "attach")
+            assert attach.available is True
+            assert attach.key == "ctrl+enter"
