@@ -1,6 +1,8 @@
 # Tests/UI/test_personas_workbench.py
 """Mounted tests for the destination-native Personas workbench."""
 
+from unittest.mock import AsyncMock, Mock
+
 import pytest
 from textual.app import App
 from textual.widgets import Button, Static
@@ -9,6 +11,10 @@ import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_m
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+    EditPersonaRequested,
+    PersonaProfileSaveRequested,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -16,6 +22,31 @@ CHARACTERS = [
     {"id": 1, "name": "Detective Sam", "description": "Noir detective", "version": 1},
     {"id": 2, "name": "Lab Assistant", "description": "Helpful scientist", "version": 1},
 ]
+
+PROFILE = {
+    "id": "p-1",
+    "name": "Archivist",
+    "description": "Preserve and retrieve",
+    "system_prompt": "You are a meticulous archivist.",
+}
+
+
+@pytest.fixture
+def stub_scope_service(mock_app_instance):
+    """Replace the MagicMock scope service with explicit AsyncMock methods."""
+    service = Mock()
+    service.list_persona_profiles = AsyncMock(
+        return_value={"items": [dict(PROFILE)], "total": 1}
+    )
+    service.get_persona_profile = AsyncMock(return_value=dict(PROFILE))
+    service.create_persona_profile = AsyncMock(
+        return_value={"id": "p-9", "name": "Mentor"}
+    )
+    service.update_persona_profile = AsyncMock(
+        return_value={"id": "p-1", "name": "Archivist 2"}
+    )
+    mock_app_instance.character_persona_scope_service = service
+    return service
 
 
 @pytest.fixture
@@ -288,3 +319,89 @@ class TestCharacterSelectionAndEdit:
             assert "New Hero" not in str(
                 screen.query_one("#personas-selected-name", Static).renderable
             )
+
+
+class TestPersonasMode:
+    async def _enter_personas_mode(self, pilot):
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-mode-personas")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        return screen
+
+    async def test_personas_mode_lists_profiles(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            rows = screen.query(".personas-library-row")
+            assert [str(r.label) for r in rows] == ["Archivist"]
+
+    async def test_profile_selection_shows_card(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            await pilot.click("#personas-library-row-persona_profile-p-1")
+            await pilot.pause()
+            assert screen.state.selected_entity_kind == "persona_profile"
+            assert screen.query_one("#ccp-persona-card-view").display is True
+            assert "Selected: Archivist" in str(
+                screen.query_one("#personas-selected-name", Static).renderable
+            )
+
+    async def test_profile_save_calls_scope_service(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            assert screen._edit_mode == "create"
+            screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            stub_scope_service.create_persona_profile.assert_awaited_once()
+            assert screen._edit_mode == "view"
+
+    async def test_profile_edit_save_calls_update(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            await pilot.click("#personas-library-row-persona_profile-p-1")
+            await pilot.pause()
+            screen.post_message(EditPersonaRequested("p-1"))
+            await pilot.pause()
+            assert screen._edit_mode == "edit"
+            assert screen.query_one("#ccp-persona-editor-view").display is True
+            screen.post_message(
+                PersonaProfileSaveRequested({"id": "p-1", "name": "Archivist 2"})
+            )
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            stub_scope_service.update_persona_profile.assert_awaited_once()
+            assert stub_scope_service.update_persona_profile.await_args.args[0] == "p-1"
+            assert screen._edit_mode == "view"
+
+    async def test_character_mode_unaffected(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            await pilot.click("#personas-mode-characters")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.active_mode == "characters"
+            rows = screen.query(".personas-library-row")
+            assert [str(r.label) for r in rows] == ["Detective Sam", "Lab Assistant"]

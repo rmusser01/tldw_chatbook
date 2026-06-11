@@ -24,11 +24,18 @@ from ...Widgets.CCP_Widgets.ccp_character_editor_widget import (
     CharacterSaveRequested,
 )
 from ...Widgets.destination_workbench import DestinationModeStrip
+from ...Widgets.Persona_Widgets.persona_profile_card_widget import PersonaProfileCardWidget
+from ...Widgets.Persona_Widgets.persona_profile_editor_widget import PersonaProfileEditorWidget
 from ...Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspectorPane
 from ...Widgets.Persona_Widgets.personas_library_pane import LibraryRow, PersonasLibraryPane
 from ...Widgets.Persona_Widgets.personas_messages import (
     PersonaActionRequested,
     PersonaEntitySelected,
+)
+from ...Widgets.Persona_Widgets.personas_pane_messages import (
+    EditPersonaRequested,
+    PersonaProfileEditCancelled,
+    PersonaProfileSaveRequested,
 )
 from ...Widgets.Persona_Widgets.personas_state import MODE_LABELS, PersonasWorkbenchState
 from ..CCP_Modules import ccp_character_handler
@@ -50,6 +57,8 @@ PLACEHOLDER_COPY = "This mode is not available yet. Characters and Personas are 
 _CENTER_VIEW_IDS: tuple[str, ...] = (
     "#ccp-character-card-view",
     "#ccp-character-editor-view",
+    "#ccp-persona-card-view",
+    "#ccp-persona-editor-view",
     "#personas-mode-placeholder",
 )
 
@@ -160,6 +169,7 @@ class PersonasScreen(BaseAppScreen):
         self._edit_mode: str = "view"
         self._guard_active: bool = False
         self._characters: list[dict] = []
+        self._profiles: list[dict] = []
         self.character_handler = CCPCharacterHandler(self)
         self.persona_handler = CCPPersonaHandler(self)
 
@@ -204,6 +214,8 @@ class PersonasScreen(BaseAppScreen):
                     with Container(id="personas-detail-stack"):
                         yield CCPCharacterCardWidget(parent_screen=self)
                         yield CCPCharacterEditorWidget(parent_screen=self)
+                        yield PersonaProfileCardWidget()
+                        yield PersonaProfileEditorWidget()
                         yield Static(PLACEHOLDER_COPY, id="personas-mode-placeholder")
                 yield PersonasInspectorPane(
                     id="personas-inspector-pane",
@@ -257,6 +269,69 @@ class PersonasScreen(BaseAppScreen):
                 return record
         return None
 
+    @work(exclusive=True, group="personas-list-refresh")
+    async def _refresh_profile_rows_worker(self) -> None:
+        """Fetch persona profile rows and render them while still in Personas mode."""
+        try:
+            profiles = await self.persona_handler.refresh_persona_list()
+        except Exception:
+            logger.warning("Could not refresh the persona profile list.", exc_info=True)
+            profiles = []
+        self._profiles = [dict(record) for record in (profiles or [])]
+        if not self.is_mounted or self.state.active_mode != "personas":
+            # A late result must not render persona rows into another mode.
+            return
+        try:
+            await self._render_profile_rows()
+        except Exception:
+            # Tolerate refreshes that race screen teardown.
+            logger.warning("Could not render the persona profile rows.", exc_info=True)
+
+    async def _render_profile_rows(self) -> None:
+        rows = tuple(
+            LibraryRow(
+                item_id=str(record.get("id")),
+                kind="persona_profile",
+                name=str(record.get("name") or "Unnamed"),
+            )
+            for record in self._profiles
+            if record.get("id")
+        )
+        library = self.query_one(PersonasLibraryPane)
+        await library.update_rows(rows, total=len(rows), noun="persona profiles")
+        if self.state.selected_entity_kind == "persona_profile" and self.state.selected_entity_id:
+            library.mark_active_row("persona_profile", self.state.selected_entity_id)
+
+    def _profile_record(self, item_id: str | None) -> dict | None:
+        if item_id is None:
+            return None
+        for record in self._profiles:
+            if str(record.get("id")) == str(item_id):
+                return record
+        return None
+
+    async def _fetch_profile_record(self, persona_id: str) -> dict:
+        """Full profile from the scope service; falls back to the cached list row."""
+        fallback = dict(self._profile_record(persona_id) or {"id": persona_id})
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        if service is None or not hasattr(service, "get_persona_profile"):
+            return fallback
+        try:
+            record = await service.get_persona_profile(
+                persona_id, mode=self.persona_handler._current_mode()
+            )
+        except Exception:
+            logger.warning(
+                f"Could not fetch persona profile {persona_id}; using the list row.",
+                exc_info=True,
+            )
+            return fallback
+        if hasattr(record, "model_dump"):
+            record = record.model_dump(mode="json")
+        if not isinstance(record, dict):
+            return fallback
+        return dict(record)
+
     # ===== Mode switching =====
 
     @on(Button.Pressed, ".personas-mode-chip")
@@ -282,9 +357,9 @@ class PersonasScreen(BaseAppScreen):
             await self._render_library_rows()
             self._show_center(None)
         elif mode == "personas":
-            # Persona profile listing is wired in a follow-up task.
             await library.update_rows((), total=0, noun="persona profiles")
             self._show_center(None)
+            self._refresh_profile_rows_worker()
         else:
             await library.update_rows((), total=0, noun=MODE_LABELS[mode].lower())
             self._show_center("#personas-mode-placeholder")
@@ -297,12 +372,15 @@ class PersonasScreen(BaseAppScreen):
     @on(PersonaEntitySelected)
     async def _handle_entity_selected(self, message: PersonaEntitySelected) -> None:
         message.stop()
-        if message.entity_kind != "character":
-            # Persona profiles and other kinds are wired in follow-up tasks.
-            return
-        await self._run_guarded(
-            lambda: self._select_character(message.entity_id, message.entity_name)
-        )
+        if message.entity_kind == "character":
+            await self._run_guarded(
+                lambda: self._select_character(message.entity_id, message.entity_name)
+            )
+        elif message.entity_kind == "persona_profile":
+            await self._run_guarded(
+                lambda: self._select_profile(message.entity_id, message.entity_name)
+            )
+        # Prompts, dictionaries, and lore are wired in follow-up tasks.
 
     async def _select_character(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -319,6 +397,22 @@ class PersonasScreen(BaseAppScreen):
         inspector.set_unsaved(False)
         inspector.show_validation(())
 
+    async def _select_profile(self, entity_id: str, entity_name: str) -> None:
+        self.state.select_entity(
+            entity_kind="persona_profile",
+            entity_id=entity_id,
+            entity_name=entity_name,
+        )
+        self._edit_mode = "view"
+        self.query_one(PersonasLibraryPane).mark_active_row("persona_profile", entity_id)
+        record = await self._fetch_profile_record(entity_id)
+        self.query_one(PersonaProfileCardWidget).show_persona(record)
+        self._show_center("#ccp-persona-card-view")
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.show_selection(name=entity_name, kind="persona_profile", authority="Local")
+        inspector.set_unsaved(False)
+        inspector.show_validation(())
+
     # ===== Create / edit =====
 
     @on(PersonaActionRequested)
@@ -327,10 +421,11 @@ class PersonasScreen(BaseAppScreen):
         if message.action != "create":
             # Import/export/delete and the rest are wired in follow-up tasks.
             return
-        if self.state.active_mode != "characters":
-            # Persona profile creation is wired in a follow-up task.
-            return
-        await self._run_guarded(self._begin_create_character)
+        if self.state.active_mode == "characters":
+            await self._run_guarded(self._begin_create_character)
+        elif self.state.active_mode == "personas":
+            await self._run_guarded(self._begin_create_profile)
+        # Creation in the remaining modes is wired in follow-up tasks.
 
     async def _begin_create_character(self) -> None:
         self._edit_mode = "create"
@@ -341,6 +436,35 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(CCPCharacterEditorWidget).new_character()
         self._show_center("#ccp-character-editor-view")
         self.query_one(PersonasInspectorPane).set_unsaved(True)
+
+    async def _begin_create_profile(self) -> None:
+        self._edit_mode = "create"
+        self.state.clear_selection()
+        # Dirty-on-entry: entering the editor conservatively marks the session
+        # unsaved rather than tracking per-keystroke changes.
+        self.state.has_unsaved_changes = True
+        self.query_one(PersonaProfileEditorWidget).new_persona()
+        self._show_center("#ccp-persona-editor-view")
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.set_unsaved(True)
+        inspector.show_validation(())
+
+    @on(EditPersonaRequested)
+    async def _handle_persona_edit_requested(self, message: EditPersonaRequested) -> None:
+        message.stop()
+        if str(message.persona_id) != (self.state.selected_entity_id or ""):
+            self._notify("Selection out of sync; reselect the persona profile.", "warning")
+            return
+        record = await self._fetch_profile_record(str(message.persona_id))
+        self._edit_mode = "edit"
+        # Dirty-on-entry: entering the editor conservatively marks the session
+        # unsaved rather than tracking per-keystroke changes.
+        self.state.has_unsaved_changes = True
+        self.query_one(PersonaProfileEditorWidget).load_persona(record)
+        self._show_center("#ccp-persona-editor-view")
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.set_unsaved(True)
+        inspector.show_validation(())
 
     @on(EditCharacterRequested)
     def _handle_edit_requested(self, message: EditCharacterRequested) -> None:
@@ -445,6 +569,68 @@ class PersonasScreen(BaseAppScreen):
         self._show_center("#ccp-character-card-view")
         self._notify("Character saved.", severity="information")
 
+    @on(PersonaProfileSaveRequested)
+    async def _handle_profile_save_requested(self, message: PersonaProfileSaveRequested) -> None:
+        """Persist a persona profile through the async scope service.
+
+        The editor validates before posting (its inline
+        ``#personas-editor-validation`` panel is the personas-mode source of
+        truth), so the screen only clears the inspector summary here.
+        """
+        message.stop()
+        data = dict(message.data or {})
+        self.query_one(PersonasInspectorPane).show_validation(())
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        if service is None:
+            self._notify("Save failed: persona profiles are unavailable.", "error")
+            return
+        mode = self.persona_handler._current_mode()
+        persona_id = str(data.get("id") or "")
+        try:
+            if self._edit_mode == "create" or not persona_id:
+                result = await service.create_persona_profile(data, mode=mode)
+            else:
+                result = await service.update_persona_profile(persona_id, data, mode=mode)
+        except Exception as exc:
+            logger.error(f"Error saving persona profile: {exc}", exc_info=True)
+            self._notify(f"Save failed: {exc}", "error")
+            return
+        if hasattr(result, "model_dump"):
+            result = result.model_dump(mode="json")
+        if not isinstance(result, dict):
+            # Tolerate backends that return ids/None: keep the submitted data.
+            result = dict(data)
+        saved = dict(result)
+        saved.setdefault("id", persona_id)
+        await self._after_profile_save(saved)
+
+    async def _after_profile_save(self, saved: dict) -> None:
+        # Refresh the cached profile list tolerantly even when the user has
+        # already left the screen or switched modes during the save.
+        try:
+            profiles = await self.persona_handler.refresh_persona_list()
+            self._profiles = [dict(record) for record in (profiles or [])]
+        except Exception:
+            logger.warning("Could not refresh persona profiles after a save.", exc_info=True)
+        if not self.is_mounted or self.state.active_mode != "personas":
+            # Leave the selection, inspector, and center pane alone.
+            return
+        self._edit_mode = "view"
+        self.state.has_unsaved_changes = False
+        saved_id = str(saved.get("id") or "")
+        name = str(saved.get("name") or "Saved persona")
+        self.state.select_entity(
+            entity_kind="persona_profile", entity_id=saved_id, entity_name=name
+        )
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.show_selection(name=name, kind="persona_profile", authority="Local")
+        inspector.set_unsaved(False)
+        inspector.show_validation(())
+        await self._render_profile_rows()
+        self.query_one(PersonaProfileCardWidget).show_persona(saved)
+        self._show_center("#ccp-persona-card-view")
+        self._notify("Persona saved.", "information")
+
     # ===== Cancel =====
 
     @on(CharacterEditorCancelled)
@@ -462,6 +648,24 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasInspectorPane).set_unsaved(False)
         if self.state.selected_entity_id:
             self._show_center("#ccp-character-card-view")
+        else:
+            self._show_center(None)
+
+    @on(PersonaProfileEditCancelled)
+    async def _handle_profile_edit_cancelled(self, message: PersonaProfileEditCancelled) -> None:
+        message.stop()
+
+        async def _finish() -> None:
+            self._finish_cancel_profile_edit()
+
+        await self._run_guarded(_finish)
+
+    def _finish_cancel_profile_edit(self) -> None:
+        self._edit_mode = "view"
+        self.state.has_unsaved_changes = False
+        self.query_one(PersonasInspectorPane).set_unsaved(False)
+        if self.state.selected_entity_id:
+            self._show_center("#ccp-persona-card-view")
         else:
             self._show_center(None)
 
