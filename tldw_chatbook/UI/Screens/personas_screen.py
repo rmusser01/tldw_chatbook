@@ -13,6 +13,7 @@ from textual.css.query import QueryError
 from textual.widgets import Button, Input, Static
 
 from ...Character_Chat.Character_Chat_Lib import validate_character_book
+from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
 from ...Widgets.confirmation_dialog import UnsavedChangesDialog
 from ...Widgets.CCP_Widgets.ccp_character_card_widget import (
     CCPCharacterCardWidget,
@@ -168,6 +169,7 @@ class PersonasScreen(BaseAppScreen):
         self.state = PersonasWorkbenchState()
         self._edit_mode: str = "view"
         self._guard_active: bool = False
+        self._profile_save_inflight: bool = False
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
         self.character_handler = CCPCharacterHandler(self)
@@ -318,7 +320,7 @@ class PersonasScreen(BaseAppScreen):
             return fallback
         try:
             record = await service.get_persona_profile(
-                persona_id, mode=self.persona_handler._current_mode()
+                persona_id, mode=self.persona_handler.current_mode()
             )
         except Exception:
             logger.warning(
@@ -435,7 +437,9 @@ class PersonasScreen(BaseAppScreen):
         self.state.has_unsaved_changes = True
         self.query_one(CCPCharacterEditorWidget).new_character()
         self._show_center("#ccp-character-editor-view")
-        self.query_one(PersonasInspectorPane).set_unsaved(True)
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.set_unsaved(True)
+        inspector.show_validation(())
 
     async def _begin_create_profile(self) -> None:
         self._edit_mode = "create"
@@ -536,7 +540,7 @@ class PersonasScreen(BaseAppScreen):
         except Exception as exc:
             logger.error(f"Error saving character: {exc}", exc_info=True)
             self.app.call_from_thread(
-                self._notify, f"Failed to save character: {exc}", "error"
+                self._notify, f"Save failed: {exc}", "error"
             )
             return
         self.app.call_from_thread(
@@ -578,31 +582,62 @@ class PersonasScreen(BaseAppScreen):
         truth), so the screen only clears the inspector summary here.
         """
         message.stop()
+        if self._profile_save_inflight:
+            logger.debug("Persona save already in flight; ignoring duplicate request.")
+            return
+        if self._edit_mode not in ("create", "edit"):
+            # Message dispatch is serial, so a double-posted Save arrives after
+            # the first save already finished and returned to view mode; a save
+            # without an open edit session is a stale duplicate.
+            logger.debug("Persona save without an open edit session; ignoring.")
+            return
         data = dict(message.data or {})
         self.query_one(PersonasInspectorPane).show_validation(())
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None:
             self._notify("Save failed: persona profiles are unavailable.", "error")
             return
-        mode = self.persona_handler._current_mode()
-        persona_id = str(data.get("id") or "")
+        self._profile_save_inflight = True
         try:
-            if self._edit_mode == "create" or not persona_id:
-                result = await service.create_persona_profile(data, mode=mode)
-            else:
-                result = await service.update_persona_profile(persona_id, data, mode=mode)
-        except Exception as exc:
-            logger.error(f"Error saving persona profile: {exc}", exc_info=True)
-            self._notify(f"Save failed: {exc}", "error")
-            return
-        if hasattr(result, "model_dump"):
-            result = result.model_dump(mode="json")
-        if not isinstance(result, dict):
-            # Tolerate backends that return ids/None: keep the submitted data.
-            result = dict(data)
-        saved = dict(result)
-        saved.setdefault("id", persona_id)
-        await self._after_profile_save(saved)
+            mode = self.persona_handler.current_mode()
+            persona_id = str(data.get("id") or "")
+            try:
+                if self._edit_mode == "create" or not persona_id:
+                    request = PersonaProfileCreate(
+                        id=data.get("id") or None,
+                        name=str(data.get("name") or ""),
+                        description=data.get("description"),
+                        mode=data.get("mode") or "session_scoped",
+                        system_prompt=data.get("system_prompt"),
+                    )
+                    result = await service.create_persona_profile(request, mode=mode)
+                else:
+                    request = PersonaProfileUpdate(
+                        name=str(data.get("name") or ""),
+                        description=data.get("description"),
+                        mode=data.get("mode"),
+                        system_prompt=data.get("system_prompt"),
+                    )
+                    result = await service.update_persona_profile(
+                        persona_id,
+                        request,
+                        expected_version=data.get("version"),
+                        mode=mode,
+                    )
+            except Exception as exc:
+                logger.error(f"Error saving persona profile: {exc}", exc_info=True)
+                self._notify(f"Save failed: {exc}", "error")
+                return
+            if hasattr(result, "model_dump"):
+                result = result.model_dump(mode="json")
+            if not isinstance(result, dict):
+                # Tolerate backends that return ids/None: keep the submitted data.
+                result = dict(data)
+            saved = dict(result)
+            saved.setdefault("id", persona_id)
+            await self._after_profile_save(saved)
+        finally:
+            self._profile_save_inflight = False
 
     async def _after_profile_save(self, saved: dict) -> None:
         # Refresh the cached profile list tolerantly even when the user has

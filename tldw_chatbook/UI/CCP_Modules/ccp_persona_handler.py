@@ -38,6 +38,10 @@ class CCPPersonaHandler:
                 return candidate
         return "local"
 
+    def current_mode(self) -> str:
+        """Public accessor for the resolved backend mode (local or server)."""
+        return self._current_mode()
+
     def _notify(self, message: str, severity: str = "warning") -> None:
         """Surface a CCP notification when a user action cannot complete."""
         notifier = getattr(self.window, "notify", None)

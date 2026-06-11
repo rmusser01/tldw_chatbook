@@ -8,6 +8,7 @@ from textual.app import App
 from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
+from tldw_chatbook.tldw_api import PersonaProfileCreate
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
@@ -391,6 +392,67 @@ class TestPersonasMode:
             stub_scope_service.update_persona_profile.assert_awaited_once()
             assert stub_scope_service.update_persona_profile.await_args.args[0] == "p-1"
             assert screen._edit_mode == "view"
+
+    async def test_profile_save_failure_keeps_editor_open(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        stub_scope_service.create_persona_profile.side_effect = RuntimeError("boom")
+        notifications: list[tuple[str, str]] = []
+        app = PersonasTestApp(mock_app_instance)
+        app.notify = lambda message, severity="information", **kwargs: notifications.append(
+            (str(message), severity)
+        )
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert any(
+                "Save failed" in message and severity == "error"
+                for message, severity in notifications
+            )
+            assert screen._edit_mode == "create"
+            assert screen.query_one("#ccp-persona-editor-view").display is True
+
+    async def test_profile_save_passes_schema_object(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            screen.post_message(
+                PersonaProfileSaveRequested(
+                    {"name": "Mentor", "description": "Guides new users"}
+                )
+            )
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            stub_scope_service.create_persona_profile.assert_awaited_once()
+            request = stub_scope_service.create_persona_profile.await_args.args[0]
+            assert isinstance(request, PersonaProfileCreate)
+            assert request.name == "Mentor"
+            assert request.description == "Guides new users"
+
+    async def test_double_save_creates_once(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
+            screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            stub_scope_service.create_persona_profile.assert_awaited_once()
 
     async def test_character_mode_unaffected(
         self, mock_app_instance, stub_characters, stub_scope_service

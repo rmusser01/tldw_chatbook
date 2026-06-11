@@ -19,6 +19,7 @@ class PersonaProfileEditorWidget(Container):
         kwargs.setdefault("id", "ccp-persona-editor-view")
         super().__init__(**kwargs)
         self._persona_id: str | None = None
+        self._version: int | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("Persona Editor", classes="destination-section")
@@ -43,6 +44,9 @@ class PersonaProfileEditorWidget(Container):
         and finds a ``load_persona`` attribute (see ccp_persona_handler._load_editor).
         """
         self._persona_id = str(data.get("id", "")) or None
+        # Kept for optimistic locking: the save path passes it back as
+        # ``expected_version`` (None for new personas).
+        self._version = data.get("version")
         self.query_one("#personas-editor-name", Input).value = str(data.get("name", ""))
         self.query_one("#personas-editor-description", TextArea).text = str(
             data.get("description", "")
@@ -59,7 +63,8 @@ class PersonaProfileEditorWidget(Container):
     def collect(self) -> Dict[str, Any]:
         """Return the current form values as a dict.
 
-        The ``id`` key is omitted when no persona has been loaded (new form).
+        The ``id`` and ``version`` keys are omitted when no persona has been
+        loaded (new form).
         """
         data: Dict[str, Any] = {
             "name": self.query_one("#personas-editor-name", Input).value.strip(),
@@ -68,6 +73,8 @@ class PersonaProfileEditorWidget(Container):
         }
         if self._persona_id is not None:
             data["id"] = self._persona_id
+        if self._version is not None:
+            data["version"] = self._version
         return data
 
     def validate(self) -> tuple[str, ...]:

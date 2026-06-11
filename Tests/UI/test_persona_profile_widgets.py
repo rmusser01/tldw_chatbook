@@ -4,6 +4,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Static, TextArea
 
+from tldw_chatbook.tldw_api import PersonaProfileCreate
 from tldw_chatbook.Widgets.Persona_Widgets.persona_profile_card_widget import (
     PersonaProfileCardWidget,
 )
@@ -83,6 +84,23 @@ async def test_editor_new_persona_clears_previous_state():
         await pilot.pause()
         assert pilot.app.query_one("#personas-editor-name", Input).value == ""
         assert "id" not in editor.collect()
+
+
+async def test_editor_roundtrips_version():
+    app = WidgetApp()
+    async with app.run_test() as pilot:
+        editor = pilot.app.query_one(PersonaProfileEditorWidget)
+        editor.load_persona({**PROFILE, "version": 3})
+        await pilot.pause()
+        assert editor.collect()["version"] == 3
+        editor.new_persona()
+        await pilot.pause()
+        assert "version" not in editor.collect()
+
+
+async def test_persona_profile_create_schema_accepts_description():
+    profile = PersonaProfileCreate(name="x", description="d")
+    assert profile.description == "d"
 
 
 async def test_editor_save_posts_collected_data():
