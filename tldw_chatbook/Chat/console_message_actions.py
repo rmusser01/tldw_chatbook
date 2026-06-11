@@ -62,36 +62,35 @@ class ConsoleMessageActionService:
         ("feedback", "Feedback"),
         ("delete", "🗑"),
     )
+    _VARIANT_NAV_ACTIONS: tuple[tuple[str, str], ...] = (
+        ("variant-previous", "<"),
+        ("variant-next", ">"),
+    )
+    _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Try"),)
 
     def __init__(self, *, available_save_destinations: set[str] | None = None) -> None:
         self.available_save_destinations = available_save_destinations or {"Chatbook"}
+
+    @classmethod
+    def _base_actions_with(cls, inserted: tuple[tuple[str, str], ...]) -> list[tuple[str, str]]:
+        """Return the base action row with extra actions inserted before regenerate."""
+        actions: list[tuple[str, str]] = []
+        for action_id, label in cls._COMPLETED_ACTIONS:
+            if action_id == "regenerate":
+                actions.extend(inserted)
+            actions.append((action_id, label))
+        return actions
 
     def available_actions(self, message: ConsoleChatMessage) -> list[ConsoleMessageAction]:
         """Return canonical selected-message actions for a transcript message."""
         disabled_reason = self._disabled_reason(message)
         completed_actions = list(self._COMPLETED_ACTIONS)
         if message.variants is not None:
-            completed_actions = [
-                ("copy", "Copy"),
-                ("edit", "Edit"),
-                ("save-as", "Save as..."),
-                ("variant-previous", "<"),
-                ("variant-next", ">"),
-                ("regenerate", "♻"),
-                ("continue", "--->"),
-                ("feedback", "Feedback"),
-                ("delete", "🗑"),
-            ]
+            completed_actions = self._base_actions_with(self._VARIANT_NAV_ACTIONS)
         if message.status == "failed":
             return [
-                ConsoleMessageAction("copy", "Copy"),
-                ConsoleMessageAction("edit", "Edit"),
-                ConsoleMessageAction("save-as", "Save as..."),
-                ConsoleMessageAction("retry", "Try"),
-                ConsoleMessageAction("regenerate", "♻"),
-                ConsoleMessageAction("continue", "--->"),
-                ConsoleMessageAction("feedback", "Feedback"),
-                ConsoleMessageAction("delete", "🗑"),
+                ConsoleMessageAction(action_id, label)
+                for action_id, label in self._base_actions_with(self._FAILED_RETRY_ACTIONS)
             ]
         return [
             ConsoleMessageAction(

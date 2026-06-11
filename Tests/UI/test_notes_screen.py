@@ -1364,7 +1364,7 @@ class TestNotesScreenMethods:
             editor = screen.query_one("#notes-editor-area", TextArea)
             panel = screen.query_one("#workspace-context-panel", WorkspaceContextPanel)
             top_save_button = screen.query_one("#notes-save-button", Button)
-            export_actions = screen.query_one("#notes-export-actions", Collapsible)
+            export_actions = screen.query_one("#notes-export-actions")
             title = screen.query_one("#notes-details-sidebar-title", Static)
 
             assert sync_button.display is True

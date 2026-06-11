@@ -19,7 +19,6 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.widgets import (
     Button,
-    Collapsible,
     Input,
     Label,
     ListItem,
@@ -128,9 +127,15 @@ class NotesNavigatorPane(NotesListPopulateMixin, VerticalScroll):
 
     DEFAULT_CSS = """
     NotesNavigatorPane > Input,
-    NotesNavigatorPane > Select,
-    NotesNavigatorPane > Button {
+    NotesNavigatorPane > Select {
         width: 100%;
+        margin-bottom: 1;
+    }
+    NotesNavigatorPane > Button {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
         margin-bottom: 1;
     }
     NotesNavigatorPane ListView {
@@ -174,14 +179,24 @@ class NotesNavigatorPane(NotesListPopulateMixin, VerticalScroll):
 
         yield Input(placeholder="Search notes content...", id="notes-search-input")
         yield Input(placeholder="Keywords (e.g., projectA, urgent)", id="notes-keyword-filter-input")
-        yield Button("Search / Filter", id="notes-search-button", variant="default")
+        yield Button(
+            "Search / Filter",
+            id="notes-search-button",
+            compact=True,
+            classes="destination-action-button console-action-secondary",
+        )
 
         yield Static("Sort by:", classes="notes-pane-section")
         yield Select(
             options=[("Date Created", "date_created"), ("Date Modified", "date_modified"), ("Title", "title")],
             id="notes-sort-select",
         )
-        yield Button("↓ Newest First", id="notes-sort-order-button", variant="default")
+        yield Button(
+            "↓ Newest First",
+            id="notes-sort-order-button",
+            compact=True,
+            classes="destination-action-button console-action-secondary",
+        )
 
         yield Static("Create:", classes="notes-pane-section")
 
@@ -198,12 +213,23 @@ class NotesNavigatorPane(NotesListPopulateMixin, VerticalScroll):
             value="blank" if "blank" in NOTE_TEMPLATES else (template_options[0][1] if template_options else None),
             id="notes-template-select",
         )
-        yield Button("Create from Template", id="notes-create-from-template-button", variant="success")
-        yield Button("Create Blank Note", id="notes-create-new-button", variant="default")
+        yield Button(
+            "Create from Template",
+            id="notes-create-from-template-button",
+            compact=True,
+            classes="destination-action-button console-action-primary",
+        )
+        yield Button(
+            "Create Blank Note",
+            id="notes-create-new-button",
+            compact=True,
+            classes="destination-action-button console-action-secondary",
+        )
         yield Button(
             "Import Note",
             id="notes-import-button",
-            variant="default",
+            compact=True,
+            classes="destination-action-button console-action-secondary",
             tooltip="Import a note file into the current Notes scope.",
         )
 
@@ -233,10 +259,19 @@ class NotesEditorPane(Vertical):
         min-height: 6;
     }
     NotesEditorPane > #notes-editor-controls {
-        height: 3;
-        min-height: 3;
+        height: 1;
+        min-height: 1;
         align: left middle;
-        overflow-x: auto;
+    }
+    NotesEditorPane #notes-editor-controls Button {
+        height: 1;
+        min-height: 1;
+        margin-left: 1;
+    }
+    NotesEditorPane #notes-editor-controls-spacer {
+        width: 1fr;
+        min-width: 0;
+        height: 1;
     }
     """
 
@@ -246,33 +281,53 @@ class NotesEditorPane(Vertical):
         workspace_panel = WorkspaceContextPanel(id="workspace-context-panel")
         workspace_panel.display = False
         yield workspace_panel
+        # Console-composer-style action bar: status on the left, right-aligned
+        # compact actions.
         with Horizontal(id="notes-editor-controls"):
-            yield Button("Save Note", id="notes-save-button", variant="primary")
-            yield Button("Preview", id="notes-preview-toggle", variant="default")
-            yield Button("Sync 🔄", id="notes-sync-button", variant="default")
             yield Label("Ready", id="notes-unsaved-indicator", classes="unsaved-indicator")
             yield Label("Words: 0", id="notes-word-count", classes="word-count")
+            yield Static("", id="notes-editor-controls-spacer")
+            yield Button(
+                "Save",
+                id="notes-save-button",
+                compact=True,
+                classes="destination-action-button console-action-primary",
+            )
+            yield Button(
+                "Preview",
+                id="notes-preview-toggle",
+                compact=True,
+                classes="destination-action-button console-action-secondary",
+            )
+            yield Button(
+                "Sync",
+                id="notes-sync-button",
+                compact=True,
+                classes="destination-action-button console-action-secondary",
+            )
 
 
 class NotesInspectorPane(VerticalScroll):
     """Right workbench pane: details, keywords, export/delete, handoff."""
 
     DEFAULT_CSS = """
-    NotesInspectorPane > Button,
-    NotesInspectorPane > Collapsible > Button {
-        width: 100%;
+    NotesInspectorPane Button {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
         margin-bottom: 1;
     }
-    NotesInspectorPane > Collapsible {
+    NotesInspectorPane .notes-inspector-section {
         width: 100%;
-        margin-bottom: 1;
+        height: auto;
     }
     NotesInspectorPane > .notes-keywords-textarea {
         width: 100%;
         height: 5;
         margin-bottom: 1;
     }
-    NotesInspectorPane > .notes-pane-section {
+    NotesInspectorPane .notes-pane-section {
         text-style: bold;
         color: $text-muted;
         margin-top: 1;
@@ -287,12 +342,15 @@ class NotesInspectorPane(VerticalScroll):
     }
     NotesInspectorPane > .auto-save-container {
         layout: horizontal;
-        height: 3;
+        height: 1;
         width: 100%;
         margin-bottom: 1;
         align: left middle;
     }
     NotesInspectorPane .auto-save-container Switch {
+        height: 1;
+        min-height: 1;
+        border: none;
         margin-right: 1;
     }
     NotesInspectorPane .auto-save-container Label {
@@ -328,24 +386,68 @@ class NotesInspectorPane(VerticalScroll):
 
         yield Static("Keywords:", classes="notes-pane-section", id="notes-keywords-label")
         yield TextArea("", id="notes-keywords-area", classes="notes-keywords-textarea")
-        yield Button("Save All Changes", id="notes-save-current-button", variant="success")
-        yield Button("Use in Chat", id="notes-use-in-chat-button", variant="primary")
+        yield Button(
+            "Save All Changes",
+            id="notes-save-current-button",
+            compact=True,
+            classes="destination-action-button console-action-primary",
+        )
+        yield Button(
+            "Use in Chat",
+            id="notes-use-in-chat-button",
+            compact=True,
+            classes="destination-action-button console-action-secondary",
+        )
 
         with Horizontal(classes="auto-save-container", id="notes-auto-save-container"):
             yield Switch(id="notes-auto-save-toggle", value=self._auto_save_enabled, tooltip="Auto-save")
             yield Label("Auto-save", classes="auto-save-label")
 
-        with Collapsible(title="Emojis", collapsed=True, id="notes-emoji-actions"):
-            yield Button("Open Emoji Picker 🎨", id="notes-sidebar-emoji-button")
+        # Console rails use plain headed sections, not collapsible chrome.
+        with Vertical(id="notes-emoji-actions", classes="notes-inspector-section"):
+            yield Static("Emojis", classes="notes-pane-section")
+            yield Button(
+                "Open Emoji Picker",
+                id="notes-sidebar-emoji-button",
+                compact=True,
+                classes="destination-action-button console-action-secondary",
+            )
 
-        with Collapsible(title="Export Options", collapsed=True, id="notes-export-actions"):
-            yield Button("Export as Markdown", id="notes-export-markdown-button")
-            yield Button("Export as Text", id="notes-export-text-button")
-            yield Button("Copy as Markdown", id="notes-copy-markdown-button")
-            yield Button("Copy as Text", id="notes-copy-text-button")
+        with Vertical(id="notes-export-actions", classes="notes-inspector-section"):
+            yield Static("Export", classes="notes-pane-section")
+            yield Button(
+                "Export Markdown",
+                id="notes-export-markdown-button",
+                compact=True,
+                classes="destination-action-button console-action-secondary",
+            )
+            yield Button(
+                "Export Text",
+                id="notes-export-text-button",
+                compact=True,
+                classes="destination-action-button console-action-secondary",
+            )
+            yield Button(
+                "Copy Markdown",
+                id="notes-copy-markdown-button",
+                compact=True,
+                classes="destination-action-button console-action-secondary",
+            )
+            yield Button(
+                "Copy Text",
+                id="notes-copy-text-button",
+                compact=True,
+                classes="destination-action-button console-action-secondary",
+            )
 
-        with Collapsible(title="Delete Item", collapsed=True, id="notes-delete-actions"):
-            yield Button("Delete Selected Note", id="notes-delete-button", variant="error")
+        with Vertical(id="notes-delete-actions", classes="notes-inspector-section"):
+            yield Static("Danger Zone", classes="notes-pane-section")
+            yield Button(
+                "Delete Selected Note",
+                id="notes-delete-button",
+                compact=True,
+                classes="destination-action-button console-action-secondary notes-delete-action",
+            )
 
     def _resource_name(self, resource_kind: str) -> str:
         mapping = {
@@ -439,10 +541,10 @@ class NotesInspectorPane(VerticalScroll):
         else:
             delete_button.label = f"Delete Selected {resource_name}"
 
-        export_actions = self.query_one("#notes-export-actions", Collapsible)
+        export_actions = self.query_one("#notes-export-actions", Vertical)
         export_actions.display = is_note_resource
 
-        emoji_actions = self.query_one("#notes-emoji-actions", Collapsible)
+        emoji_actions = self.query_one("#notes-emoji-actions", Vertical)
         emoji_actions.display = is_note_resource
 
         meta = self.query_one("#notes-detail-meta", Static)
@@ -477,6 +579,8 @@ class NotesSyncPane(VerticalScroll):
     NotesSyncPane SyncStatusCard {
         padding: 0 1;
         margin-bottom: 1;
+        border: solid $surface-lighten-1;
+        background: $surface;
     }
     NotesSyncPane QuickSyncSection {
         height: auto;
@@ -490,16 +594,31 @@ class NotesSyncPane(VerticalScroll):
         height: auto;
     }
     NotesSyncPane .sync-button-container {
-        height: 3;
+        height: 1;
         margin-top: 0;
+        align: left middle;
+    }
+    NotesSyncPane #quick-sync-btn {
+        width: auto;
+        min-width: 12;
+        height: 1;
+        min-height: 1;
+        border: none;
     }
     NotesSyncPane .sync-options {
-        height: 3;
-        margin-top: 0;
+        height: 1;
+        margin-top: 1;
+        align: left middle;
+    }
+    NotesSyncPane .sync-options Switch {
+        height: 1;
+        min-height: 1;
+        border: none;
     }
     NotesSyncPane RecentActivitySection {
         height: 8;
         margin-top: 1;
+        border: solid $surface-lighten-1;
     }
     """
 
@@ -741,7 +860,8 @@ class NotesTemplatesPane(VerticalScroll):
         yield Button(
             "Create Note from Template",
             id="notes-templates-create-button",
-            variant="primary",
+            compact=True,
+            classes="destination-action-button console-action-primary",
         )
 
     @property

@@ -104,11 +104,13 @@ class NotesScreen(BaseAppScreen):
         overflow: hidden;
     }
 
-    #notes-mode-label {
-        width: 8;
-        min-width: 8;
+    #notes-status-row {
+        width: 1fr;
+        min-width: 0;
         height: 1;
         min-height: 1;
+        text-align: right;
+        color: $text-muted;
     }
 
     Button.notes-mode-chip {
@@ -236,23 +238,19 @@ class NotesScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         with Vertical(id="notes-shell"):
             yield Static("Notes", id="notes-title", classes="ds-destination-header")
-            yield Static(
-                "Capture, search, and reuse notes; sync to disk; create from templates.",
-                id="notes-purpose",
-                classes="destination-purpose",
-            )
-            yield Static(
-                self._status_row_label(),
-                id="notes-status-row",
-                classes="destination-status-row",
-            )
+            # Console-style header: title plus one dense line that carries the
+            # mode chips and the scope/status summary.
             with DestinationModeStrip(id="notes-mode-strip", classes="destination-mode-strip"):
-                yield Static("Modes:", id="notes-mode-label", classes="destination-section")
                 for mode_id, mode in self.NOTES_MODES.items():
                     classes = "notes-mode-chip"
                     if mode_id == self.state.active_mode:
                         classes = f"{classes} is-active"
                     yield Button(mode["label"], id=mode["button_id"], classes=classes)
+                yield Static(
+                    self._status_row_label(),
+                    id="notes-status-row",
+                    classes="destination-status-row",
+                )
 
             notes_region = Horizontal(
                 id="notes-mode-region-notes",

@@ -336,12 +336,10 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 #home-purpose,
 #console-purpose,
 #library-purpose,
-#notes-purpose,
 #artifacts-purpose,
 #mcp-purpose,
 #console-status-row,
 #library-status-row,
-#notes-status-row,
 #notes-mode-strip,
 #console-mode-bar,
 #artifacts-mode-strip,
@@ -1297,12 +1295,20 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     overflow: hidden;
 }
 
-#library-mode-label,
-#notes-mode-label {
+#library-mode-label {
     width: $ds-library-mode-label-width;
     min-width: $ds-library-mode-label-width;
     height: $ds-library-mode-bar-height;
     min-height: $ds-library-mode-bar-height;
+}
+
+#notes-status-row {
+    width: 1fr;
+    min-width: 0;
+    height: $ds-destination-compact-strip-height;
+    min-height: $ds-destination-compact-strip-height;
+    text-align: right;
+    color: $ds-text-muted;
 }
 
 Button.library-mode-chip,
@@ -1905,6 +1911,24 @@ Button.settings-category-button.settings-secondary-search-match {
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
     overflow-y: auto;
+}
+
+#notes-sync-pane #quick-sync-btn {
+    border: none;
+    background: $ds-action-focus 35%;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#notes-sync-pane #browse-folder-btn {
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+Button.notes-delete-action {
+    color: $ds-status-error;
 }
 
 #library-source-inspector,
