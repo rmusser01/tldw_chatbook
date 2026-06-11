@@ -29,7 +29,6 @@ from .CCP_Modules import (
     PromptMessage,
     DictionaryMessage,
     ViewChangeMessage,
-    SidebarMessage,
     LoadingManager,
     setup_ccp_enhancements
 )

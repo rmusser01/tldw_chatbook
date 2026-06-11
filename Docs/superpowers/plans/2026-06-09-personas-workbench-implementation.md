@@ -70,7 +70,7 @@ state model.
 **Files:**
 - Create: `backlog/decisions/004-personas-destination-native-workbench.md`
 
-- [ ] **Step 1: Create the backlog task**
+- [x] **Step 1: Create the backlog task**
 
 ```bash
 backlog task create "Personas destination-native workbench (Characters + Personas)" \
@@ -81,7 +81,7 @@ backlog task create "Personas destination-native workbench (Characters + Persona
 
 Note the created task id (referred to as `task-N` below).
 
-- [ ] **Step 2: Write the ADR**
+- [x] **Step 2: Write the ADR**
 
 Create `backlog/decisions/004-personas-destination-native-workbench.md`:
 
@@ -135,7 +135,7 @@ and is reused; only the route shell, persona stubs, and sidebar chrome are repla
 - Plan: Docs/superpowers/plans/2026-06-09-personas-workbench-implementation.md
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backlog/decisions/004-personas-destination-native-workbench.md backlog/tasks/
@@ -152,7 +152,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Create: `tldw_chatbook/Widgets/Persona_Widgets/personas_messages.py`
 - Test: `Tests/UI/test_personas_workbench_state.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # Tests/UI/test_personas_workbench_state.py
@@ -213,12 +213,12 @@ def test_state_is_frozen():
     assert replace(state, active_mode="personas").active_mode == "personas"
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q Tests/UI/test_personas_workbench_state.py --tb=short`
 Expected: FAIL with `ModuleNotFoundError: No module named 'tldw_chatbook.Widgets.Persona_Widgets'`
 
-- [ ] **Step 3: Implement state and messages**
+- [x] **Step 3: Implement state and messages**
 
 ```python
 # tldw_chatbook/Widgets/Persona_Widgets/personas_state.py
@@ -339,12 +339,12 @@ class PersonaProfileEditCancelled(PersonasWorkbenchMessage):
 """Destination-native Personas workbench pane widgets."""
 ```
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_workbench_state.py --tb=short`
 Expected: 5 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/Widgets/Persona_Widgets/ Tests/UI/test_personas_workbench_state.py
@@ -359,7 +359,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Create: `tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py`
 - Test: `Tests/UI/test_personas_library_pane.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # Tests/UI/test_personas_library_pane.py
@@ -484,12 +484,12 @@ async def test_search_input_posts_search_changed_and_new_posts_new():
     assert news == [True]
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q Tests/UI/test_personas_library_pane.py --tb=short`
 Expected: FAIL with `ModuleNotFoundError` for `personas_library_pane`
 
-- [ ] **Step 3: Implement the pane**
+- [x] **Step 3: Implement the pane**
 
 ```python
 # tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py
@@ -614,12 +614,12 @@ class PersonasLibraryPane(Vertical):
         self.post_message(LibrarySearchChanged(query=event.value))
 ```
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_library_pane.py --tb=short`
 Expected: 5 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py Tests/UI/test_personas_library_pane.py
@@ -634,7 +634,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Create: `tldw_chatbook/Widgets/Persona_Widgets/personas_inspector_pane.py`
 - Test: `Tests/UI/test_personas_inspector_pane.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # Tests/UI/test_personas_inspector_pane.py
@@ -742,12 +742,12 @@ async def test_conversations_panel_rows_post_selection():
     assert received == ["conv-1"]
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q Tests/UI/test_personas_inspector_pane.py --tb=short`
 Expected: FAIL with `ModuleNotFoundError` for `personas_inspector_pane`
 
-- [ ] **Step 3: Implement the pane**
+- [x] **Step 3: Implement the pane**
 
 ```python
 # tldw_chatbook/Widgets/Persona_Widgets/personas_inspector_pane.py
@@ -869,12 +869,12 @@ class PersonasInspectorPane(Vertical):
             self.post_message(ConversationRowSelected(self._conversation_ids[index]))
 ```
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_inspector_pane.py --tb=short`
 Expected: 5 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/Widgets/Persona_Widgets/personas_inspector_pane.py Tests/UI/test_personas_inspector_pane.py
@@ -910,7 +910,7 @@ views, edits, creates, and deletes characters through the reused CCP behavior la
   `new_character()`, and posts `CharacterSaveRequested(character_data)` /
   `CharacterEditorCancelled`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # Tests/UI/test_personas_workbench.py
@@ -1061,12 +1061,12 @@ class TestCharacterSelectionAndEdit:
         assert created and created[0]["name"] == "New Hero"
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q Tests/UI/test_personas_workbench.py --tb=short`
 Expected: FAIL — `PersonasScreen` has no `state`/workbench IDs (current thin shell).
 
-- [ ] **Step 3: Rewrite the screen**
+- [x] **Step 3: Rewrite the screen**
 
 Replace the entire contents of `tldw_chatbook/UI/Screens/personas_screen.py`:
 
@@ -1386,18 +1386,18 @@ Note: `UnsavedChangesDialog.__init__` — check its actual signature in
 accepts (it subclasses `ConfirmationDialog`, which takes `message`). Adjust the call if
 the constructor differs, keeping the await-for-bool contract.
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_workbench.py Tests/UI/test_personas_workbench_state.py --tb=short`
 Expected: all pass
 
-- [ ] **Step 5: Run neighboring suites to catch fallout**
+- [x] **Step 5: Run neighboring suites to catch fallout**
 
 Run: `python -m pytest -q Tests/UI/test_ccp_screen.py Tests/UI/test_personas_library_pane.py Tests/UI/test_personas_inspector_pane.py --tb=short`
 Expected: pass (legacy ccp route untouched in this phase). If anything imported the old
 thin-shell symbols (`PERSONAS_EMPTY_COPY` etc.), update those imports.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add tldw_chatbook/UI/Screens/personas_screen.py Tests/UI/test_personas_workbench.py
@@ -1412,7 +1412,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Modify: `tldw_chatbook/UI/Screens/personas_screen.py`
 - Modify: `Tests/UI/test_personas_workbench.py`
 
-- [ ] **Step 1: Write the failing test** (append to `TestWorkbenchShell`)
+- [x] **Step 1: Write the failing test** (append to `TestWorkbenchShell`)
 
 ```python
     async def test_footer_shortcut_context_set_and_cleared(self, mock_app_instance, stub_characters):
@@ -1426,12 +1426,12 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
             assert context.source == "personas"
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q "Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_footer_shortcut_context_set_and_cleared" --tb=short`
 Expected: FAIL — no `_shortcut_context`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add to `personas_screen.py` (imports at top, methods on the class):
 
@@ -1475,12 +1475,12 @@ Call `self._register_footer_shortcuts()` at the end of `on_mount`, and add:
 Before finalizing key choices, run `grep -rn "ctrl+n\|ctrl+f\|ctrl+s" tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/app.py`
 and change any key that collides with a global binding (spec: keys are illustrative).
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_workbench.py --tb=short`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/UI/Screens/personas_screen.py Tests/UI/test_personas_workbench.py
@@ -1503,7 +1503,7 @@ save, cancel, unsaved guard); legacy `ccp` route still works; `python -m pytest 
 - Create: `tldw_chatbook/Widgets/Persona_Widgets/persona_profile_editor_widget.py`
 - Test: `Tests/UI/test_persona_profile_widgets.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # Tests/UI/test_persona_profile_widgets.py
@@ -1603,12 +1603,12 @@ async def test_editor_save_requires_name():
         assert errors == ("name: required",)
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q Tests/UI/test_persona_profile_widgets.py --tb=short`
 Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implement the widgets**
+- [x] **Step 3: Implement the widgets**
 
 ```python
 # tldw_chatbook/Widgets/Persona_Widgets/persona_profile_card_widget.py
@@ -1746,12 +1746,12 @@ class PersonaProfileEditorWidget(Container):
         self.post_message(PersonaProfileEditCancelled())
 ```
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `python -m pytest -q Tests/UI/test_persona_profile_widgets.py --tb=short`
 Expected: 4 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/Widgets/Persona_Widgets/persona_profile_card_widget.py \
@@ -1768,7 +1768,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Modify: `tldw_chatbook/UI/Screens/personas_screen.py`
 - Modify: `Tests/UI/test_personas_workbench.py`
 
-- [ ] **Step 1: Write the failing tests** (new class in `test_personas_workbench.py`)
+- [x] **Step 1: Write the failing tests** (new class in `test_personas_workbench.py`)
 
 ```python
 PROFILES = [
@@ -1834,12 +1834,12 @@ If `mock_app_instance.character_persona_scope_service` is not already an
 `return_value` assignment — match how `Tests/UI/test_ccp_screen.py` stubs the same
 service.
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q "Tests/UI/test_personas_workbench.py::TestPersonasMode" --tb=short`
 Expected: FAIL — personas mode renders nothing
 
-- [ ] **Step 3: Implement personas mode in the screen**
+- [x] **Step 3: Implement personas mode in the screen**
 
 In `personas_screen.py`:
 
@@ -1999,12 +1999,12 @@ unsaved flags), and add save/cancel/edit handlers:
 Make `_row_selected` `async` already (it is) and keep `dataclasses.replace` imports
 local for consistency with the existing methods.
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_workbench.py --tb=short`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/UI/Screens/personas_screen.py Tests/UI/test_personas_workbench.py
@@ -2026,7 +2026,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Modify: `tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py` (add module-level `search_characters`)
 - Modify: `Tests/UI/test_personas_workbench.py`
 
-- [ ] **Step 1: Write the failing tests** (new class)
+- [x] **Step 1: Write the failing tests** (new class)
 
 ```python
 class TestSearch:
@@ -2058,12 +2058,12 @@ class TestSearch:
             assert len(screen.query(".personas-library-row")) == 2
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q "Tests/UI/test_personas_workbench.py::TestSearch" --tb=short`
 Expected: FAIL — search does nothing
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add to `ccp_character_handler.py` next to `fetch_all_characters` (module level):
 
@@ -2153,12 +2153,12 @@ profile list is small), reusing the same `filtered=bool(query)` count style:
 (Refactor `_refresh_persona_rows` to call `_render_profile_rows_filtered()` after
 storing `self._profiles` so both paths render identically.)
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_workbench.py --tb=short`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/UI/Screens/personas_screen.py \
@@ -2179,7 +2179,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   `:2743` (`export_character_card_to_png`); legacy import flow in
   `tldw_chatbook/UI/Screens/ccp_screen.py` (search for `ccp-import-character-native`)
 
-- [ ] **Step 1: Write the failing tests** (new class)
+- [x] **Step 1: Write the failing tests** (new class)
 
 ```python
 class TestImportExport:
@@ -2231,12 +2231,12 @@ class TestImportExport:
         assert target.read_text() == '{"name": "Detective Sam"}'
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q "Tests/UI/test_personas_workbench.py::TestImportExport" --tb=short`
 Expected: FAIL — methods missing
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `personas_screen.py`, add imports:
 
@@ -2320,12 +2320,12 @@ save-file dialog (same dialog family the legacy export used) and then call
 exact parameter order at `Character_Chat_Lib.py:2743` before wiring — it takes the
 output path; match its signature.
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_workbench.py --tb=short`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/UI/Screens/personas_screen.py Tests/UI/test_personas_workbench.py
@@ -2343,7 +2343,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   (`list_character_conversations(db, character_id, limit, offset)`),
   `tldw_chatbook/Widgets/CCP_Widgets/ccp_conversation_view_widget.py`
 
-- [ ] **Step 1: Write the failing tests** (new class)
+- [x] **Step 1: Write the failing tests** (new class)
 
 ```python
 class TestConversationsPanel:
@@ -2386,12 +2386,12 @@ class TestConversationsPanel:
             assert view.display is True
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q "Tests/UI/test_personas_workbench.py::TestConversationsPanel" --tb=short`
 Expected: FAIL
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `personas_screen.py`:
 
@@ -2456,12 +2456,12 @@ attach, plus `metadata["conversation_id"]`) and **Open in Library** posts
 `NavigateToScreen("conversation")` (import `NavigateToScreen` from
 `..Navigation.main_navigation`).
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_workbench.py --tb=short`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/UI/Screens/personas_screen.py Tests/UI/test_personas_workbench.py
@@ -2480,7 +2480,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   `attach_to_console` method) and `ccp_screen.py` `#ccp-attach-selected-to-console` /
   `#ccp-start-selected-chat` handlers
 
-- [ ] **Step 1: Write the failing tests** (new class)
+- [x] **Step 1: Write the failing tests** (new class)
 
 ```python
 class TestConsoleActions:
@@ -2516,12 +2516,12 @@ class TestConsoleActions:
         assert staged[0].metadata["intent"] == "start_chat"
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q "Tests/UI/test_personas_workbench.py::TestConsoleActions" --tb=short`
 Expected: FAIL
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
     @on(Button.Pressed, "#personas-attach-to-console")
@@ -2579,12 +2579,12 @@ Expected: FAIL
         )
 ```
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_workbench.py --tb=short`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/UI/Screens/personas_screen.py Tests/UI/test_personas_workbench.py
@@ -2600,7 +2600,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Modify: `tldw_chatbook/UI/Screens/personas_screen.py`
 - Test: `Tests/UI/test_personas_preview.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # Tests/UI/test_personas_preview.py
@@ -2682,12 +2682,12 @@ async def test_provider_status_is_readable():
         assert "Provider unavailable" in str(status.renderable)
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q Tests/UI/test_personas_preview.py --tb=short`
 Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implement the pane**
+- [x] **Step 3: Implement the pane**
 
 ```python
 # tldw_chatbook/Widgets/Persona_Widgets/personas_preview_pane.py
@@ -2798,12 +2798,12 @@ class PersonasPreviewPane(Vertical):
         self.post_message(PreviewOpenInConsoleRequested())
 ```
 
-- [ ] **Step 4: Verify pane green**
+- [x] **Step 4: Verify pane green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_preview.py --tb=short`
 Expected: 4 passed
 
-- [ ] **Step 5: Wire the screen to the provider gateway**
+- [x] **Step 5: Wire the screen to the provider gateway**
 
 In `personas_screen.py`:
 
@@ -2926,7 +2926,7 @@ Note the spec point: the preview reads the in-editor draft — when
 record (the editor exposes the same data it posts in `CharacterSaveRequested`; read
 `ccp_character_editor_widget.py` for its collect method and use it).
 
-- [ ] **Step 6: Add a screen-level test** (append to `Tests/UI/test_personas_workbench.py`)
+- [x] **Step 6: Add a screen-level test** (append to `Tests/UI/test_personas_workbench.py`)
 
 ```python
 class TestPreviewIntegration:
@@ -2949,12 +2949,12 @@ class TestPreviewIntegration:
             assert "Traceback" not in text
 ```
 
-- [ ] **Step 7: Verify all green**
+- [x] **Step 7: Verify all green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_preview.py Tests/UI/test_personas_workbench.py --tb=short`
 Expected: all pass
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add tldw_chatbook/Widgets/Persona_Widgets/personas_preview_pane.py \
@@ -2972,7 +2972,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Modify: `tldw_chatbook/UI/Screens/personas_screen.py`
 - Modify: `Tests/UI/test_personas_workbench.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 class TestDelete:
@@ -2999,12 +2999,12 @@ async def _async_true():
     return True
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run: `python -m pytest -q "Tests/UI/test_personas_workbench.py::TestDelete" --tb=short`
 Expected: FAIL — `delete_character` does not exist
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add to `ccp_character_handler.py` (module level, next to `update_character`):
 
@@ -3084,12 +3084,12 @@ Check `ConfirmationDialog.__init__` at `confirmation_dialog.py:70` and
 `delete_persona_profile`'s signature at `character_persona_scope_service.py:684` (it
 may also need an expected version argument) before wiring; match what exists.
 
-- [ ] **Step 4: Verify green**
+- [x] **Step 4: Verify green**
 
 Run: `python -m pytest -q Tests/UI/test_personas_workbench.py --tb=short`
 Expected: all pass
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/UI/CCP_Modules/ccp_character_handler.py \
@@ -3116,7 +3116,7 @@ before Phase 4.
 - Test: `Tests/UI/test_shell_destinations.py` (or create if missing — check
   `grep -rl resolve_shell_route Tests/` first and extend the existing file)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_ccp_legacy_routes_resolve_to_personas_destination():
@@ -3136,12 +3136,12 @@ def test_ccp_screen_route_loads_personas_screen():
     assert screen_class.__name__ == "PersonasScreen"
 ```
 
-- [ ] **Step 2: Verify red**
+- [x] **Step 2: Verify red**
 
 Run the test file.
 Expected: FAIL — `ccp` still resolves to itself / `ConversationScreen`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `shell_destinations.py`:
 - Remove `"ccp"` from `_ROUTABLE_LEGACY_ROUTES` (line ~144).
@@ -3162,14 +3162,14 @@ to:
     "ccp": ScreenRoute("ccp", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"),
 ```
 
-- [ ] **Step 4: Verify green and run navigation suites**
+- [x] **Step 4: Verify green and run navigation suites**
 
 Run: `python -m pytest -q Tests/UI/test_shell_destinations.py Tests/UI --tb=short`
 (adjust the first path to wherever the route tests live)
 Expected: route tests pass; any test asserting the old mapping gets updated to the new
 expectation in this commit.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tldw_chatbook/UI/Navigation/ Tests/
@@ -3189,7 +3189,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   `tldw_chatbook/UI/CCP_Modules/__init__.py`
 - Modify/Delete: `Tests/UI/test_ccp_screen.py`
 
-- [ ] **Step 1: Find every remaining importer**
+- [x] **Step 1: Find every remaining importer**
 
 ```bash
 grep -rn "ccp_screen\|conversation_screen\|ccp_sidebar\|CCPScreen\|ConversationScreen" \
@@ -3201,7 +3201,7 @@ Expected: hits only in the files being deleted, the two `__init__.py` files, and
 fixed in this task before deleting — replace screen-class references with
 `PersonasScreen` or remove dead branches, smallest change that keeps imports clean.
 
-- [ ] **Step 2: Port surviving test intent**
+- [x] **Step 2: Port surviving test intent**
 
 Review `Tests/UI/test_ccp_screen.py`. Behavior already covered by
 `test_personas_workbench.py` (selection, save, attach, mode switching) is deleted with
@@ -3210,7 +3210,7 @@ the file. Anything still unique (e.g. import-flow edge cases) moves into
 `test_ccp_prompt_handler_scope.py` test reused modules — keep them; remove only tests
 of `ccp_sidebar_handler`.
 
-- [ ] **Step 3: Delete and clean exports**
+- [x] **Step 3: Delete and clean exports**
 
 ```bash
 git rm tldw_chatbook/UI/Screens/ccp_screen.py tldw_chatbook/UI/Screens/ccp_screen.py.bak \
@@ -3223,7 +3223,7 @@ git rm tldw_chatbook/UI/Screens/ccp_screen.py tldw_chatbook/UI/Screens/ccp_scree
 Remove the corresponding names from `CCP_Widgets/__init__.py` and
 `CCP_Modules/__init__.py`.
 
-- [ ] **Step 4: Verify the app imports and the suite passes**
+- [x] **Step 4: Verify the app imports and the suite passes**
 
 ```bash
 python -c "import tldw_chatbook.app"
@@ -3232,7 +3232,7 @@ python -m pytest -q Tests/UI Tests/Chat --tb=short
 
 Expected: import succeeds, suites pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
@@ -3248,15 +3248,15 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Add: screenshots under `Docs/superpowers/qa/personas-workbench/`
 - Modify: the backlog task from Task 1
 
-- [ ] **Step 1: Update the route inventory** — mark `ccp`, `characters`, `prompts` as
+- [x] **Step 1: Update the route inventory** — mark `ccp`, `characters`, `prompts` as
   resolving to the `personas` destination; note the workbench replaces the snapshot shell.
 
-- [ ] **Step 2: Capture actual screenshots** via the established textual-web/CDP
+- [x] **Step 2: Capture actual screenshots** via the established textual-web/CDP
   workflow: Characters mode with a selected character (card + conversations + preview
   expanded), the editor with a validation error, and Personas mode. Save under
   `Docs/superpowers/qa/personas-workbench/` and present for approval.
 
-- [ ] **Step 3: Run the full test suite**
+- [x] **Step 3: Run the full test suite**
 
 ```bash
 python -m pytest -q --tb=short
@@ -3264,7 +3264,7 @@ python -m pytest -q --tb=short
 
 Expected: green (pre-existing unrelated failures noted explicitly if any).
 
-- [ ] **Step 4: Close out the backlog task**
+- [x] **Step 4: Close out the backlog task**
 
 ```bash
 backlog task edit <task-N> -s Done --notes "Personas workbench shipped per spec \
@@ -3276,7 +3276,7 @@ and screenshot QA."
 Check all ACs (`- [ ]` → `- [x]`) in the task file and add Implementation Notes per the
 repo's Definition of Done.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Docs/ backlog/
@@ -3303,3 +3303,20 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   authority)`, `PersonasWorkbenchState.with_mode`, message constructor arguments —
   used identically across tasks.
 ```
+
+## Completion Notes (2026-06-11)
+
+- Tasks 1-2 were superseded by PR #506 ("Add Personas workbench foundation
+  contracts"), which landed ADR-007
+  (`backlog/decisions/007-personas-workbench-route-consolidation.md`), the state
+  model, the message vocabulary, and the foundation tests.
+- A Console-style UX parity phase (UX-A through UX-E4, commits `164a5ae5..`) was
+  inserted before Tasks 15-17 after design review: ds-token/contract groundwork,
+  ds-native card/editor/transcript widgets, screen chrome parity, faithful QA
+  evidence, ListView-based navigation, bindings + managed focus, real dirty
+  tracking with a live header, and preview/validation/feedback polish.
+- Task 16 expanded beyond the planned scope to retire the orphaned legacy
+  widgets alongside the CCP screen and sidebar chrome; the retirement commit
+  removed a net 7,312 lines.
+- Inherited pre-existing test failures (branch debt that predates this work) are
+  documented in the backlog summary task for the rebuild.
