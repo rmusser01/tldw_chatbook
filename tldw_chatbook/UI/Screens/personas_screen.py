@@ -183,6 +183,12 @@ class PersonasScreen(BaseAppScreen):
         self.state = PersonasWorkbenchState()
         self._edit_mode: str = "view"
         self._guard_active: bool = False
+        # Refuse-reentry flag for the import/export file dialogs. Cancelling
+        # an in-flight dialog worker (exclusive=True) would orphan a modal
+        # pushed via push_screen_wait, whose dismissal then calls
+        # set_result on a cancelled future (InvalidStateError on Textual
+        # 8.2.7), so a second request is ignored instead.
+        self._io_dialog_active: bool = False
         self._profile_save_inflight: bool = False
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
@@ -579,44 +585,53 @@ class PersonasScreen(BaseAppScreen):
 
     async def _open_import_dialog(self) -> None:
         """Continuation for the guarded import action: launch the dialog worker."""
-        self.run_worker(self._import_dialog_worker(), group="personas-io", exclusive=True)
+        if self._io_dialog_active:
+            logger.debug("Import/export dialog already active; ignoring import request.")
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._import_dialog_worker(), group="personas-io")
 
     async def _import_dialog_worker(self) -> None:
         # Same dialog family as the legacy CCP import route
         # (ccp_character_handler.handle_import).
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
 
-        picker = EnhancedFileOpen(
-            title="Import Character Card",
-            filters=Filters(
-                ("Character Cards", "*.json;*.png"),
-                ("JSON Files", "*.json"),
-                ("PNG Files (with embedded data)", "*.png"),
-                ("All Files", "*.*"),
-            ),
-            context="character_import",
-        )
         try:
-            file_path = await self.app.push_screen_wait(picker)
-        except Exception:
-            logger.warning("Could not show the import file dialog.", exc_info=True)
-            return
-        if file_path:
-            await self._import_character_from_path(str(file_path))
+            picker = EnhancedFileOpen(
+                title="Import Character Card",
+                filters=Filters(
+                    ("Character Cards", "*.json;*.png"),
+                    ("JSON Files", "*.json"),
+                    ("PNG Files (with embedded data)", "*.png"),
+                    ("All Files", "*.*"),
+                ),
+                context="character_import",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.warning("Could not show the import file dialog.", exc_info=True)
+                return
+            if file_path:
+                await self._import_character_from_path(str(file_path))
+        finally:
+            self._io_dialog_active = False
 
     async def _import_character_from_path(self, path: str) -> None:
         """Import a character card file, then refresh, select, and reveal it."""
+        # On a name conflict the importer returns the EXISTING character's id;
+        # snapshot the pre-import ids so the notification can say so.
+        pre_import_ids = {str(c.get("id")) for c in self._characters}
         try:
             # Sync DB call; see the section comment for the threading choice.
-            result = await asyncio.to_thread(
+            imported_id = await asyncio.to_thread(
                 ccp_character_handler.import_character_card, path
             )
         except Exception as exc:
             logger.error(f"Error importing character card from {path}: {exc}", exc_info=True)
             self._notify(f"Import failed: {exc}", "error")
             return
-        imported_id = result.get("id") if isinstance(result, dict) else result
-        if not result or imported_id is None:
+        if imported_id is None:
             self._notify(
                 "Import failed: the file did not contain a valid character card.",
                 "error",
@@ -636,13 +651,12 @@ class PersonasScreen(BaseAppScreen):
             # refreshed but selection/center pane belong to the new mode.
             return
         record = self._character_record(imported_id)
-        name = str(
-            (record or {}).get("name")
-            or (result.get("name") if isinstance(result, dict) else "")
-            or "Imported character"
-        )
+        name = str((record or {}).get("name") or "Imported character")
         await self._select_character(imported_id, name)
-        self._notify("Character imported.", "information")
+        if imported_id in pre_import_ids:
+            self._notify("Character already existed; selected it.", "information")
+        else:
+            self._notify("Character imported.", "information")
 
     @on(Button.Pressed, "#personas-export-json")
     async def _handle_export_json_pressed(self, event: Button.Pressed) -> None:
@@ -665,33 +679,40 @@ class PersonasScreen(BaseAppScreen):
         if fmt == "png" and kind != "character":
             self._notify("PNG export is only available for characters.", "warning")
             return
-        self.run_worker(self._export_dialog_worker(fmt), group="personas-io", exclusive=True)
+        if self._io_dialog_active:
+            logger.debug("Import/export dialog already active; ignoring export request.")
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._export_dialog_worker(fmt), group="personas-io")
 
     async def _export_dialog_worker(self, fmt: str) -> None:
         # Same dialog family as import (enhanced_file_picker).
         from ...Widgets.enhanced_file_picker import EnhancedFileSave, Filters
 
-        name = self.state.selected_entity_name or "export"
-        # Filename sanitization mirrors the legacy CCP export route.
-        safe_name = "".join(c for c in name if c.isalnum() or c in " -_").rstrip()
-        default_filename = f"{safe_name or 'export'}.{fmt}"
-        if fmt == "png":
-            filters = Filters(("PNG Files", "*.png"), ("All Files", "*.*"))
-        else:
-            filters = Filters(("JSON Files", "*.json"), ("All Files", "*.*"))
-        picker = EnhancedFileSave(
-            title=f"Export as {fmt.upper()}",
-            default_filename=default_filename,
-            filters=filters,
-            context="character_export",
-        )
         try:
-            target_path = await self.app.push_screen_wait(picker)
-        except Exception:
-            logger.warning("Could not show the export file dialog.", exc_info=True)
-            return
-        if target_path:
-            await self._export_selected_character(str(target_path), fmt=fmt)
+            name = self.state.selected_entity_name or "export"
+            # Filename sanitization mirrors the legacy CCP export route.
+            safe_name = "".join(c for c in name if c.isalnum() or c in " -_").rstrip()
+            default_filename = f"{safe_name or 'export'}.{fmt}"
+            if fmt == "png":
+                filters = Filters(("PNG Files", "*.png"), ("All Files", "*.*"))
+            else:
+                filters = Filters(("JSON Files", "*.json"), ("All Files", "*.*"))
+            picker = EnhancedFileSave(
+                title=f"Export as {fmt.upper()}",
+                default_filename=default_filename,
+                filters=filters,
+                context="character_export",
+            )
+            try:
+                target_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.warning("Could not show the export file dialog.", exc_info=True)
+                return
+            if target_path:
+                await self._export_selected_character(str(target_path), fmt=fmt)
+        finally:
+            self._io_dialog_active = False
 
     async def _export_selected_character(self, target_path: str, *, fmt: str) -> None:
         """Export the current selection to ``target_path`` as JSON or PNG."""
@@ -748,7 +769,12 @@ class PersonasScreen(BaseAppScreen):
             db, character_id, str(target), base_directory=str(target.parent)
         )
         if not ok:
-            raise RuntimeError("PNG export returned no data")
+            # The library returns False for several causes; surface them all.
+            raise RuntimeError(
+                "PNG export failed - the destination may be invalid (hidden/dot "
+                "directories are rejected) or the character lacks image data; "
+                "check the log for details."
+            )
 
     @staticmethod
     def _write_text_file(target_path: str, content: str) -> None:

@@ -642,7 +642,7 @@ class TestImportExport:
 
         def fake_import(file_path):
             imported_paths.append(file_path)
-            return {"id": 3, "name": "Imported Hero", "version": 1}
+            return 3
 
         monkeypatch.setattr(
             character_handler_module, "import_character_card", fake_import
@@ -685,6 +685,60 @@ class TestImportExport:
             assert screen.query_one("#personas-library-search").value == ""
             rows = screen.query(".personas-library-row")
             assert "Imported Hero" in [str(r.label) for r in rows]
+
+    async def test_second_import_request_ignored_while_dialog_active(
+        self, mock_app_instance, stub_characters
+    ):
+        """A queued import action must not start a second dialog worker."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            calls: list[int] = []
+
+            def counting_worker():
+                calls.append(1)
+
+                async def _noop():
+                    pass
+
+                return _noop()
+
+            screen._import_dialog_worker = counting_worker
+            screen._io_dialog_active = True
+            screen.post_message(PersonaActionRequested(action="import"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert calls == []
+            # Sanity check: with the flag cleared the same wiring does fire.
+            screen._io_dialog_active = False
+            screen.post_message(PersonaActionRequested(action="import"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert calls == [1]
+
+    async def test_import_existing_character_notifies_already_existed(
+        self, mock_app_instance, stub_characters, monkeypatch, tmp_path
+    ):
+        """A name-conflict import returns an existing id; the copy must say so."""
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card", lambda file_path: 1
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await screen._import_character_from_path(str(tmp_path / "dupe.json"))
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "1"
+            assert any(
+                "already existed" in message and severity == "information"
+                for message, severity in notifications
+            )
+            assert not any("Character imported." in message for message, _ in notifications)
 
     async def test_import_failure_shows_recovery_copy(
         self, mock_app_instance, stub_characters, monkeypatch, tmp_path
