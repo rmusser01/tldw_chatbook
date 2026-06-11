@@ -6,6 +6,8 @@ the foundation PR until it merges.
 
 from __future__ import annotations
 
+from typing import Any, Dict
+
 from textual.message import Message
 
 
@@ -15,3 +17,23 @@ class ConversationRowSelected(Message):
     def __init__(self, conversation_id: str) -> None:
         self.conversation_id = conversation_id
         super().__init__()
+
+
+class EditPersonaRequested(Message):
+    """Edit was requested for the displayed persona profile."""
+
+    def __init__(self, persona_id: str) -> None:
+        self.persona_id = persona_id
+        super().__init__()
+
+
+class PersonaProfileSaveRequested(Message):
+    """The persona editor form was submitted."""
+
+    def __init__(self, data: Dict[str, Any]) -> None:
+        self.data = data
+        super().__init__()
+
+
+class PersonaProfileEditCancelled(Message):
+    """The persona editor form was cancelled."""
