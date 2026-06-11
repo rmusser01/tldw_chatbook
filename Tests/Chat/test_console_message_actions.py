@@ -86,6 +86,17 @@ def test_unavailable_save_destinations_are_explicit_wip():
     assert "WIP" in note.reason
 
 
+def test_default_save_destinations_do_not_claim_chatbook_is_wired():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    destinations = service.save_as_destinations(message)
+
+    chatbook = next(destination for destination in destinations if destination.label == "Chatbook")
+    assert chatbook.available is False
+    assert "WIP" in chatbook.reason
+
+
 def test_action_labels_fit_compact_terminal_width_budget():
     service = ConsoleMessageActionService()
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer")

@@ -69,7 +69,7 @@ class ConsoleMessageActionService:
     _FAILED_RETRY_ACTIONS: tuple[tuple[str, str], ...] = (("retry", "Try"),)
 
     def __init__(self, *, available_save_destinations: set[str] | None = None) -> None:
-        self.available_save_destinations = available_save_destinations or {"Chatbook"}
+        self.available_save_destinations = set(available_save_destinations or ())
 
     @classmethod
     def _base_actions_with(cls, inserted: tuple[tuple[str, str], ...]) -> list[tuple[str, str]]:

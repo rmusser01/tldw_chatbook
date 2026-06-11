@@ -407,17 +407,29 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             )
 
     def _model_for_provider(self, provider: str) -> str | None:
-        configured_model_options = self._configured_model_select_options(provider)
-        if configured_model_options:
-            stored_model = self._provider_model_draft(provider)
+        if provider in self._provider_model_drafts:
+            stored_model = normalize_console_model_value(self._provider_model_drafts[provider])
             if stored_model:
                 return stored_model
-            return configured_model_options[0][1]
-
-        if provider in self._provider_model_drafts:
-            return self._provider_model_draft(provider)
+        configured_model = self._default_model_for_provider(provider)
+        if configured_model:
+            return configured_model
         if provider == self._settings.provider:
-            return normalize_console_model_value(self._settings.model)
+            settings_model = normalize_console_model_value(self._settings.model)
+            if settings_model:
+                return settings_model
+        configured_model_options = self._configured_model_select_options(provider)
+        if configured_model_options:
+            return configured_model_options[0][1]
+        return None
+
+    def _default_model_for_provider(self, provider: str) -> str | None:
+        provider_key = provider_config_key(provider)
+        provider_settings = self._provider_settings(provider_key)
+        for key in ("model", "api_model", "default_model"):
+            configured_model = normalize_console_model_value(provider_settings.get(key))
+            if configured_model:
+                return configured_model
         return None
 
     def _sync_base_url_control(self, provider: str, base_url: str | None) -> None:
