@@ -610,22 +610,33 @@ class NotesSyncPane(VerticalScroll):
         )
 
     @on(Button.Pressed, "#quick-sync-btn")
-    async def run_quick_sync(self, event: Button.Pressed) -> None:
+    def run_quick_sync(self, event: Button.Pressed) -> None:
         event.stop()
         if self.sync_in_progress:
             return
-        await self.perform_sync()
+        # Sync can exceed 100ms; run it as an exclusive worker so repeated
+        # clicks cannot stack concurrent sync runs.
+        self.run_worker(self.perform_sync(), exclusive=True, group="notes-sync")
 
     async def perform_sync(self) -> None:
         from tldw_chatbook.Notes.sync_engine import ConflictResolution, SyncDirection
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
 
         folder_value = self.query_one("#sync-folder-input", Input).value
         if not folder_value:
             self.app.notify("Please select a folder to sync", severity="warning")
             return
-        sync_folder = Path(folder_value).expanduser()
-        if not sync_folder.exists():
-            self.app.notify("Selected folder does not exist", severity="error")
+        try:
+            sync_folder = validate_path_simple(
+                Path(folder_value).expanduser(), require_exists=True
+            )
+        except ValueError as exc:
+            self.app.notify(f"Rejected sync folder: {exc}", severity="error")
+            return
+        if not sync_folder.is_dir():
+            self.app.notify(
+                "Selected path is a file; choose a folder to sync.", severity="error"
+            )
             return
         if self.sync_service is None:
             self.app.notify(
@@ -683,7 +694,13 @@ class NotesSyncPane(VerticalScroll):
             self.app_instance.last_sync_time = _datetime.now()
             self.update_status()
         except Exception as exc:
-            logger.error(f"Notes sync failed: {exc}")
+            logger.error(
+                "Notes sync failed (folder={}, direction={}, resolution={}): {}",
+                sync_folder,
+                direction.value,
+                resolution.value,
+                exc,
+            )
             self._add_activity(f"Sync failed: {exc}", "error")
             self.app.notify("Sync failed", severity="error")
         finally:
@@ -739,6 +756,7 @@ class NotesTemplatesPane(VerticalScroll):
         from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
 
         list_view = self.query_one("#notes-templates-list", ListView)
+        items: list[ListItem] = []
         for key in sorted(NOTE_TEMPLATES):
             template = NOTE_TEMPLATES[key]
             label = template.get(
@@ -746,7 +764,8 @@ class NotesTemplatesPane(VerticalScroll):
             )
             item = ListItem(Label(str(label)))
             setattr(item, "template_key", key)
-            await list_view.append(item)
+            items.append(item)
+        await list_view.extend(items)
 
     def _show_preview(self, item: Any) -> None:
         from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
