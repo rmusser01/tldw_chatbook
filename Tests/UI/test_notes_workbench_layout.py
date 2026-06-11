@@ -106,9 +106,7 @@ async def test_notes_workbench_exposes_feature_parity_selectors():
             ("#notes-editor-area", TextArea),
             ("#notes-save-button", Button),
             ("#notes-preview-toggle", Button),
-            ("#notes-sync-button", Button),
             ("#notes-keywords-area", TextArea),
-            ("#notes-save-current-button", Button),
             ("#notes-use-in-chat-button", Button),
             ("#notes-export-markdown-button", Button),
             ("#notes-export-text-button", Button),
@@ -145,7 +143,7 @@ async def test_notes_mode_strip_switches_regions_and_preserves_editor_text():
         assert notes_region.display is False
         assert sync_region.display is True
         assert screen.query_one("#notes-mode-sync", Button).has_class("is-active")
-        assert screen.query_one("#notes-open-sync-modal", Button) is not None
+        assert screen.query_one("#quick-sync-btn", Button) is not None
 
         screen.query_one("#notes-mode-templates", Button).press()
         await pilot.pause()
@@ -218,6 +216,74 @@ async def test_notes_active_mode_round_trips_through_save_restore():
 
 def test_notes_state_defaults_include_notes_mode():
     assert NotesScreenState().active_mode == "notes"
+
+
+@pytest.mark.asyncio
+async def test_notes_sync_pane_runs_sync_through_service():
+    from tldw_chatbook.Widgets.Note_Widgets.notes_workbench_panes import NotesSyncPane
+    from textual.widgets import Input
+
+    screen = NotesScreen(_mock_app_instance())
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen.query_one("#notes-mode-sync", Button).press()
+        await pilot.pause()
+
+        pane = screen.query_one("#notes-sync-pane", NotesSyncPane)
+
+        # Sync Now lives in the docked action bar and must be visible
+        # without scrolling whenever Sync mode is active.
+        sync_button = screen.query_one("#quick-sync-btn", Button)
+        assert screen.query_one("#notes-action-bar-sync").display is True
+        assert sync_button.region.height > 0
+
+        class FakeProgress:
+            total_files = 2
+            processed_files = 2
+            conflicts = []
+            errors = []
+            created_notes = ["a"]
+            updated_notes = []
+            created_files = []
+            updated_files = ["b"]
+
+        sync_service = Mock()
+        sync_service.sync_folder = AsyncMock(return_value=("session-1", FakeProgress()))
+        pane.sync_service = sync_service
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pane.query_one("#sync-folder-input", Input).value = tmp_dir
+            screen.query_one("#quick-sync-btn", Button).press()
+            await pilot.pause(0.2)
+
+        assert sync_service.sync_folder.await_count == 1
+        kwargs = sync_service.sync_folder.await_args.kwargs
+        assert kwargs["user_id"] == "default_user"
+        activity_text = " ".join(
+            str(child.render())
+            for child in pane.query_one("#notes-sync-activity-log").children
+        )
+        assert "Sync complete" in activity_text
+        assert "1 notes created" in activity_text
+
+
+@pytest.mark.asyncio
+async def test_notes_sync_mode_chip_switches_to_sync_mode_without_modal():
+    screen = NotesScreen(_mock_app_instance())
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+
+        screen.query_one("#notes-mode-sync", Button).press()
+        await pilot.pause()
+
+        assert screen.state.active_mode == "sync"
+        assert screen.query_one("#notes-mode-region-sync").display is True
+        assert screen.query_one("#notes-action-bar-sync").display is True
+        assert screen.query_one("#notes-action-bar-notes").display is False
 
 
 @pytest.mark.asyncio
@@ -370,3 +436,298 @@ async def test_notes_template_with_bad_placeholder_fails_gracefully(monkeypatch)
         "invalid placeholder" in str(call.args[0])
         for call in screen._notify.call_args_list
     )
+
+
+@pytest.mark.asyncio
+async def test_notes_keyboard_bindings_drive_core_actions():
+    mock_instance = _mock_app_instance()
+    mock_instance.notes_service.add_note.return_value = "kbd-note-1"
+    mock_instance.notes_service.get_note_by_id.return_value = {
+        "id": "kbd-note-1",
+        "title": "New Note",
+        "content": "",
+        "version": 1,
+        "keywords": [],
+    }
+    screen = NotesScreen(mock_instance)
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+
+        # "/" focuses the navigator search input from anywhere.
+        screen.query_one("#notes-mode-notes", Button).focus()
+        await pilot.press("slash")
+        await pilot.pause()
+        assert screen.focused is not None
+        assert screen.focused.id == "notes-search-input"
+
+        # "e" jumps focus into the editor surface.
+        screen.query_one("#notes-mode-notes", Button).focus()
+        await pilot.press("e")
+        await pilot.pause()
+        assert screen.focused.id == "notes-editor-area"
+
+        # "n" creates a new note when focus is outside text entry.
+        screen.query_one("#notes-mode-notes", Button).focus()
+        await pilot.press("n")
+        await pilot.pause()
+        assert mock_instance.notes_service.add_note.called
+
+        # "s" saves through the same path as the Save button.
+        screen._save_current_note = AsyncMock(return_value=True)
+        screen.query_one("#notes-mode-notes", Button).focus()
+        await pilot.press("s")
+        await pilot.pause()
+        screen._save_current_note.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_notes_bindings_do_not_fire_while_typing_in_editor():
+    mock_instance = _mock_app_instance()
+    screen = NotesScreen(mock_instance)
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+
+        editor = screen.query_one("#notes-editor-area", TextArea)
+        screen._suspend_dirty_tracking = False
+        editor.focus()
+        await pilot.press("n", "s", "e")
+        await pilot.pause()
+
+        # The letters were typed into the editor, not intercepted as actions.
+        assert editor.text == "nse"
+        assert not mock_instance.notes_service.add_note.called
+
+
+@pytest.mark.asyncio
+async def test_notes_tab_traversal_reaches_primary_actions():
+    screen = NotesScreen(_mock_app_instance())
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+
+        screen.query_one("#notes-mode-notes", Button).focus()
+        reached: set[str] = set()
+        for _ in range(60):
+            await pilot.press("tab")
+            focused = screen.focused
+            if focused is not None and focused.id:
+                reached.add(focused.id)
+
+        for required in (
+            "notes-search-input",
+            "notes-create-from-template-button",
+            "notes-title-input",
+            "notes-editor-area",
+            "notes-save-button",
+            "notes-keywords-area",
+            "notes-delete-button",
+            "notes-navigator-rail-collapse",
+            "notes-inspector-rail-collapse",
+        ):
+            assert required in reached, f"tab order never reached #{required}"
+
+
+@pytest.mark.asyncio
+async def test_notes_templates_pane_lists_previews_and_creates():
+    from tldw_chatbook.Widgets.Note_Widgets.notes_workbench_panes import NotesTemplatesPane
+    from textual.widgets import ListView
+
+    mock_instance = _mock_app_instance()
+    mock_instance.notes_service.add_note.return_value = "tpl-note-1"
+    mock_instance.notes_service.get_note_by_id.return_value = {
+        "id": "tpl-note-1",
+        "title": "Templated",
+        "content": "Body",
+        "version": 1,
+        "keywords": [],
+    }
+    screen = NotesScreen(mock_instance)
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen.query_one("#notes-mode-templates", Button).press()
+        await pilot.pause()
+
+        pane = screen.query_one("#notes-templates-pane", NotesTemplatesPane)
+        template_list = pane.query_one("#notes-templates-list", ListView)
+        assert len(template_list.children) > 0
+
+        template_list.index = 0
+        await pilot.pause()
+        assert pane.selected_template_key is not None
+
+        screen.query_one("#notes-templates-create-button", Button).press()
+        await pilot.pause(0.2)
+
+        assert mock_instance.notes_service.add_note.called
+        assert screen.state.active_mode == "notes"
+        assert screen.state.selected_note_id == "tpl-note-1"
+
+
+def test_inspector_format_timestamp_humanizes_machine_timestamps():
+    import re
+
+    from tldw_chatbook.Widgets.Note_Widgets.notes_workbench_panes import NotesInspectorPane
+
+    formatted = NotesInspectorPane._format_timestamp("2026-06-11 13:25:09.785000+00:00")
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", formatted)
+    # Unparseable values fall back to the raw string instead of raising.
+    assert NotesInspectorPane._format_timestamp("not a date") == "not a date"
+
+
+def test_template_display_label_strips_template_noise():
+    from tldw_chatbook.Widgets.Note_Widgets.notes_workbench_panes import template_display_label
+
+    assert template_display_label("blank", {"description": "Empty note template"}) == "Empty note"
+    assert template_display_label("meeting", {"description": "Template for meeting notes"}) == "Meeting notes"
+    assert template_display_label("todo", {"title": "Todo List"}) == "Todo List"
+    assert template_display_label("custom_thing", {}) == "Custom thing"
+
+
+@pytest.mark.asyncio
+async def test_notes_status_row_reflects_active_mode():
+    from textual.widgets import Static
+
+    screen = NotesScreen(_mock_app_instance())
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+
+        status = screen.query_one("#notes-status-row", Static)
+        assert "saved" in str(status.render())
+
+        screen.query_one("#notes-mode-sync", Button).press()
+        await pilot.pause()
+        sync_text = str(status.render())
+        assert "last sync" in sync_text
+        assert "saved" not in sync_text
+
+        screen.query_one("#notes-mode-templates", Button).press()
+        await pilot.pause()
+        templates_text = str(status.render())
+        assert "templates" in templates_text
+        assert "saved" not in templates_text
+
+
+@pytest.mark.asyncio
+async def test_auto_sync_switch_arms_timer_and_persists(monkeypatch):
+    from textual.widgets import Switch
+
+    from tldw_chatbook import config as app_config
+    from tldw_chatbook.Widgets.Note_Widgets.notes_workbench_panes import NotesSyncPane
+
+    saved: list[tuple[str, str, object]] = []
+    monkeypatch.setattr(
+        app_config,
+        "save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)),
+    )
+    monkeypatch.setattr(
+        app_config,
+        "get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+
+    screen = NotesScreen(_mock_app_instance())
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen.query_one("#notes-mode-sync", Button).press()
+        await pilot.pause()
+
+        pane = screen.query_one("#notes-sync-pane", NotesSyncPane)
+        switch = pane.query_one("#auto-sync-switch", Switch)
+        assert pane._auto_sync_timer is None
+
+        switch.value = True
+        await pilot.pause()
+        assert pane._auto_sync_timer is not None
+        assert ("notes", "auto_sync", True) in saved
+        log_text = " ".join(
+            str(line.render()) for line in pane.query(".notes-sync-activity-line")
+        )
+        assert "Auto-sync on" in log_text
+
+        switch.value = False
+        await pilot.pause()
+        assert pane._auto_sync_timer is None
+        assert ("notes", "auto_sync", False) in saved
+
+
+@pytest.mark.asyncio
+async def test_conflict_option_does_not_promise_a_prompt():
+    screen = NotesScreen(_mock_app_instance())
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen.query_one("#notes-mode-sync", Button).press()
+        await pilot.pause()
+
+        conflict_select = screen.query_one("#conflict-resolution", Select)
+        labels = [str(label) for label, _value in conflict_select._options]
+        assert any("Skip and record for review" in label for label in labels)
+        assert not any("Ask" in label for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_empty_scope_sections_render_hint_rows():
+    from textual.widgets import Label as TextualLabel
+
+    screen = NotesScreen(_mock_app_instance())
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+
+        for list_id, expected in (
+            ("#server-notes-list-view", "No server notes yet."),
+            ("#workspaces-list-view", "No workspaces yet."),
+        ):
+            list_view = screen.query_one(list_id, ListView)
+            texts = " ".join(
+                str(label.render()) for label in list_view.query(TextualLabel)
+            )
+            assert expected in texts, f"{list_id} missing empty hint"
+
+
+@pytest.mark.asyncio
+async def test_templates_second_activation_creates_note():
+    from tldw_chatbook.Widgets.Note_Widgets.notes_workbench_panes import NotesTemplatesPane
+
+    mock_instance = _mock_app_instance()
+    mock_instance.notes_service.add_note.return_value = "tpl-note-2"
+    mock_instance.notes_service.get_note_by_id.return_value = {
+        "id": "tpl-note-2",
+        "title": "Templated",
+        "content": "Body",
+        "version": 1,
+        "keywords": [],
+    }
+    screen = NotesScreen(mock_instance)
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        screen.query_one("#notes-mode-templates", Button).press()
+        await pilot.pause()
+
+        pane = screen.query_one("#notes-templates-pane", NotesTemplatesPane)
+        template_list = pane.query_one("#notes-templates-list", ListView)
+        template_list.focus()
+        template_list.index = 0
+        await pilot.pause()
+
+        # First Enter arms the selection and explains the second step.
+        template_list.action_select_cursor()
+        await pilot.pause(0.2)
+        assert not mock_instance.notes_service.add_note.called
+        preview_text = str(
+            pane.query_one("#notes-template-preview").render()
+        )
+        assert "create a note" in preview_text
+
+        # Second Enter on the same item creates the note.
+        template_list.action_select_cursor()
+        await pilot.pause(0.2)
+        assert mock_instance.notes_service.add_note.called
+        assert screen.state.active_mode == "notes"

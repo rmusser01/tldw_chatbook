@@ -56,10 +56,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._can_save = can_save
         self._focus_model = focus_model
         self._active_provider = settings.provider
-        self._provider_model_drafts: dict[str, str] = {}
-        settings_model = normalize_console_model_value(settings.model)
-        if settings_model:
-            self._provider_model_drafts[settings.provider] = settings_model
+        self._provider_model_drafts: dict[str, str | None] = {}
+        self._set_provider_model_draft(settings.provider, settings.model)
         self._provider_base_url_drafts: dict[str, str] = {}
         initial_base_url = self._initial_base_url_for_provider(
             settings.provider,
@@ -390,11 +388,17 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             for option in build_console_model_options(provider, self._providers_models, None)
         ]
 
+    def _set_provider_model_draft(self, provider: str, value: object) -> None:
+        """Store a per-provider draft model, normalized once at this boundary."""
+        self._provider_model_drafts[provider] = normalize_console_model_value(value)
+
+    def _provider_model_draft(self, provider: str) -> str | None:
+        """Return the already-normalized draft model stored for a provider."""
+        return self._provider_model_drafts.get(provider)
+
     def _store_current_model_for_provider(self, provider: str) -> None:
         if provider:
-            self._provider_model_drafts[provider] = normalize_console_model_value(
-                self._current_model_value()
-            ) or ""
+            self._set_provider_model_draft(provider, self._current_model_value())
 
     def _store_current_base_url_for_provider(self, provider: str) -> None:
         if provider and self._provider_uses_base_url(provider):
