@@ -6,7 +6,9 @@ from textual.app import App
 from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
+from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 pytestmark = pytest.mark.asyncio
 
@@ -44,6 +46,12 @@ class PersonasTestApp(App):
         if name.startswith(self._NON_DELEGATED_PREFIXES):
             raise AttributeError(name)
         return getattr(self.__dict__["_mock"], name)
+
+    def compose(self):
+        # Mirrors the real app: the footer lives on the app's default screen
+        # (see app.py compose), which is exactly where the screen's
+        # ``self.app.query_one("AppFooterStatus")`` lookup resolves.
+        yield AppFooterStatus(id="app-footer-status")
 
     def on_mount(self) -> None:
         self.push_screen(PersonasScreen(self))
@@ -86,6 +94,31 @@ class TestWorkbenchShell:
             assert "save" in rendered.lower()
             assert "attach" in rendered.lower()
             assert context.source == "personas"
+            footer = pilot.app.query_one(AppFooterStatus)
+            assert "new" in footer.shortcut_text.lower()
+            assert "search" in footer.shortcut_text.lower()
+            await pilot.app.pop_screen()
+            await pilot.pause()
+            assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+
+    async def test_unmount_clear_does_not_stomp_other_screens_context(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            footer = pilot.app.query_one(AppFooterStatus)
+            # Another screen registers its context (switch_screen mounts the
+            # incoming screen before unmounting the outgoing one).
+            footer.set_shortcut_context(
+                ShortcutContext(
+                    source="console",
+                    actions=(ShortcutAction("ctrl+enter", "send"),),
+                )
+            )
+            screen._clear_footer_shortcuts()
+            assert "ctrl+enter send" in footer.shortcut_text
+            assert footer.shortcut_text != AppFooterStatus.DEFAULT_SHORTCUT_TEXT
 
     async def test_placeholder_modes_show_placeholder_panel(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
@@ -124,6 +157,27 @@ class TestCharacterSelectionAndEdit:
             assert screen._edit_mode == "create"
             editor = screen.query_one("#ccp-character-editor-view")
             assert editor.display is True
+
+    async def test_ctrl_n_opens_editor_in_create_mode(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            assert screen._edit_mode == "create"
+            assert screen.query_one("#ccp-character-editor-view").display is True
+
+    async def test_ctrl_f_focuses_library_search(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.press("ctrl+f")
+            await pilot.pause()
+            focused = pilot.app.focused
+            assert focused is not None
+            assert focused.id == "personas-library-search"
 
     async def test_save_with_missing_name_blocks_and_shows_validation(self, mock_app_instance, stub_characters, monkeypatch):
         created = []

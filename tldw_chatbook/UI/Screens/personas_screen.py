@@ -7,8 +7,10 @@ from typing import Any, Awaitable, Callable
 from loguru import logger
 from textual import on, work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.css.query import QueryError
+from textual.widgets import Button, Input, Static
 
 from ...Character_Chat.Character_Chat_Lib import validate_character_book
 from ...Widgets.confirmation_dialog import UnsavedChangesDialog
@@ -54,6 +56,11 @@ _CENTER_VIEW_IDS: tuple[str, ...] = (
 
 class PersonasScreen(BaseAppScreen):
     """Characters, personas, prompts, dictionaries, and behavior profiles."""
+
+    BINDINGS = [
+        Binding("ctrl+n", "personas_new", "New"),
+        Binding("ctrl+f", "personas_search", "Search"),
+    ]
 
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
@@ -521,6 +528,19 @@ class PersonasScreen(BaseAppScreen):
         if callable(notify):
             notify(message, severity=severity)
 
+    # ===== Key bindings =====
+
+    def action_personas_new(self) -> None:
+        """Ctrl+N: same code path as the library New button."""
+        self.post_message(PersonaActionRequested(action="create"))
+
+    def action_personas_search(self) -> None:
+        """Ctrl+F: focus the library search input."""
+        try:
+            self.query_one("#personas-library-search", Input).focus()
+        except QueryError:
+            pass
+
     # ===== Footer shortcut context =====
 
     def _shortcut_context(self) -> ShortcutContext:
@@ -529,25 +549,26 @@ class PersonasScreen(BaseAppScreen):
             actions=(
                 ShortcutAction("ctrl+n", "new"),
                 ShortcutAction("ctrl+f", "search"),
-                ShortcutAction("ctrl+s", "save"),
-                ShortcutAction("ctrl+enter", "attach"),
+                # Task 12 (attach) and the editor-save wiring flip these on.
+                ShortcutAction("ctrl+s", "save", available=False),
+                ShortcutAction("ctrl+enter", "attach", available=False),
             ),
         )
 
     def _register_footer_shortcuts(self) -> None:
         try:
             footer = self.app.query_one("AppFooterStatus")
-            set_ctx = getattr(footer, "set_shortcut_context", None)
-            if callable(set_ctx):
-                set_ctx(self._shortcut_context())
-        except Exception:
-            pass
+        except QueryError:
+            return
+        set_ctx = getattr(footer, "set_shortcut_context", None)
+        if callable(set_ctx):
+            set_ctx(self._shortcut_context())
 
     def _clear_footer_shortcuts(self) -> None:
         try:
             footer = self.app.query_one("AppFooterStatus")
-            clear_ctx = getattr(footer, "clear_shortcut_context", None)
-            if callable(clear_ctx):
-                clear_ctx()
-        except Exception:
-            pass
+        except QueryError:
+            return
+        clear_ctx = getattr(footer, "clear_shortcut_context", None)
+        if callable(clear_ctx):
+            clear_ctx(source="personas")
