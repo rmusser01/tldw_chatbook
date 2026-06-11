@@ -277,10 +277,10 @@ class ChatbooksWindowImproved(Screen):
     }
 
     .search-input:focus {
-        border: solid $ds-input-focus-border;
-        border-bottom: solid $ds-input-focus-accent;
-        background: $ds-input-focus-bg;
-        color: $ds-text-primary;
+        border: solid $primary;
+        border-bottom: solid $primary;
+        background: $surface;
+        color: $text;
     }
     
     .content-area {

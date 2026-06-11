@@ -87,9 +87,9 @@ class BaseTamagotchi(Static):
     }
 
     BaseTamagotchi:focus {
-        border: round $ds-focus-accent;
-        background: $ds-focus-bg;
-        color: $ds-focus-fg;
+        border: round $primary;
+        background: $surface;
+        color: $text;
         text-style: bold underline;
     }
 
