@@ -467,3 +467,130 @@ class TestPersonasMode:
             assert screen.state.active_mode == "characters"
             rows = screen.query(".personas-library-row")
             assert [str(r.label) for r in rows] == ["Detective Sam", "Lab Assistant"]
+
+
+PROFILES_FOR_SEARCH = [
+    {"id": "p-1", "name": "Archivist", "description": "Preserve and retrieve", "system_prompt": "You are a meticulous archivist."},
+    {"id": "p-2", "name": "Navigator", "description": "Charts the course", "system_prompt": "You guide the user."},
+]
+
+
+class TestSearch:
+    async def test_search_filters_loaded_characters_locally(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            # Type into the search input
+            search_input = screen.query_one("#personas-library-search")
+            search_input.value = "sam"
+            await pilot.pause()
+            rows = screen.query(".personas-library-row")
+            assert [str(r.label) for r in rows] == ["Detective Sam"]
+            count = str(screen.query_one("#personas-library-count", Static).renderable)
+            assert "1 of 2 characters" in count
+
+    async def test_clearing_search_restores_all_rows(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            search_input = screen.query_one("#personas-library-search")
+            # Filter first
+            search_input.value = "sam"
+            await pilot.pause()
+            # Then clear
+            search_input.value = ""
+            await pilot.pause()
+            rows = screen.query(".personas-library-row")
+            assert [str(r.label) for r in rows] == ["Detective Sam", "Lab Assistant"]
+            count = str(screen.query_one("#personas-library-count", Static).renderable)
+            assert "2 characters" in count
+            assert "of" not in count
+
+    async def test_search_is_case_insensitive(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            search_input = screen.query_one("#personas-library-search")
+            search_input.value = "LAB"
+            await pilot.pause()
+            rows = screen.query(".personas-library-row")
+            assert [str(r.label) for r in rows] == ["Lab Assistant"]
+
+    async def test_search_filters_profiles_in_personas_mode(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        # Replace the scope service stub with two profiles
+        stub_scope_service.list_persona_profiles = AsyncMock(
+            return_value={"items": [dict(p) for p in PROFILES_FOR_SEARCH], "total": 2}
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-mode-personas")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # Two profiles loaded; now search for "nav"
+            search_input = screen.query_one("#personas-library-search")
+            search_input.value = "nav"
+            await pilot.pause()
+            rows = screen.query(".personas-library-row")
+            assert [str(r.label) for r in rows] == ["Navigator"]
+            count = str(screen.query_one("#personas-library-count", Static).renderable)
+            assert "1 of 2 persona profiles" in count
+
+    async def test_mode_switch_clears_search(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            # Search in characters mode
+            search_input = screen.query_one("#personas-library-search")
+            search_input.value = "sam"
+            await pilot.pause()
+            assert len(screen.query(".personas-library-row")) == 1
+            # Switch to personas mode and back
+            await pilot.click("#personas-mode-personas")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.click("#personas-mode-characters")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # All rows visible after round-trip
+            rows = screen.query(".personas-library-row")
+            assert [str(r.label) for r in rows] == ["Detective Sam", "Lab Assistant"]
+            # Search input is cleared
+            assert screen.query_one("#personas-library-search").value == ""
+
+    async def test_fts_path_used_for_large_libraries(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        fts_calls: list[str] = []
+
+        def fake_fts(search_term: str, limit: int = 50):
+            fts_calls.append(search_term)
+            return [{"id": 1, "name": "Detective Sam"}]
+
+        monkeypatch.setattr(character_handler_module, "search_characters_fts", fake_fts)
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            # Lower the threshold so the 2-character stub library triggers FTS
+            screen.LIBRARY_FTS_THRESHOLD = 2
+            search_input = screen.query_one("#personas-library-search")
+            search_input.value = "sam"
+            await pilot.pause()
+            assert fts_calls == ["sam"]
+            rows = screen.query(".personas-library-row")
+            assert [str(r.label) for r in rows] == ["Detective Sam"]

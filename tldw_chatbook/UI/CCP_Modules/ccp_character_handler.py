@@ -42,6 +42,17 @@ def _normalize_character_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
+def search_characters_fts(search_term: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """FTS search over character cards for large libraries."""
+    db = _default_character_db()
+    if db is None:
+        return []
+    return [
+        _normalize_character_payload(row)
+        for row in db.search_character_cards(search_term, limit=limit)
+    ]
+
+
 def fetch_all_characters() -> List[Dict[str, Any]]:
     """Compatibility helper for CCP tests and UI refreshes."""
     from ...Character_Chat.Character_Chat_Lib import fetch_character_names

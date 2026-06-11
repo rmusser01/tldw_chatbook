@@ -32,6 +32,7 @@ from ...Widgets.Persona_Widgets.personas_library_pane import LibraryRow, Persona
 from ...Widgets.Persona_Widgets.personas_messages import (
     PersonaActionRequested,
     PersonaEntitySelected,
+    PersonaSearchChanged,
 )
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
     EditPersonaRequested,
@@ -66,6 +67,10 @@ _CENTER_VIEW_IDS: tuple[str, ...] = (
 
 class PersonasScreen(BaseAppScreen):
     """Characters, personas, prompts, dictionaries, and behavior profiles."""
+
+    #: Page size above which the loaded list may be truncated and FTS is used
+    #: instead of filtering the in-memory list.
+    LIBRARY_FTS_THRESHOLD: int = 1000
 
     BINDINGS = [
         Binding("ctrl+n", "personas_new", "New"),
@@ -249,17 +254,41 @@ class PersonasScreen(BaseAppScreen):
             logger.warning("Could not render the character library rows.", exc_info=True)
 
     async def _render_library_rows(self) -> None:
-        rows = tuple(
-            LibraryRow(
-                item_id=str(record.get("id")),
-                kind="character",
-                name=str(record.get("name") or "Unnamed"),
+        query = self.state.search_query
+        total = len(self._characters)
+        if query:
+            if total >= self.LIBRARY_FTS_THRESHOLD:
+                # Large library: use FTS so the full DB corpus is searched
+                # even when the loaded list is a page-size truncation.
+                matched = ccp_character_handler.search_characters_fts(query)
+            else:
+                # Small library: filter in-memory, case-insensitively on name.
+                q_lower = query.lower()
+                matched = [r for r in self._characters if q_lower in str(r.get("name") or "").lower()]
+            rows = tuple(
+                LibraryRow(
+                    item_id=str(record.get("id")),
+                    kind="character",
+                    name=str(record.get("name") or "Unnamed"),
+                )
+                for record in matched
+                if record.get("id") is not None
             )
-            for record in self._characters
-            if record.get("id") is not None
-        )
+            filtered = True
+        else:
+            rows = tuple(
+                LibraryRow(
+                    item_id=str(record.get("id")),
+                    kind="character",
+                    name=str(record.get("name") or "Unnamed"),
+                )
+                for record in self._characters
+                if record.get("id") is not None
+            )
+            filtered = False
+            total = len(rows)
         library = self.query_one(PersonasLibraryPane)
-        await library.update_rows(rows, total=len(rows), noun="characters")
+        await library.update_rows(rows, total=total, noun="characters", filtered=filtered)
         if self.state.selected_entity_kind == "character" and self.state.selected_entity_id:
             library.mark_active_row("character", self.state.selected_entity_id)
 
@@ -290,19 +319,53 @@ class PersonasScreen(BaseAppScreen):
             logger.warning("Could not render the persona profile rows.", exc_info=True)
 
     async def _render_profile_rows(self) -> None:
-        rows = tuple(
-            LibraryRow(
-                item_id=str(record.get("id")),
-                kind="persona_profile",
-                name=str(record.get("name") or "Unnamed"),
+        query = self.state.search_query
+        total = len(self._profiles)
+        if query:
+            q_lower = query.lower()
+            matched = [r for r in self._profiles if q_lower in str(r.get("name") or "").lower()]
+            rows = tuple(
+                LibraryRow(
+                    item_id=str(record.get("id")),
+                    kind="persona_profile",
+                    name=str(record.get("name") or "Unnamed"),
+                )
+                for record in matched
+                if record.get("id")
             )
-            for record in self._profiles
-            if record.get("id")
-        )
+            filtered = True
+        else:
+            rows = tuple(
+                LibraryRow(
+                    item_id=str(record.get("id")),
+                    kind="persona_profile",
+                    name=str(record.get("name") or "Unnamed"),
+                )
+                for record in self._profiles
+                if record.get("id")
+            )
+            filtered = False
+            total = len(rows)
         library = self.query_one(PersonasLibraryPane)
-        await library.update_rows(rows, total=len(rows), noun="persona profiles")
+        await library.update_rows(rows, total=total, noun="persona profiles", filtered=filtered)
         if self.state.selected_entity_kind == "persona_profile" and self.state.selected_entity_id:
             library.mark_active_row("persona_profile", self.state.selected_entity_id)
+
+    @on(PersonaSearchChanged)
+    async def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
+        message.stop()
+        # Search does not change selection or center pane — no unsaved guard needed.
+        self.state.search_query = message.query.strip()
+        if self.state.active_mode == "characters":
+            try:
+                await self._render_library_rows()
+            except Exception:
+                logger.warning("Could not re-render character rows after search.", exc_info=True)
+        elif self.state.active_mode == "personas":
+            try:
+                await self._render_profile_rows()
+            except Exception:
+                logger.warning("Could not re-render profile rows after search.", exc_info=True)
 
     def _profile_record(self, item_id: str | None) -> dict | None:
         if item_id is None:
@@ -346,6 +409,13 @@ class PersonasScreen(BaseAppScreen):
 
     async def _apply_mode(self, mode: str) -> None:
         self.state.switch_mode(mode)
+        # switch_mode does not reset search_query; clear it explicitly and
+        # reset the Input widget so the library starts unfiltered in the new mode.
+        self.state.search_query = ""
+        try:
+            self.query_one("#personas-library-search", Input).value = ""
+        except Exception:
+            pass
         self._edit_mode = "view"
         for chip_mode in MODE_CHIP_ORDER:
             self.query_one(f"#personas-mode-{chip_mode}", Button).set_class(
