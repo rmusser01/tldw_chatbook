@@ -1338,6 +1338,64 @@ class TestConsoleActions:
         assert "Archivist" in payload.title
         assert "You are a meticulous archivist." in payload.body
 
+    async def test_attach_aborts_when_profile_fetch_degraded(
+        self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
+    ):
+        """A fallback (list-row) profile record must not stage silently."""
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        captured: list[tuple[str, str]] = []
+        app.notify = lambda message, severity="information", **kwargs: captured.append(
+            (str(message), severity)
+        )
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_profile(pilot)
+            # The service degrades after listing/selection succeeded.
+            stub_scope_service.get_persona_profile = AsyncMock(
+                side_effect=RuntimeError("service down")
+            )
+            screen.query_one("#personas-attach-to-console", Button).press()
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_not_called()
+        assert (
+            "Persona profile is not fully loaded; try reselecting it.",
+            "warning",
+        ) in captured
+        assert not any(severity == "information" for _msg, severity in captured)
+
+    async def test_ctrl_enter_attaches_selected_character(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Ctrl+Enter stages the selected character, same as the Attach button."""
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            await self._select_first_character(pilot)
+            await pilot.press("ctrl+enter")
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_called_once()
+        payload = app.open_chat_with_handoff.call_args.args[0]
+        assert payload.source == "personas"
+        assert payload.metadata["selected_kind"] == "character"
+        assert payload.metadata["selected_record_id"] == "1"
+
+    async def test_attach_warns_when_handoff_unavailable(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A missing app handoff API warns instead of toasting success."""
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = None
+        captured: list[tuple[str, str]] = []
+        app.notify = lambda message, severity="information", **kwargs: captured.append(
+            (str(message), severity)
+        )
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.query_one("#personas-attach-to-console", Button).press()
+            await pilot.pause()
+        assert ("Console handoff is unavailable.", "warning") in captured
+        assert not any(severity == "information" for _msg, severity in captured)
+
     async def test_conversation_continue_still_works(
         self, mock_app_instance, stub_characters, stub_conversations
     ):

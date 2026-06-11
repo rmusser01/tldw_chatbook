@@ -425,10 +425,22 @@ class PersonasScreen(BaseAppScreen):
 
     async def _fetch_profile_record(self, persona_id: str) -> dict:
         """Full profile from the scope service; falls back to the cached list row."""
+        record, _complete = await self._fetch_profile_record_checked(persona_id)
+        return record
+
+    async def _fetch_profile_record_checked(self, persona_id: str) -> tuple[dict, bool]:
+        """Full profile plus whether it actually came from the scope service.
+
+        Returns ``(record, complete)``. ``complete`` is ``True`` only for a
+        service-backed record; the cached list-row / bare-id fallback is a
+        summary (no ``system_prompt``), so callers that need the full card
+        (e.g. Console handoffs) must check the flag, while display paths can
+        keep showing the partial record.
+        """
         fallback = dict(self._profile_record(persona_id) or {"id": persona_id})
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "get_persona_profile"):
-            return fallback
+            return fallback, False
         try:
             record = await service.get_persona_profile(
                 persona_id, mode=self.persona_handler.current_mode()
@@ -438,12 +450,12 @@ class PersonasScreen(BaseAppScreen):
                 f"Could not fetch persona profile {persona_id}; using the list row.",
                 exc_info=True,
             )
-            return fallback
+            return fallback, False
         if hasattr(record, "model_dump"):
             record = record.model_dump(mode="json")
         if not isinstance(record, dict):
-            return fallback
-        return dict(record)
+            return fallback, False
+        return dict(record), True
 
     # ===== Mode switching =====
 
@@ -782,7 +794,16 @@ class PersonasScreen(BaseAppScreen):
             )
         else:
             # List rows are summaries; the full record carries system_prompt.
-            record = await self._fetch_profile_record(entity_id)
+            # A degraded (fallback) record must fail the handoff loudly, the
+            # same way a not-yet-loaded character does, rather than staging a
+            # body that silently lacks the system prompt.
+            record, complete = await self._fetch_profile_record_checked(entity_id)
+            if not complete:
+                self._notify(
+                    "Persona profile is not fully loaded; try reselecting it.",
+                    "warning",
+                )
+                return None
             field_specs = (
                 ("Description", "description"),
                 ("System prompt", "system_prompt"),
