@@ -57,6 +57,11 @@ class EvalNavigationScreen(Screen):
     ]
 
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-accent: $primary;
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+
     EvalNavigationScreen {
         background: $background;
     }

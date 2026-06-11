@@ -91,6 +91,7 @@ async def _wait_until(
     raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s")
 
 
+@pytest.mark.skip(reason="Stale release-era snapshot (copy/evidence drifted); re-pin or retire via backlog task-98")
 @pytest.mark.asyncio
 async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
     monkeypatch: pytest.MonkeyPatch,

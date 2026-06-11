@@ -173,6 +173,10 @@ class PathBreadcrumbs(Horizontal):
     """Clickable breadcrumb navigation for paths"""
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+
     PathBreadcrumbs {
         height: 3;
         padding: 0 1;

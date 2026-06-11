@@ -62,6 +62,11 @@ class BaseTamagotchi(Static):
     ]
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-accent: $primary;
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+
     BaseTamagotchi {
         width: auto;
         height: 3;
