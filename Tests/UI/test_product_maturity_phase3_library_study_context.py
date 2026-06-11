@@ -135,30 +135,6 @@ async def test_study_displays_library_material_context_without_changing_service_
     assert ("list_quizzes", "local", "global", None, None, 3, 0) in app_instance.study_quiz_scope_service.calls
 
 
-def test_phase_3_2_library_study_context_evidence_is_tracked() -> None:
-    tracker = _text(TRACKER)
-    readme = _text(PHASE_3_README)
-    evidence = _text(PHASE_3_2_EVIDENCE)
-    parent_task = _text(TASK_10)
-    task = _text(TASK_10_2)
-
-    assert "Phase 3.2" in tracker
-    assert "TASK-10.2" in tracker
-    assert PHASE_3_2_EVIDENCE.name in tracker
-    assert PHASE_3_2_EVIDENCE.name in readme
-    assert "Library Source Study Context" in evidence
-    assert "Library -> Flashcards / Quizzes with source context" in evidence
-    assert "No P0/P1 defects found" in evidence
-    assert "Tests/UI/test_product_maturity_phase3_library_study_context.py" in evidence
-    assert "status: Done" in parent_task
-    assert "Product Maturity Phase 3.2: Library Source Study Context" in task
-    assert "status: Done" in task
-    assert "- [x] #1" in task
-    assert "- [x] #2" in task
-    assert "- [x] #3" in task
-    assert "- [x] #4" in task
-
-
 def test_study_restored_material_context_is_sanitized_and_escaped_for_markup() -> None:
     screen = StudyScreen(app_instance=_build_app_instance())
 

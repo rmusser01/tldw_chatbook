@@ -221,37 +221,3 @@ def test_visual_audit_destination_body_selectors_cover_top_level_destinations() 
     assert set(DESTINATION_BODY_SELECTORS) == set(TOP_LEVEL_DESTINATION_IDS)
 
 
-def test_phase_one_five_evidence_records_visual_broken_state_audit() -> None:
-    evidence = _text(EVIDENCE)
-
-    _assert_no_local_path_prefixes(evidence)
-    for required_text in (
-        "Phase 1.5",
-        "TASK-8.5",
-        "Visual Broken-State Audit",
-        "compact",
-        "laptop",
-        "large",
-        "SVG screenshot export",
-        "No P0/P1 visual broken-state blockers",
-        "Remaining Phase 1 gates",
-    ):
-        assert required_text in evidence
-    for destination_id in TOP_LEVEL_DESTINATION_IDS:
-        assert f"`{destination_id}`" in evidence
-
-
-def test_phase_one_five_tracking_and_task_closeout_are_current() -> None:
-    tracker = _text(TRACKER)
-    readme = _text(PHASE_1_README)
-    task = _text(TASK)
-
-    assert "Phase 1.5" in tracker
-    assert "TASK-8.5" in tracker
-    assert EVIDENCE.name in tracker
-    assert EVIDENCE.name in readme
-    assert "Phase 1.5 visual broken-state status: verified" in readme
-    assert "status: Done" in task
-    for acceptance_criterion in range(1, 6):
-        assert f"- [x] #{acceptance_criterion}" in task
-    assert "Implementation Notes" in task

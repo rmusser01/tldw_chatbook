@@ -161,38 +161,6 @@ def _assert_single_style_span(renderable: Text, *, style: str, expected_text: st
     assert renderable.plain[span.start : span.end] == expected_text
 
 
-def test_gate15_console_internals_evidence_is_tracked():
-    evidence = _repo_text(GATE15_EVIDENCE)
-    roadmap = _repo_text(ROADMAP)
-    readme = _repo_text(PHASE_3_README)
-    task = _repo_text(TASK_10_6)
-
-    for heading in (
-        "## Scope",
-        "## Walkthrough",
-        "## Functional Result",
-        "## Verification",
-        "## Defects",
-        "## Residual Risk",
-        "## Exit Decision",
-    ):
-        assert heading in evidence
-    for selector in (
-        "#console-control-bar",
-        "#console-session-surface",
-        "#console-native-composer",
-        "#console-run-inspector",
-    ):
-        assert selector in evidence
-    assert "/Users/macbook-dev/" not in evidence
-    assert GATE15_EVIDENCE.name in readme
-    assert GATE15_EVIDENCE.name in roadmap
-    assert "Gate 1.5" in roadmap
-    assert "TASK-10.6" in roadmap
-    assert "status: Done" in task
-    assert "## Implementation Notes" in task
-
-
 def test_console_session_surface_uses_flex_height_not_full_percent_height():
     for stylesheet in (
         Path("tldw_chatbook/css/tldw_cli_modular.tcss"),

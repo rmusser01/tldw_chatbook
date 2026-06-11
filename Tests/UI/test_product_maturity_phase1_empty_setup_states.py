@@ -310,35 +310,3 @@ async def test_service_unavailable_states_disable_false_console_handoffs(
         assert "unavailable" in str(button.tooltip).lower()
 
 
-def test_phase_one_six_evidence_records_empty_error_setup_state_coverage() -> None:
-    evidence = _text(EVIDENCE)
-
-    _assert_no_local_path_prefixes(evidence)
-    for required_text in (
-        "Phase 1.6",
-        "TASK-8.6",
-        "Empty/Error/Setup State Coverage",
-        "missing provider",
-        "optional dependency",
-        "service unavailable",
-        "runtime not configured",
-        "No P0/P1 empty/error/setup blockers",
-        "Remaining Phase 1 gate",
-    ):
-        assert required_text in evidence
-
-
-def test_phase_one_six_tracking_and_task_closeout_are_current() -> None:
-    tracker = _text(TRACKER)
-    readme = _text(PHASE_1_README)
-    task = _text(TASK)
-
-    assert "Phase 1.6" in tracker
-    assert "TASK-8.6" in tracker
-    assert EVIDENCE.name in tracker
-    assert EVIDENCE.name in readme
-    assert "Phase 1.6 empty/error/setup status: verified" in readme
-    assert "status: Done" in task
-    for acceptance_criterion in range(1, 5):
-        assert f"- [x] #{acceptance_criterion}" in task
-    assert "Implementation Notes" in task

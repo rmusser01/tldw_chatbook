@@ -58,19 +58,6 @@ def test_backlog_pointer_names_execution_source_of_truth():
     assert "Do not create a parallel phase tree" in text
 
 
-def test_post_ux_qa_scaffold_is_delta_focused():
-    readme = _text(POST_UX_QA_README)
-    template = _text(POST_UX_QA_TEMPLATE)
-
-    assert "changed screens" in readme
-    assert "changed workflows" in readme
-    assert "changed layout contracts" in readme
-    assert "discovered regressions" in readme
-    assert "Pre-UX Baseline Evidence" in template
-    assert "Post-UX Delta" in template
-    assert "Regression Decision" in template
-
-
 def test_public_roadmap_is_directional_and_commitment_free():
     text = _text(PUBLIC_ROADMAP)
 

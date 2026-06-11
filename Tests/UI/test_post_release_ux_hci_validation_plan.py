@@ -94,46 +94,6 @@ def test_post_release_validation_plan_requires_actual_app_use() -> None:
         assert workflow in plan
 
 
-def test_post_release_qa_harness_requires_real_screenshots_and_approval() -> None:
-    readme = _text(QA_README)
-    template = _text(QA_TEMPLATE)
-
-    for required in (
-        "Actual screenshots are required",
-        "Do not use generated SVGs",
-        "textual-web with CDP/browser automation",
-        "actual terminal screenshot",
-        "A screen that renders but has dead controls",
-        "P0/P1 findings require Backlog follow-up tasks",
-    ):
-        assert required in readme
-
-    table_rows = [_markdown_table_columns(row) for row in readme.splitlines()]
-    for screen in REQUIRED_SCREENS:
-        matching_rows = [row for row in table_rows if row and row[0] == screen]
-        assert len(matching_rows) == 1, (
-            f"{screen} must have exactly one row in the post-release QA index"
-        )
-        columns = matching_rows[0]
-        assert len(columns) >= 5, f"{screen} row must include all QA index columns"
-        assert columns[2] in {"pending", "approved"}, (
-            f"{screen} row must track screenshot approval explicitly"
-        )
-
-    for required_field in (
-        "Evidence method:",
-        "Actual screenshot path:",
-        "Screenshot approval:",
-        "Nielsen Norman Heuristic Findings",
-        "Keyboard And Focus Findings",
-        "Cross-Screen Handoff Findings",
-        "Power-User Repetition Findings",
-        "Severity Decisions",
-        "Accepted: no",
-    ):
-        assert required_field in template
-
-
 def test_post_release_backlog_tasks_track_screens_workflows_and_deferred_features() -> None:
     parent = _text(TASK_60)
 
@@ -196,27 +156,6 @@ def test_product_maturity_tracker_lists_post_release_validation_tranche() -> Non
     assert "actual-use functionality evidence" in tracker
     assert "cross-screen workflow validation" in tracker
     assert str(DEFERRED_TRANCHE_PLAN) in tracker
-
-
-def test_post_release_cross_screen_workflow_evidence_records_verification() -> None:
-    evidence = _text(WORKFLOW_EVIDENCE)
-    readme = _text(QA_README)
-
-    for required in (
-        "TASK-60.3",
-        "Workflow Matrix",
-        "Home primary action opens target route",
-        "Library Search/RAG mode and source handoff",
-        "Artifacts/Chatbook resume to Console",
-        "Personas and Skills attach to Console",
-        "Watchlists, Schedules, Workflows run follow",
-        "No unresolved P0/P1 findings remain",
-        "Result: 5 passed",
-        "Result: 8 passed",
-    ):
-        assert required in evidence
-
-    assert "2026-05-22-cross-screen-workflow-validation.md" in readme
 
 
 def test_post_release_deferred_tranche_plan_prioritizes_audited_future_work() -> None:

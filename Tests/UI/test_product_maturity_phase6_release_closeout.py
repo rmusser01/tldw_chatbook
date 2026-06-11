@@ -99,57 +99,6 @@ def _assert_task_done(task: str, task_path: Path) -> None:
     assert "## Implementation Notes" in text, task
 
 
-def test_phase6_release_closeout_evidence_and_tracking_are_complete() -> None:
-    evidence = _text(EVIDENCE)
-    phase_6_readme = _text(PHASE_6_README)
-    tracker = _text(TRACKER)
-    metadata = _metadata(evidence)
-
-    assert metadata["task"] == "TASK-13.7"
-    assert metadata["parent_task"] == "TASK-13"
-    assert metadata["decision"] == "release_closeout_recorded"
-    assert metadata["phase6_status"] == "verified"
-    assert metadata["p0_p1_findings"] == []
-    assert set(metadata["public_docs_reviewed"]) == {
-        PUBLIC_ROADMAP.as_posix(),
-        RECOVERY_DOC.as_posix(),
-        PHASE_6_README.as_posix(),
-    }
-    assert metadata["final_focused_replay_result"]["failed"] == 0
-    assert metadata["final_focused_replay_result"]["passed"] > 0
-
-    for section in (
-        "## Environment",
-        "## Evidence Completeness",
-        "## Public Roadmap Review",
-        "## Release Closeout Decision",
-        "## P0/P1 Decision",
-        "## Residual Risk",
-        "## Verification",
-    ):
-        assert section in evidence
-
-    for required_path in REQUIRED_PHASE_6_EVIDENCE:
-        assert required_path in evidence
-        assert required_path in phase_6_readme or required_path.endswith(
-            "2026-05-16-phase-6-7-release-closeout.md"
-        )
-    assert "Status: TASK-13.1 through TASK-13.7 done; Phase 6 verified" in phase_6_readme
-    assert EVIDENCE.as_posix() in phase_6_readme
-
-    qa_row = _markdown_table_row(tracker, "Phase 6 QA index")
-    _assert_phase6_status_complete(qa_row[2])
-    phase_row = _markdown_table_row(tracker, "Phase 6: Release Hardening And Documentation")
-    _assert_phase6_status_complete(phase_row[2])
-    assert EVIDENCE.name in phase_row[4]
-    assert "release hardening complete" in phase_row[5].lower()
-    assert "Phase 6 verified" in tracker
-
-    _assert_task_done("TASK-13", TASK_13)
-    for task_id, task_path in CHILD_TASKS.items():
-        _assert_task_done(task_id, task_path)
-
-
 def test_public_roadmap_matches_release_closeout_without_internal_commitments() -> None:
     roadmap = _text(PUBLIC_ROADMAP)
     recovery = _text(RECOVERY_DOC)

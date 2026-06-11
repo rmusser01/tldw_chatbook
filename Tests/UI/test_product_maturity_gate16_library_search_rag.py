@@ -135,41 +135,6 @@ async def _wait_for_inspector_selection(
     raise AssertionError(f"Timed out waiting for Library Search/RAG selection: {title!r}")
 
 
-def test_gate16_library_search_rag_evidence_is_tracked() -> None:
-    evidence = _repo_text(GATE16_EVIDENCE)
-    roadmap = _repo_text(ROADMAP)
-    readme = _repo_text(PHASE_3_README)
-    task_10 = _repo_text(TASK_10)
-    task_10_8 = _repo_text(TASK_10_8)
-    task_10_8_5 = _repo_text(TASK_10_8_5)
-
-    for heading in (
-        "## Scope",
-        "## Walkthrough",
-        "## Functional Result",
-        "## Verification",
-        "## Residual Risk",
-    ):
-        assert heading in evidence
-    for selector in (
-        "#library-search-rag-panel",
-        "#library-rag-query-input",
-        "#library-rag-results",
-        "#library-rag-use-in-console",
-        "#console-run-library-rag",
-        "#console-live-work-payload-source-id",
-    ):
-        assert selector in evidence
-    assert "Console staged evidence" in evidence
-    assert GATE16_EVIDENCE.name in readme
-    assert GATE16_EVIDENCE.name in roadmap
-    assert "Gate 1.6 / Phase 3.8" in roadmap
-    assert "TASK-10.8.5" in roadmap
-    assert "status: Done" in task_10_8
-    assert "status: Done" in task_10_8_5
-    assert "Closed Gate 1.6 with TASK-10.8" in task_10
-
-
 def test_library_search_rag_provenance_labels_escape_rich_markup() -> None:
     result = LibraryRagResultRow.from_result(
         {

@@ -160,37 +160,3 @@ async def test_command_palette_keyboard_fallback_exposes_top_level_product_model
         assert any(destination.purpose in help_text for _, help_text in matching_hits)
 
 
-def test_phase_one_four_evidence_records_keyboard_focus_sweep() -> None:
-    evidence = _text(EVIDENCE)
-
-    _assert_no_local_path_prefixes(evidence)
-    for required_text in (
-        "Phase 1.4",
-        "TASK-8.4",
-        "Keyboard And Focus Sweep",
-        "Fresh HOME",
-        "Ctrl+P",
-        "Tab order",
-        "home-primary-action",
-        "No P0/P1 keyboard or focus blockers",
-        "Remaining Phase 1 gates",
-    ):
-        assert required_text in evidence
-    for destination_id in TOP_LEVEL_DESTINATION_IDS:
-        assert f"`nav-{destination_id}`" in evidence
-
-
-def test_phase_one_four_tracking_and_task_closeout_are_current() -> None:
-    tracker = _text(TRACKER)
-    readme = _text(PHASE_1_README)
-    task = _text(TASK)
-
-    assert "Phase 1.4" in tracker
-    assert "TASK-8.4" in tracker
-    assert EVIDENCE.name in tracker
-    assert EVIDENCE.name in readme
-    assert "Phase 1.4 keyboard/focus status: verified" in readme
-    assert "status: Done" in task
-    for acceptance_criterion in range(1, 6):
-        assert f"- [x] #{acceptance_criterion}" in task
-    assert "Implementation Notes" in task

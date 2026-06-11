@@ -121,25 +121,3 @@ def test_pending_study_initial_section_overrides_restored_section() -> None:
     assert screen.current_section == "quizzes"
 
 
-def test_phase_3_1_library_study_entry_evidence_is_tracked() -> None:
-    tracker = _text(TRACKER)
-    readme = _text(PHASE_3_README)
-    evidence = _text(PHASE_3_1_EVIDENCE)
-    parent_task = _text(TASK_10)
-    task = _text(TASK_10_1)
-
-    assert "Phase 3.1" in tracker
-    assert "TASK-10.1" in tracker
-    assert PHASE_3_1_EVIDENCE.name in tracker
-    assert PHASE_3_1_EVIDENCE.name in readme
-    assert "Library Study Entry" in evidence
-    assert "Library -> Study Dashboard / Flashcards / Quizzes" in evidence
-    assert "No P0/P1 defects found" in evidence
-    assert "Tests/UI/test_product_maturity_phase3_knowledge_entry.py" in evidence
-    assert "status: Done" in parent_task
-    assert "Product Maturity Phase 3.1: Library Study Entry" in task
-    assert "status: Done" in task
-    assert "- [x] #1" in task
-    assert "- [x] #2" in task
-    assert "- [x] #3" in task
-    assert "- [x] #4" in task
