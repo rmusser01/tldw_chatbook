@@ -1,5 +1,5 @@
 ---
-id: TASK-90
+id: TASK-96
 title: 'Notes screen UX/HCI review fixes (PR #504)'
 status: Done
 assignee:
