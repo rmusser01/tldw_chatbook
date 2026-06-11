@@ -206,13 +206,11 @@ class TestCharacterSelectionAndEdit:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert screen.query_one("#ccp-character-card-view").display is True
-            placeholder = screen.query_one("#no-character-placeholder")
-            assert "hidden" in placeholder.classes
+            placeholder = screen.query_one("#personas-character-card-empty")
             assert placeholder.display is False
-            details = screen.query_one("#character-details-container")
-            assert "hidden" not in details.classes
-            assert details.display is True
-            name = screen.query_one("#ccp-card-name-display", Static)
+            body = screen.query_one("#personas-character-card-body")
+            assert body.display is True
+            name = screen.query_one("#personas-character-card-name", Static)
             assert "Detective Sam" in str(name.renderable)
 
     async def test_new_button_opens_editor_in_create_mode(self, mock_app_instance, stub_characters):
@@ -1054,7 +1052,7 @@ class TestConversationsPanel:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._open_conversation(pilot)
-            assert screen.query_one("#ccp-conversation-messages-view").display is True
+            assert screen.query_one("#personas-conversation-transcript-view").display is True
             assert screen.query_one("#ccp-character-card-view").display is False
 
     async def test_back_returns_to_card(
@@ -1066,7 +1064,7 @@ class TestConversationsPanel:
             await pilot.click("#personas-conversation-back")
             await pilot.pause()
             assert screen.query_one("#ccp-character-card-view").display is True
-            assert screen.query_one("#ccp-conversation-messages-view").display is False
+            assert screen.query_one("#personas-conversation-transcript-view").display is False
 
     async def test_continue_in_console_stages_payload(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -1120,7 +1118,7 @@ class TestConversationsPanel:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._open_conversation(pilot)
             assert screen.conversations._open_conversation_id == "conv-1"
-            screen.conversations.show_conversation_view(
+            await screen.conversations.show_conversation_view(
                 "conv-stale", [{"role": "user", "content": "stale"}], "stale", False
             )
             await pilot.pause()
@@ -1662,11 +1660,13 @@ class TestPreviewIntegration:
     async def test_draft_aware_system_prompt_uses_editor_data(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
+        from textual.widgets import TextArea as _TextArea
+
         from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
             EditCharacterRequested,
         )
-        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
-            CCPCharacterEditorWidget,
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
+            PersonasCharacterEditorWidget,
         )
 
         app = PersonasTestApp(mock_app_instance)
@@ -1675,8 +1675,10 @@ class TestPreviewIntegration:
             screen.post_message(EditCharacterRequested("1"))
             await pilot.pause()
             assert screen._edit_mode == "edit"
-            editor = screen.query_one(CCPCharacterEditorWidget)
-            editor._description_area.text = "Draft noir vibes, unsaved."
+            editor = screen.query_one(PersonasCharacterEditorWidget)
+            editor.query_one(
+                "#personas-char-editor-description", _TextArea
+            ).text = "Draft noir vibes, unsaved."
             await pilot.pause()
             prompt = screen._preview_system_prompt()
             assert "Draft noir vibes, unsaved." in prompt

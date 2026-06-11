@@ -27,19 +27,25 @@ from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
-from ...Widgets.CCP_Widgets.ccp_character_card_widget import (
-    CCPCharacterCardWidget,
-    EditCharacterRequested,
-)
+# The message classes stay legacy-owned (handlers below bind to them); only
+# the widgets rendering the center views are ds-native Personas ones.
+from ...Widgets.CCP_Widgets.ccp_character_card_widget import EditCharacterRequested
 from ...Widgets.CCP_Widgets.ccp_character_editor_widget import (
-    CCPCharacterEditorWidget,
     CharacterEditorCancelled,
     CharacterSaveRequested,
 )
-from ...Widgets.CCP_Widgets.ccp_conversation_view_widget import CCPConversationViewWidget
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import PersonaProfileCardWidget
 from ...Widgets.Persona_Widgets.persona_profile_editor_widget import PersonaProfileEditorWidget
+from ...Widgets.Persona_Widgets.personas_character_card_widget import (
+    PersonasCharacterCardWidget,
+)
+from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
+    PersonasCharacterEditorWidget,
+)
+from ...Widgets.Persona_Widgets.personas_conversation_transcript_widget import (
+    PersonasConversationTranscriptWidget,
+)
 from ...Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspectorPane
 from ...Widgets.Persona_Widgets.personas_library_pane import LibraryRow, PersonasLibraryPane
 from ...Widgets.Persona_Widgets.personas_messages import (
@@ -278,8 +284,8 @@ class PersonasScreen(BaseAppScreen):
                 )
                 with Vertical(id="personas-work-area", classes="destination-workbench-pane"):
                     with Container(id="personas-detail-stack"):
-                        yield CCPCharacterCardWidget(parent_screen=self)
-                        yield CCPCharacterEditorWidget(parent_screen=self)
+                        yield PersonasCharacterCardWidget()
+                        yield PersonasCharacterEditorWidget()
                         yield PersonaProfileCardWidget()
                         yield PersonaProfileEditorWidget()
                         with Horizontal(id="personas-conversation-actions"):
@@ -292,7 +298,7 @@ class PersonasScreen(BaseAppScreen):
                                 "Open in Library",
                                 id="personas-conversation-open-library",
                             )
-                        yield CCPConversationViewWidget(parent_screen=self)
+                        yield PersonasConversationTranscriptWidget()
                         yield Static(PLACEHOLDER_COPY, id="personas-mode-placeholder")
                     yield PersonasPreviewPane(id="personas-preview-pane")
                 yield PersonasInspectorPane(
@@ -850,7 +856,7 @@ class PersonasScreen(BaseAppScreen):
         if self.state.active_mode == "characters":
             if self._edit_mode in ("edit", "create"):
                 try:
-                    record = self.query_one(CCPCharacterEditorWidget).get_character_data() or {}
+                    record = self.query_one(PersonasCharacterEditorWidget).get_character_data() or {}
                 except Exception:
                     logger.warning("Could not collect editor data for the preview.", exc_info=True)
                     record = {}
@@ -1012,7 +1018,7 @@ class PersonasScreen(BaseAppScreen):
         # Dirty-on-entry: entering the editor conservatively marks the session
         # unsaved rather than tracking per-keystroke changes.
         self.state.has_unsaved_changes = True
-        self.query_one(CCPCharacterEditorWidget).new_character()
+        self.query_one(PersonasCharacterEditorWidget).new_character()
         self._show_center("#ccp-character-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         # Create mode: the previous selection's identity (and conversation
@@ -1067,7 +1073,7 @@ class PersonasScreen(BaseAppScreen):
         # Dirty-on-entry: entering the editor conservatively marks the session
         # unsaved rather than tracking per-keystroke changes.
         self.state.has_unsaved_changes = True
-        self.query_one(CCPCharacterEditorWidget).load_character(record)
+        self.query_one(PersonasCharacterEditorWidget).load_character(record)
         self._show_center("#ccp-character-editor-view")
         self.query_one(PersonasInspectorPane).set_unsaved(True)
 
@@ -1651,10 +1657,9 @@ class PersonasScreen(BaseAppScreen):
                 widget = self.query_one(selector)
             except Exception:
                 continue
-            visible = selector == visible_id
-            # The CCP widgets carry a `.hidden` class with display:none !important.
-            widget.set_class(not visible, "hidden")
-            widget.display = visible
+            # All center views are ds-native widgets without `.hidden`-class
+            # styling; plain display toggling is the whole mechanism.
+            widget.display = selector == visible_id
         # The conversation actions row is chrome shown alongside (not instead
         # of) the read-only conversation view.
         try:

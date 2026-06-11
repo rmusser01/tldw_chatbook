@@ -20,7 +20,9 @@ from ...Character_Chat.Character_Chat_Lib import (
     list_character_conversations,
     retrieve_conversation_messages_for_ui,
 )
-from ...Widgets.CCP_Widgets.ccp_conversation_view_widget import CCPConversationViewWidget
+from ...Widgets.Persona_Widgets.personas_conversation_transcript_widget import (
+    PersonasConversationTranscriptWidget,
+)
 from ...Widgets.Persona_Widgets.personas_inspector_pane import PersonasInspectorPane
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -30,8 +32,8 @@ if TYPE_CHECKING:
 
 logger = logger.bind(module="PersonasConversationsController")
 
-#: The read-only conversation view (CCPConversationViewWidget's own id).
-_CONVERSATION_VIEW_ID = "#ccp-conversation-messages-view"
+#: The read-only transcript view (PersonasConversationTranscriptWidget's own id).
+_CONVERSATION_VIEW_ID = "#personas-conversation-transcript-view"
 
 #: Cap on the transcript text staged into a Console handoff body.
 _HANDOFF_TRANSCRIPT_CHAR_LIMIT = 6000
@@ -166,10 +168,10 @@ class PersonasConversationsController:
             self.show_conversation_view, conversation_id, messages, transcript, truncated
         )
 
-    def show_conversation_view(
+    async def show_conversation_view(
         self, conversation_id: str, messages: list[dict], transcript: str, truncated: bool
     ) -> None:
-        """UI-thread continuation: display the read-only conversation view."""
+        """UI-thread continuation: display the read-only transcript view."""
         screen = self.screen
         if not screen.is_mounted or screen.state.active_mode != "characters":
             return
@@ -183,11 +185,12 @@ class PersonasConversationsController:
         self._open_conversation_truncated = truncated
         self._loaded_conversation_id = conversation_id
         try:
-            view = screen.query_one(CCPConversationViewWidget)
+            view = screen.query_one(PersonasConversationTranscriptWidget)
         except QueryError:
-            logger.warning("Conversation view widget is not mounted.")
+            logger.warning("Conversation transcript widget is not mounted.")
             return
-        view.load_conversation_messages(messages)
+        view.set_title(self._open_conversation_title or "Conversation")
+        await view.load_messages(messages)
         screen._show_center(_CONVERSATION_VIEW_ID)
 
     # ===== Conversation actions =====
