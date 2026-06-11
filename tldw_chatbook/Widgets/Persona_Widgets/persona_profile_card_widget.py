@@ -11,7 +11,7 @@ from typing import Any, Dict
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal
+from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
 
 from .personas_pane_messages import EditPersonaRequested
@@ -26,6 +26,10 @@ class PersonaProfileCardWidget(Container):
     PersonaProfileCardWidget {
         width: 100%;
         height: 100%;
+    }
+
+    PersonaProfileCardWidget #personas-card-body {
+        height: 1fr;
     }
 
     PersonaProfileCardWidget .ds-field-row {
@@ -63,11 +67,12 @@ class PersonaProfileCardWidget(Container):
 
     def compose(self) -> ComposeResult:
         yield Static("Persona Profile", classes="destination-section")
-        # markup=False: these Statics render profile content, which must
-        # display literally (an unmatched [/tag] would raise MarkupError at
-        # render time with markup enabled).
-        for _label, dom_id in self._FIELD_ROWS:
-            yield Static("", id=dom_id, classes="ds-field-row", markup=False)
+        with VerticalScroll(id="personas-card-body"):
+            # markup=False: these Statics render profile content, which must
+            # display literally (an unmatched [/tag] would raise MarkupError at
+            # render time with markup enabled).
+            for _label, dom_id in self._FIELD_ROWS:
+                yield Static("", id=dom_id, classes="ds-field-row", markup=False)
         with Horizontal(classes="ds-toolbar"):
             yield Button(
                 "Edit",

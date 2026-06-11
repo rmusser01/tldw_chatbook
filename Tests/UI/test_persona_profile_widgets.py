@@ -32,6 +32,13 @@ class WidgetApp(App):
         yield PersonaProfileEditorWidget()
 
 
+class EditorOnlyApp(App):
+    """Isolated harness for editor-only tests — keeps card off-screen concerns away."""
+
+    def compose(self):
+        yield PersonaProfileEditorWidget()
+
+
 async def test_card_shows_profile_and_edit_posts_message():
     received = []
 
@@ -157,7 +164,7 @@ async def test_persona_profile_create_schema_accepts_description():
 async def test_editor_save_posts_collected_data():
     received = []
 
-    class CaptureApp(WidgetApp):
+    class CaptureApp(EditorOnlyApp):
         def on_persona_profile_save_requested(self, message: PersonaProfileSaveRequested) -> None:
             received.append(message.data)
 
@@ -167,9 +174,7 @@ async def test_editor_save_posts_collected_data():
         editor.new_persona()
         pilot.app.query_one("#personas-editor-name", Input).value = "Mentor"
         await pilot.pause()
-        # press() instead of click(): the full-height card above pushes the
-        # editor's toolbar off the small harness screen.
-        pilot.app.query_one("#personas-editor-save", Button).press()
+        await pilot.click("#personas-editor-save")
         await pilot.pause()
     assert received and received[0]["name"] == "Mentor"
 
@@ -177,7 +182,7 @@ async def test_editor_save_posts_collected_data():
 async def test_editor_save_with_empty_name_blocks_and_shows_error():
     received = []
 
-    class CaptureApp(WidgetApp):
+    class CaptureApp(EditorOnlyApp):
         def on_persona_profile_save_requested(self, message: PersonaProfileSaveRequested) -> None:
             received.append(message.data)
 
@@ -186,10 +191,29 @@ async def test_editor_save_with_empty_name_blocks_and_shows_error():
         editor = pilot.app.query_one(PersonaProfileEditorWidget)
         editor.new_persona()
         await pilot.pause()
-        # press() instead of click(): the full-height card above pushes the
-        # editor's toolbar off the small harness screen.
-        pilot.app.query_one("#personas-editor-save", Button).press()
+        await pilot.click("#personas-editor-save")
         await pilot.pause()
         validation = pilot.app.query_one("#personas-editor-validation", Static)
         assert "name: required" in str(validation.renderable)
     assert received == []
+
+
+async def test_long_system_prompt_keeps_edit_toolbar_visible():
+    """A 60-line system prompt must not push the Edit button off-screen."""
+    long_prompt = "\n".join(f"Line {i}: do something useful here." for i in range(60))
+    profile_with_long_prompt = {
+        "id": "p-long",
+        "name": "Verbose Persona",
+        "description": "A persona with a very long system prompt.",
+        "system_prompt": long_prompt,
+    }
+
+    app = WidgetApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        card = pilot.app.query_one(PersonaProfileCardWidget)
+        card.show_persona(profile_with_long_prompt)
+        await pilot.pause()
+        # The Edit button must be clickable (visible on screen) even with a long
+        # system prompt filling the scrollable body above it.
+        await pilot.click("#personas-card-edit")
+        await pilot.pause()  # no exception means the button was reachable

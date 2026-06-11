@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, Static, TextArea
 
 from .personas_pane_messages import (
@@ -18,6 +18,32 @@ from .personas_pane_messages import (
 
 class PersonaProfileEditorWidget(Container):
     """ds-field-row form: name, description, system prompt."""
+
+    DEFAULT_CSS = """
+    PersonaProfileEditorWidget {
+        width: 100%;
+        height: 100%;
+    }
+
+    PersonaProfileEditorWidget #personas-editor-body {
+        height: 1fr;
+    }
+
+    PersonaProfileEditorWidget .ds-toolbar {
+        height: 1;
+        min-height: 1;
+    }
+
+    PersonaProfileEditorWidget .ds-toolbar Button {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+        margin-right: 1;
+    }
+    """
 
     def __init__(self, **kwargs) -> None:
         kwargs.setdefault("id", "ccp-persona-editor-view")
@@ -34,16 +60,17 @@ class PersonaProfileEditorWidget(Container):
 
     def compose(self) -> ComposeResult:
         yield Static("Persona Editor", classes="destination-section")
-        with Vertical(classes="ds-field-row"):
-            yield Label("Name")
-            yield Input(id="personas-editor-name", placeholder="Persona name")
-        with Vertical(classes="ds-field-row"):
-            yield Label("Description")
-            yield TextArea(id="personas-editor-description")
-        with Vertical(classes="ds-field-row"):
-            yield Label("System prompt")
-            yield TextArea(id="personas-editor-system-prompt")
-        yield Static("", id="personas-editor-validation")
+        with VerticalScroll(id="personas-editor-body"):
+            with Vertical(classes="ds-field-row"):
+                yield Label("Name")
+                yield Input(id="personas-editor-name", placeholder="Persona name")
+            with Vertical(classes="ds-field-row"):
+                yield Label("Description")
+                yield TextArea(id="personas-editor-description")
+            with Vertical(classes="ds-field-row"):
+                yield Label("System prompt")
+                yield TextArea(id="personas-editor-system-prompt")
+            yield Static("", id="personas-editor-validation")
         with Horizontal(classes="ds-toolbar"):
             yield Button("Save", id="personas-editor-save")
             yield Button("Cancel", id="personas-editor-cancel")
