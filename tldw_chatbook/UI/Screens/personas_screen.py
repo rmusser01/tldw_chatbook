@@ -610,6 +610,8 @@ class PersonasScreen(BaseAppScreen):
                 conversation_id, "Untitled conversation"
             )
             self._open_conversation_transcript = ""
+            self._open_conversation_truncated = False
+            self._loaded_conversation_id = None
             self._load_conversation_messages_worker(
                 conversation_id, self.state.selected_entity_name or "Character"
             )

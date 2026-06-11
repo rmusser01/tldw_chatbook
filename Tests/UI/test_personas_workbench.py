@@ -1123,6 +1123,64 @@ class TestConversationsPanel:
             for message, severity in notifications
         )
 
+    async def test_continue_blocked_during_same_conversation_reload(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        """Re-selecting the same conversation clears loaded state so Continue is blocked
+        until the reload worker delivers its results.
+
+        Regression: _open() previously only reset _open_conversation_transcript but left
+        _loaded_conversation_id and _open_conversation_truncated intact.  That meant the
+        guard in _handle_conversation_continue_console() saw _loaded_conversation_id ==
+        _open_conversation_id immediately after the reload started and would stage an empty
+        body with a stale truncation flag.
+        """
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            ConversationRowSelected as _CRS,
+        )
+
+        notifications: list[tuple[str, str]] = []
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        app.notify = lambda message, severity="information", **kwargs: notifications.append(
+            (str(message), severity)
+        )
+
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            # conv-1 is fully loaded at this point.
+            assert screen._loaded_conversation_id == "conv-1"
+            assert screen._open_conversation_transcript != ""
+
+            # Stub the worker so it never calls _show_conversation_view, thus
+            # simulating an in-flight reload whose result hasn't arrived yet.
+            # We patch on the instance so the class-level @work decorated method
+            # is bypassed for subsequent calls within this test.
+            screen._load_conversation_messages_worker = lambda *args, **kwargs: None
+
+            # Re-select the same conversation by posting the message directly to the
+            # screen — this exercises _handle_conversation_row_selected → _open()
+            # without relying on the inspector-pane button being click-reachable
+            # while the conversation view is displayed on top.
+            screen.post_message(_CRS("conv-1"))
+            await pilot.pause()
+
+            # _open() should have cleared _loaded_conversation_id.
+            assert screen._loaded_conversation_id is None, (
+                "_open() must reset _loaded_conversation_id so that re-selecting "
+                "the same conversation doesn't bypass the still-loading guard"
+            )
+
+            # Try to continue — the reload is in flight so it must be blocked.
+            await pilot.click("#personas-conversation-continue-console")
+            await pilot.pause()
+
+        app.open_chat_with_handoff.assert_not_called()
+        assert any(
+            "still loading" in message and severity == "warning"
+            for message, severity in notifications
+        ), f"Expected 'still loading' warning; got: {notifications}"
+
     async def test_profile_selection_shows_no_conversations(
         self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
     ):
