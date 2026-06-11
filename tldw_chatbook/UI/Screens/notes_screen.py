@@ -264,6 +264,10 @@ class NotesScreen(BaseAppScreen):
             "artifacts": [],
         }
         self._skip_next_resume_refresh = False
+        # Serializes list population: a modal dismiss resumes the screen and
+        # refreshes concurrently with worker-driven refreshes; interleaved
+        # ListView appends would duplicate rows.
+        self._populate_lock = asyncio.Lock()
         logger.debug("NotesScreen initialized with scope-aware state")
 
     NOTES_MODES = {
@@ -442,7 +446,9 @@ class NotesScreen(BaseAppScreen):
             ScopeType.WORKSPACE: "Workspace",
         }
         scope_label = scope_labels.get(self.state.scope_type, "Local")
-        item_noun = "workspaces" if self.state.scope_type == ScopeType.WORKSPACE else "notes"
+        item_noun = "workspace" if self.state.scope_type == ScopeType.WORKSPACE else "note"
+        if self._scope_item_count != 1:
+            item_noun += "s"
         save_state = "unsaved" if self.state.has_unsaved_changes else "saved"
         return f"{scope_label} | {self._scope_item_count} {item_noun} | {save_state}"
 
@@ -1076,18 +1082,19 @@ class NotesScreen(BaseAppScreen):
     async def _populate_scope_list_if_available(self, items: list[dict[str, Any]]) -> None:
         if not self.is_mounted:
             return
-        try:
-            navigator = self.query_one("#notes-navigator-pane", NotesNavigatorPane)
-            if self.state.scope_type == ScopeType.LOCAL_NOTE:
-                await navigator.populate_local_notes_list(items)
-            elif self.state.scope_type == ScopeType.SERVER_NOTE:
-                await navigator.populate_server_notes_list(items)
-            else:
-                await navigator.populate_workspaces_list(items)
-        except QueryError:
-            return
-        self._scope_item_count = len(items)
-        self._update_status_row()
+        async with self._populate_lock:
+            try:
+                navigator = self.query_one("#notes-navigator-pane", NotesNavigatorPane)
+                if self.state.scope_type == ScopeType.LOCAL_NOTE:
+                    await navigator.populate_local_notes_list(items)
+                elif self.state.scope_type == ScopeType.SERVER_NOTE:
+                    await navigator.populate_server_notes_list(items)
+                else:
+                    await navigator.populate_workspaces_list(items)
+            except QueryError:
+                return
+            self._scope_item_count = len(items)
+            self._update_status_row()
 
     async def _populate_notes_list_if_available(self, notes_list_data: list[dict[str, Any]]) -> None:
         await self._populate_scope_list_if_available(notes_list_data)
@@ -2845,6 +2852,12 @@ class NotesScreen(BaseAppScreen):
         await self.refresh_current_scope()
 
     @on(Button.Pressed, "#notes-delete-button")
+    def on_delete_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        # push_screen_wait requires a worker context; awaiting the
+        # confirmation dialog directly from the message pump crashes the app.
+        self.run_worker(self.handle_delete_button(event), exclusive=True, group="notes-delete")
+
     async def handle_delete_button(self, event: Button.Pressed) -> None:
         event.stop()
         deleted_id = self._get_current_resource_id()
@@ -2902,6 +2915,11 @@ class NotesScreen(BaseAppScreen):
         await self._save_current_workspace_details()
 
     @on(Button.Pressed, "#workspace-add-source-button")
+    def on_workspace_add_source_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        # The media picker is awaited via push_screen_wait, which needs a worker.
+        self.run_worker(self.handle_workspace_add_source_button(event), exclusive=True, group="notes-add-source")
+
     async def handle_workspace_add_source_button(self, event: Button.Pressed) -> None:
         event.stop()
         await self._create_workspace_source()

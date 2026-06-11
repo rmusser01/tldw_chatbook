@@ -915,6 +915,10 @@ class NotesSyncPane(Horizontal):
 
             self.app_instance.last_sync_time = _datetime.now()
             self.update_status()
+            # Keep the Notes-mode list and status row in step with sync results.
+            refresh = getattr(self.screen, "refresh_current_scope", None)
+            if callable(refresh):
+                await refresh()
         except Exception as exc:
             logger.error(
                 "Notes sync failed (folder={}, direction={}, resolution={}): {}",

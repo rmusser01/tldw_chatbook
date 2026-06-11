@@ -2170,6 +2170,32 @@ Button.notes-delete-action {
     max-height: 10;
 }
 
+/* Sort row: the global `Select { width: 100%; }` rule would otherwise
+   inflate the select and push the order toggle out of the row. */
+#notes-sort-row {
+    height: 1;
+    min-height: 1;
+    margin-bottom: 1;
+    align: left middle;
+}
+
+#notes-sort-row > Static {
+    width: 6;
+    min-width: 6;
+    color: $ds-text-muted;
+}
+
+#notes-sort-row Select {
+    width: 1fr;
+    min-width: 0;
+    margin: 0;
+}
+
+#notes-sort-row Button {
+    margin-left: 1;
+}
+
+
 #library-source-inspector {
     width: 2fr;
     min-width: 0;
