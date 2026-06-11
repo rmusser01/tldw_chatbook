@@ -121,8 +121,6 @@ class NotesScreen(BaseAppScreen):
 
     .notes-mode-chip.is-active {
         border: none;
-        background: $primary;
-        color: $background;
         text-style: bold underline;
     }
 

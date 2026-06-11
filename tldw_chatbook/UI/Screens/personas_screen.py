@@ -330,6 +330,7 @@ class PersonasScreen(BaseAppScreen):
     async def refresh_character_library_list(self, characters: list[dict] | None) -> None:
         """Destination-native hook called by ``CCPCharacterHandler``."""
         self._characters = [dict(record) for record in (characters or [])]
+        self._update_status_row()
         if self.state.active_mode != "characters":
             return
         try:
@@ -391,6 +392,7 @@ class PersonasScreen(BaseAppScreen):
             logger.warning("Could not refresh the persona profile list.", exc_info=True)
             profiles = []
         self._profiles = [dict(record) for record in (profiles or [])]
+        self._update_status_row()
         if not self.is_mounted or self.state.active_mode != "personas":
             # A late result must not render persona rows into another mode.
             return
@@ -518,7 +520,19 @@ class PersonasScreen(BaseAppScreen):
             self._show_center("#personas-mode-placeholder")
 
     def _status_row_text(self) -> str:
-        return f"Mode: {MODE_LABELS[self.state.active_mode]} | Source: Local | Attachments: Console"
+        mode = self.state.active_mode
+        if mode == "characters":
+            return f"Characters: {len(self._characters)} | Source: Local | Attachments: Console"
+        if mode == "personas":
+            return f"Personas: {len(self._profiles)} | Source: Local | Attachments: Console"
+        return f"Mode: {MODE_LABELS[mode]} | Source: Local | Attachments: Console"
+
+    def _update_status_row(self) -> None:
+        """Refresh the status row text; tolerate refreshes racing teardown."""
+        try:
+            self.query_one("#personas-status-row", Static).update(self._status_row_text())
+        except Exception:
+            logger.debug("Could not update the personas status row.", exc_info=True)
 
     # ===== Selection =====
 

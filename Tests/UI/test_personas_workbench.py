@@ -164,6 +164,25 @@ class TestWorkbenchShell:
             assert "ctrl+enter send" in footer.shortcut_text
             assert footer.shortcut_text != AppFooterStatus.DEFAULT_SHORTCUT_TEXT
 
+    async def test_status_row_shows_live_counts_per_mode(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            status = screen.query_one("#personas-status-row", Static)
+            assert "Characters: 2" in str(status.renderable)
+            assert "Source: Local" in str(status.renderable)
+            await pilot.click("#personas-mode-personas")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert "Personas: 1" in str(status.renderable)
+            await pilot.click("#personas-mode-prompts")
+            await pilot.pause()
+            assert "Mode: Prompts" in str(status.renderable)
+
     async def test_placeholder_modes_show_placeholder_panel(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:

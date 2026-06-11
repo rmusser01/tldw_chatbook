@@ -81,15 +81,28 @@ class PersonasPreviewPane(Vertical):
             "Preview conversation",
             id="personas-preview-toggle",
             tooltip="Test the selected character or persona in an ephemeral conversation; nothing is saved.",
+            classes="console-action-subdued",
         )
         with Vertical(id="personas-preview-body"):
             yield Static("", id="personas-preview-status")
             yield VerticalScroll(id="personas-preview-transcript")
             yield Input(placeholder="Test message...", id="personas-preview-input")
             with Horizontal(classes="ds-toolbar"):
-                yield Button("Test Reply", id="personas-preview-test-reply")
-                yield Button("Reset", id="personas-preview-reset")
-                yield Button("Open in Console", id="personas-preview-open-console")
+                yield Button(
+                    "Test Reply",
+                    id="personas-preview-test-reply",
+                    classes="console-action-secondary",
+                )
+                yield Button(
+                    "Reset",
+                    id="personas-preview-reset",
+                    classes="console-action-subdued",
+                )
+                yield Button(
+                    "Open in Console",
+                    id="personas-preview-open-console",
+                    classes="console-action-subdued",
+                )
 
     def on_mount(self) -> None:
         self.query_one("#personas-preview-body").display = False

@@ -37,15 +37,35 @@ class PersonasInspectorPane(Vertical):
         yield Static("Readiness", classes="destination-section")
         yield Static("Console: Blocked - select an item", id="personas-readiness-console")
         with Vertical(id="personas-inspector-actions"):
-            yield Button("Attach to Console", id="personas-attach-to-console", disabled=True)
-            yield Button("Start Chat", id="personas-start-chat", disabled=True)
-            yield Button("Export JSON", id="personas-export-json", disabled=True)
-            yield Button("Export PNG", id="personas-export-png", disabled=True)
+            yield Button(
+                "Attach to Console",
+                id="personas-attach-to-console",
+                disabled=True,
+                classes="console-action-secondary",
+            )
+            yield Button(
+                "Start Chat",
+                id="personas-start-chat",
+                disabled=True,
+                classes="console-action-secondary",
+            )
+            yield Button(
+                "Export JSON",
+                id="personas-export-json",
+                disabled=True,
+                classes="console-action-subdued",
+            )
+            yield Button(
+                "Export PNG",
+                id="personas-export-png",
+                disabled=True,
+                classes="console-action-subdued",
+            )
             yield Button(
                 "Delete",
                 id="personas-delete",
                 disabled=True,
-                classes="personas-destructive",
+                classes="console-action-subdued personas-destructive",
             )
 
     def show_selection(self, *, name: str, kind: str, authority: str) -> None:
@@ -95,7 +115,11 @@ class PersonasInspectorPane(Vertical):
             seen.add(dom_id)
             self._conversation_lookup[dom_id] = conversation_id
             buttons.append(
-                Button(title, id=dom_id, classes="personas-conversation-row")
+                Button(
+                    title,
+                    id=dom_id,
+                    classes="personas-conversation-row console-action-subdued",
+                )
             )
         if buttons:
             await container.mount_all(buttons)

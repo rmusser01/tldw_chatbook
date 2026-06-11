@@ -47,11 +47,17 @@ class PersonasLibraryPane(Vertical):
         yield Static("Library", classes="destination-section personas-column-title")
         yield Input(placeholder="Search...", id="personas-library-search")
         with Horizontal(id="personas-library-toolbar", classes="ds-toolbar"):
-            yield Button("New", id="personas-library-new", tooltip="Create a new item in this mode.")
+            yield Button(
+                "New",
+                id="personas-library-new",
+                tooltip="Create a new item in this mode.",
+                classes="console-action-secondary",
+            )
             yield Button(
                 "Import",
                 id="personas-library-import",
                 tooltip="Import a character card (PNG or JSON).",
+                classes="console-action-secondary",
             )
         yield VerticalScroll(id="personas-library-rows")
         yield Static("", id="personas-library-count", classes="destination-purpose")
@@ -92,7 +98,7 @@ class PersonasLibraryPane(Vertical):
                 dom_id = f"{dom_id}-{suffix}"
             seen.add(dom_id)
             self._row_lookup[dom_id] = row
-            classes = "personas-library-row"
+            classes = "personas-library-row console-action-subdued"
             if row.is_unsaved:
                 classes += " is-unsaved"
             widgets.append(Button(row.name, id=dom_id, classes=classes))

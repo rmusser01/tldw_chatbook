@@ -38,6 +38,33 @@ async def test_default_state_shows_no_selection_and_disabled_actions():
         )
 
 
+async def test_action_buttons_carry_shared_flat_button_classes():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        for button_id in ("#personas-attach-to-console", "#personas-start-chat"):
+            assert pilot.app.query_one(button_id, Button).has_class(
+                "console-action-secondary"
+            )
+        for button_id in ("#personas-export-json", "#personas-export-png"):
+            assert pilot.app.query_one(button_id, Button).has_class(
+                "console-action-subdued"
+            )
+        delete = pilot.app.query_one("#personas-delete", Button)
+        assert delete.has_class("console-action-subdued")
+        assert delete.has_class("personas-destructive")
+
+
+async def test_conversation_rows_carry_subdued_class():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        await pane.show_conversations((("conv-1", "First case"),))
+        await pilot.pause()
+        row = pilot.app.query_one("#personas-conversation-row-conv-1", Button)
+        assert row.has_class("personas-conversation-row")
+        assert row.has_class("console-action-subdued")
+
+
 async def test_show_selection_enables_actions_and_shows_authority():
     app = InspectorApp()
     async with app.run_test() as pilot:

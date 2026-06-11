@@ -39,7 +39,7 @@ If a runtime slice needs a new visual pattern, update the visual-system contract
 
 ## Shared Flat-Button Vocabulary
 
-`.console-action-primary`, `.console-action-secondary`, `.console-action-subdued`, and `.console-action-disabled` are the shared cross-screen flat-button vocabulary for destination action toolbars. They render `border: none`, one-row height, and `$ds-surface-raised` (secondary/subdued), `$ds-action-focus`-alpha (primary), or `$ds-surface-panel` (disabled) backgrounds; the exact declarations are verified by `Tests/UI/test_non_obscuring_focus_contract.py`. New destination screens apply these classes to toolbar actions instead of defining screen-local button rules.
+`.console-action-primary`, `.console-action-secondary`, `.console-action-subdued`, and `.console-action-disabled` are the shared cross-screen flat-button vocabulary for destination action toolbars. The classes are self-sufficient: each carries `border: none` plus the one-row height (`height: 1; min-height: 1;`) itself, so a screen that applies only the class gets the flat one-row look without extra screen-local rules. Backgrounds are `$ds-surface-raised` (secondary/subdued), `$ds-action-focus`-alpha (primary), or `$ds-surface-panel` (disabled). The declarations of the secondary, subdued, and disabled classes are verified by `Tests/UI/test_non_obscuring_focus_contract.py`. New destination screens apply these classes to toolbar actions instead of defining screen-local button rules.
 
 ## Required State Classes
 

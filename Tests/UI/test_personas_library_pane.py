@@ -132,6 +132,51 @@ async def test_mark_active_row_applies_is_active_to_selected_only():
         assert "is-active" not in pilot.app.query_one("#personas-library-row-character-1", Button).classes
 
 
+async def test_toolbar_and_rows_carry_shared_flat_button_classes():
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        assert pilot.app.query_one("#personas-library-new", Button).has_class(
+            "console-action-secondary"
+        )
+        assert pilot.app.query_one("#personas-library-import", Button).has_class(
+            "console-action-secondary"
+        )
+        await pane.update_rows(
+            (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
+            total=1,
+            noun="characters",
+        )
+        await pilot.pause()
+        row = pilot.app.query_one("#personas-library-row-character-1", Button)
+        assert row.has_class("personas-library-row")
+        assert row.has_class("console-action-subdued")
+
+
+async def test_active_row_keeps_subdued_and_is_active_markers():
+    """The bundle resolves .personas-library-row.is-active over the subdued
+    class by specificity; the widget must keep both markers on the row."""
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="1", kind="character", name="Detective Sam"),
+                LibraryRow(item_id="2", kind="character", name="Tutor"),
+            ),
+            total=2,
+            noun="characters",
+        )
+        await pilot.pause()
+        pane.mark_active_row("character", "1")
+        active = pilot.app.query_one("#personas-library-row-character-1", Button)
+        assert active.has_class("console-action-subdued")
+        assert active.has_class("is-active")
+        inactive = pilot.app.query_one("#personas-library-row-character-2", Button)
+        assert inactive.has_class("console-action-subdued")
+        assert not inactive.has_class("is-active")
+
+
 async def test_set_mode_toggles_import_button_and_empty_copy():
     app = LibraryPaneApp()
     async with app.run_test() as pilot:

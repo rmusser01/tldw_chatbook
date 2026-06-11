@@ -55,6 +55,23 @@ async def test_collapsed_by_default_and_toggle_expands():
         assert body.display is False
 
 
+async def test_buttons_carry_shared_flat_button_classes():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        assert pilot.app.query_one("#personas-preview-test-reply", Button).has_class(
+            "console-action-secondary"
+        )
+        assert pilot.app.query_one("#personas-preview-reset", Button).has_class(
+            "console-action-subdued"
+        )
+        assert pilot.app.query_one("#personas-preview-open-console", Button).has_class(
+            "console-action-subdued"
+        )
+        assert pilot.app.query_one("#personas-preview-toggle", Button).has_class(
+            "console-action-subdued"
+        )
+
+
 async def test_expand_api_shows_body():
     app = PreviewApp()
     async with app.run_test() as pilot:
