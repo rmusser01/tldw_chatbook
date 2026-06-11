@@ -280,3 +280,93 @@ async def test_notes_rail_collapse_state_round_trips_through_save_restore():
         await pilot.pause()
         assert restored_screen.query_one("#notes-navigator-pane").display is False
         assert restored_screen.query_one("#notes-navigator-rail-handle").display is True
+
+
+@pytest.mark.asyncio
+async def test_notes_sort_select_exposes_sort_keys_as_values():
+    screen = NotesScreen(_mock_app_instance())
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+
+        sort_select = screen.query_one("#notes-sort-select", Select)
+        # Values must be the sort keys NotesScreen branches on, not the labels.
+        sort_select.value = "date_modified"
+        await pilot.pause()
+        assert screen.state.sort_by == "date_modified"
+        sort_select.value = "title"
+        await pilot.pause()
+        assert screen.state.sort_by == "title"
+
+
+@pytest.mark.asyncio
+async def test_notes_import_parses_yaml_title_and_content(tmp_path):
+    mock_instance = _mock_app_instance()
+    mock_instance.notes_service.add_note.return_value = "imported-1"
+    mock_instance.notes_service.get_note_by_id.return_value = {
+        "id": "imported-1",
+        "title": "Yaml Note",
+        "content": "Body from yaml",
+        "version": 1,
+        "keywords": [],
+    }
+    note_file = tmp_path / "note.yaml"
+    note_file.write_text("title: Yaml Note\ncontent: Body from yaml\n", encoding="utf-8")
+
+    screen = NotesScreen(mock_instance)
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        await screen._import_note_from_path(note_file)
+        await pilot.pause()
+
+    kwargs = mock_instance.notes_service.add_note.call_args.kwargs
+    assert kwargs["title"] == "Yaml Note"
+    assert kwargs["content"] == "Body from yaml"
+
+
+@pytest.mark.asyncio
+async def test_notes_import_rejects_oversized_file(tmp_path):
+    mock_instance = _mock_app_instance()
+    note_file = tmp_path / "huge.txt"
+    note_file.write_text("x" * (NotesScreen._IMPORT_NOTE_MAX_CHARS + 1), encoding="utf-8")
+
+    screen = NotesScreen(mock_instance)
+    screen._notify = Mock()
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        await screen._import_note_from_path(note_file)
+
+    assert not mock_instance.notes_service.add_note.called
+    assert any(
+        "supported note size" in str(call.args[0])
+        for call in screen._notify.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_notes_template_with_bad_placeholder_fails_gracefully(monkeypatch):
+    mock_instance = _mock_app_instance()
+    screen = NotesScreen(mock_instance)
+    screen._notify = Mock()
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+
+        import tldw_chatbook.Event_Handlers.notes_events as notes_events_module
+
+        selected_key = screen.query_one("#notes-template-select", Select).value
+        monkeypatch.setitem(
+            notes_events_module.NOTE_TEMPLATES,
+            selected_key,
+            {"title": "Bad {nonexistent}", "content": "body", "keywords": ""},
+        )
+        screen.query_one("#notes-create-from-template-button", Button).press()
+        await pilot.pause()
+
+    assert not mock_instance.notes_service.add_note.called
+    assert any(
+        "invalid placeholder" in str(call.args[0])
+        for call in screen._notify.call_args_list
+    )

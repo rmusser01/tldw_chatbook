@@ -12,6 +12,7 @@ from typing import Any, Iterable
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import QueryError
 from textual.widgets import (
     Button,
     Collapsible,
@@ -173,7 +174,7 @@ class NotesNavigatorPane(NotesListPopulateMixin, VerticalScroll):
 
         yield Static("Sort by:", classes="notes-pane-section")
         yield Select(
-            options=[("date_created", "Date Created"), ("date_modified", "Date Modified"), ("title", "Title")],
+            options=[("Date Created", "date_created"), ("Date Modified", "date_modified"), ("Title", "title")],
             id="notes-sort-select",
         )
         yield Button("↓ Newest First", id="notes-sort-order-button", variant="default")
@@ -375,7 +376,10 @@ class NotesInspectorPane(VerticalScroll):
 
     def update_note_meta(self, details: dict[str, Any] | None) -> None:
         """Render created/modified/version/sync metadata for the selected note."""
-        meta = self.query_one("#notes-detail-meta", Static)
+        try:
+            meta = self.query_one("#notes-detail-meta", Static)
+        except QueryError:
+            return
         if not details:
             meta.update("No note selected.")
             return
@@ -404,7 +408,10 @@ class NotesInspectorPane(VerticalScroll):
         is_note_resource = resource_kind == "note"
         is_workspace_details = canonical_scope == "workspace" and resource_kind == "workspace"
 
-        title = self.query_one("#notes-details-sidebar-title", Static)
+        try:
+            title = self.query_one("#notes-details-sidebar-title", Static)
+        except QueryError:
+            return
         if is_workspace_details:
             title.update("Workspace Details")
         else:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import replace
 from datetime import datetime
@@ -2618,8 +2619,17 @@ class NotesScreen(BaseAppScreen):
             "time": now.strftime("%H:%M"),
             "datetime": now.strftime("%Y-%m-%d %H:%M"),
         }
-        title = str(template.get("title", "New Note")).format(**template_data)
-        content = str(template.get("content", "")).format(**template_data)
+        # Templates can come from the user's note_templates.json; unknown
+        # placeholders or malformed format syntax must not crash the action.
+        try:
+            title = str(template.get("title", "New Note")).format(**template_data)
+            content = str(template.get("content", "")).format(**template_data)
+        except (KeyError, ValueError, IndexError) as exc:
+            self._notify(
+                f"Template '{template_key}' has an invalid placeholder: {exc}",
+                severity="error",
+            )
+            return
         new_note_id = self.notes_service.add_note(
             user_id=self.notes_user_id,
             title=title,
@@ -2650,6 +2660,9 @@ class NotesScreen(BaseAppScreen):
             import_callback,
         )
 
+    _IMPORT_NOTE_MAX_CHARS = 2_000_000
+    _IMPORT_NOTE_TITLE_MAX_CHARS = 300
+
     async def _import_note_from_path(self, selected_path: Optional[Path]) -> None:
         if selected_path is None:
             return
@@ -2658,19 +2671,36 @@ class NotesScreen(BaseAppScreen):
             return
 
         from tldw_chatbook.Event_Handlers.notes_events import _parse_note_from_file_content
+        from tldw_chatbook.Utils.input_validation import sanitize_string
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
 
         try:
-            file_content = Path(selected_path).read_text(encoding="utf-8")
+            note_path = validate_path_simple(selected_path, require_exists=True)
+        except ValueError as exc:
+            self._notify(f"Rejected import path: {exc}", severity="error")
+            return
+        try:
+            file_content = await asyncio.to_thread(
+                note_path.read_text, encoding="utf-8", errors="replace"
+            )
         except OSError as exc:
             self._notify(f"Could not read file: {exc}", severity="error")
             return
-        title, content = _parse_note_from_file_content(Path(selected_path), file_content)
-        if title is None:
-            title = Path(selected_path).stem or "Imported Note"
+        if len(file_content) > self._IMPORT_NOTE_MAX_CHARS:
+            self._notify(
+                "Import rejected: file is larger than the supported note size.",
+                severity="error",
+            )
+            return
+        title, content = _parse_note_from_file_content(note_path, file_content)
+        title = sanitize_string(title or "", max_length=self._IMPORT_NOTE_TITLE_MAX_CHARS)
+        if not title:
+            title = note_path.stem or "Imported Note"
+        content = (content or "").replace("\x00", "")
         new_note_id = self.notes_service.add_note(
             user_id=self.notes_user_id,
             title=title,
-            content=content or "",
+            content=content,
         )
         if not new_note_id:
             self._notify("Failed to import note.", severity="error")
