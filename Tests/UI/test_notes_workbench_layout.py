@@ -440,6 +440,97 @@ async def test_notes_template_with_bad_placeholder_fails_gracefully(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_notes_keyboard_bindings_drive_core_actions():
+    mock_instance = _mock_app_instance()
+    mock_instance.notes_service.add_note.return_value = "kbd-note-1"
+    mock_instance.notes_service.get_note_by_id.return_value = {
+        "id": "kbd-note-1",
+        "title": "New Note",
+        "content": "",
+        "version": 1,
+        "keywords": [],
+    }
+    screen = NotesScreen(mock_instance)
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+
+        # "/" focuses the navigator search input from anywhere.
+        screen.query_one("#notes-mode-notes", Button).focus()
+        await pilot.press("slash")
+        await pilot.pause()
+        assert screen.focused is not None
+        assert screen.focused.id == "notes-search-input"
+
+        # "e" jumps focus into the editor surface.
+        screen.query_one("#notes-mode-notes", Button).focus()
+        await pilot.press("e")
+        await pilot.pause()
+        assert screen.focused.id == "notes-editor-area"
+
+        # "n" creates a new note when focus is outside text entry.
+        screen.query_one("#notes-mode-notes", Button).focus()
+        await pilot.press("n")
+        await pilot.pause()
+        assert mock_instance.notes_service.add_note.called
+
+        # "s" saves through the same path as the Save button.
+        screen._save_current_note = AsyncMock(return_value=True)
+        screen.query_one("#notes-mode-notes", Button).focus()
+        await pilot.press("s")
+        await pilot.pause()
+        screen._save_current_note.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_notes_bindings_do_not_fire_while_typing_in_editor():
+    mock_instance = _mock_app_instance()
+    screen = NotesScreen(mock_instance)
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+
+        editor = screen.query_one("#notes-editor-area", TextArea)
+        screen._suspend_dirty_tracking = False
+        editor.focus()
+        await pilot.press("n", "s", "e")
+        await pilot.pause()
+
+        # The letters were typed into the editor, not intercepted as actions.
+        assert editor.text == "nse"
+        assert not mock_instance.notes_service.add_note.called
+
+
+@pytest.mark.asyncio
+async def test_notes_tab_traversal_reaches_primary_actions():
+    screen = NotesScreen(_mock_app_instance())
+    app = NotesWorkbenchHarness(screen)
+    async with app.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+
+        screen.query_one("#notes-mode-notes", Button).focus()
+        reached: set[str] = set()
+        for _ in range(60):
+            await pilot.press("tab")
+            focused = screen.focused
+            if focused is not None and focused.id:
+                reached.add(focused.id)
+
+        for required in (
+            "notes-search-input",
+            "notes-create-from-template-button",
+            "notes-title-input",
+            "notes-editor-area",
+            "notes-save-button",
+            "notes-keywords-area",
+            "notes-delete-button",
+            "notes-navigator-rail-collapse",
+            "notes-inspector-rail-collapse",
+        ):
+            assert required in reached, f"tab order never reached #{required}"
+
+
+@pytest.mark.asyncio
 async def test_notes_templates_pane_lists_previews_and_creates():
     from tldw_chatbook.Widgets.Note_Widgets.notes_workbench_panes import NotesTemplatesPane
     from textual.widgets import ListView

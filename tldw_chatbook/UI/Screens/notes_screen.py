@@ -89,6 +89,16 @@ class SyncRequested(Message):
 class NotesScreen(BaseAppScreen):
     """Notes management screen with scope-aware state."""
 
+    # Keyboard-only operation, following the Settings/Library single-letter
+    # convention: these fire when focus is outside text-entry widgets and are
+    # surfaced in the footer.
+    BINDINGS = [
+        ("s", "notes_save_note", "Save Note"),
+        ("n", "notes_new_note", "New Note"),
+        ("slash", "notes_focus_search", "Search Notes"),
+        ("e", "notes_focus_editor", "Edit Note"),
+    ]
+
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
     # equal-specificity selectors and takes precedence when loaded.
@@ -2545,6 +2555,34 @@ class NotesScreen(BaseAppScreen):
         event.stop()
         self._set_state(is_preview_mode=not self.state.is_preview_mode)
         await self._toggle_preview_mode()
+
+    async def action_notes_save_note(self) -> None:
+        if not self._is_note_editor_context():
+            self._notify("Select a note before saving.", severity="warning")
+            return
+        success = await self._save_current_note()
+        self.post_message(NoteSaved(self._get_current_resource_id(), success))
+
+    async def action_notes_new_note(self) -> None:
+        if self.state.active_mode != "notes":
+            self._set_state(active_mode="notes")
+        await self._create_new_note()
+
+    def action_notes_focus_search(self) -> None:
+        if self.state.active_mode != "notes":
+            self._set_state(active_mode="notes")
+        try:
+            self.query_one("#notes-search-input", Input).focus()
+        except QueryError:
+            return
+
+    def action_notes_focus_editor(self) -> None:
+        if self.state.active_mode != "notes":
+            self._set_state(active_mode="notes")
+        try:
+            self.query_one("#notes-editor-area", TextArea).focus()
+        except QueryError:
+            return
 
     @on(Button.Pressed, "#notes-navigator-rail-collapse")
     def handle_navigator_rail_collapse(self, event: Button.Pressed) -> None:
