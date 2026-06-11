@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from loguru import logger
 from textual import on, work
@@ -10,6 +10,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Button, Static
 
+from ...Character_Chat.Character_Chat_Lib import validate_character_book
 from ...Widgets.confirmation_dialog import UnsavedChangesDialog
 from ...Widgets.CCP_Widgets.ccp_character_card_widget import (
     CCPCharacterCardWidget,
@@ -149,6 +150,7 @@ class PersonasScreen(BaseAppScreen):
         super().__init__(app_instance, "personas", **kwargs)
         self.state = PersonasWorkbenchState()
         self._edit_mode: str = "view"
+        self._guard_active: bool = False
         self._characters: list[dict] = []
         self.character_handler = CCPCharacterHandler(self)
         self.persona_handler = CCPPersonaHandler(self)
@@ -250,15 +252,7 @@ class PersonasScreen(BaseAppScreen):
         mode = str(event.button.id or "").removeprefix("personas-mode-")
         if mode not in MODE_CHIP_ORDER or mode == self.state.active_mode:
             return
-        if self.state.has_unsaved_changes:
-            self.run_worker(self._switch_mode_after_guard(mode))
-            return
-        await self._apply_mode(mode)
-
-    async def _switch_mode_after_guard(self, mode: str) -> None:
-        if not await self._confirm_discard_unsaved():
-            return
-        await self._apply_mode(mode)
+        await self._run_guarded(lambda: self._apply_mode(mode))
 
     async def _apply_mode(self, mode: str) -> None:
         self.state.switch_mode(mode)
@@ -293,18 +287,9 @@ class PersonasScreen(BaseAppScreen):
         if message.entity_kind != "character":
             # Persona profiles and other kinds are wired in follow-up tasks.
             return
-        if self.state.has_unsaved_changes:
-            self.run_worker(
-                self._select_character_after_guard(message.entity_id, message.entity_name)
-            )
-            return
-        await self._select_character(message.entity_id, message.entity_name)
-
-    async def _select_character_after_guard(self, entity_id: str, entity_name: str) -> None:
-        if not await self._confirm_discard_unsaved():
-            return
-        self.state.has_unsaved_changes = False
-        await self._select_character(entity_id, entity_name)
+        await self._run_guarded(
+            lambda: self._select_character(message.entity_id, message.entity_name)
+        )
 
     async def _select_character(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -319,6 +304,7 @@ class PersonasScreen(BaseAppScreen):
         inspector = self.query_one(PersonasInspectorPane)
         inspector.show_selection(name=entity_name, kind="character", authority="Local")
         inspector.set_unsaved(False)
+        inspector.show_validation(())
 
     # ===== Create / edit =====
 
@@ -331,19 +317,13 @@ class PersonasScreen(BaseAppScreen):
         if self.state.active_mode != "characters":
             # Persona profile creation is wired in a follow-up task.
             return
-        if self.state.has_unsaved_changes:
-            self.run_worker(self._begin_create_after_guard())
-            return
-        self._begin_create_character()
+        await self._run_guarded(self._begin_create_character)
 
-    async def _begin_create_after_guard(self) -> None:
-        if not await self._confirm_discard_unsaved():
-            return
-        self._begin_create_character()
-
-    def _begin_create_character(self) -> None:
+    async def _begin_create_character(self) -> None:
         self._edit_mode = "create"
         self.state.clear_selection()
+        # Dirty-on-entry: entering the editor conservatively marks the session
+        # unsaved rather than tracking per-keystroke changes.
         self.state.has_unsaved_changes = True
         self.query_one(CCPCharacterEditorWidget).new_character()
         self._show_center("#ccp-character-editor-view")
@@ -352,22 +332,32 @@ class PersonasScreen(BaseAppScreen):
     @on(EditCharacterRequested)
     def _handle_edit_requested(self, message: EditCharacterRequested) -> None:
         message.stop()
+        if str(message.character_id) != (self.state.selected_entity_id or ""):
+            self._notify("Selection out of sync; reselect the character.", "warning")
+            return
         record = self._full_character_record(str(message.character_id))
         if record is None:
             self._notify("Character data is not loaded yet.", severity="warning")
             return
         self._edit_mode = "edit"
+        # Dirty-on-entry: entering the editor conservatively marks the session
+        # unsaved rather than tracking per-keystroke changes.
         self.state.has_unsaved_changes = True
         self.query_one(CCPCharacterEditorWidget).load_character(record)
         self._show_center("#ccp-character-editor-view")
         self.query_one(PersonasInspectorPane).set_unsaved(True)
 
     def _full_character_record(self, character_id: str) -> dict | None:
-        """Prefer the handler's fully-loaded card over the id/name list rows."""
+        """Return the handler's fully-loaded card, or ``None`` when stale.
+
+        The list rows in ``_characters`` are id/name-only; falling back to
+        them would feed the editor (and a later save) empty fields, so a
+        mismatch deliberately returns ``None``.
+        """
         loaded = self.character_handler.current_character_data
         if loaded and str(self.character_handler.current_character_id) == character_id:
             return dict(loaded)
-        return self._character_record(character_id)
+        return None
 
     # ===== Save =====
 
@@ -378,8 +368,6 @@ class PersonasScreen(BaseAppScreen):
             errors.append("name: required")
         book = data.get("character_book")
         if book:
-            from ...Character_Chat.Character_Chat_Lib import validate_character_book
-
             ok, book_errors = validate_character_book(book)
             if not ok:
                 errors.extend(str(error) for error in book_errors)
@@ -393,13 +381,14 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasInspectorPane).show_validation(errors)
         if errors:
             return
-        self._save_character_worker(data, self.state.selected_entity_id)
+        # Snapshot UI-thread state here; the worker thread must not read it.
+        self._save_character_worker(data, self.state.selected_entity_id, self._edit_mode)
 
-    @work(thread=True, exclusive=True)
-    def _save_character_worker(self, data: dict, selected_id: str | None) -> None:
+    @work(thread=True, exclusive=True, group="personas-save")
+    def _save_character_worker(self, data: dict, selected_id: str | None, edit_mode: str) -> None:
         """Persist via the legacy module-level helpers off the UI thread."""
         try:
-            if self._edit_mode == "create" or not selected_id:
+            if edit_mode == "create" or not selected_id:
                 saved_id = ccp_character_handler.create_character(data)
                 if not saved_id:
                     raise RuntimeError("Character creation returned no id.")
@@ -413,13 +402,24 @@ class PersonasScreen(BaseAppScreen):
                 self._notify, f"Failed to save character: {exc}", "error"
             )
             return
-        self.app.call_from_thread(self._after_character_save, str(saved_id))
+        self.app.call_from_thread(
+            self._after_character_save, str(saved_id), str(data.get("name") or "")
+        )
 
-    async def _after_character_save(self, saved_id: str) -> None:
+    async def _after_character_save(self, saved_id: str, submitted_name: str = "") -> None:
+        if not self.is_mounted or self.state.active_mode != "characters":
+            # The save completed after the user left the screen or switched
+            # modes; refresh the cached list but leave the selection,
+            # inspector, and center pane alone.
+            try:
+                await self.character_handler.refresh_character_list()
+            except Exception:
+                logger.warning("Could not refresh characters after a late save.", exc_info=True)
+            return
         self._edit_mode = "view"
         await self.character_handler.refresh_character_list()
         record = self._character_record(saved_id)
-        name = str(record.get("name") or "Saved character") if record else "Saved character"
+        name = str((record or {}).get("name") or submitted_name or "Saved character")
         self.state.select_entity(entity_kind="character", entity_id=saved_id, entity_name=name)
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
@@ -437,15 +437,11 @@ class PersonasScreen(BaseAppScreen):
     @on(CharacterEditorCancelled)
     async def _handle_editor_cancelled(self, message: CharacterEditorCancelled) -> None:
         message.stop()
-        if self.state.has_unsaved_changes:
-            self.run_worker(self._cancel_edit_after_guard())
-            return
-        self._finish_cancel_edit()
 
-    async def _cancel_edit_after_guard(self) -> None:
-        if not await self._confirm_discard_unsaved():
-            return
-        self._finish_cancel_edit()
+        async def _finish() -> None:
+            self._finish_cancel_edit()
+
+        await self._run_guarded(_finish)
 
     def _finish_cancel_edit(self) -> None:
         self._edit_mode = "view"
@@ -469,6 +465,32 @@ class PersonasScreen(BaseAppScreen):
             # The CCP widgets carry a `.hidden` class with display:none !important.
             widget.set_class(not visible, "hidden")
             widget.display = visible
+
+    async def _run_guarded(self, continuation: Callable[[], Awaitable[None]]) -> None:
+        """Run ``continuation``, confirming first when an edit would be discarded.
+
+        The clean fast path runs the continuation inline (the calling message
+        handler awaits it), matching the pre-helper behavior tests rely on.
+        The dirty path needs a worker context for ``push_screen_wait`` and is
+        protected by ``_guard_active`` so a queued second trigger cannot
+        double-fire the confirm dialog or its continuation.
+        """
+        if not self.state.has_unsaved_changes:
+            await continuation()
+            return
+        if self._guard_active:
+            return
+        self._guard_active = True
+        self.run_worker(self._confirm_then_run(continuation), group="personas-guard")
+
+    async def _confirm_then_run(self, continuation: Callable[[], Awaitable[None]]) -> None:
+        try:
+            if not await self._confirm_discard_unsaved():
+                return
+            self.state.has_unsaved_changes = False
+            await continuation()
+        finally:
+            self._guard_active = False
 
     async def _confirm_discard_unsaved(self) -> bool:
         """True when it is safe to discard the in-progress edit.

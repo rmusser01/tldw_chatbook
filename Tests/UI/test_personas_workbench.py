@@ -140,6 +140,16 @@ class TestCharacterSelectionAndEdit:
             character_handler_module, "create_character",
             lambda data: created.append(data) or 99,
         )
+
+        def fetch_all_with_created():
+            characters = [dict(c) for c in CHARACTERS]
+            if created:
+                characters.append({"id": 99, "name": "New Hero", "version": 1})
+            return characters
+
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", fetch_all_with_created
+        )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
@@ -151,5 +161,64 @@ class TestCharacterSelectionAndEdit:
             )
             screen.post_message(CharacterSaveRequested({"name": "New Hero", "first_message": "Hi"}))
             await pilot.pause()
+            await app.workers.wait_for_complete()
             await pilot.pause()
+            assert screen.state.selected_entity_id == "99"
+            assert screen._edit_mode == "view"
         assert created and created[0]["name"] == "New Hero"
+
+    async def test_edit_requested_for_mismatched_character_is_ignored(self, mock_app_instance, stub_characters):
+        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
+            EditCharacterRequested,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            screen.post_message(EditCharacterRequested(2))
+            await pilot.pause()
+            assert screen._edit_mode == "view"
+            assert screen.query_one("#ccp-character-editor-view").display is False
+
+    async def test_mode_switch_during_save_does_not_render_character_into_other_mode(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        import threading
+
+        release = threading.Event()
+        created = []
+
+        def blocking_create(data):
+            release.wait(timeout=5)
+            created.append(data)
+            return 99
+
+        monkeypatch.setattr(character_handler_module, "create_character", blocking_create)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
+                CharacterSaveRequested,
+            )
+            screen.post_message(CharacterSaveRequested({"name": "New Hero", "first_message": "Hi"}))
+            await pilot.pause()  # Save worker is now blocked inside create_character.
+            await screen._apply_mode("prompts")
+            await pilot.pause()
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert created and created[0]["name"] == "New Hero"
+            assert screen.state.active_mode == "prompts"
+            assert screen.state.selected_entity_id is None
+            placeholder = screen.query_one("#personas-mode-placeholder", Static)
+            assert placeholder.display is True
+            assert screen.query_one("#ccp-character-card-view").display is False
+            assert "New Hero" not in str(
+                screen.query_one("#personas-selected-name", Static).renderable
+            )
