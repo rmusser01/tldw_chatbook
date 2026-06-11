@@ -8,6 +8,7 @@ from textual.app import App
 from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
+import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
 from tldw_chatbook.tldw_api import PersonaProfileCreate
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
@@ -943,14 +944,14 @@ class TestConversationsPanel:
             character_handler_module, "_default_character_db", lambda: object()
         )
         monkeypatch.setattr(
-            personas_screen_module,
+            conversations_controller_module,
             "list_character_conversations",
             lambda db, character_id, limit=50, offset=0: [
                 {"id": "conv-1", "title": "First case"}
             ],
         )
         monkeypatch.setattr(
-            personas_screen_module,
+            conversations_controller_module,
             "retrieve_conversation_messages_for_ui",
             lambda db, conversation_id, character_name, user_name, **kwargs: [
                 ("Hello there", "Greetings, detective."),
@@ -990,7 +991,7 @@ class TestConversationsPanel:
             raise RuntimeError("listing failed")
 
         monkeypatch.setattr(
-            personas_screen_module, "list_character_conversations", boom
+            conversations_controller_module, "list_character_conversations", boom
         )
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -1058,11 +1059,11 @@ class TestConversationsPanel:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
             assert screen.state.selected_entity_id == "1"
-            await screen._apply_conversation_rows("999", (("conv-x", "X"),))
+            await screen.conversations.apply_conversation_rows("999", (("conv-x", "X"),))
             await pilot.pause()
             rows = screen.query(".personas-conversation-row")
             assert [str(r.label) for r in rows] == ["First case"]
-            assert "conv-x" not in screen._conversation_rows
+            assert "conv-x" not in screen.conversations._conversation_rows
 
     async def test_stale_conversation_view_is_skipped(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -1071,19 +1072,19 @@ class TestConversationsPanel:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._open_conversation(pilot)
-            assert screen._open_conversation_id == "conv-1"
-            screen._show_conversation_view(
+            assert screen.conversations._open_conversation_id == "conv-1"
+            screen.conversations.show_conversation_view(
                 "conv-stale", [{"role": "user", "content": "stale"}], "stale", False
             )
             await pilot.pause()
-            assert screen._loaded_conversation_id == "conv-1"
-            assert screen._open_conversation_transcript != "stale"
+            assert screen.conversations._loaded_conversation_id == "conv-1"
+            assert screen.conversations._open_conversation_transcript != "stale"
 
     async def test_long_transcript_sets_body_truncated(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
         monkeypatch.setattr(
-            personas_screen_module,
+            conversations_controller_module,
             "retrieve_conversation_messages_for_ui",
             lambda db, conversation_id, character_name, user_name, **kwargs: [
                 ("u" * 500, "b" * 500) for _ in range(20)
@@ -1098,7 +1099,7 @@ class TestConversationsPanel:
         app.open_chat_with_handoff.assert_called_once()
         payload = app.open_chat_with_handoff.call_args.args[0]
         assert payload.body_truncated is True
-        assert len(payload.body) <= personas_screen_module._HANDOFF_TRANSCRIPT_CHAR_LIMIT
+        assert len(payload.body) <= conversations_controller_module._HANDOFF_TRANSCRIPT_CHAR_LIMIT
         assert payload.source_id == "conv-1"
 
     async def test_continue_blocked_while_loading(
@@ -1113,8 +1114,8 @@ class TestConversationsPanel:
         )
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._open_conversation(pilot)
-            screen._open_conversation_id = "conv-2"
-            screen._loaded_conversation_id = "conv-1"
+            screen.conversations._open_conversation_id = "conv-2"
+            screen.conversations._loaded_conversation_id = "conv-1"
             await pilot.click("#personas-conversation-continue-console")
             await pilot.pause()
         app.open_chat_with_handoff.assert_not_called()
@@ -1129,9 +1130,9 @@ class TestConversationsPanel:
         """Re-selecting the same conversation clears loaded state so Continue is blocked
         until the reload worker delivers its results.
 
-        Regression: _open() previously only reset _open_conversation_transcript but left
-        _loaded_conversation_id and _open_conversation_truncated intact.  That meant the
-        guard in _handle_conversation_continue_console() saw _loaded_conversation_id ==
+        Regression: open_conversation() previously only reset _open_conversation_transcript
+        but left _loaded_conversation_id and _open_conversation_truncated intact.  That meant
+        the guard in continue_in_console() saw _loaded_conversation_id ==
         _open_conversation_id immediately after the reload started and would stage an empty
         body with a stale truncation flag.
         """
@@ -1149,26 +1150,27 @@ class TestConversationsPanel:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._open_conversation(pilot)
             # conv-1 is fully loaded at this point.
-            assert screen._loaded_conversation_id == "conv-1"
-            assert screen._open_conversation_transcript != ""
+            assert screen.conversations._loaded_conversation_id == "conv-1"
+            assert screen.conversations._open_conversation_transcript != ""
 
-            # Stub the worker so it never calls _show_conversation_view, thus
-            # simulating an in-flight reload whose result hasn't arrived yet.
-            # We patch on the instance so the class-level @work decorated method
-            # is bypassed for subsequent calls within this test.
-            screen._load_conversation_messages_worker = lambda *args, **kwargs: None
+            # Stub the worker entry so it never calls show_conversation_view,
+            # thus simulating an in-flight reload whose result hasn't arrived
+            # yet. We patch on the controller instance so subsequent calls
+            # within this test are bypassed.
+            screen.conversations.load_conversation_messages = lambda *args, **kwargs: None
 
             # Re-select the same conversation by posting the message directly to the
-            # screen — this exercises _handle_conversation_row_selected → _open()
-            # without relying on the inspector-pane button being click-reachable
-            # while the conversation view is displayed on top.
+            # screen — this exercises _handle_conversation_row_selected →
+            # open_conversation() without relying on the inspector-pane button being
+            # click-reachable while the conversation view is displayed on top.
             screen.post_message(_CRS("conv-1"))
             await pilot.pause()
 
-            # _open() should have cleared _loaded_conversation_id.
-            assert screen._loaded_conversation_id is None, (
-                "_open() must reset _loaded_conversation_id so that re-selecting "
-                "the same conversation doesn't bypass the still-loading guard"
+            # open_conversation() should have cleared _loaded_conversation_id.
+            assert screen.conversations._loaded_conversation_id is None, (
+                "open_conversation() must reset _loaded_conversation_id so that "
+                "re-selecting the same conversation doesn't bypass the "
+                "still-loading guard"
             )
 
             # Try to continue — the reload is in flight so it must be blocked.
@@ -1209,14 +1211,14 @@ class TestConsoleActions:
             character_handler_module, "_default_character_db", lambda: object()
         )
         monkeypatch.setattr(
-            personas_screen_module,
+            conversations_controller_module,
             "list_character_conversations",
             lambda db, character_id, limit=50, offset=0: [
                 {"id": "conv-1", "title": "First case"}
             ],
         )
         monkeypatch.setattr(
-            personas_screen_module,
+            conversations_controller_module,
             "retrieve_conversation_messages_for_ui",
             lambda db, conversation_id, character_name, user_name, **kwargs: [
                 ("Hello there", "Greetings, detective."),
