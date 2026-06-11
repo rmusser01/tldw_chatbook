@@ -26,7 +26,6 @@ from .ccp_persona_handler import CCPPersonaHandler
 from .ccp_prompt_handler import CCPPromptHandler
 from .ccp_dictionary_handler import CCPDictionaryHandler
 from .ccp_message_manager import CCPMessageManager
-from .ccp_sidebar_handler import CCPSidebarHandler
 
 # Import validation models
 from .ccp_validators import (
@@ -78,8 +77,7 @@ __all__ = [
     'CCPPromptHandler',
     'CCPDictionaryHandler',
     'CCPMessageManager',
-    'CCPSidebarHandler',
-    
+
     # Validation models
     'ConversationInput',
     'CharacterCardInput',

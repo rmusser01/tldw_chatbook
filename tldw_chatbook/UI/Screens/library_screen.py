@@ -254,10 +254,15 @@ class LibraryScreen(BaseAppScreen):
         text-style: bold underline;
     }
 
+    /* Standalone fallback chrome: the app bundle overrides these ID/class
+       rules with $ds-grid-line tokens (css/tldw_cli_modular.tcss), but the
+       screen must render its workbench borders when mounted outside TldwCli
+       (e.g. test harnesses), where the bundle stylesheet is not loaded. */
     #library-contract-grid {
         height: 1fr;
         min-height: 20;
         padding: 1;
+        border: solid $surface-lighten-1;
     }
 
     .library-region {
@@ -265,6 +270,7 @@ class LibraryScreen(BaseAppScreen):
         height: 100%;
         min-height: 20;
         padding: 1;
+        border: solid $surface-lighten-1;
     }
 
     #library-source-browser {

@@ -127,7 +127,7 @@ class TldwCliRefactored(App):
              "UI.SearchWindow", "SearchWindow"),
             ("coding", "UI.Screens.coding_screen", "CodingScreen",
              "UI.Coding_Window", "CodingWindow"),
-            ("ccp", "UI.Screens.conversation_screen", "ConversationScreen",
+            ("ccp", "UI.Screens.personas_screen", "PersonasScreen",
              "UI.Conv_Char_Window", "CCPWindow"),
             ("ingest", "UI.Screens.media_ingest_screen", "MediaIngestScreen",
              "UI.MediaIngestWindowRebuilt", "MediaIngestWindow"),

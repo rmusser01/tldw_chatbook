@@ -19,6 +19,35 @@ class ConversationRowSelected(Message):
         super().__init__()
 
 
+class EditCharacterRequested(Message):
+    """User requested to edit the character.
+
+    Relocated from the retired ``CCP_Widgets.ccp_character_card_widget``.
+    """
+
+    def __init__(self, character_id: int) -> None:
+        super().__init__()
+        self.character_id = character_id
+
+
+class CharacterSaveRequested(Message):
+    """User requested to save the character.
+
+    Relocated from the retired ``CCP_Widgets.ccp_character_editor_widget``.
+    """
+
+    def __init__(self, character_data: Dict[str, Any]) -> None:
+        super().__init__()
+        self.character_data = character_data
+
+
+class CharacterEditorCancelled(Message):
+    """User cancelled character editing.
+
+    Relocated from the retired ``CCP_Widgets.ccp_character_editor_widget``.
+    """
+
+
 class EditPersonaRequested(Message):
     """Edit was requested for the displayed persona profile."""
 

@@ -16,7 +16,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
 
-from ..CCP_Widgets.ccp_character_card_widget import EditCharacterRequested
+from .personas_pane_messages import EditCharacterRequested
 
 
 class PersonasCharacterCardWidget(Container):

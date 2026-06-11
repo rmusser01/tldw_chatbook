@@ -27,13 +27,6 @@ from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
-# The message classes stay legacy-owned (handlers below bind to them); only
-# the widgets rendering the center views are ds-native Personas ones.
-from ...Widgets.CCP_Widgets.ccp_character_card_widget import EditCharacterRequested
-from ...Widgets.CCP_Widgets.ccp_character_editor_widget import (
-    CharacterEditorCancelled,
-    CharacterSaveRequested,
-)
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import PersonaProfileCardWidget
 from ...Widgets.Persona_Widgets.persona_profile_editor_widget import PersonaProfileEditorWidget
@@ -54,7 +47,10 @@ from ...Widgets.Persona_Widgets.personas_messages import (
     PersonaSearchChanged,
 )
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
+    CharacterEditorCancelled,
+    CharacterSaveRequested,
     ConversationRowSelected,
+    EditCharacterRequested,
     EditorContentChanged,
     EditPersonaRequested,
     PersonaProfileEditCancelled,

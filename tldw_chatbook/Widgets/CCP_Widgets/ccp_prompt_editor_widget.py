@@ -14,8 +14,6 @@ from textual import on
 from textual.message import Message
 from textual.validation import Length
 
-if TYPE_CHECKING:
-    from ...UI.Screens.ccp_screen import CCPScreen, CCPScreenState
 
 logger = logger.bind(module="CCPPromptEditorWidget")
 
@@ -323,7 +321,8 @@ class CCPPromptEditorWidget(Container):
     """
     
     # Reactive state reference (will be linked to parent screen's state)
-    state: reactive[Optional['CCPScreenState']] = reactive(None)
+    # Legacy CCPScreenState holder retained for compatibility (screen retired).
+    state: reactive[Optional[Any]] = reactive(None)
     
     # Current prompt data being edited
     prompt_data: reactive[Dict[str, Any]] = reactive({})
@@ -350,7 +349,7 @@ class CCPPromptEditorWidget(Container):
         ("custom", "Custom"),
     ]
     
-    def __init__(self, parent_screen: Optional['CCPScreen'] = None, **kwargs):
+    def __init__(self, parent_screen: Optional[Any] = None, **kwargs):
         """Initialize the prompt editor widget.
         
         Args:

@@ -4,12 +4,10 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Static, TextArea
 
-from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
-    EditCharacterRequested,
-)
-from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
+from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterEditorCancelled,
     CharacterSaveRequested,
+    EditCharacterRequested,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_card_widget import (
     PersonasCharacterCardWidget,

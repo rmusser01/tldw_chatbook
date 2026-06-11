@@ -18,11 +18,11 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, Static, TextArea
 
-from ..CCP_Widgets.ccp_character_editor_widget import (
+from .personas_pane_messages import (
     CharacterEditorCancelled,
     CharacterSaveRequested,
+    EditorContentChanged,
 )
-from .personas_pane_messages import EditorContentChanged
 
 
 class PersonasCharacterEditorWidget(Container):

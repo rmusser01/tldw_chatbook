@@ -801,7 +801,6 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         ("acp", "#acp-workbench", ("Agents / Sessions", "Session Detail", "Compatibility / Actions")),
         ("skills", "#skills-workbench", ("Skill Library", "Skill Detail", "Skill Inspector")),
         ("settings", "#settings-workbench", ("Settings Sections", "Preference Detail", "Scope Inspector")),
-        ("ccp", "#ccp-workbench", ("Character Library", "Character Detail", "Attach / Validate")),
     ),
 )
 @pytest.mark.asyncio

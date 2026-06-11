@@ -298,7 +298,7 @@ class TestCharacterSelectionAndEdit:
             await pilot.pause()
             await pilot.click("#personas-library-new")
             await pilot.pause()
-            from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
+            from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
             )
             screen.post_message(CharacterSaveRequested({"name": "", "first_message": "Hi"}))
@@ -327,7 +327,7 @@ class TestCharacterSelectionAndEdit:
             await pilot.pause()
             await pilot.click("#personas-library-new")
             await pilot.pause()
-            from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
+            from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
             )
             # entries is required (and must be a list) when a book is present.
@@ -349,10 +349,10 @@ class TestCharacterSelectionAndEdit:
         self, mock_app_instance, stub_characters, monkeypatch
     ):
         """Editor open -> inspector "editing..."; save success -> back to OK."""
-        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
             EditCharacterRequested,
         )
-        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
             CharacterSaveRequested,
         )
 
@@ -383,10 +383,10 @@ class TestCharacterSelectionAndEdit:
     async def test_inspector_validation_back_to_ok_on_editor_cancel(
         self, mock_app_instance, stub_characters
     ):
-        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
             EditCharacterRequested,
         )
-        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
             CharacterEditorCancelled,
         )
 
@@ -430,7 +430,7 @@ class TestCharacterSelectionAndEdit:
             await pilot.pause()
             await pilot.click("#personas-library-new")
             await pilot.pause()
-            from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
+            from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
             )
             screen.post_message(CharacterSaveRequested({"name": "New Hero", "first_message": "Hi"}))
@@ -442,7 +442,7 @@ class TestCharacterSelectionAndEdit:
         assert created and created[0]["name"] == "New Hero"
 
     async def test_edit_requested_for_mismatched_character_is_ignored(self, mock_app_instance, stub_characters):
-        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
             EditCharacterRequested,
         )
 
@@ -477,7 +477,7 @@ class TestCharacterSelectionAndEdit:
             await pilot.pause()
             await pilot.click("#personas-library-new")
             await pilot.pause()
-            from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
+            from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
             )
             screen.post_message(CharacterSaveRequested({"name": "New Hero", "first_message": "Hi"}))
@@ -1559,7 +1559,7 @@ class TestConsoleActions:
     async def test_attach_blocked_with_unsaved_edits(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
             EditCharacterRequested,
         )
 
@@ -2079,7 +2079,7 @@ class TestPreviewIntegration:
     ):
         from textual.widgets import TextArea as _TextArea
 
-        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
             EditCharacterRequested,
         )
         from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
@@ -2844,7 +2844,7 @@ class TestDirtyTracking:
         return calls
 
     async def _edit_first_character(self, pilot):
-        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
             EditCharacterRequested,
         )
 
