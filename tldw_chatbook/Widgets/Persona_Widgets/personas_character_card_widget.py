@@ -127,11 +127,16 @@ class PersonasCharacterCardWidget(Container):
         labels = {suffix: label for label, suffix in self._FIELD_ROWS}
 
         def _set(suffix: str, value: str) -> None:
+            widget = self.query_one(f"#personas-character-card-{suffix}", Static)
             label = labels.get(suffix)
             if label is not None:
-                # Label inline with the value: "Name: Detective Sam".
+                # Label inline with the value: "Name: Detective Sam". Rows
+                # with no value are hidden outright - a bare "Label:" line is
+                # noise, not information (display toggling keeps this
+                # sync-safe and reversible on the next load).
+                widget.display = bool(value)
                 value = f"{label}: {value}" if value else f"{label}:"
-            self.query_one(f"#personas-character-card-{suffix}", Static).update(value)
+            widget.update(value)
 
         _set("name", str(record.get("name") or "Unnamed Character"))
         _set("description", str(record.get("description") or ""))
@@ -156,6 +161,13 @@ class PersonasCharacterCardWidget(Container):
         greetings = [str(greeting) for greeting in (record.get("alternate_greetings") or [])]
         _set("alt-greetings", f"Alternate greetings: {len(greetings)}")
         _set("greeting-preview", greetings[0] if greetings else "")
+        # The preview row is unlabeled, so the labeled-row hiding above does
+        # not cover it; an empty preview must not leave a blank line.
+        # ("Tags: none", "Alternate greetings: 0", and "Avatar: none" stay
+        # visible - they carry information even when empty.)
+        self.query_one("#personas-character-card-greeting-preview").display = bool(
+            greetings
+        )
         avatar = "embedded" if (record.get("image") or record.get("avatar")) else "none"
         self.query_one("#personas-card-avatar-status", Static).update(f"Avatar: {avatar}")
 

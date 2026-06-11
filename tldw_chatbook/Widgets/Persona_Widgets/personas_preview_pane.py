@@ -75,6 +75,11 @@ class PersonasPreviewPane(Vertical):
         # Rendered transcript line texts ("you: ..." / "character: ...");
         # the source of truth for transcript_text().
         self._lines: list[str] = []
+        # In-progress streamed reply line (begin_reply/append_reply_chunk).
+        # finalize_reply commits it; discard_partial_reply removes it.
+        self._partial_widget: Static | None = None
+        self._partial_index: int | None = None
+        self._partial_text: str = ""
 
     def compose(self) -> ComposeResult:
         yield Button(
@@ -128,8 +133,59 @@ class PersonasPreviewPane(Vertical):
         self._append_line(f"you: {text}", "personas-preview-line-you")
 
     def append_reply(self, text: str) -> None:
-        """Append a "character: ..." transcript line."""
+        """Append a complete "character: ..." transcript line in one go."""
         self._append_line(f"character: {text}", "personas-preview-line-character")
+
+    def begin_reply(self) -> None:
+        """Start a streamed "character: ..." line, grown by append_reply_chunk.
+
+        Only one streamed line can be in progress; beginning a new one while
+        another is open simply re-targets the partial tracking (the owner is
+        expected to finalize or discard first).
+        """
+        self._partial_text = ""
+        line = "character:"
+        widget = Static(
+            line,
+            classes="personas-preview-line personas-preview-line-character",
+            # markup=False: streamed text must render literally, never as Rich
+            # markup (unmatched tags raise MarkupError at render).
+            markup=False,
+        )
+        self._partial_widget = widget
+        self._partial_index = len(self._lines)
+        self._lines.append(line)
+        self.query_one("#personas-preview-transcript", VerticalScroll).mount(widget)
+
+    def append_reply_chunk(self, text: str) -> None:
+        """Grow the in-progress streamed reply line in place."""
+        if self._partial_widget is None:
+            self.begin_reply()
+        self._partial_text += str(text)
+        line = f"character: {self._partial_text}"
+        if self._partial_index is not None and self._partial_index < len(self._lines):
+            self._lines[self._partial_index] = line
+        self._partial_widget.update(line)
+
+    def finalize_reply(self) -> None:
+        """Commit the streamed line: it is now a permanent transcript entry."""
+        self._partial_widget = None
+        self._partial_index = None
+        self._partial_text = ""
+
+    async def discard_partial_reply(self) -> None:
+        """Remove an in-progress streamed line (stale/error); no-op otherwise."""
+        widget, index = self._partial_widget, self._partial_index
+        self.finalize_reply()
+        if widget is None:
+            return
+        if index is not None and index < len(self._lines):
+            del self._lines[index]
+        try:
+            await widget.remove()
+        except Exception:
+            # Tolerate a widget already removed by a transcript reseed.
+            pass
 
     async def reset(self) -> None:
         """Drop the conversation back to the seeded greeting; clear status."""
@@ -148,6 +204,10 @@ class PersonasPreviewPane(Vertical):
 
     async def _render_seed_lines(self) -> None:
         """Replace the transcript with the greeting line (or nothing)."""
+        # remove_children below also removes any in-progress streamed line, so
+        # the partial tracking must be dropped with it (a later discard must
+        # not delete a line from the freshly seeded transcript).
+        self.finalize_reply()
         self._lines = []
         container = self.query_one("#personas-preview-transcript", VerticalScroll)
         await container.remove_children()
@@ -183,9 +243,8 @@ class PersonasPreviewPane(Vertical):
         body = self.query_one("#personas-preview-body")
         body.display = not body.display
 
-    @on(Button.Pressed, "#personas-preview-test-reply")
-    def _handle_test_reply(self, event: Button.Pressed) -> None:
-        event.stop()
+    def _submit_preview_message(self) -> None:
+        """Shared Test Reply path: guard, clear, append, request a reply."""
         field = self.query_one("#personas-preview-input", Input)
         text = field.value.strip()
         if not text:
@@ -193,6 +252,17 @@ class PersonasPreviewPane(Vertical):
         field.value = ""
         self.append_user(text)
         self.post_message(PreviewReplyRequested(text))
+
+    @on(Button.Pressed, "#personas-preview-test-reply")
+    def _handle_test_reply(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._submit_preview_message()
+
+    @on(Input.Submitted, "#personas-preview-input")
+    def _handle_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in the input submits exactly like the Test Reply button."""
+        event.stop()
+        self._submit_preview_message()
 
     @on(Button.Pressed, "#personas-preview-reset")
     async def _handle_reset(self, event: Button.Pressed) -> None:

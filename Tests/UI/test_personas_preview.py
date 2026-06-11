@@ -160,6 +160,107 @@ async def test_test_reply_posts_message_and_clears_input():
         assert _line_texts(pilot.app) == ["you: Hi there"]
 
 
+async def test_enter_in_input_submits_like_test_reply():
+    """Enter in the preview input takes the same path as the Test Reply button."""
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        pane.expand()
+        await pilot.pause()
+        field = pilot.app.query_one("#personas-preview-input", Input)
+        field.focus()
+        await pilot.pause()
+        field.value = "Hi there"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert pilot.app.replies == ["Hi there"]
+        assert field.value == ""
+        assert _line_texts(pilot.app) == ["you: Hi there"]
+
+
+async def test_enter_with_empty_input_is_a_noop():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        pane.expand()
+        await pilot.pause()
+        field = pilot.app.query_one("#personas-preview-input", Input)
+        field.focus()
+        await pilot.pause()
+        field.value = "   "
+        await pilot.press("enter")
+        await pilot.pause()
+        assert pilot.app.replies == []
+        assert _line_texts(pilot.app) == []
+
+
+async def test_streaming_reply_updates_one_line_progressively():
+    """begin_reply/append_reply_chunk grow a single character line in place."""
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        await pane.seed_greeting("Hello.")
+        await pilot.pause()
+        pane.begin_reply()
+        pane.append_reply_chunk("Your humble ")
+        await pilot.pause()
+        assert _line_texts(pilot.app) == [
+            "character: Hello.",
+            "character: Your humble ",
+        ]
+        pane.append_reply_chunk("narrator.")
+        await pilot.pause()
+        assert _line_texts(pilot.app) == [
+            "character: Hello.",
+            "character: Your humble narrator.",
+        ]
+        assert pane.transcript_text() == (
+            "character: Hello.\ncharacter: Your humble narrator."
+        )
+        pane.finalize_reply()
+        # A finalized line is committed: a later discard must not remove it.
+        await pane.discard_partial_reply()
+        await pilot.pause()
+        assert "character: Your humble narrator." in pane.transcript_text()
+
+
+async def test_discard_partial_reply_removes_in_progress_line():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        await pane.seed_greeting("Hello.")
+        await pilot.pause()
+        pane.begin_reply()
+        pane.append_reply_chunk("Half a tho")
+        await pilot.pause()
+        await pane.discard_partial_reply()
+        await pilot.pause()
+        assert _line_texts(pilot.app) == ["character: Hello."]
+        assert pane.transcript_text() == "character: Hello."
+        # Discard with no partial in progress is a no-op.
+        await pane.discard_partial_reply()
+        pane.append_user("Still works")
+        await pilot.pause()
+        assert pane.transcript_text() == "character: Hello.\nyou: Still works"
+
+
+async def test_seed_greeting_clears_partial_reply_state():
+    """A reseed mid-stream wipes the partial line; discard after is a no-op."""
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        await pane.seed_greeting("Hello.")
+        pane.begin_reply()
+        pane.append_reply_chunk("Half a tho")
+        await pilot.pause()
+        await pane.seed_greeting("Fresh greeting.")
+        await pilot.pause()
+        await pane.discard_partial_reply()
+        await pilot.pause()
+        assert _line_texts(pilot.app) == ["character: Fresh greeting."]
+        assert pane.transcript_text() == "character: Fresh greeting."
+
+
 async def test_test_reply_with_empty_input_is_a_noop():
     app = PreviewApp()
     async with app.run_test() as pilot:

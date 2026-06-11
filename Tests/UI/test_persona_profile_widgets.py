@@ -44,15 +44,66 @@ async def test_card_shows_profile_and_edit_posts_message():
         card = pilot.app.query_one(PersonaProfileCardWidget)
         card.show_persona(PROFILE)
         await pilot.pause()
-        assert "Archivist" in str(
-            pilot.app.query_one("#personas-card-name", Static).renderable
+        # Labeled inline rows, matching the character card's vocabulary.
+        assert (
+            str(pilot.app.query_one("#personas-card-name", Static).renderable)
+            == "Name: Archivist"
         )
-        assert "meticulous archivist" in str(
-            pilot.app.query_one("#personas-card-system-prompt", Static).renderable
+        assert (
+            str(pilot.app.query_one("#personas-card-description", Static).renderable)
+            == "Description: Preserve, organize, retrieve"
+        )
+        assert (
+            str(pilot.app.query_one("#personas-card-system-prompt", Static).renderable)
+            == "System prompt: You are a meticulous archivist."
         )
         await pilot.click("#personas-card-edit")
         await pilot.pause()
     assert received == ["p-1"]
+
+
+async def test_card_hides_empty_rows():
+    """Empty description/system prompt rows are hidden - no bare labels."""
+    app = WidgetApp()
+    async with app.run_test() as pilot:
+        card = pilot.app.query_one(PersonaProfileCardWidget)
+        card.show_persona({"id": "p-1", "name": "Archivist", "description": ""})
+        await pilot.pause()
+        assert pilot.app.query_one("#personas-card-name", Static).display is True
+        assert pilot.app.query_one("#personas-card-description", Static).display is False
+        assert (
+            pilot.app.query_one("#personas-card-system-prompt", Static).display is False
+        )
+        # Re-show with values: the rows come back.
+        card.show_persona(PROFILE)
+        await pilot.pause()
+        assert pilot.app.query_one("#personas-card-description", Static).display is True
+        assert (
+            pilot.app.query_one("#personas-card-system-prompt", Static).display is True
+        )
+
+
+async def test_card_markup_like_content_renders_literally():
+    """Profile text with Rich-markup-looking content must not raise at render."""
+    app = WidgetApp()
+    async with app.run_test() as pilot:
+        card = pilot.app.query_one(PersonaProfileCardWidget)
+        card.show_persona(
+            {"id": "p-1", "name": "[/x]", "description": "[bold]unclosed"}
+        )
+        await pilot.pause()  # would raise MarkupError at render with markup on
+        assert "[/x]" in str(
+            pilot.app.query_one("#personas-card-name", Static).renderable
+        )
+
+
+async def test_card_edit_button_lives_in_toolbar_with_shared_classes():
+    app = WidgetApp()
+    async with app.run_test() as pilot:
+        button = pilot.app.query_one("#personas-card-edit", Button)
+        assert button.has_class("console-action-secondary")
+        toolbar = button.parent
+        assert toolbar is not None and toolbar.has_class("ds-toolbar")
 
 
 async def test_card_edit_disabled_without_persona():
@@ -116,7 +167,9 @@ async def test_editor_save_posts_collected_data():
         editor.new_persona()
         pilot.app.query_one("#personas-editor-name", Input).value = "Mentor"
         await pilot.pause()
-        await pilot.click("#personas-editor-save")
+        # press() instead of click(): the full-height card above pushes the
+        # editor's toolbar off the small harness screen.
+        pilot.app.query_one("#personas-editor-save", Button).press()
         await pilot.pause()
     assert received and received[0]["name"] == "Mentor"
 
@@ -133,7 +186,9 @@ async def test_editor_save_with_empty_name_blocks_and_shows_error():
         editor = pilot.app.query_one(PersonaProfileEditorWidget)
         editor.new_persona()
         await pilot.pause()
-        await pilot.click("#personas-editor-save")
+        # press() instead of click(): the full-height card above pushes the
+        # editor's toolbar off the small harness screen.
+        pilot.app.query_one("#personas-editor-save", Button).press()
         await pilot.pause()
         validation = pilot.app.query_one("#personas-editor-validation", Static)
         assert "name: required" in str(validation.renderable)

@@ -603,10 +603,11 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_selection(name=entity_name, kind="character", authority="Local")
         inspector.set_unsaved(False)
         inspector.show_validation(())
-        # Clear any previous character's rows immediately; the worker fills
-        # the panel back in once the listing returns.
+        # Drop any previous character's rows immediately and show a loading
+        # placeholder; the worker fills the panel in once the listing returns
+        # (or replaces the placeholder with the empty-state copy).
         self.conversations.reset()
-        await inspector.show_conversations(())
+        await inspector.show_conversations_loading()
         self.conversations.load_conversations(entity_id)
         # Seed the ephemeral preview with the character's greeting. The list
         # rows are id/name-only summaries and load_character only SCHEDULES a
@@ -987,6 +988,9 @@ class PersonasScreen(BaseAppScreen):
                 )
             return
         pane.set_status("Running")
+        # An exclusive-cancelled predecessor may have left a half-streamed
+        # reply line behind; this run owns the transcript now, so drop it.
+        await pane.discard_partial_reply()
         # Coalesce consecutive user turns: an exclusive-cancelled predecessor
         # worker (double-fired Test Reply) leaves [user, user] in the history,
         # which strict providers reject; join them into one message instead.
@@ -1003,28 +1007,50 @@ class PersonasScreen(BaseAppScreen):
             {"role": "system", "content": self._preview_system_prompt()}
         ] + history
         reply = ""
+        streamed = False
         try:
             async for chunk in gateway.stream_chat(resolution, messages):
+                if _stale():
+                    # The selection changed or the preview was reset while the
+                    # provider was streaming. The invalidation paths reseed the
+                    # pane (removing the partial line); the discard here only
+                    # covers the window before that reseed lands, and is a
+                    # no-op afterwards.
+                    await pane.discard_partial_reply()
+                    return
                 reply += chunk
+                if chunk:
+                    # Progressive rendering: the first chunk opens the reply
+                    # line, later chunks grow it in place.
+                    if not streamed:
+                        pane.begin_reply()
+                        streamed = True
+                    pane.append_reply_chunk(chunk)
         except Exception:
             logger.error("Preview provider call failed.", exc_info=True)
             if not _stale():
                 # Keep the user's transcript line, but pop the unanswered
-                # history entry so a retry does not duplicate the turn.
+                # history entry so a retry does not duplicate the turn, and
+                # remove any half-streamed reply line - the reply never
+                # completed, so the transcript must not keep a fragment.
                 self._pop_orphaned_preview_user_turn()
+                await pane.discard_partial_reply()
                 pane.set_status("Provider error - try again or configure in Settings")
             return
         if _stale():
-            # The selection changed or the preview was reset while the
-            # provider was streaming; the reply belongs to state that is gone.
+            # Same staleness rule for a stream that ended after invalidation.
+            await pane.discard_partial_reply()
             return
         if reply:
+            # The transcript already shows the full streamed line; commit it
+            # and give the history ONE consolidated assistant entry.
             self._preview_history.append({"role": "assistant", "content": reply})
-            pane.append_reply(reply)
+            pane.finalize_reply()
             pane.set_status("Ready")
         else:
             # An empty stream must not add a bare "character:" line or an
-            # empty assistant history entry.
+            # empty assistant history entry (no line was begun: chunks were
+            # empty or absent).
             pane.set_status("No reply received")
 
     @on(PreviewResetRequested)
@@ -1080,7 +1106,9 @@ class PersonasScreen(BaseAppScreen):
         # rows) must not linger in the inspector. clear_selection also resets
         # the unsaved gating, which is correct for a pristine session.
         await inspector.clear_selection()
-        inspector.show_validation(())
+        # While an editor is open the editor footer owns validation detail;
+        # the inspector line must not claim "OK".
+        inspector.show_validation_editing()
         self.call_after_refresh(self._focus_editor_name)
 
     async def _begin_create_profile(self) -> None:
@@ -1093,7 +1121,7 @@ class PersonasScreen(BaseAppScreen):
         inspector = self.query_one(PersonasInspectorPane)
         # Same identity reset as _begin_create_character: no stale selection.
         await inspector.clear_selection()
-        inspector.show_validation(())
+        inspector.show_validation_editing()
         self.call_after_refresh(self._focus_editor_name)
 
     @on(EditPersonaRequested)
@@ -1110,7 +1138,7 @@ class PersonasScreen(BaseAppScreen):
         self._show_center("#ccp-persona-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         inspector.set_unsaved(False)
-        inspector.show_validation(())
+        inspector.show_validation_editing()
         self._register_footer_shortcuts()
         self.call_after_refresh(self._focus_editor_name)
 
@@ -1129,7 +1157,9 @@ class PersonasScreen(BaseAppScreen):
         # posts EditorContentChanged on the first real modification.
         self.query_one(PersonasCharacterEditorWidget).load_character(record)
         self._show_center("#ccp-character-editor-view")
-        self.query_one(PersonasInspectorPane).set_unsaved(False)
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.set_unsaved(False)
+        inspector.show_validation_editing()
         self._register_footer_shortcuts()
         self.call_after_refresh(self._focus_editor_name)
 
@@ -1561,8 +1591,14 @@ class PersonasScreen(BaseAppScreen):
         message.stop()
         data = dict(message.character_data or {})
         errors = self._validate_character(data)
-        self.query_one(PersonasInspectorPane).show_validation(errors)
+        # The editor footer is the single in-editor validation surface: the
+        # screen-side results (name, character_book) render there, in the
+        # same format as the editor's own check.
+        self.query_one(PersonasCharacterEditorWidget).show_validation(errors)
         if errors:
+            # The editor stays open, so the inspector line stays in its
+            # editing state instead of duplicating the error detail.
+            self.query_one(PersonasInspectorPane).show_validation_editing()
             return
         # Snapshot UI-thread state here; the worker thread must not read it.
         self._save_character_worker(data, self.state.selected_entity_id, self._edit_mode)
@@ -1637,7 +1673,9 @@ class PersonasScreen(BaseAppScreen):
             logger.debug("Persona save without an open edit session; ignoring.")
             return
         data = dict(message.data or {})
-        self.query_one(PersonasInspectorPane).show_validation(())
+        # The editor is still open until the save lands; keep the inspector
+        # line in its editing state (a failed save leaves the editor open).
+        self.query_one(PersonasInspectorPane).show_validation_editing()
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None:
             self._notify("Save failed: persona profiles are unavailable.", "error")
@@ -1728,7 +1766,10 @@ class PersonasScreen(BaseAppScreen):
     def _finish_cancel_edit(self) -> None:
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
-        self.query_one(PersonasInspectorPane).set_unsaved(False)
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.set_unsaved(False)
+        # The editor closed: the inspector validation line returns to normal.
+        inspector.show_validation(())
         self._set_active_row_unsaved(False)
         if self.state.selected_entity_id:
             self._show_center("#ccp-character-card-view")
@@ -1748,7 +1789,10 @@ class PersonasScreen(BaseAppScreen):
     def _finish_cancel_profile_edit(self) -> None:
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
-        self.query_one(PersonasInspectorPane).set_unsaved(False)
+        inspector = self.query_one(PersonasInspectorPane)
+        inspector.set_unsaved(False)
+        # The editor closed: the inspector validation line returns to normal.
+        inspector.show_validation(())
         self._set_active_row_unsaved(False)
         if self.state.selected_entity_id:
             self._show_center("#ccp-persona-card-view")

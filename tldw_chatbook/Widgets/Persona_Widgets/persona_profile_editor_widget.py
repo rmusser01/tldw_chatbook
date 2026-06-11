@@ -124,15 +124,22 @@ class PersonaProfileEditorWidget(Container):
             errors.append("name: required")
         return tuple(errors)
 
+    def show_validation(self, errors: tuple[str, ...]) -> None:
+        """Render validation errors in the editor footer (the single
+        in-editor surface); an empty tuple clears it."""
+        validation = self.query_one("#personas-editor-validation", Static)
+        if errors:
+            validation.update("Validation errors:\n" + "\n".join(errors))
+        else:
+            validation.update("")
+
     @on(Button.Pressed, "#personas-editor-save")
     def _save_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         errors = self.validate()
-        validation = self.query_one("#personas-editor-validation", Static)
+        self.show_validation(errors)
         if errors:
-            validation.update("Validation errors:\n" + "\n".join(errors))
             return
-        validation.update("")
         self.post_message(PersonaProfileSaveRequested(self.collect()))
 
     @on(Button.Pressed, "#personas-editor-cancel")

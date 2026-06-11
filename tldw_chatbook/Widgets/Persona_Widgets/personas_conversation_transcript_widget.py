@@ -7,7 +7,7 @@ message, ``role: content``, no per-message chrome.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll
@@ -56,14 +56,37 @@ class PersonasConversationTranscriptWidget(Container):
             str(title or "Conversation")
         )
 
-    async def load_messages(self, messages: List[Dict[str, Any]]) -> None:
-        """Replace the transcript with ``messages`` (async-safe replace)."""
+    async def show_loading(self) -> None:
+        """Replace the transcript with a loading placeholder.
+
+        Gives the conversation click instant feedback while the message
+        worker fetches; ``load_messages`` replaces it with the content.
+        """
+        scroll = self.query_one("#personas-transcript-scroll", VerticalScroll)
+        await scroll.remove_children()
+        await scroll.mount(
+            Static("Loading transcript...", id="personas-transcript-loading")
+        )
+
+    async def load_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        speaker_names: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Replace the transcript with ``messages`` (async-safe replace).
+
+        ``speaker_names`` maps roles to display names (e.g. ``{"user":
+        "You", "assistant": "Detective Sam"}``); unmapped roles render as
+        the raw role. Role CSS classes are unaffected by the mapping.
+        """
+        names = speaker_names or {}
         scroll = self.query_one("#personas-transcript-scroll", VerticalScroll)
         await scroll.remove_children()
         widgets: list[Static] = []
         for message in messages or []:
             role = str(message.get("role") or "unknown")
             content = str(message.get("content") or "")
+            speaker = str(names.get(role) or role)
             # Role styling is intentionally binary: "user" vs assistant-style
             # for every other role (assistant, system, tool, unknown, ...).
             role_class = (
@@ -75,7 +98,7 @@ class PersonasConversationTranscriptWidget(Container):
                 # markup=False: message content must render literally, never
                 # as Rich markup (unmatched tags raise MarkupError at render).
                 Static(
-                    f"{role}: {content}",
+                    f"{speaker}: {content}",
                     classes=f"personas-transcript-line {role_class}",
                     markup=False,
                 )

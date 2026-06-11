@@ -108,14 +108,23 @@ class PersonasConversationsController:
             return
         self._conversation_rows = dict(rows)
         try:
-            await screen.query_one(PersonasInspectorPane).show_conversations(rows)
+            # An empty result (including a tolerated listing failure) shows
+            # readable empty-state copy rather than a silently blank panel.
+            await screen.query_one(PersonasInspectorPane).show_conversations(
+                rows, empty_copy="No saved conversations."
+            )
         except Exception:
             logger.warning("Could not render the conversations panel.", exc_info=True)
 
     # ===== Read-only view =====
 
     async def open_conversation(self, conversation_id: str) -> None:
-        """Row-selected continuation: open the conversation read-only."""
+        """Row-selected continuation: open the conversation read-only.
+
+        The transcript view opens IMMEDIATELY with a loading placeholder so
+        the click has instant feedback; the message worker's continuation
+        replaces it with the content (or a newer selection supersedes it).
+        """
         screen = self.screen
         screen._edit_mode = "view"
         self._open_conversation_id = conversation_id
@@ -125,6 +134,15 @@ class PersonasConversationsController:
         self._open_conversation_transcript = ""
         self._open_conversation_truncated = False
         self._loaded_conversation_id = None
+        try:
+            view = screen.query_one(PersonasConversationTranscriptWidget)
+            view.set_title(self._open_conversation_title or "Conversation")
+            await view.show_loading()
+            screen._show_center(_CONVERSATION_VIEW_ID)
+            # Esc-back is available as soon as the view is open.
+            screen._register_footer_shortcuts()
+        except QueryError:
+            logger.warning("Conversation transcript widget is not mounted.")
         self.load_conversation_messages(
             conversation_id, screen.state.selected_entity_name or "Character"
         )
@@ -165,11 +183,23 @@ class PersonasConversationsController:
         truncated = len(full_transcript) > _HANDOFF_TRANSCRIPT_CHAR_LIMIT
         transcript = full_transcript[:_HANDOFF_TRANSCRIPT_CHAR_LIMIT]
         self.screen.app.call_from_thread(
-            self.show_conversation_view, conversation_id, messages, transcript, truncated
+            self.show_conversation_view,
+            conversation_id,
+            messages,
+            transcript,
+            truncated,
+            # The on-screen transcript names speakers ("You"/the character),
+            # matching the staged handoff body built above.
+            {"user": "You", "assistant": character_name},
         )
 
     async def show_conversation_view(
-        self, conversation_id: str, messages: list[dict], transcript: str, truncated: bool
+        self,
+        conversation_id: str,
+        messages: list[dict],
+        transcript: str,
+        truncated: bool,
+        speaker_names: dict[str, str] | None = None,
     ) -> None:
         """UI-thread continuation: display the read-only transcript view."""
         screen = self.screen
@@ -190,7 +220,7 @@ class PersonasConversationsController:
             logger.warning("Conversation transcript widget is not mounted.")
             return
         view.set_title(self._open_conversation_title or "Conversation")
-        await view.load_messages(messages)
+        await view.load_messages(messages, speaker_names=speaker_names)
         screen._show_center(_CONVERSATION_VIEW_ID)
         # Esc-back availability changed; focus the transcript so arrow keys
         # scroll it (the helper refuses to steal focus from active typing).

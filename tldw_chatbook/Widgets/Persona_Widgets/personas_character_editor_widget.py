@@ -255,6 +255,20 @@ class PersonasCharacterEditorWidget(Container):
         """Clear the form for a new (unsaved) character; version defaults 1.0."""
         self.load_character({})
 
+    def show_validation(self, errors: tuple[str, ...]) -> None:
+        """Render screen-side validation errors in the editor footer.
+
+        The footer Static is the single in-editor validation surface: the
+        editor's own name-required check and the screen's ``_validate_character``
+        results (e.g. character_book errors) both land here, in the same
+        format. An empty tuple clears it.
+        """
+        validation = self.query_one("#personas-char-editor-validation", Static)
+        if errors:
+            validation.update("Validation errors:\n" + "\n".join(errors))
+        else:
+            validation.update("")
+
     def get_character_data(self) -> Dict[str, Any]:
         """Current form values, in the legacy editor's key structure.
 

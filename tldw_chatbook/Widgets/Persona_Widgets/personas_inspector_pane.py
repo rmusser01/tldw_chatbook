@@ -138,11 +138,50 @@ class PersonasInspectorPane(Vertical):
         else:
             summary.update("Validation: OK")
 
-    async def show_conversations(self, rows: tuple[tuple[str, str], ...]) -> None:
-        """Render (conversation_id, title) rows; empty tuple clears the panel."""
+    def show_validation_editing(self) -> None:
+        """Editing-session state: the editor footer owns the error detail,
+        so the inspector line must not claim "OK" while an editor is open."""
+        self.query_one("#personas-validation-summary", Static).update(
+            "Validation: editing..."
+        )
+
+    async def show_conversations_loading(self) -> None:
+        """Show a loading placeholder while the listing worker runs."""
+        await self._show_conversations_placeholder("Loading conversations...")
+
+    async def _show_conversations_placeholder(self, text: str) -> None:
+        """Replace the rows with one disabled, non-selectable status line."""
         list_view = self.query_one("#personas-conversations-list", ListView)
         await list_view.clear()
         self._conversation_lookup = {}
+        await list_view.extend(
+            [
+                ListItem(
+                    Static(text, markup=False),
+                    classes="personas-conversations-placeholder",
+                    disabled=True,
+                )
+            ]
+        )
+
+    async def show_conversations(
+        self,
+        rows: tuple[tuple[str, str], ...],
+        *,
+        empty_copy: str | None = None,
+    ) -> None:
+        """Render (conversation_id, title) rows.
+
+        An empty ``rows`` tuple clears the panel silently unless
+        ``empty_copy`` is given, in which case that copy renders as a
+        disabled placeholder (the library empty-state idiom).
+        """
+        list_view = self.query_one("#personas-conversations-list", ListView)
+        await list_view.clear()
+        self._conversation_lookup = {}
+        if not rows and empty_copy:
+            await self._show_conversations_placeholder(empty_copy)
+            return
         items: list[ListItem] = []
         seen: set[str] = set()
         for conversation_id, title in rows:

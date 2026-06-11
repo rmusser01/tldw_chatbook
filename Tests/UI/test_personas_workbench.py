@@ -284,6 +284,9 @@ class TestCharacterSelectionAndEdit:
             assert focused.id == "personas-library-search"
 
     async def test_save_with_missing_name_blocks_and_shows_validation(self, mock_app_instance, stub_characters, monkeypatch):
+        """Blocked saves render in the editor footer; the inspector says
+        "editing..." while an editor is open (the footer is the single
+        in-editor validation surface)."""
         created = []
         monkeypatch.setattr(
             character_handler_module, "create_character",
@@ -300,9 +303,110 @@ class TestCharacterSelectionAndEdit:
             )
             screen.post_message(CharacterSaveRequested({"name": "", "first_message": "Hi"}))
             await pilot.pause()
+            editor_validation = screen.query_one(
+                "#personas-char-editor-validation", Static
+            )
+            assert "name: required" in str(editor_validation.renderable)
             summary = screen.query_one("#personas-validation-summary", Static)
-            assert "name: required" in str(summary.renderable)
+            assert "Validation: editing..." in str(summary.renderable)
+            assert "OK" not in str(summary.renderable)
         assert created == []
+
+    async def test_character_book_errors_render_in_editor_footer(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """Screen-side validation (character_book) renders in the editor footer."""
+        created = []
+        monkeypatch.setattr(
+            character_handler_module, "create_character",
+            lambda data: created.append(data) or 99,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
+                CharacterSaveRequested,
+            )
+            # entries is required (and must be a list) when a book is present.
+            screen.post_message(
+                CharacterSaveRequested(
+                    {"name": "Bookish", "character_book": {"entries": "nope"}}
+                )
+            )
+            await pilot.pause()
+            editor_validation = screen.query_one(
+                "#personas-char-editor-validation", Static
+            )
+            assert "character_book" in str(editor_validation.renderable)
+            summary = screen.query_one("#personas-validation-summary", Static)
+            assert "Validation: editing..." in str(summary.renderable)
+        assert created == []
+
+    async def test_inspector_validation_reads_editing_while_editor_open(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """Editor open -> inspector "editing..."; save success -> back to OK."""
+        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
+            EditCharacterRequested,
+        )
+        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
+            CharacterSaveRequested,
+        )
+
+        monkeypatch.setattr(
+            character_handler_module, "update_character", lambda cid, data: True
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            summary = screen.query_one("#personas-validation-summary", Static)
+            assert "Validation: OK" in str(summary.renderable)
+            screen.post_message(EditCharacterRequested("1"))
+            await pilot.pause()
+            assert "Validation: editing..." in str(summary.renderable)
+            screen.post_message(
+                CharacterSaveRequested({"name": "Detective Sam", "version": 1})
+            )
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert "Validation: OK" in str(summary.renderable)
+
+    async def test_inspector_validation_back_to_ok_on_editor_cancel(
+        self, mock_app_instance, stub_characters
+    ):
+        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
+            EditCharacterRequested,
+        )
+        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
+            CharacterEditorCancelled,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            screen.post_message(EditCharacterRequested("1"))
+            await pilot.pause()
+            summary = screen.query_one("#personas-validation-summary", Static)
+            assert "Validation: editing..." in str(summary.renderable)
+            screen.post_message(CharacterEditorCancelled())
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert "Validation: OK" in str(summary.renderable)
 
     async def test_save_calls_create_and_refreshes(self, mock_app_instance, stub_characters, monkeypatch):
         created = []
@@ -1053,6 +1157,107 @@ class TestConversationsPanel:
             rows = screen.query(".personas-conversation-row")
             assert [_row_text(r) for r in rows] == ["First case"]
 
+    async def test_conversations_panel_shows_loading_then_rows(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        """While the listing worker runs the panel says it is loading."""
+        import threading
+
+        release = threading.Event()
+
+        def gated_listing(db, character_id, limit=50, offset=0):
+            release.wait(timeout=5)
+            return [{"id": "conv-1", "title": "First case"}]
+
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            gated_listing,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            panel = screen.query_one("#personas-conversations-list")
+            texts = [str(s.renderable) for s in panel.query(Static)]
+            assert any("Loading conversations..." in text for text in texts)
+            release.set()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            rows = screen.query(".personas-conversation-row")
+            assert [_row_text(r) for r in rows] == ["First case"]
+            texts = [str(s.renderable) for s in panel.query(Static)]
+            assert not any("Loading" in text for text in texts)
+
+    async def test_conversations_panel_empty_shows_copy(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [],
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            panel = screen.query_one("#personas-conversations-list")
+            texts = [str(s.renderable) for s in panel.query(Static)]
+            assert any("No saved conversations." in text for text in texts)
+            assert list(screen.query(".personas-conversation-row")) == []
+
+    async def test_open_conversation_shows_loading_placeholder(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        """Clicking a conversation gives instant feedback: the transcript view
+        opens immediately with a loading placeholder."""
+        import threading
+
+        release = threading.Event()
+
+        def gated_messages(db, conversation_id, character_name, user_name, **kwargs):
+            release.wait(timeout=5)
+            return [("Hello there", "Greetings, detective.")]
+
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "retrieve_conversation_messages_for_ui",
+            gated_messages,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.pause()
+            view = screen.query_one("#personas-conversation-transcript-view")
+            assert view.display is True
+            texts = [str(s.renderable) for s in view.query(Static)]
+            assert any("Loading transcript..." in text for text in texts)
+            release.set()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            texts = [str(s.renderable) for s in view.query(Static)]
+            assert not any("Loading transcript..." in text for text in texts)
+            assert any("Greetings, detective." in text for text in texts)
+
+    async def test_transcript_lines_use_speaker_names(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """The read-only transcript uses You/<character name>, not user/assistant."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            view = screen.query_one("#personas-conversation-transcript-view")
+            texts = [
+                str(line.renderable)
+                for line in view.query(".personas-transcript-line")
+            ]
+            assert texts == [
+                "You: Hello there",
+                "Detective Sam: Greetings, detective.",
+            ]
+
     async def test_conversation_listing_failure_is_tolerant(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
     ):
@@ -1517,12 +1722,27 @@ class TestConsoleActions:
 
 
 class _FakePreviewGateway:
-    """In-memory gateway double: ready resolution + scripted stream."""
+    """In-memory gateway double: ready resolution + scripted stream.
 
-    def __init__(self, chunks=("Hello, ", "world."), gate=None, error=None):
+    ``gate`` holds the stream BEFORE the first chunk; ``mid_gate`` holds it
+    between the first chunk and the rest; ``error`` raises before any chunk
+    unless ``error_after_first`` is set, in which case the first chunk is
+    yielded and the error raised on the next pull.
+    """
+
+    def __init__(
+        self,
+        chunks=("Hello, ", "world."),
+        gate=None,
+        mid_gate=None,
+        error=None,
+        error_after_first=False,
+    ):
         self.chunks = chunks
         self.gate = gate
+        self.mid_gate = mid_gate
         self.error = error
+        self.error_after_first = error_after_first
         self.requests: list[list[dict]] = []
         self.closed = False
 
@@ -1537,10 +1757,14 @@ class _FakePreviewGateway:
         self.requests.append([dict(m) for m in messages])
         if self.gate is not None:
             await self.gate.wait()
-        if self.error is not None:
+        if self.error is not None and not self.error_after_first:
             raise self.error
-        for chunk in self.chunks:
+        for index, chunk in enumerate(self.chunks):
+            if index == 1 and self.mid_gate is not None:
+                await self.mid_gate.wait()
             yield chunk
+            if index == 0 and self.error is not None and self.error_after_first:
+                raise self.error
 
     async def aclose(self):
         self.closed = True
@@ -1691,6 +1915,164 @@ class TestPreviewIntegration:
             # The provider saw the system prompt followed by the history.
             assert fake.requests and fake.requests[0][0]["role"] == "system"
             assert fake.requests[0][1] == {"role": "user", "content": "Hi there"}
+
+    async def test_reply_streams_progressively_into_one_line(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Chunks render as they arrive, updating ONE growing character line."""
+        import asyncio
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        mid_gate = asyncio.Event()
+        fake = _FakePreviewGateway(mid_gate=mid_gate)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._ensure_preview_gateway = lambda: fake
+            pane = screen.query_one(PersonasPreviewPane)
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            # The first chunk must be visible WHILE the stream is held open.
+            for _ in range(50):
+                if "character: Hello, " in pane.transcript_text():
+                    break
+                await pilot.pause()
+            assert "character: Hello, " in pane.transcript_text()
+            # History gets the consolidated entry only at the end.
+            assert not any(
+                entry["role"] == "assistant" for entry in screen._preview_history
+            )
+            mid_gate.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            lines = pane.transcript_text().splitlines()
+            assert lines.count("character: Hello, world.") == 1
+            assert "character: Hello, " not in [
+                line for line in lines if line != "character: Hello, world."
+            ]
+            assert screen._preview_history[-1] == {
+                "role": "assistant",
+                "content": "Hello, world.",
+            }
+
+    async def test_reset_mid_stream_removes_partial_line(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Reset after the first chunk landed must drop the partial line."""
+        import asyncio
+
+        from textual.widgets import Button as _Button
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        mid_gate = asyncio.Event()
+        fake = _FakePreviewGateway(mid_gate=mid_gate)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._ensure_preview_gateway = lambda: fake
+            pane = screen.query_one(PersonasPreviewPane)
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            for _ in range(50):
+                if "character: Hello, " in pane.transcript_text():
+                    break
+                await pilot.pause()
+            assert "character: Hello, " in pane.transcript_text()
+            screen.query_one("#personas-preview-reset", _Button).press()
+            await pilot.pause()
+            mid_gate.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert "Hello" not in pane.transcript_text()
+            assert pane.transcript_text() == (
+                "character: The name's Detective Sam. Who's asking?"
+            )
+            assert not any(
+                entry["role"] == "assistant" for entry in screen._preview_history
+            )
+
+    async def test_selection_change_mid_stream_removes_partial_line(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A selection move after the first chunk must drop the partial line."""
+        import asyncio
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        mid_gate = asyncio.Event()
+        fake = _FakePreviewGateway(mid_gate=mid_gate)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._ensure_preview_gateway = lambda: fake
+            pane = screen.query_one(PersonasPreviewPane)
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            for _ in range(50):
+                if "character: Hello, " in pane.transcript_text():
+                    break
+                await pilot.pause()
+            assert "character: Hello, " in pane.transcript_text()
+            await pilot.click("#personas-library-row-character-2")
+            await pilot.pause()
+            mid_gate.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert "Hello" not in pane.transcript_text()
+            assert not any(
+                entry["role"] == "assistant" for entry in screen._preview_history
+            )
+
+    async def test_error_mid_stream_removes_partial_line(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A provider error after the first chunk must not leave a dangling
+        partial line; status shows the recovery copy and the orphaned user
+        history entry is popped."""
+        from textual.widgets import Static as _Static
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        fake = _FakePreviewGateway(
+            error=RuntimeError("provider exploded"), error_after_first=True
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._ensure_preview_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+            assert "Hello" not in pane.transcript_text()
+            assert screen._preview_history == []
+            status = str(
+                screen.query_one("#personas-preview-status", _Static).renderable
+            )
+            assert "Provider error" in status
 
     async def test_draft_aware_system_prompt_uses_editor_data(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -2518,6 +2900,46 @@ class TestDirtyTracking:
             await pilot.pause()
             assert confirms == [True]
             assert screen.state.selected_entity_id == "2"
+
+    async def test_persona_editor_typing_marks_dirty_and_guard_fires(
+        self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
+    ):
+        """Carryover: PersonaProfileEditorWidget._field_changed parity with the
+        character editor — typing posts EditorContentChanged exactly once, the
+        screen marks the session unsaved, and leaving consults the guard."""
+        from textual.widgets import TextArea
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-mode-personas")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.click("#personas-library-row-persona_profile-p-1")
+            await pilot.pause()
+            screen.post_message(EditPersonaRequested("p-1"))
+            await pilot.pause()
+            assert screen._edit_mode == "edit"
+            # Programmatic population must not have marked the session dirty.
+            assert screen.state.has_unsaved_changes is False
+            screen.query_one("#personas-editor-description", TextArea).focus()
+            await pilot.pause()
+            await pilot.press("x")
+            await pilot.pause()
+            assert screen.state.has_unsaved_changes is True
+            readiness = str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+            assert "unsaved" in readiness
+            confirms = self._bypass_confirm(screen, True)
+            await pilot.click("#personas-mode-characters")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert confirms == [True]
+            assert screen.state.active_mode == "characters"
 
     async def test_programmatic_load_does_not_mark_dirty(
         self, mock_app_instance, stub_characters, stub_conversations

@@ -158,23 +158,51 @@ class TestCharacterCard:
             card = pilot.app.query_one(PersonasCharacterCardWidget)
             assert not list(card.query(Label))
 
-    async def test_empty_field_renders_bare_label(self):
-        """Empty values render just 'Label:' with no trailing space."""
+    async def test_empty_field_rows_are_hidden(self):
+        """Empty values hide their row entirely - no bare 'Label:' lines.
+
+        'Avatar: none' stays visible (it is informative), and re-loading with
+        a value flips a hidden row back on.
+        """
         app = WidgetApp()
         async with app.run_test() as pilot:
             card = pilot.app.query_one(PersonasCharacterCardWidget)
             data = dict(CHARACTER)
             data["scenario"] = ""
+            data.pop("image")
             card.load_character(data)
             await pilot.pause()
+            scenario = pilot.app.query_one("#personas-character-card-scenario", Static)
+            assert scenario.display is False
+            # Populated rows stay visible.
             assert (
-                str(
-                    pilot.app.query_one(
-                        "#personas-character-card-scenario", Static
-                    ).renderable
-                )
-                == "Scenario:"
+                pilot.app.query_one(
+                    "#personas-character-card-description", Static
+                ).display
+                is True
             )
+            # "Avatar: none" is informative and stays visible.
+            avatar = pilot.app.query_one("#personas-card-avatar-status", Static)
+            assert avatar.display is True
+            assert str(avatar.renderable) == "Avatar: none"
+            # Re-load with the field populated: the row comes back.
+            card.load_character(dict(CHARACTER))
+            await pilot.pause()
+            assert scenario.display is True
+            assert "rainy night" in str(scenario.renderable)
+
+    async def test_empty_greeting_preview_row_is_hidden(self):
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            card = pilot.app.query_one(PersonasCharacterCardWidget)
+            data = dict(CHARACTER)
+            data["alternate_greetings"] = []
+            card.load_character(data)
+            await pilot.pause()
+            preview = pilot.app.query_one(
+                "#personas-character-card-greeting-preview", Static
+            )
+            assert preview.display is False
 
     async def test_load_with_markup_like_content_does_not_raise(self):
         """Field values with Rich-markup-looking text must render literally."""
@@ -435,6 +463,30 @@ class TestConversationTranscript:
             assert "user: Hello" in str(lines[0].renderable)
             assert "personas-transcript-line-user" in lines[0].classes
             assert "assistant: Hi there" in str(lines[1].renderable)
+            assert "personas-transcript-line-assistant" in lines[1].classes
+
+    async def test_load_messages_maps_speaker_names(self):
+        """speaker_names renders display names; unmapped roles fall back."""
+        app = WidgetApp()
+        async with app.run_test() as pilot:
+            view = pilot.app.query_one(PersonasConversationTranscriptWidget)
+            await view.load_messages(
+                [
+                    {"role": "user", "content": "Hello"},
+                    {"role": "assistant", "content": "Hi there"},
+                    {"role": "system", "content": "Stay terse."},
+                ],
+                speaker_names={"user": "You", "assistant": "Detective Sam"},
+            )
+            await pilot.pause()
+            lines = list(view.query(".personas-transcript-line"))
+            assert [str(line.renderable) for line in lines] == [
+                "You: Hello",
+                "Detective Sam: Hi there",
+                "system: Stay terse.",
+            ]
+            # Role classes are unchanged by display-name mapping.
+            assert "personas-transcript-line-user" in lines[0].classes
             assert "personas-transcript-line-assistant" in lines[1].classes
 
     async def test_empty_messages_show_placeholder(self):
