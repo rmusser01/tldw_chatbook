@@ -1494,15 +1494,21 @@ class TestConsoleActions:
         assert "Greetings, detective." in payload.body
 
     async def test_footer_shortcut_attach_available(
-        self, mock_app_instance, stub_characters
+        self, mock_app_instance, stub_characters, stub_conversations
     ):
+        """The attach hint is truthful: available only with a saved selection."""
         app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
+        async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
             context = screen._shortcut_context()
             attach = next(a for a in context.actions if a.label == "attach")
-            assert attach.available is True
             assert attach.key == "ctrl+enter"
+            assert attach.available is False  # nothing selected yet
+            await self._select_first_character(pilot)
+            attach = next(
+                a for a in screen._shortcut_context().actions if a.label == "attach"
+            )
+            assert attach.available is True
 
 
 class _FakePreviewGateway:
@@ -2178,3 +2184,239 @@ class TestDelete:
                 "not loaded" in message and severity == "warning"
                 for message, severity in notifications
             )
+
+
+class TestKeyboardInteraction:
+    """UX-E2: context-sensitive Escape, real Ctrl+S, mode keys, managed focus."""
+
+    @pytest.fixture
+    def stub_conversations(self, monkeypatch):
+        """Stub the DB resolver, conversation listing, and message retrieval."""
+        monkeypatch.setattr(
+            character_handler_module, "_default_character_db", lambda: object()
+        )
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [
+                {"id": "conv-1", "title": "First case"}
+            ],
+        )
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "retrieve_conversation_messages_for_ui",
+            lambda db, conversation_id, character_name, user_name, **kwargs: [
+                ("Hello there", "Greetings, detective."),
+            ],
+        )
+
+    @staticmethod
+    def _bypass_confirm(screen, answer: bool) -> list[bool]:
+        """Stub the unsaved-changes confirm; returns a call log."""
+        calls: list[bool] = []
+
+        async def fake_confirm() -> bool:
+            calls.append(answer)
+            return answer
+
+        screen._confirm_discard_unsaved = fake_confirm
+        return calls
+
+    async def _open_create_editor(self, pilot):
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.press("ctrl+n")
+        await pilot.pause()
+        assert screen._edit_mode == "create"
+        return screen
+
+    async def test_escape_cancels_editor_via_guard(
+        self, mock_app_instance, stub_characters
+    ):
+        """Esc in the editor takes the SAME guarded cancel path as the button."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._open_create_editor(pilot)
+            confirms = self._bypass_confirm(screen, True)
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # The guard was consulted (dirty-on-entry), not bypassed.
+            assert confirms == [True]
+            assert screen._edit_mode == "view"
+            assert screen.query_one("#ccp-character-editor-view").display is False
+
+    async def test_escape_keeps_editor_when_guard_declined(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._open_create_editor(pilot)
+            confirms = self._bypass_confirm(screen, False)
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert confirms == [False]
+            assert screen._edit_mode == "create"
+            assert screen.query_one("#ccp-character-editor-view").display is True
+
+    async def test_escape_in_transcript_returns_to_card(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.click("#personas-conversation-row-conv-1")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            transcript = screen.query_one("#personas-conversation-transcript-view")
+            assert transcript.display is True
+            # Opening a transcript focuses its scroll so arrow keys scroll it.
+            focused = pilot.app.focused
+            assert focused is not None and focused.id == "personas-transcript-scroll"
+            await pilot.press("escape")
+            await pilot.pause()
+            assert transcript.display is False
+            assert screen.query_one("#ccp-character-card-view").display is True
+            # Back returns focus to the conversations list in the inspector.
+            focused = pilot.app.focused
+            assert focused is not None and focused.id == "personas-conversations-list"
+
+    async def test_escape_blurs_search_input(self, mock_app_instance, stub_characters):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.press("ctrl+f")
+            await pilot.pause()
+            assert pilot.app.focused.id == "personas-library-search"
+            await pilot.press("escape")
+            await pilot.pause()
+            focused = pilot.app.focused
+            assert focused is not None and focused.id == "personas-library-rows"
+            # Still in view mode; nothing else changed.
+            assert screen._edit_mode == "view"
+
+    async def test_ctrl_s_saves_from_editor(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        from textual.widgets import Input
+
+        created = []
+        monkeypatch.setattr(
+            character_handler_module, "create_character",
+            lambda data: created.append(data) or 99,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._open_create_editor(pilot)
+            screen.query_one("#personas-char-editor-name", Input).value = "New Hero"
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen._edit_mode == "view"
+        assert created and created[0]["name"] == "New Hero"
+
+    async def test_ctrl_s_noop_in_view_mode(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        created = []
+        monkeypatch.setattr(
+            character_handler_module, "create_character",
+            lambda data: created.append(data) or 99,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen._edit_mode == "view"
+        assert created == []
+
+    async def test_footer_save_hint_flips_with_edit_mode(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+
+            def _save_action(context):
+                return next(a for a in context.actions if a.label == "save")
+
+            assert _save_action(screen._shortcut_context()).available is False
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            assert _save_action(screen._shortcut_context()).available is True
+            # The footer was re-registered on the transition.
+            footer = pilot.app.query_one(AppFooterStatus)
+            assert "ctrl+s save unavailable" not in footer.shortcut_text
+            assert "ctrl+s save" in footer.shortcut_text
+            confirms = self._bypass_confirm(screen, True)
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert confirms == [True]
+            assert _save_action(screen._shortcut_context()).available is False
+            assert "ctrl+s save unavailable" in footer.shortcut_text
+
+    async def test_mode_keys_switch_modes(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.press("ctrl+2")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.active_mode == "personas"
+            # ]/[ cycle through the strip order from the active mode.
+            await pilot.press("right_square_bracket")
+            await pilot.pause()
+            assert screen.state.active_mode == "prompts"
+            await pilot.press("left_square_bracket")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.active_mode == "personas"
+
+    async def test_focus_lands_in_editor_name_on_create(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            await self._open_create_editor(pilot)
+            await pilot.pause()
+            focused = pilot.app.focused
+            assert focused is not None
+            assert focused.id == "personas-char-editor-name"
+
+    async def test_focus_returns_to_library_after_cancel(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._open_create_editor(pilot)
+            self._bypass_confirm(screen, True)
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            focused = pilot.app.focused
+            assert focused is not None
+            assert focused.id == "personas-library-rows"

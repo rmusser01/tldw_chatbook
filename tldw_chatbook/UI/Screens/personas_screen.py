@@ -13,7 +13,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import QueryError
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, ListView, Static, TextArea
 
 from ...Character_Chat.Character_Chat_Lib import (
     export_character_card_to_json,
@@ -105,10 +105,32 @@ class PersonasScreen(BaseAppScreen):
     #: ``Character_Chat/Character_Chat_Lib.py``, which caps the loaded list.
     LIBRARY_FTS_THRESHOLD: int = 1000
 
+    # Escape/Ctrl+S deliberately do NOT use priority=True: on Textual 8.2.7
+    # neither Input nor TextArea (with the default tab_behavior="focus")
+    # consumes those keys, so they bubble from the editor fields to this
+    # screen's bindings; the actions are strict no-ops outside their contexts.
+    # Esc inside an editor TextArea is cancel-with-guard by design (the
+    # unsaved-changes dialog prompts before anything is discarded).
     BINDINGS = [
         Binding("ctrl+n", "personas_new", "New"),
         Binding("ctrl+f", "personas_search", "Search"),
         Binding("ctrl+enter", "personas_attach", "Attach"),
+        Binding("ctrl+s", "personas_save", "Save", show=False),
+        Binding("escape", "personas_escape", "Back", show=False),
+        # Ctrl+1..5 mirror the mode strip order (MODE_CHIP_ORDER).
+        *[
+            Binding(
+                f"ctrl+{index + 1}",
+                f"personas_mode('{mode}')",
+                MODE_LABELS[mode],
+                show=False,
+            )
+            for index, mode in enumerate(MODE_CHIP_ORDER)
+        ],
+        # [ / ] cycle the mode strip. They are printable keys, so text widgets
+        # consume them as input first; they only act from list/button focus.
+        Binding("left_square_bracket", "personas_mode_cycle(-1)", "Prev mode", show=False),
+        Binding("right_square_bracket", "personas_mode_cycle(1)", "Next mode", show=False),
     ]
 
     # Baseline workbench geometry so the screen renders correctly even without
@@ -622,6 +644,8 @@ class PersonasScreen(BaseAppScreen):
     def _handle_conversation_back(self, event: Button.Pressed) -> None:
         event.stop()
         self._show_center("#ccp-character-card-view")
+        self._register_footer_shortcuts()
+        self._focus_conversations_list()
 
     @on(Button.Pressed, "#personas-conversation-open-library")
     def _handle_conversation_open_library(self, event: Button.Pressed) -> None:
@@ -1035,6 +1059,7 @@ class PersonasScreen(BaseAppScreen):
         await inspector.clear_selection()
         inspector.set_unsaved(True)
         inspector.show_validation(())
+        self.call_after_refresh(self._focus_editor_name)
 
     async def _begin_create_profile(self) -> None:
         self._edit_mode = "create"
@@ -1049,6 +1074,7 @@ class PersonasScreen(BaseAppScreen):
         await inspector.clear_selection()
         inspector.set_unsaved(True)
         inspector.show_validation(())
+        self.call_after_refresh(self._focus_editor_name)
 
     @on(EditPersonaRequested)
     async def _handle_persona_edit_requested(self, message: EditPersonaRequested) -> None:
@@ -1066,6 +1092,8 @@ class PersonasScreen(BaseAppScreen):
         inspector = self.query_one(PersonasInspectorPane)
         inspector.set_unsaved(True)
         inspector.show_validation(())
+        self._register_footer_shortcuts()
+        self.call_after_refresh(self._focus_editor_name)
 
     @on(EditCharacterRequested)
     def _handle_edit_requested(self, message: EditCharacterRequested) -> None:
@@ -1084,6 +1112,8 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonasCharacterEditorWidget).load_character(record)
         self._show_center("#ccp-character-editor-view")
         self.query_one(PersonasInspectorPane).set_unsaved(True)
+        self._register_footer_shortcuts()
+        self.call_after_refresh(self._focus_editor_name)
 
     def _full_character_record(self, character_id: str) -> dict | None:
         """Return the handler's fully-loaded card, or ``None`` when stale.
@@ -1440,6 +1470,7 @@ class PersonasScreen(BaseAppScreen):
             await self._reset_preview("")
             await self.query_one(PersonasInspectorPane).clear_selection()
             self._show_center(None)
+            self._register_footer_shortcuts()
         # Refresh the cached rows even when the user already left the screen
         # or switched modes (the render paths are mode-guarded downstream).
         if kind == "character":
@@ -1523,6 +1554,8 @@ class PersonasScreen(BaseAppScreen):
         if record is not None:
             await self.character_handler.load_character(saved_id)
         self._show_center("#ccp-character-card-view")
+        self._register_footer_shortcuts()
+        self.call_after_refresh(self._focus_library_list)
         self._notify("Character saved.", severity="information")
 
     @on(PersonaProfileSaveRequested)
@@ -1616,6 +1649,8 @@ class PersonasScreen(BaseAppScreen):
         await self._render_profile_rows()
         self.query_one(PersonaProfileCardWidget).show_persona(saved)
         self._show_center("#ccp-persona-card-view")
+        self._register_footer_shortcuts()
+        self.call_after_refresh(self._focus_library_list)
         self._notify("Persona saved.", "information")
 
     # ===== Cancel =====
@@ -1637,6 +1672,7 @@ class PersonasScreen(BaseAppScreen):
             self._show_center("#ccp-character-card-view")
         else:
             self._show_center(None)
+        self.call_after_refresh(self._focus_library_list)
 
     @on(PersonaProfileEditCancelled)
     async def _handle_profile_edit_cancelled(self, message: PersonaProfileEditCancelled) -> None:
@@ -1655,6 +1691,7 @@ class PersonasScreen(BaseAppScreen):
             self._show_center("#ccp-persona-card-view")
         else:
             self._show_center(None)
+        self.call_after_refresh(self._focus_library_list)
 
     # ===== Helpers =====
 
@@ -1687,6 +1724,9 @@ class PersonasScreen(BaseAppScreen):
         """
         if not self.state.has_unsaved_changes:
             await continuation()
+            # Guarded continuations are exactly the transitions that change
+            # edit mode / selection, so the footer hints refresh here.
+            self._register_footer_shortcuts()
             return
         if self._guard_active:
             return
@@ -1699,6 +1739,7 @@ class PersonasScreen(BaseAppScreen):
                 return
             self.state.has_unsaved_changes = False
             await continuation()
+            self._register_footer_shortcuts()
         finally:
             self._guard_active = False
 
@@ -1748,17 +1789,171 @@ class PersonasScreen(BaseAppScreen):
             return
         await self._attach_selection_to_console(intent="attach")
 
+    def action_personas_save(self) -> None:
+        """Ctrl+S: trigger the visible editor's Save path; no-op otherwise.
+
+        Pressing the editor's own Save button reuses its validation flow
+        (name-required check, message posting) without a second code path.
+        """
+        if self._edit_mode not in ("create", "edit"):
+            return
+        for view_id, button_id in (
+            ("#ccp-character-editor-view", "#personas-char-editor-save"),
+            ("#ccp-persona-editor-view", "#personas-editor-save"),
+        ):
+            try:
+                view = self.query_one(view_id)
+            except QueryError:
+                continue
+            if view.display:
+                try:
+                    view.query_one(button_id, Button).press()
+                except QueryError:
+                    logger.warning(f"Save button {button_id} is not mounted.")
+                return
+
+    def action_personas_escape(self) -> None:
+        """Escape, context-sensitive; a strict no-op outside its contexts.
+
+        Editor open -> the SAME cancel path as the Cancel button (the posted
+        cancel message routes through the unsaved guard; never bypassed).
+        Transcript open -> back to the card, focus the conversations list.
+        Search focused -> move focus to the library list.
+        """
+        if self._edit_mode in ("create", "edit"):
+            for view_id, message in (
+                ("#ccp-character-editor-view", CharacterEditorCancelled),
+                ("#ccp-persona-editor-view", PersonaProfileEditCancelled),
+            ):
+                try:
+                    view = self.query_one(view_id)
+                except QueryError:
+                    continue
+                if view.display:
+                    self.post_message(message())
+                    return
+            return
+        try:
+            transcript = self.query_one(_CONVERSATION_VIEW_ID)
+        except QueryError:
+            transcript = None
+        if transcript is not None and transcript.display:
+            # Same path as the "Back to card" button.
+            self._show_center("#ccp-character-card-view")
+            self._register_footer_shortcuts()
+            self._focus_conversations_list()
+            return
+        focused = self.app.focused
+        if focused is not None and focused.id == "personas-library-search":
+            self._focus_library_list(force=True)
+
+    async def action_personas_mode(self, mode: str) -> None:
+        """Ctrl+1..5: same guarded path as the mode chips."""
+        if mode not in MODE_CHIP_ORDER or mode == self.state.active_mode:
+            return
+        await self._run_guarded(lambda: self._apply_mode(mode))
+
+    async def action_personas_mode_cycle(self, delta: int) -> None:
+        """[ / ]: cycle the mode strip relative to the active mode."""
+        try:
+            index = MODE_CHIP_ORDER.index(self.state.active_mode)
+        except ValueError:
+            index = 0
+        await self.action_personas_mode(
+            MODE_CHIP_ORDER[(index + delta) % len(MODE_CHIP_ORDER)]
+        )
+
+    # ===== Focus management =====
+
+    def _focus_steal_blocked(self) -> bool:
+        """True when focus sits in an active text input outside the editors.
+
+        Mirrors the chat screen's "don't steal focus from an active input"
+        rule. Editor fields are exempt: focus moves are requested exactly when
+        the editor is being dismissed (save/cancel), so they are not active.
+        """
+        focused = self.app.focused
+        if not isinstance(focused, (Input, TextArea)):
+            return False
+        return not any(
+            getattr(node, "id", None)
+            in ("ccp-character-editor-view", "ccp-persona-editor-view")
+            for node in focused.ancestors
+        )
+
+    def _focus_editor_name(self) -> None:
+        """Focus the visible editor's Name input (after the center switch)."""
+        for view_id, input_id in (
+            ("#ccp-character-editor-view", "#personas-char-editor-name"),
+            ("#ccp-persona-editor-view", "#personas-editor-name"),
+        ):
+            try:
+                view = self.query_one(view_id)
+            except QueryError:
+                continue
+            if view.display:
+                try:
+                    view.query_one(input_id, Input).focus()
+                except QueryError:
+                    pass
+                return
+
+    def _focus_library_list(self, *, force: bool = False) -> None:
+        """Focus the library rows unless the user is typing elsewhere.
+
+        ``force`` is for explicit user intent (Esc in the search input), where
+        leaving the text input IS the request.
+        """
+        if not force and self._focus_steal_blocked():
+            return
+        try:
+            self.query_one("#personas-library-rows", ListView).focus()
+        except QueryError:
+            pass
+
+    def _focus_conversations_list(self) -> None:
+        """Focus the inspector's conversations list (transcript Back path)."""
+        if self._focus_steal_blocked():
+            return
+        try:
+            self.query_one("#personas-conversations-list", ListView).focus()
+        except QueryError:
+            pass
+
+    def _focus_conversation_transcript(self) -> None:
+        """Focus the transcript scroll so arrow keys scroll it."""
+        if self._focus_steal_blocked():
+            return
+        try:
+            self.query_one("#personas-transcript-scroll").focus()
+        except QueryError:
+            pass
+
     # ===== Footer shortcut context =====
 
     def _shortcut_context(self) -> ShortcutContext:
+        """Truthful footer hints built from the live workbench state.
+
+        Re-registered (replace-on-change) on every transition that changes an
+        availability: entering/leaving an editor, selection changes, saves,
+        deletes, and mode switches.
+        """
+        editing = self._edit_mode in ("create", "edit")
+        try:
+            transcript_open = bool(self.query_one(_CONVERSATION_VIEW_ID).display)
+        except QueryError:
+            transcript_open = False
         return ShortcutContext(
             source="personas",
             actions=(
                 ShortcutAction("ctrl+n", "new"),
                 ShortcutAction("ctrl+f", "search"),
-                # The editor-save wiring flips this on.
-                ShortcutAction("ctrl+s", "save", available=False),
-                ShortcutAction("ctrl+enter", "attach"),
+                ShortcutAction("ctrl+s", "save", available=editing),
+                ShortcutAction("esc", "back", available=editing or transcript_open),
+                ShortcutAction(
+                    "ctrl+enter", "attach", available=self._console_action_allowed()
+                ),
+                ShortcutAction("ctrl+1-5", "mode"),
             ),
         )
 

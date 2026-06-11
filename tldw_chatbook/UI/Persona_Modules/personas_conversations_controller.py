@@ -192,6 +192,10 @@ class PersonasConversationsController:
         view.set_title(self._open_conversation_title or "Conversation")
         await view.load_messages(messages)
         screen._show_center(_CONVERSATION_VIEW_ID)
+        # Esc-back availability changed; focus the transcript so arrow keys
+        # scroll it (the helper refuses to steal focus from active typing).
+        screen._register_footer_shortcuts()
+        screen.call_after_refresh(screen._focus_conversation_transcript)
 
     # ===== Conversation actions =====
 
