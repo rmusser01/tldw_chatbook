@@ -1360,21 +1360,18 @@ class TestNotesScreenMethods:
         async with app.run_test() as pilot:
             await pilot.pause()
 
-            sync_button = screen.query_one("#notes-sync-button", Button)
             editor = screen.query_one("#notes-editor-area", TextArea)
             panel = screen.query_one("#workspace-context-panel", WorkspaceContextPanel)
             top_save_button = screen.query_one("#notes-save-button", Button)
             export_actions = screen.query_one("#notes-export-actions")
             title = screen.query_one("#notes-details-sidebar-title", Static)
 
-            assert sync_button.display is True
             assert editor.display is not False
             assert panel.display is False
 
             screen._set_state(scope_type=ScopeType.SERVER_NOTE)
             await pilot.pause()
 
-            assert sync_button.display is False
             assert top_save_button.display is True
             assert _text(title) == "Server Note Details"
 
@@ -1720,7 +1717,7 @@ class TestNotesScreenMethods:
             assert import_button.display is False
 
     @pytest.mark.asyncio
-    async def test_search_button_routes_through_scope_aware_filtered_search_flow(self, mock_app_instance):
+    async def test_keyword_filter_routes_through_scope_aware_filtered_search_flow(self, mock_app_instance):
         screen = NotesScreen(mock_app_instance)
         screen._perform_filtered_search = AsyncMock()  # type: ignore[method-assign]
         app = NotesScreenTestApp(screen, mock_app_instance.notes_service)
@@ -1728,20 +1725,15 @@ class TestNotesScreenMethods:
         async with app.run_test() as pilot:
             await pilot.pause()
 
-            search_input = screen.query_one("#notes-search-input")
             keyword_input = screen.query_one("#notes-keyword-filter-input")
-
-            search_input.value = "alpha"
-            keyword_input.value = "urgent"
-            await pilot.pause()
             screen._perform_filtered_search.reset_mock()
 
-            event = Mock()
-            event.stop = Mock()
+            keyword_input.value = "urgent"
+            await pilot.pause()
 
-            await screen.handle_search_button(event)
-
-        screen._perform_filtered_search.assert_awaited_once_with("alpha", "urgent")
+        screen._perform_filtered_search.assert_awaited_with(
+            screen.state.search_query, "urgent"
+        )
 
     @pytest.mark.asyncio
     async def test_keyword_only_edit_triggers_unsaved_navigation_guard(self, mock_app_instance):

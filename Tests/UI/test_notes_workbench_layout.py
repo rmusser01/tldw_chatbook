@@ -106,9 +106,7 @@ async def test_notes_workbench_exposes_feature_parity_selectors():
             ("#notes-editor-area", TextArea),
             ("#notes-save-button", Button),
             ("#notes-preview-toggle", Button),
-            ("#notes-sync-button", Button),
             ("#notes-keywords-area", TextArea),
-            ("#notes-save-current-button", Button),
             ("#notes-use-in-chat-button", Button),
             ("#notes-export-markdown-button", Button),
             ("#notes-export-text-button", Button),
@@ -234,13 +232,11 @@ async def test_notes_sync_pane_runs_sync_through_service():
 
         pane = screen.query_one("#notes-sync-pane", NotesSyncPane)
 
-        sync_button = pane.query_one("#quick-sync-btn", Button)
-        sync_region = screen.query_one("#notes-mode-region-sync").region
+        # Sync Now lives in the docked action bar and must be visible
+        # without scrolling whenever Sync mode is active.
+        sync_button = screen.query_one("#quick-sync-btn", Button)
+        assert screen.query_one("#notes-action-bar-sync").display is True
         assert sync_button.region.height > 0
-        assert (
-            sync_button.region.y + sync_button.region.height
-            <= sync_region.y + sync_region.height
-        ), "Sync Now must be visible without scrolling"
 
         class FakeProgress:
             total_files = 2
@@ -260,31 +256,34 @@ async def test_notes_sync_pane_runs_sync_through_service():
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             pane.query_one("#sync-folder-input", Input).value = tmp_dir
-            pane.query_one("#quick-sync-btn", Button).press()
+            screen.query_one("#quick-sync-btn", Button).press()
             await pilot.pause(0.2)
 
         assert sync_service.sync_folder.await_count == 1
         kwargs = sync_service.sync_folder.await_args.kwargs
         assert kwargs["user_id"] == "default_user"
         activity_text = " ".join(
-            str(child.render()) for child in pane.query_one("#activity-section").children
+            str(child.render())
+            for child in pane.query_one("#notes-sync-activity-log").children
         )
         assert "Sync complete" in activity_text
         assert "1 notes created" in activity_text
 
 
 @pytest.mark.asyncio
-async def test_notes_sync_button_switches_to_sync_mode_without_modal():
+async def test_notes_sync_mode_chip_switches_to_sync_mode_without_modal():
     screen = NotesScreen(_mock_app_instance())
     app = NotesWorkbenchHarness(screen)
     async with app.run_test(size=(140, 42)) as pilot:
         await pilot.pause()
 
-        screen.query_one("#notes-sync-button", Button).press()
+        screen.query_one("#notes-mode-sync", Button).press()
         await pilot.pause()
 
         assert screen.state.active_mode == "sync"
         assert screen.query_one("#notes-mode-region-sync").display is True
+        assert screen.query_one("#notes-action-bar-sync").display is True
+        assert screen.query_one("#notes-action-bar-notes").display is False
 
 
 @pytest.mark.asyncio
@@ -559,7 +558,7 @@ async def test_notes_templates_pane_lists_previews_and_creates():
         await pilot.pause()
         assert pane.selected_template_key is not None
 
-        pane.query_one("#notes-templates-create-button", Button).press()
+        screen.query_one("#notes-templates-create-button", Button).press()
         await pilot.pause(0.2)
 
         assert mock_instance.notes_service.add_note.called
