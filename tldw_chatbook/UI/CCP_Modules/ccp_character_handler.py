@@ -43,13 +43,24 @@ def _normalize_character_payload(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def search_characters_fts(search_term: str, limit: int = 50) -> List[Dict[str, Any]]:
-    """FTS search over character cards for large libraries."""
+    """FTS search over character cards for large libraries.
+
+    The user's raw term is wrapped as a quoted FTS5 prefix query
+    (``"term"*``) so operator characters (``"``,  ``(``, ``-``, ...) are
+    treated literally and matching is prefix-based, consistent with the
+    in-memory substring filter used for small libraries.
+    """
+    term = (search_term or "").strip()
+    if not term:
+        return []
     db = _default_character_db()
     if db is None:
         return []
+    escaped = term.replace('"', '""')
+    match_query = f'"{escaped}"*'
     return [
         _normalize_character_payload(row)
-        for row in db.search_character_cards(search_term, limit=limit)
+        for row in db.search_character_cards(match_query, limit=limit)
     ]
 
 

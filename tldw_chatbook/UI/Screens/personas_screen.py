@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Awaitable, Callable
 
 from loguru import logger
@@ -69,7 +70,9 @@ class PersonasScreen(BaseAppScreen):
     """Characters, personas, prompts, dictionaries, and behavior profiles."""
 
     #: Page size above which the loaded list may be truncated and FTS is used
-    #: instead of filtering the in-memory list.
+    #: instead of filtering the in-memory list. Must stay in sync with the
+    #: ``fetch_character_names(limit=1000)`` default in
+    #: ``Character_Chat/Character_Chat_Lib.py``, which caps the loaded list.
     LIBRARY_FTS_THRESHOLD: int = 1000
 
     BINDINGS = [
@@ -177,6 +180,9 @@ class PersonasScreen(BaseAppScreen):
         self._profile_save_inflight: bool = False
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
+        # Serializes library renders: the pane's update_rows has two
+        # suspension points, so interleaved renders could double-mount rows.
+        self._render_lock = asyncio.Lock()
         self.character_handler = CCPCharacterHandler(self)
         self.persona_handler = CCPPersonaHandler(self)
 
@@ -253,6 +259,19 @@ class PersonasScreen(BaseAppScreen):
             # Tolerate refreshes that race screen teardown.
             logger.warning("Could not render the character library rows.", exc_info=True)
 
+    @staticmethod
+    def _build_library_rows(records: list[dict], kind: str) -> tuple[LibraryRow, ...]:
+        """Map id/name records onto library rows, skipping id-less records."""
+        return tuple(
+            LibraryRow(
+                item_id=str(record.get("id")),
+                kind=kind,
+                name=str(record.get("name") or "Unnamed"),
+            )
+            for record in records
+            if record.get("id") is not None
+        )
+
     async def _render_library_rows(self) -> None:
         query = self.state.search_query
         total = len(self._characters)
@@ -265,32 +284,16 @@ class PersonasScreen(BaseAppScreen):
                 # Small library: filter in-memory, case-insensitively on name.
                 q_lower = query.lower()
                 matched = [r for r in self._characters if q_lower in str(r.get("name") or "").lower()]
-            rows = tuple(
-                LibraryRow(
-                    item_id=str(record.get("id")),
-                    kind="character",
-                    name=str(record.get("name") or "Unnamed"),
-                )
-                for record in matched
-                if record.get("id") is not None
-            )
             filtered = True
         else:
-            rows = tuple(
-                LibraryRow(
-                    item_id=str(record.get("id")),
-                    kind="character",
-                    name=str(record.get("name") or "Unnamed"),
-                )
-                for record in self._characters
-                if record.get("id") is not None
-            )
+            matched = self._characters
             filtered = False
-            total = len(rows)
-        library = self.query_one(PersonasLibraryPane)
-        await library.update_rows(rows, total=total, noun="characters", filtered=filtered)
-        if self.state.selected_entity_kind == "character" and self.state.selected_entity_id:
-            library.mark_active_row("character", self.state.selected_entity_id)
+        async with self._render_lock:
+            rows = self._build_library_rows(matched, "character")
+            library = self.query_one(PersonasLibraryPane)
+            await library.update_rows(rows, total=total, noun="characters", filtered=filtered)
+            if self.state.selected_entity_kind == "character" and self.state.selected_entity_id:
+                library.mark_active_row("character", self.state.selected_entity_id)
 
     def _character_record(self, item_id: str | None) -> dict | None:
         if item_id is None:
@@ -324,32 +327,16 @@ class PersonasScreen(BaseAppScreen):
         if query:
             q_lower = query.lower()
             matched = [r for r in self._profiles if q_lower in str(r.get("name") or "").lower()]
-            rows = tuple(
-                LibraryRow(
-                    item_id=str(record.get("id")),
-                    kind="persona_profile",
-                    name=str(record.get("name") or "Unnamed"),
-                )
-                for record in matched
-                if record.get("id")
-            )
             filtered = True
         else:
-            rows = tuple(
-                LibraryRow(
-                    item_id=str(record.get("id")),
-                    kind="persona_profile",
-                    name=str(record.get("name") or "Unnamed"),
-                )
-                for record in self._profiles
-                if record.get("id")
-            )
+            matched = self._profiles
             filtered = False
-            total = len(rows)
-        library = self.query_one(PersonasLibraryPane)
-        await library.update_rows(rows, total=total, noun="persona profiles", filtered=filtered)
-        if self.state.selected_entity_kind == "persona_profile" and self.state.selected_entity_id:
-            library.mark_active_row("persona_profile", self.state.selected_entity_id)
+        async with self._render_lock:
+            rows = self._build_library_rows(matched, "persona_profile")
+            library = self.query_one(PersonasLibraryPane)
+            await library.update_rows(rows, total=total, noun="persona profiles", filtered=filtered)
+            if self.state.selected_entity_kind == "persona_profile" and self.state.selected_entity_id:
+                library.mark_active_row("persona_profile", self.state.selected_entity_id)
 
     @on(PersonaSearchChanged)
     async def _handle_search_changed(self, message: PersonaSearchChanged) -> None:

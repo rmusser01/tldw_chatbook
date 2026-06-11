@@ -594,3 +594,67 @@ class TestSearch:
             assert fts_calls == ["sam"]
             rows = screen.query(".personas-library-row")
             assert [str(r.label) for r in rows] == ["Detective Sam"]
+
+    async def test_concurrent_renders_do_not_duplicate_rows(
+        self, mock_app_instance, stub_characters
+    ):
+        """Two back-to-back renders must serialize instead of double-mounting."""
+        import asyncio
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await asyncio.gather(
+                screen._render_library_rows(), screen._render_library_rows()
+            )
+            await pilot.pause()
+            rows = screen.query(".personas-library-row")
+            assert [str(r.label) for r in rows] == ["Detective Sam", "Lab Assistant"]
+
+
+class _FtsStubDB:
+    """Captures the MATCH term handed to search_character_cards."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, int]] = []
+
+    def search_character_cards(self, search_term, limit=10):
+        self.calls.append((search_term, limit))
+        return [{"id": 1, "name": "Match"}]
+
+
+class TestFtsTermSafety:
+    """Unit tests for the MATCH expression built by search_characters_fts."""
+
+    @pytest.fixture
+    def stub_db(self, monkeypatch):
+        stub = _FtsStubDB()
+        monkeypatch.setattr(
+            character_handler_module, "_default_character_db", lambda: stub
+        )
+        return stub
+
+    async def test_normal_term_becomes_quoted_prefix_query(self, stub_db):
+        results = character_handler_module.search_characters_fts("sam")
+        assert [term for term, _ in stub_db.calls] == ['"sam"*']
+        assert results and results[0]["name"] == "Match"
+
+    async def test_apostrophe_term_is_safe(self, stub_db):
+        character_handler_module.search_characters_fts("O'Brien")
+        assert [term for term, _ in stub_db.calls] == ['"O\'Brien"*']
+
+    async def test_embedded_double_quote_is_escaped(self, stub_db):
+        character_handler_module.search_characters_fts('sam"')
+        assert [term for term, _ in stub_db.calls] == ['"sam"""*']
+
+    async def test_fts_operator_characters_are_quoted(self, stub_db):
+        character_handler_module.search_characters_fts("(")
+        assert [term for term, _ in stub_db.calls] == ['"("*']
+        character_handler_module.search_characters_fts("sam-")
+        assert [term for term, _ in stub_db.calls][-1] == '"sam-"*'
+
+    async def test_empty_term_returns_empty_without_db_call(self, stub_db):
+        assert character_handler_module.search_characters_fts("") == []
+        assert character_handler_module.search_characters_fts("   ") == []
+        assert stub_db.calls == []
