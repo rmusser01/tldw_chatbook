@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional, Dict, Any, List
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll
+from textual.css.query import QueryError
 from textual.widgets import Static, Label, TextArea, Button
 from textual.reactive import reactive
 from textual import on
@@ -81,6 +82,13 @@ class CCPCharacterCardWidget(Container):
     }
     
     CCPCharacterCardWidget.hidden {
+        display: none !important;
+    }
+
+    /* The placeholder/details swap relies on `.hidden`; define it here so
+       the widget is self-contained on hosts (e.g. the Personas workbench)
+       that do not provide the legacy CCP screen's `.hidden` rule. */
+    CCPCharacterCardWidget .hidden {
         display: none !important;
     }
     
@@ -372,11 +380,11 @@ class CCPCharacterCardWidget(Container):
         try:
             placeholder = self.query_one("#no-character-placeholder")
             placeholder.add_class("hidden")
-            
+
             details = self.query_one("#character-details-container")
             details.remove_class("hidden")
-        except:
-            pass
+        except QueryError as e:
+            logger.warning(f"Could not toggle character card placeholder/details: {e}")
         
         # Update fields
         self._update_basic_fields(character_data)
@@ -490,11 +498,11 @@ class CCPCharacterCardWidget(Container):
         try:
             placeholder = self.query_one("#no-character-placeholder")
             placeholder.remove_class("hidden")
-            
+
             details = self.query_one("#character-details-container")
             details.add_class("hidden")
-        except:
-            pass
+        except QueryError as e:
+            logger.warning(f"Could not restore character card placeholder: {e}")
         
         # Clear all fields
         if self._name_display:

@@ -191,16 +191,54 @@ class TestCharacterSelectionAndEdit:
                 screen.query_one("#personas-selected-name", Static).renderable
             )
 
+    async def test_card_body_populates_on_selection(self, mock_app_instance, stub_characters):
+        """The card's BODY must populate: placeholder hidden, fields filled.
+
+        Mirrors the screenshot QA defect where the inspector and preview
+        populated but the center card kept its 'No character loaded.'
+        placeholder with an empty details area.
+        """
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.query_one("#ccp-character-card-view").display is True
+            placeholder = screen.query_one("#no-character-placeholder")
+            assert "hidden" in placeholder.classes
+            assert placeholder.display is False
+            details = screen.query_one("#character-details-container")
+            assert "hidden" not in details.classes
+            assert details.display is True
+            name = screen.query_one("#ccp-card-name-display", Static)
+            assert "Detective Sam" in str(name.renderable)
+
     async def test_new_button_opens_editor_in_create_mode(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
+            await pilot.pause()
+            # Select a character first: entering create mode must not leave
+            # the previous selection's identity in the inspector.
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             await pilot.click("#personas-library-new")
             await pilot.pause()
             assert screen._edit_mode == "create"
             editor = screen.query_one("#ccp-character-editor-view")
             assert editor.display is True
+            selected_name = str(
+                screen.query_one("#personas-selected-name", Static).renderable
+            )
+            assert "Detective Sam" not in selected_name
+            # Unsaved gating must survive the identity reset.
+            readiness = str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+            assert "Blocked" in readiness
 
     async def test_ctrl_n_opens_editor_in_create_mode(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)

@@ -1019,6 +1019,10 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(CCPCharacterEditorWidget).new_character()
         self._show_center("#ccp-character-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
+        # Create mode: the previous selection's identity (and conversation
+        # rows) must not linger in the inspector. Clear the identity first,
+        # then re-apply the unsaved gating that clear_selection resets.
+        await inspector.clear_selection()
         inspector.set_unsaved(True)
         inspector.show_validation(())
 
@@ -1031,6 +1035,8 @@ class PersonasScreen(BaseAppScreen):
         self.query_one(PersonaProfileEditorWidget).new_persona()
         self._show_center("#ccp-persona-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
+        # Same identity reset as _begin_create_character: no stale selection.
+        await inspector.clear_selection()
         inspector.set_unsaved(True)
         inspector.show_validation(())
 
