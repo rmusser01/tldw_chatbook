@@ -192,12 +192,6 @@ class PersonasScreen(BaseAppScreen):
         border: none;
     }
 
-    .personas-library-row.is-active {
-        background: $primary;
-        color: $background;
-        text-style: bold;
-    }
-
     #personas-conversation-actions {
         height: 3;
         min-height: 3;

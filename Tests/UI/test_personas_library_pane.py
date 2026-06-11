@@ -154,8 +154,11 @@ async def test_toolbar_and_rows_carry_shared_flat_button_classes():
 
 
 async def test_active_row_keeps_subdued_and_is_active_markers():
-    """The bundle resolves .personas-library-row.is-active over the subdued
-    class by specificity; the widget must keep both markers on the row."""
+    """The bundle's user-tier rule ``Button.personas-library-row.is-active``
+    (in _agentic_terminal.tcss) wins over ``.console-action-subdued`` by
+    higher specificity (type + two classes vs. one class) within the same
+    origin tier, so the active row is styled correctly; the widget must
+    keep both marker classes on the row so both rules can apply."""
     app = LibraryPaneApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasLibraryPane)

@@ -1893,6 +1893,21 @@ Button.settings-category-button.settings-secondary-search-match {
     text-style: bold underline;
 }
 
+Button.personas-library-row.is-active {
+    border: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+Button.personas-library-row.is-active:focus {
+    outline: none;
+    border: none;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
 .library-source-action {
     width: $ds-library-source-action-width;
     min-width: $ds-library-source-action-min-width;
