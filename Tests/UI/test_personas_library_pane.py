@@ -305,6 +305,82 @@ async def test_search_enter_with_no_rows_does_not_crash():
         assert pilot.app.focused is list_view
 
 
+async def test_highlighted_row_carries_textual_highlight_class():
+    """Textual sets ``-highlight`` (single dash) on the browsed ListItem.
+
+    Our CSS bundle targets ``ListItem.personas-library-row.-highlight``; this
+    test pins the class-name contract so a Textual upgrade that renames the
+    pseudo-class will surface immediately as a test failure rather than a
+    silent visual regression.
+    """
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="1", kind="character", name="Alpha"),
+                LibraryRow(item_id="2", kind="character", name="Beta"),
+            ),
+            total=2,
+            noun="characters",
+        )
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        await pilot.pause()
+        # After pressing down the ListView moves the cursor to index 0
+        # (Textual convention: first press sets the highlight).
+        await pilot.press("down")
+        await pilot.pause()
+        # The highlighted item carries the Textual-internal ``-highlight``
+        # class (single dash), which is what our CSS selector targets.
+        first = pilot.app.query_one("#personas-library-row-character-1", ListItem)
+        assert first.has_class("-highlight"), (
+            "ListItem should carry Textual's '-highlight' (single-dash) class "
+            "when it is the browse cursor; if this fails Textual may have "
+            "renamed the class and our CSS selector needs updating."
+        )
+
+
+async def test_is_active_and_highlight_can_coexist():
+    """An active row that is also the browse cursor must carry both
+    ``is-active`` and ``-highlight`` so the CSS cascade can resolve
+    correctly (the ``.is-active`` rule wins by sheet order).
+
+    ``mark_active_row`` sets ``list_view.index`` to the active row's position,
+    so after focusing the list and pressing down once from index 0 the cursor
+    lands on index 1 (Beta).  We verify the ``-highlight`` class is present on
+    whichever row holds the browse cursor, confirming Textual's class contract.
+    """
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="1", kind="character", name="Alpha"),
+                LibraryRow(item_id="2", kind="character", name="Beta"),
+            ),
+            total=2,
+            noun="characters",
+        )
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        await pilot.pause()
+        # Press down twice so the cursor is on index 1 (Beta), then mark it
+        # active — both ``is-active`` and ``-highlight`` must coexist.
+        await pilot.press("down")
+        await pilot.press("down")
+        await pilot.pause()
+        pane.mark_active_row("character", "2")
+        await pilot.pause()
+        beta = pilot.app.query_one("#personas-library-row-character-2", ListItem)
+        assert beta.has_class("is-active"), "Active marker must be present on Beta"
+        assert beta.has_class("-highlight"), (
+            "Browse cursor class (-highlight) must coexist with is-active on Beta"
+        )
+
+
 async def test_colliding_item_ids_render_without_crash():
     received = []
 
