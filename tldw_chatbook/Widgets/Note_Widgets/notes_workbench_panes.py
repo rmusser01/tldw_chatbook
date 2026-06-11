@@ -142,7 +142,7 @@ class NotesNavigatorPane(NotesListPopulateMixin, VerticalScroll):
         width: 100%;
         min-height: 4;
         max-height: 12;
-        border: round $surface;
+        border: none;
         margin-bottom: 1;
     }
     NotesNavigatorPane > .notes-pane-section {
@@ -835,13 +835,13 @@ class NotesTemplatesPane(VerticalScroll):
     NotesTemplatesPane #notes-templates-list {
         height: auto;
         max-height: 14;
-        border: round $surface;
+        border: solid $surface-lighten-1;
         margin-bottom: 1;
     }
     NotesTemplatesPane #notes-template-preview {
         min-height: 6;
         padding: 1;
-        border: round $surface;
+        border: solid $surface-lighten-1;
         margin-bottom: 1;
         color: $text-muted;
     }

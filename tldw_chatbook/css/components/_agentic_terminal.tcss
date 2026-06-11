@@ -1913,6 +1913,86 @@ Button.settings-category-button.settings-secondary-search-match {
     overflow-y: auto;
 }
 
+/* Notes form controls mirror the Console settings control language exactly:
+   quiet tall-bordered inputs, single-row flattened selects, accent focus. */
+#notes-shell Input {
+    height: 3;
+    min-height: 3;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#notes-shell Input:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#notes-shell Input > .input--cursor {
+    background: $ds-input-focus-accent;
+    color: $ds-surface-panel;
+}
+
+#notes-shell Select {
+    height: 1;
+    min-height: 1;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#notes-shell Select > SelectCurrent {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    content-align: left middle;
+}
+
+#notes-shell Select > SelectCurrent Static#label {
+    width: 1fr;
+    height: 1;
+    background: transparent;
+    color: $ds-text-primary;
+}
+
+#notes-shell Select > SelectCurrent .arrow {
+    background: transparent;
+    color: $ds-text-muted;
+}
+
+#notes-shell Select:focus {
+    border: none;
+    border-bottom: none;
+    outline: solid $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+#notes-shell TextArea {
+    border: tall $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+#notes-shell TextArea:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+}
+
+#notes-shell ListView {
+    border: none;
+    background: $ds-surface-panel;
+    padding: 0;
+}
+
 #notes-sync-pane #quick-sync-btn {
     border: none;
     background: $ds-action-focus 35%;
