@@ -8,10 +8,12 @@ from textual.app import App
 from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
+import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
 from tldw_chatbook.tldw_api import PersonaProfileCreate
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import PersonaActionRequested
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     EditPersonaRequested,
     PersonaProfileSaveRequested,
@@ -611,6 +613,214 @@ class TestSearch:
             await pilot.pause()
             rows = screen.query(".personas-library-row")
             assert [str(r.label) for r in rows] == ["Detective Sam", "Lab Assistant"]
+
+
+class TestImportExport:
+    """Path-based import/export flows; file dialogs are never exercised."""
+
+    @pytest.fixture
+    def stub_db(self, monkeypatch):
+        sentinel = object()
+        monkeypatch.setattr(
+            character_handler_module, "_default_character_db", lambda: sentinel
+        )
+        return sentinel
+
+    @staticmethod
+    def _capture_notifications(app) -> list[tuple[str, str]]:
+        """Shadow App.notify with an instance attribute, like _notify resolves it."""
+        captured: list[tuple[str, str]] = []
+        app.notify = lambda message, severity="information", **kwargs: captured.append(
+            (str(message), severity)
+        )
+        return captured
+
+    async def test_import_success_refreshes_selects_and_clears_search(
+        self, mock_app_instance, stub_characters, monkeypatch, tmp_path
+    ):
+        imported_paths: list[str] = []
+
+        def fake_import(file_path):
+            imported_paths.append(file_path)
+            return {"id": 3, "name": "Imported Hero", "version": 1}
+
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card", fake_import
+        )
+
+        def fetch_all_with_imported():
+            characters = [dict(c) for c in CHARACTERS]
+            if imported_paths:
+                characters.append({"id": 3, "name": "Imported Hero", "version": 1})
+            return characters
+
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", fetch_all_with_imported
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_character_by_id",
+            lambda character_id: next(
+                (
+                    dict(c)
+                    for c in fetch_all_with_imported()
+                    if str(c["id"]) == str(character_id)
+                ),
+                None,
+            ),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            search_input = screen.query_one("#personas-library-search")
+            search_input.value = "sam"
+            await pilot.pause()
+            await screen._import_character_from_path(str(tmp_path / "card.json"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert imported_paths == [str(tmp_path / "card.json")]
+            assert screen.state.selected_entity_id == "3"
+            assert screen.query_one("#personas-library-search").value == ""
+            rows = screen.query(".personas-library-row")
+            assert "Imported Hero" in [str(r.label) for r in rows]
+
+    async def test_import_failure_shows_recovery_copy(
+        self, mock_app_instance, stub_characters, monkeypatch, tmp_path
+    ):
+        def fake_import(file_path):
+            raise ValueError("Unsupported card format")
+
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card", fake_import
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await screen._import_character_from_path(str(tmp_path / "bad.json"))
+            await pilot.pause()
+            assert any(
+                "Unsupported card format" in message and severity == "error"
+                for message, severity in notifications
+            )
+            assert screen.state.selected_entity_id == "1"
+
+    async def test_export_json_writes_file(
+        self, mock_app_instance, stub_characters, stub_db, monkeypatch, tmp_path
+    ):
+        calls: list[tuple] = []
+
+        def fake_export(db, character_id, include_image=True):
+            calls.append((db, character_id, include_image))
+            return '{"name": "Detective Sam"}'
+
+        monkeypatch.setattr(
+            personas_screen_module, "export_character_card_to_json", fake_export
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            target = tmp_path / "detective_sam.json"
+            await screen._export_selected_character(str(target), fmt="json")
+            await pilot.pause()
+            assert calls and calls[0][0] is stub_db and calls[0][1] == 1
+            assert target.read_text(encoding="utf-8") == '{"name": "Detective Sam"}'
+            assert any(
+                "Exported to" in message and severity == "information"
+                for message, severity in notifications
+            )
+
+    async def test_export_png_delegates(
+        self, mock_app_instance, stub_characters, stub_db, monkeypatch, tmp_path
+    ):
+        captured: dict = {}
+
+        def fake_export_png(db, character_id, output_path, base_directory=None):
+            captured.update(
+                db=db,
+                character_id=character_id,
+                output_path=output_path,
+                base_directory=base_directory,
+            )
+            return True
+
+        monkeypatch.setattr(
+            personas_screen_module, "export_character_card_to_png", fake_export_png
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            target = tmp_path / "detective_sam.png"
+            await screen._export_selected_character(str(target), fmt="png")
+            await pilot.pause()
+            assert captured["db"] is stub_db
+            assert captured["character_id"] == 1
+            assert captured["output_path"] == str(target)
+            assert any(
+                "Exported to" in message and severity == "information"
+                for message, severity in notifications
+            )
+
+    async def test_export_profile_json(
+        self, mock_app_instance, stub_characters, stub_scope_service, tmp_path
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-mode-personas")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.click("#personas-library-row-persona_profile-p-1")
+            await pilot.pause()
+            target = tmp_path / "archivist.json"
+            await screen._export_selected_character(str(target), fmt="json")
+            await pilot.pause()
+            assert "Archivist" in target.read_text(encoding="utf-8")
+            assert any(
+                "Exported to" in message and severity == "information"
+                for message, severity in notifications
+            )
+
+    async def test_import_requires_characters_mode(
+        self, mock_app_instance, stub_characters, stub_scope_service, monkeypatch
+    ):
+        import_calls: list[str] = []
+        monkeypatch.setattr(
+            character_handler_module,
+            "import_character_card",
+            lambda file_path: import_calls.append(file_path) or 3,
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-mode-personas")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            screen.post_message(PersonaActionRequested(action="import"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert import_calls == []
+            assert not any(severity == "error" for _, severity in notifications)
 
 
 class _FtsStubDB:

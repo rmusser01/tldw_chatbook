@@ -113,10 +113,16 @@ def update_character(character_id: CharacterId, data: Dict[str, Any]) -> bool:
 
 
 def import_character_card(file_path: str) -> Any:
-    """Compatibility helper for character import."""
-    from ...Character_Chat.ccv3_parser import import_character_card_json
+    """Compatibility helper for character import.
 
-    return import_character_card_json(file_path)
+    Delegates to ``import_and_save_character_from_file`` (the previous
+    ``ccv3_parser.import_character_card_json`` target is an empty module).
+    Returns the imported character's DB id, or ``None`` when the file does
+    not contain a valid character card.
+    """
+    from ...Character_Chat.Character_Chat_Lib import import_and_save_character_from_file
+
+    return import_and_save_character_from_file(_default_character_db(), file_path)
 
 
 class CCPCharacterHandler:

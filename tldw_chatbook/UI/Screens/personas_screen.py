@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from loguru import logger
@@ -13,7 +15,11 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.widgets import Button, Input, Static
 
-from ...Character_Chat.Character_Chat_Lib import validate_character_book
+from ...Character_Chat.Character_Chat_Lib import (
+    export_character_card_to_json,
+    export_character_card_to_png,
+    validate_character_book,
+)
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
 from ...Widgets.confirmation_dialog import UnsavedChangesDialog
 from ...Widgets.CCP_Widgets.ccp_character_card_widget import (
@@ -477,14 +483,19 @@ class PersonasScreen(BaseAppScreen):
     @on(PersonaActionRequested)
     async def _handle_action_requested(self, message: PersonaActionRequested) -> None:
         message.stop()
-        if message.action != "create":
-            # Import/export/delete and the rest are wired in follow-up tasks.
-            return
-        if self.state.active_mode == "characters":
-            await self._run_guarded(self._begin_create_character)
-        elif self.state.active_mode == "personas":
-            await self._run_guarded(self._begin_create_profile)
-        # Creation in the remaining modes is wired in follow-up tasks.
+        if message.action == "create":
+            if self.state.active_mode == "characters":
+                await self._run_guarded(self._begin_create_character)
+            elif self.state.active_mode == "personas":
+                await self._run_guarded(self._begin_create_profile)
+            # Creation in the remaining modes is wired in follow-up tasks.
+        elif message.action == "import":
+            # Character-card import only; the library pane hides the Import
+            # button outside Characters mode, so other modes are a no-op.
+            if self.state.active_mode != "characters":
+                return
+            await self._run_guarded(self._open_import_dialog)
+        # Delete and the rest are wired in follow-up tasks.
 
     async def _begin_create_character(self) -> None:
         self._edit_mode = "create"
@@ -556,6 +567,192 @@ class PersonasScreen(BaseAppScreen):
         if loaded and str(self.character_handler.current_character_id) == character_id:
             return dict(loaded)
         return None
+
+    # ===== Import / export =====
+    #
+    # Dialog flows run in workers (push_screen_wait requires one); the
+    # path-based methods below them are dialog-free so tests can call them
+    # directly. Sync DB/file work runs via asyncio.to_thread rather than a
+    # @work(thread=True) worker (the pattern saves use) because import and
+    # export need their result awaited inline for the follow-up
+    # selection/notification steps.
+
+    async def _open_import_dialog(self) -> None:
+        """Continuation for the guarded import action: launch the dialog worker."""
+        self.run_worker(self._import_dialog_worker(), group="personas-io", exclusive=True)
+
+    async def _import_dialog_worker(self) -> None:
+        # Same dialog family as the legacy CCP import route
+        # (ccp_character_handler.handle_import).
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        picker = EnhancedFileOpen(
+            title="Import Character Card",
+            filters=Filters(
+                ("Character Cards", "*.json;*.png"),
+                ("JSON Files", "*.json"),
+                ("PNG Files (with embedded data)", "*.png"),
+                ("All Files", "*.*"),
+            ),
+            context="character_import",
+        )
+        try:
+            file_path = await self.app.push_screen_wait(picker)
+        except Exception:
+            logger.warning("Could not show the import file dialog.", exc_info=True)
+            return
+        if file_path:
+            await self._import_character_from_path(str(file_path))
+
+    async def _import_character_from_path(self, path: str) -> None:
+        """Import a character card file, then refresh, select, and reveal it."""
+        try:
+            # Sync DB call; see the section comment for the threading choice.
+            result = await asyncio.to_thread(
+                ccp_character_handler.import_character_card, path
+            )
+        except Exception as exc:
+            logger.error(f"Error importing character card from {path}: {exc}", exc_info=True)
+            self._notify(f"Import failed: {exc}", "error")
+            return
+        imported_id = result.get("id") if isinstance(result, dict) else result
+        if not result or imported_id is None:
+            self._notify(
+                "Import failed: the file did not contain a valid character card.",
+                "error",
+            )
+            return
+        imported_id = str(imported_id)
+        # Clear any active search (state + Input, as _apply_mode does) so the
+        # imported character is visible in the refreshed list.
+        self.state.search_query = ""
+        try:
+            self.query_one("#personas-library-search", Input).value = ""
+        except Exception:
+            pass
+        await self.character_handler.refresh_character_list()
+        if not self.is_mounted or self.state.active_mode != "characters":
+            # The user left Characters mode while the import ran; the list is
+            # refreshed but selection/center pane belong to the new mode.
+            return
+        record = self._character_record(imported_id)
+        name = str(
+            (record or {}).get("name")
+            or (result.get("name") if isinstance(result, dict) else "")
+            or "Imported character"
+        )
+        await self._select_character(imported_id, name)
+        self._notify("Character imported.", "information")
+
+    @on(Button.Pressed, "#personas-export-json")
+    async def _handle_export_json_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._open_export_dialog("json")
+
+    @on(Button.Pressed, "#personas-export-png")
+    async def _handle_export_png_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._open_export_dialog("png")
+
+    def _open_export_dialog(self, fmt: str) -> None:
+        """Validate the selection and launch the save-dialog worker."""
+        kind = self.state.selected_entity_kind
+        if not self.state.selected_entity_id or kind not in ("character", "persona_profile"):
+            # The inspector disables these buttons without a saved selection;
+            # this is a defensive re-check.
+            self._notify("Select a saved item before exporting.", "warning")
+            return
+        if fmt == "png" and kind != "character":
+            self._notify("PNG export is only available for characters.", "warning")
+            return
+        self.run_worker(self._export_dialog_worker(fmt), group="personas-io", exclusive=True)
+
+    async def _export_dialog_worker(self, fmt: str) -> None:
+        # Same dialog family as import (enhanced_file_picker).
+        from ...Widgets.enhanced_file_picker import EnhancedFileSave, Filters
+
+        name = self.state.selected_entity_name or "export"
+        # Filename sanitization mirrors the legacy CCP export route.
+        safe_name = "".join(c for c in name if c.isalnum() or c in " -_").rstrip()
+        default_filename = f"{safe_name or 'export'}.{fmt}"
+        if fmt == "png":
+            filters = Filters(("PNG Files", "*.png"), ("All Files", "*.*"))
+        else:
+            filters = Filters(("JSON Files", "*.json"), ("All Files", "*.*"))
+        picker = EnhancedFileSave(
+            title=f"Export as {fmt.upper()}",
+            default_filename=default_filename,
+            filters=filters,
+            context="character_export",
+        )
+        try:
+            target_path = await self.app.push_screen_wait(picker)
+        except Exception:
+            logger.warning("Could not show the export file dialog.", exc_info=True)
+            return
+        if target_path:
+            await self._export_selected_character(str(target_path), fmt=fmt)
+
+    async def _export_selected_character(self, target_path: str, *, fmt: str) -> None:
+        """Export the current selection to ``target_path`` as JSON or PNG."""
+        kind = self.state.selected_entity_kind
+        entity_id = self.state.selected_entity_id
+        if not entity_id:
+            self._notify("Select a saved item before exporting.", "warning")
+            return
+        try:
+            if kind == "character":
+                character_id = int(str(entity_id))
+                if fmt == "png":
+                    await asyncio.to_thread(
+                        self._export_character_png_sync, character_id, target_path
+                    )
+                else:
+                    await asyncio.to_thread(
+                        self._export_character_json_sync, character_id, target_path
+                    )
+            elif kind == "persona_profile":
+                if fmt != "json":
+                    self._notify("PNG export is only available for characters.", "warning")
+                    return
+                record = await self._fetch_profile_record(str(entity_id))
+                content = json.dumps(record, indent=2, ensure_ascii=False, default=str)
+                await asyncio.to_thread(self._write_text_file, target_path, content)
+            else:
+                self._notify("Export is not available for this selection.", "warning")
+                return
+        except Exception as exc:
+            logger.error(f"Error exporting to {target_path}: {exc}", exc_info=True)
+            self._notify(f"Export failed: {exc}", "error")
+            return
+        self._notify(f"Exported to {target_path}", "information")
+
+    def _export_character_json_sync(self, character_id: int, target_path: str) -> None:
+        """Sync JSON export; raises on failure (runs off the UI thread)."""
+        db = ccp_character_handler._default_character_db()
+        content = export_character_card_to_json(db, character_id, include_image=True)
+        if content is None:
+            raise RuntimeError("export returned no data")
+        self._write_text_file(target_path, content)
+
+    def _export_character_png_sync(self, character_id: int, target_path: str) -> None:
+        """Sync PNG export; the library writes the file and validates the path.
+
+        ``export_character_card_to_png`` validates ``output_path`` against a
+        base directory (defaulting to its own exports folder), so the chosen
+        path's parent is passed to keep user-selected destinations valid.
+        """
+        db = ccp_character_handler._default_character_db()
+        target = Path(target_path).expanduser()
+        ok = export_character_card_to_png(
+            db, character_id, str(target), base_directory=str(target.parent)
+        )
+        if not ok:
+            raise RuntimeError("PNG export returned no data")
+
+    @staticmethod
+    def _write_text_file(target_path: str, content: str) -> None:
+        Path(target_path).expanduser().write_text(content, encoding="utf-8")
 
     # ===== Save =====
 
