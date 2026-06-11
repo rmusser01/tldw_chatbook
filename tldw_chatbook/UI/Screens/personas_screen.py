@@ -55,6 +55,7 @@ from ...Widgets.Persona_Widgets.personas_messages import (
 )
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
     ConversationRowSelected,
+    EditorContentChanged,
     EditPersonaRequested,
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
@@ -266,7 +267,7 @@ class PersonasScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         with Vertical(id="personas-shell"):
             yield Static(
-                "Personas | Behavior profiles for chat and agents | Ready | Local",
+                self._title_text(),
                 id="personas-title",
                 classes="ds-destination-header",
             )
@@ -534,6 +535,29 @@ class PersonasScreen(BaseAppScreen):
         else:
             await library.update_rows((), total=0, noun=MODE_LABELS[mode].lower())
             self._show_center("#personas-mode-placeholder")
+
+    def _title_text(self) -> str:
+        """Live header line: destination identity plus the editing state.
+
+        "Local" deliberately stays out of the title - the status row directly
+        below already says "Source: Local" (de-dup, P3-15).
+        """
+        base = "Personas | Behavior profiles for chat and agents"
+        suffix = " - unsaved" if self.state.has_unsaved_changes else ""
+        if self._edit_mode == "create":
+            noun = "persona" if self.state.active_mode == "personas" else "character"
+            return f"{base} | New {noun}{suffix}"
+        if self._edit_mode == "edit":
+            name = self.state.selected_entity_name or "item"
+            return f"{base} | Editing {name}{suffix}"
+        return f"{base} | Ready"
+
+    def _update_title(self) -> None:
+        """Refresh the header line; tolerate updates racing teardown."""
+        try:
+            self.query_one("#personas-title", Static).update(self._title_text())
+        except Exception:
+            logger.debug("Could not update the personas title.", exc_info=True)
 
     def _status_row_text(self) -> str:
         mode = self.state.active_mode
@@ -1047,32 +1071,28 @@ class PersonasScreen(BaseAppScreen):
     async def _begin_create_character(self) -> None:
         self._edit_mode = "create"
         self.state.clear_selection()
-        # Dirty-on-entry: entering the editor conservatively marks the session
-        # unsaved rather than tracking per-keystroke changes.
-        self.state.has_unsaved_changes = True
+        # Change-based dirty tracking: the session starts clean; the editor
+        # posts EditorContentChanged on the first real modification.
         self.query_one(PersonasCharacterEditorWidget).new_character()
         self._show_center("#ccp-character-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         # Create mode: the previous selection's identity (and conversation
-        # rows) must not linger in the inspector. Clear the identity first,
-        # then re-apply the unsaved gating that clear_selection resets.
+        # rows) must not linger in the inspector. clear_selection also resets
+        # the unsaved gating, which is correct for a pristine session.
         await inspector.clear_selection()
-        inspector.set_unsaved(True)
         inspector.show_validation(())
         self.call_after_refresh(self._focus_editor_name)
 
     async def _begin_create_profile(self) -> None:
         self._edit_mode = "create"
         self.state.clear_selection()
-        # Dirty-on-entry: entering the editor conservatively marks the session
-        # unsaved rather than tracking per-keystroke changes.
-        self.state.has_unsaved_changes = True
+        # Change-based dirty tracking: the session starts clean (see
+        # _begin_create_character).
         self.query_one(PersonaProfileEditorWidget).new_persona()
         self._show_center("#ccp-persona-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
         # Same identity reset as _begin_create_character: no stale selection.
         await inspector.clear_selection()
-        inspector.set_unsaved(True)
         inspector.show_validation(())
         self.call_after_refresh(self._focus_editor_name)
 
@@ -1084,13 +1104,12 @@ class PersonasScreen(BaseAppScreen):
             return
         record = await self._fetch_profile_record(str(message.persona_id))
         self._edit_mode = "edit"
-        # Dirty-on-entry: entering the editor conservatively marks the session
-        # unsaved rather than tracking per-keystroke changes.
-        self.state.has_unsaved_changes = True
+        # Change-based dirty tracking: the session starts clean; the editor
+        # posts EditorContentChanged on the first real modification.
         self.query_one(PersonaProfileEditorWidget).load_persona(record)
         self._show_center("#ccp-persona-editor-view")
         inspector = self.query_one(PersonasInspectorPane)
-        inspector.set_unsaved(True)
+        inspector.set_unsaved(False)
         inspector.show_validation(())
         self._register_footer_shortcuts()
         self.call_after_refresh(self._focus_editor_name)
@@ -1106,14 +1125,51 @@ class PersonasScreen(BaseAppScreen):
             self._notify("Character data is not loaded yet.", severity="warning")
             return
         self._edit_mode = "edit"
-        # Dirty-on-entry: entering the editor conservatively marks the session
-        # unsaved rather than tracking per-keystroke changes.
-        self.state.has_unsaved_changes = True
+        # Change-based dirty tracking: the session starts clean; the editor
+        # posts EditorContentChanged on the first real modification.
         self.query_one(PersonasCharacterEditorWidget).load_character(record)
         self._show_center("#ccp-character-editor-view")
-        self.query_one(PersonasInspectorPane).set_unsaved(True)
+        self.query_one(PersonasInspectorPane).set_unsaved(False)
         self._register_footer_shortcuts()
         self.call_after_refresh(self._focus_editor_name)
+
+    @on(EditorContentChanged)
+    def _handle_editor_content_changed(self, message: EditorContentChanged) -> None:
+        """First real modification of an editing session: mark it unsaved.
+
+        The editors post this once per load/new session; the screen owns the
+        ``has_unsaved_changes`` flag, the inspector gating, the title state,
+        the footer hints, and the library row badge.
+        """
+        message.stop()
+        if self._edit_mode not in ("create", "edit"):
+            # A stray Changed outside an editing session (e.g. racing a
+            # save/cancel finisher) must not resurrect the dirty flag.
+            return
+        if self.state.has_unsaved_changes:
+            return
+        self.state.has_unsaved_changes = True
+        try:
+            self.query_one(PersonasInspectorPane).set_unsaved(True)
+        except QueryError:
+            pass
+        self._set_active_row_unsaved(True)
+        # Attach availability changed (unsaved edits block Console actions),
+        # and the title gains the "- unsaved" segment.
+        self._register_footer_shortcuts()
+
+    def _set_active_row_unsaved(self, unsaved: bool) -> None:
+        """Badge (or un-badge) the selected library row for the edit session."""
+        try:
+            pane = self.query_one(PersonasLibraryPane)
+        except QueryError:
+            return
+        kind = self.state.selected_entity_kind
+        entity_id = self.state.selected_entity_id
+        if unsaved and kind and entity_id:
+            pane.set_row_unsaved(kind, str(entity_id), True)
+        else:
+            pane.set_row_unsaved(None, None, False)
 
     def _full_character_record(self, character_id: str) -> dict | None:
         """Return the handler's fully-loaded card, or ``None`` when stale.
@@ -1206,6 +1262,9 @@ class PersonasScreen(BaseAppScreen):
         record = self._character_record(imported_id)
         name = str((record or {}).get("name") or "Imported character")
         await self._select_character(imported_id, name)
+        # The selection changed outside _run_guarded; refresh the footer hints
+        # (attach is now available) and the header state.
+        self._register_footer_shortcuts()
         if imported_id in pre_import_ids:
             self._notify("Character already existed; selected it.", "information")
         else:
@@ -1541,6 +1600,7 @@ class PersonasScreen(BaseAppScreen):
                 logger.warning("Could not refresh characters after a late save.", exc_info=True)
             return
         self._edit_mode = "view"
+        self._set_active_row_unsaved(False)
         await self.character_handler.refresh_character_list()
         record = self._character_record(saved_id)
         name = str((record or {}).get("name") or submitted_name or "Saved character")
@@ -1637,6 +1697,7 @@ class PersonasScreen(BaseAppScreen):
             return
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
+        self._set_active_row_unsaved(False)
         saved_id = str(saved.get("id") or "")
         name = str(saved.get("name") or "Saved persona")
         self.state.select_entity(
@@ -1668,6 +1729,7 @@ class PersonasScreen(BaseAppScreen):
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         self.query_one(PersonasInspectorPane).set_unsaved(False)
+        self._set_active_row_unsaved(False)
         if self.state.selected_entity_id:
             self._show_center("#ccp-character-card-view")
         else:
@@ -1687,6 +1749,7 @@ class PersonasScreen(BaseAppScreen):
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         self.query_one(PersonasInspectorPane).set_unsaved(False)
+        self._set_active_row_unsaved(False)
         if self.state.selected_entity_id:
             self._show_center("#ccp-persona-card-view")
         else:
@@ -1738,6 +1801,9 @@ class PersonasScreen(BaseAppScreen):
             if not await self._confirm_discard_unsaved():
                 return
             self.state.has_unsaved_changes = False
+            # The discarded session's row badge must not survive the discard
+            # (the continuation may move the selection without a row rebuild).
+            self._set_active_row_unsaved(False)
             await continuation()
             self._register_footer_shortcuts()
         finally:
@@ -1958,6 +2024,10 @@ class PersonasScreen(BaseAppScreen):
         )
 
     def _register_footer_shortcuts(self) -> None:
+        # The footer re-registers on exactly the transitions that change the
+        # editing/selection state, which are also the transitions the live
+        # header reflects; refresh the title here so the two stay in lockstep.
+        self._update_title()
         try:
             footer = self.app.query_one("AppFooterStatus")
         except QueryError:

@@ -147,6 +147,18 @@ class PersonasLibraryPane(Vertical):
             if is_active:
                 list_view.index = index
 
+    def set_row_unsaved(self, kind: str | None, item_id: str | None, unsaved: bool) -> None:
+        """Toggle the ``.is-unsaved`` badge without rebuilding the rows.
+
+        Only one row (the active editing session's) may carry the badge, so
+        setting it also clears any stale badge elsewhere; passing
+        ``unsaved=False`` (or no kind/id) clears the badge everywhere.
+        """
+        target = _row_dom_id(kind, item_id) if (kind and item_id) else None
+        list_view = self.query_one("#personas-library-rows", ListView)
+        for item in list_view.children:
+            item.set_class(unsaved and item.id == target, "is-unsaved")
+
     @on(Input.Changed, "#personas-library-search")
     def _search_changed(self, event: Input.Changed) -> None:
         event.stop()

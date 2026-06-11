@@ -22,6 +22,7 @@ from ..CCP_Widgets.ccp_character_editor_widget import (
     CharacterEditorCancelled,
     CharacterSaveRequested,
 )
+from .personas_pane_messages import EditorContentChanged
 
 
 class PersonasCharacterEditorWidget(Container):
@@ -123,6 +124,16 @@ class PersonasCharacterEditorWidget(Container):
         # contains newlines (one multi-paragraph greeting becomes N greetings).
         self._loaded_greetings: List[str] = []
         self._loaded_greetings_text: str = ""
+        # Dirty tracking (UX-E3): ``_loading`` suppresses Changed events that
+        # are dispatched while a programmatic population is in progress;
+        # ``_loaded_snapshot`` is the authoritative suppressor for the ones
+        # Textual delivers AFTER ``load_character`` returns (programmatic
+        # ``value``/``text`` sets post Changed asynchronously). ``None`` means
+        # no editing session has started yet. ``_dirty_posted`` makes the
+        # EditorContentChanged announcement once-per-session.
+        self._loading: bool = False
+        self._loaded_snapshot: tuple | None = None
+        self._dirty_posted: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static("Character Editor", classes="destination-section")
@@ -194,6 +205,19 @@ class PersonasCharacterEditorWidget(Container):
 
     def load_character(self, data: Dict[str, Any]) -> None:
         """Fill the form from ``data`` (tolerant of legacy key aliases)."""
+        self._loading = True
+        try:
+            self._populate_form(data)
+        finally:
+            self._loading = False
+        # Re-arm dirty tracking for the new session. The Changed events fired
+        # by the programmatic sets above are delivered after this method
+        # returns, so the handler compares against this snapshot (taken from
+        # the just-populated form) and ignores events that match it.
+        self._loaded_snapshot = self._form_snapshot()
+        self._dirty_posted = False
+
+    def _populate_form(self, data: Dict[str, Any]) -> None:
         self._character_data = dict(data or {})
         record = self._character_data
         self._input("name").value = str(record.get("name") or "")
@@ -275,6 +299,23 @@ class PersonasCharacterEditorWidget(Container):
 
     # ===== Internals =====
 
+    def _form_snapshot(self) -> tuple:
+        """Raw field values, for change detection (cheap, no parsing)."""
+        return (
+            self._input("name").value,
+            self._area("first-message").text,
+            self._area("description").text,
+            self._area("personality").text,
+            self._area("system-prompt").text,
+            self._area("scenario").text,
+            self._area("post-history").text,
+            self._area("creator-notes").text,
+            self._input("creator").value,
+            self._input("version").value,
+            self._input("tags").value,
+            self._area("alt-greetings").text,
+        )
+
     def _set_advanced_open(self, open_: bool) -> None:
         """Show/hide the Advanced section and keep the toggle label in sync."""
         self.query_one("#personas-char-editor-advanced").display = open_
@@ -283,6 +324,26 @@ class PersonasCharacterEditorWidget(Container):
         )
 
     # ===== Events =====
+
+    @on(Input.Changed)
+    @on(TextArea.Changed)
+    def _field_changed(self, event: Input.Changed | TextArea.Changed) -> None:
+        """Announce the first real user modification of the session.
+
+        All Inputs/TextAreas that bubble here are this editor's own fields.
+        Programmatic population also fires Changed; those events either land
+        while ``_loading`` is set or (the usual case, since Textual posts them
+        asynchronously) after ``load_character`` returned, where the snapshot
+        comparison filters them out because the form still matches what was
+        loaded. Paste and undo also fire Changed, so the comparison covers
+        them too.
+        """
+        if self._loading or self._dirty_posted or self._loaded_snapshot is None:
+            return
+        if self._form_snapshot() == self._loaded_snapshot:
+            return
+        self._dirty_posted = True
+        self.post_message(EditorContentChanged())
 
     @on(Button.Pressed, "#personas-char-editor-advanced-toggle")
     def _toggle_advanced(self, event: Button.Pressed) -> None:

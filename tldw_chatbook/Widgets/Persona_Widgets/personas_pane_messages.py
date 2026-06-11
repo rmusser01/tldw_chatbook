@@ -39,6 +39,16 @@ class PersonaProfileEditCancelled(Message):
     """The persona editor form was cancelled."""
 
 
+class EditorContentChanged(Message):
+    """An editor form received its first real user modification.
+
+    Posted at most once per editing session (re-armed by each
+    ``load_character``/``new_character``/``load_persona``/``new_persona``
+    population) by the workbench editor widgets; the screen flips
+    ``has_unsaved_changes`` on it.
+    """
+
+
 class PreviewReplyRequested(Message):
     """A test reply was requested from the preview-conversation pane."""
 

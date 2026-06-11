@@ -1365,6 +1365,11 @@ class TestConsoleActions:
             screen.post_message(EditCharacterRequested("1"))
             await pilot.pause()
             assert screen._edit_mode == "edit"
+            # Change-based dirty tracking: make a real edit first.
+            from textual.widgets import TextArea
+
+            screen.query_one("#personas-char-editor-description", TextArea).text = "edited"
+            await pilot.pause()
             assert screen.state.has_unsaved_changes is True
             await pilot.press("ctrl+enter")
             await pilot.pause()
@@ -2237,12 +2242,16 @@ class TestKeyboardInteraction:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._open_create_editor(pilot)
+            # Type into the focused Name input first: dirty tracking is
+            # change-based, so a pristine editor would cancel dialog-free.
+            await pilot.press("x")
+            await pilot.pause()
             confirms = self._bypass_confirm(screen, True)
             await pilot.press("escape")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            # The guard was consulted (dirty-on-entry), not bypassed.
+            # The guard was consulted (real edit present), not bypassed.
             assert confirms == [True]
             assert screen._edit_mode == "view"
             assert screen.query_one("#ccp-character-editor-view").display is False
@@ -2253,6 +2262,8 @@ class TestKeyboardInteraction:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._open_create_editor(pilot)
+            await pilot.press("x")  # real edit; the guard must fire
+            await pilot.pause()
             confirms = self._bypass_confirm(screen, False)
             await pilot.press("escape")
             await pilot.pause()
@@ -2369,7 +2380,9 @@ class TestKeyboardInteraction:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            assert confirms == [True]
+            # A pristine create session cancels without the discard dialog
+            # (change-based dirty tracking).
+            assert confirms == []
             assert _save_action(screen._shortcut_context()).available is False
             assert "ctrl+s save unavailable" in footer.shortcut_text
 
@@ -2420,3 +2433,220 @@ class TestKeyboardInteraction:
             focused = pilot.app.focused
             assert focused is not None
             assert focused.id == "personas-library-rows"
+
+
+class TestDirtyTracking:
+    """UX-E3: change-based dirty tracking, live header state, row badges."""
+
+    @pytest.fixture
+    def stub_conversations(self, monkeypatch):
+        monkeypatch.setattr(
+            character_handler_module, "_default_character_db", lambda: object()
+        )
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [],
+        )
+
+    @staticmethod
+    def _bypass_confirm(screen, answer: bool) -> list[bool]:
+        """Stub the unsaved-changes confirm; returns a call log."""
+        calls: list[bool] = []
+
+        async def fake_confirm() -> bool:
+            calls.append(answer)
+            return answer
+
+        screen._confirm_discard_unsaved = fake_confirm
+        return calls
+
+    async def _edit_first_character(self, pilot):
+        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
+            EditCharacterRequested,
+        )
+
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-library-row-character-1")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        screen.post_message(EditCharacterRequested("1"))
+        await pilot.pause()
+        assert screen._edit_mode == "edit"
+        return screen
+
+    @staticmethod
+    async def _type_in_description(pilot, screen):
+        from textual.widgets import TextArea
+
+        screen.query_one("#personas-char-editor-description", TextArea).focus()
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+
+    async def test_edit_without_changes_switches_without_dialog(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Edit then click away with zero keystrokes: no discard dialog."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._edit_first_character(pilot)
+            assert screen.state.has_unsaved_changes is False
+            confirms = self._bypass_confirm(screen, True)
+            await pilot.click("#personas-library-row-character-2")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert confirms == []
+            assert screen.state.selected_entity_id == "2"
+            assert screen._edit_mode == "view"
+
+    async def test_typing_marks_dirty_and_guard_fires(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._edit_first_character(pilot)
+            await self._type_in_description(pilot, screen)
+            assert screen.state.has_unsaved_changes is True
+            confirms = self._bypass_confirm(screen, True)
+            await pilot.click("#personas-library-row-character-2")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert confirms == [True]
+            assert screen.state.selected_entity_id == "2"
+
+    async def test_programmatic_load_does_not_mark_dirty(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Populating the editor (load/new) must not count as a user change."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._edit_first_character(pilot)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.has_unsaved_changes is False
+            # Same for a fresh create session (new_character population).
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            await pilot.pause()
+            assert screen._edit_mode == "create"
+            assert screen.state.has_unsaved_changes is False
+
+    async def test_title_reflects_editing_state(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        monkeypatch.setattr(
+            character_handler_module, "update_character", lambda cid, data: True
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._edit_first_character(pilot)
+            title = screen.query_one("#personas-title", Static)
+            text = str(title.renderable)
+            assert "Editing Detective Sam" in text
+            assert "unsaved" not in text
+            await self._type_in_description(pilot, screen)
+            assert "Editing Detective Sam - unsaved" in str(title.renderable)
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # Back to Ready; "Local" stays out of the title (the status row
+            # already carries "Source: Local").
+            assert (
+                str(title.renderable)
+                == "Personas | Behavior profiles for chat and agents | Ready"
+            )
+
+    async def test_active_row_gets_unsaved_badge(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        monkeypatch.setattr(
+            character_handler_module, "update_character", lambda cid, data: True
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._edit_first_character(pilot)
+            row = screen.query_one("#personas-library-row-character-1")
+            assert "is-unsaved" not in row.classes
+            await self._type_in_description(pilot, screen)
+            assert "is-unsaved" in row.classes
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            # The save refresh rebuilds the rows; the badge must be gone.
+            row = screen.query_one("#personas-library-row-character-1")
+            assert "is-unsaved" not in row.classes
+
+    async def test_unsaved_badge_cleared_on_discarded_switch(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Discarding edits while switching rows must drop the stale badge."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._edit_first_character(pilot)
+            await self._type_in_description(pilot, screen)
+            row = screen.query_one("#personas-library-row-character-1")
+            assert "is-unsaved" in row.classes
+            self._bypass_confirm(screen, True)
+            await pilot.click("#personas-library-row-character-2")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "2"
+            assert not screen.query(".personas-library-row.is-unsaved")
+
+    async def test_import_reregisters_footer(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        """UX-E2 carryover: import-selection must refresh the attach hint."""
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card", lambda path: 1
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            attach = next(
+                a for a in screen._shortcut_context().actions if a.label == "attach"
+            )
+            assert attach.available is False  # no prior selection
+            footer = pilot.app.query_one(AppFooterStatus)
+            assert "ctrl+enter attach unavailable" in footer.shortcut_text
+            await screen._import_character_from_path("/tmp/card.json")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            attach = next(
+                a for a in screen._shortcut_context().actions if a.label == "attach"
+            )
+            assert attach.available is True
+            assert "ctrl+enter attach unavailable" not in footer.shortcut_text
+            assert "ctrl+enter attach" in footer.shortcut_text
+
+
+class TestConfirmationDialogEscape:
+    """Keyboard users must be able to dismiss the shared confirm dialog."""
+
+    async def test_confirmation_dialog_escape_cancels(self):
+        from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+        results: list[bool] = []
+
+        class DialogApp(App):
+            def on_mount(self) -> None:
+                self.push_screen(ConfirmationDialog(), callback=results.append)
+
+        app = DialogApp()
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert isinstance(pilot.app.screen, ConfirmationDialog)
+            await pilot.press("escape")
+            await pilot.pause()
+            assert results == [False]
+            assert not isinstance(pilot.app.screen, ConfirmationDialog)
