@@ -224,6 +224,11 @@ class PersonasScreen(BaseAppScreen):
         self._open_conversation_id: str | None = None
         self._open_conversation_title: str = ""
         self._open_conversation_transcript: str = ""
+        self._open_conversation_truncated: bool = False
+        # Id of the conversation whose transcript actually finished loading;
+        # set only by _show_conversation_view so the Continue-in-Console
+        # handler can tell an in-flight load from a completed one.
+        self._loaded_conversation_id: str | None = None
         # Serializes library renders: the pane's update_rows has two
         # suspension points, so interleaved renders could double-mount rows.
         self._render_lock = asyncio.Lock()
@@ -548,6 +553,8 @@ class PersonasScreen(BaseAppScreen):
         self._open_conversation_id = None
         self._open_conversation_title = ""
         self._open_conversation_transcript = ""
+        self._open_conversation_truncated = False
+        self._loaded_conversation_id = None
 
     @work(thread=True, exclusive=True, group="personas-conversations")
     def _load_conversations_worker(self, character_id: str) -> None:
@@ -633,13 +640,15 @@ class PersonasScreen(BaseAppScreen):
             if bot_message:
                 messages.append({"role": "assistant", "content": bot_message})
                 transcript_lines.append(f"{character_name}: {bot_message}")
-        transcript = "\n".join(transcript_lines)[:_HANDOFF_TRANSCRIPT_CHAR_LIMIT]
+        full_transcript = "\n".join(transcript_lines)
+        truncated = len(full_transcript) > _HANDOFF_TRANSCRIPT_CHAR_LIMIT
+        transcript = full_transcript[:_HANDOFF_TRANSCRIPT_CHAR_LIMIT]
         self.app.call_from_thread(
-            self._show_conversation_view, conversation_id, messages, transcript
+            self._show_conversation_view, conversation_id, messages, transcript, truncated
         )
 
     def _show_conversation_view(
-        self, conversation_id: str, messages: list[dict], transcript: str
+        self, conversation_id: str, messages: list[dict], transcript: str, truncated: bool
     ) -> None:
         """UI-thread continuation: display the read-only conversation view."""
         if not self.is_mounted or self.state.active_mode != "characters":
@@ -651,6 +660,8 @@ class PersonasScreen(BaseAppScreen):
             # The selection or the requested conversation changed mid-flight.
             return
         self._open_conversation_transcript = transcript
+        self._open_conversation_truncated = truncated
+        self._loaded_conversation_id = conversation_id
         try:
             view = self.query_one(CCPConversationViewWidget)
         except QueryError:
@@ -677,17 +688,24 @@ class PersonasScreen(BaseAppScreen):
         if not conversation_id:
             self._notify("Open a conversation before continuing in Console.", "warning")
             return
+        if self._loaded_conversation_id != conversation_id:
+            # The transcript worker has not delivered this conversation yet
+            # (or a newer selection superseded the loaded one).
+            self._notify("Conversation is still loading.", "warning")
+            return
         open_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
         if not callable(open_handoff):
             self._notify("Console handoff is unavailable.", "warning")
             return
         character_name = self.state.selected_entity_name or "Character"
         title = self._open_conversation_title or "Untitled conversation"
-        payload = ChatHandoffPayload(
+        payload = ChatHandoffPayload.from_source_content(
             source="personas",
             item_type="character-conversation",
             title=f"{character_name}: {title}",
             body=self._open_conversation_transcript or "",
+            body_truncated=self._open_conversation_truncated,
+            source_id=conversation_id,
             runtime_backend="local",
             source_owner="local",
             source_selector_state="local",

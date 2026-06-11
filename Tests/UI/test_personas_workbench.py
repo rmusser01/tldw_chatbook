@@ -1050,6 +1050,79 @@ class TestConversationsPanel:
             await pilot.pause()
             assert app.nav_routes == ["conversation"]
 
+    async def test_stale_conversation_rows_are_skipped(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Rows for a character other than the current selection are dropped."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            assert screen.state.selected_entity_id == "1"
+            await screen._apply_conversation_rows("999", (("conv-x", "X"),))
+            await pilot.pause()
+            rows = screen.query(".personas-conversation-row")
+            assert [str(r.label) for r in rows] == ["First case"]
+            assert "conv-x" not in screen._conversation_rows
+
+    async def test_stale_conversation_view_is_skipped(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A view continuation for a superseded conversation id is dropped."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            assert screen._open_conversation_id == "conv-1"
+            screen._show_conversation_view(
+                "conv-stale", [{"role": "user", "content": "stale"}], "stale", False
+            )
+            await pilot.pause()
+            assert screen._loaded_conversation_id == "conv-1"
+            assert screen._open_conversation_transcript != "stale"
+
+    async def test_long_transcript_sets_body_truncated(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        monkeypatch.setattr(
+            personas_screen_module,
+            "retrieve_conversation_messages_for_ui",
+            lambda db, conversation_id, character_name, user_name, **kwargs: [
+                ("u" * 500, "b" * 500) for _ in range(20)
+            ],
+        )
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            await self._open_conversation(pilot)
+            await pilot.click("#personas-conversation-continue-console")
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_called_once()
+        payload = app.open_chat_with_handoff.call_args.args[0]
+        assert payload.body_truncated is True
+        assert len(payload.body) <= personas_screen_module._HANDOFF_TRANSCRIPT_CHAR_LIMIT
+        assert payload.source_id == "conv-1"
+
+    async def test_continue_blocked_while_loading(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Continue in Console refuses to stage a transcript still in flight."""
+        notifications: list[tuple[str, str]] = []
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        app.notify = lambda message, severity="information", **kwargs: notifications.append(
+            (str(message), severity)
+        )
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._open_conversation(pilot)
+            screen._open_conversation_id = "conv-2"
+            screen._loaded_conversation_id = "conv-1"
+            await pilot.click("#personas-conversation-continue-console")
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_not_called()
+        assert any(
+            "still loading" in message and severity == "warning"
+            for message, severity in notifications
+        )
+
     async def test_profile_selection_shows_no_conversations(
         self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
     ):
