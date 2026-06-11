@@ -258,7 +258,6 @@ class LibraryScreen(BaseAppScreen):
         height: 1fr;
         min-height: 20;
         padding: 1;
-        border: solid $surface-lighten-1;
     }
 
     .library-region {
@@ -266,7 +265,6 @@ class LibraryScreen(BaseAppScreen):
         height: 100%;
         min-height: 20;
         padding: 1;
-        border: solid $surface-lighten-1;
     }
 
     #library-source-browser {

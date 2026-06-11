@@ -1286,11 +1286,6 @@ Button.notes-mode-chip {
     background: $ds-surface-panel;
 }
 
-#personas-workbench {
-    padding: 1;
-    border: solid #6f6f6f;
-}
-
 #artifacts-list-pane,
 #artifacts-detail-pane,
 #artifacts-inspector-pane,
@@ -1345,24 +1340,10 @@ Button.notes-mode-chip {
     background: $ds-surface-panel;
 }
 
-#personas-list-pane {
-    width: 2fr;
-    min-width: 26;
-    border: solid #6f6f6f;
-    padding: 1;
-}
-
-#personas-detail-pane {
-    width: 4fr;
-    min-width: 42;
-    border: solid #6f6f6f;
-    padding: 1;
-}
-
 #personas-inspector-pane {
     width: 2fr;
     min-width: 30;
-    border: solid #6f6f6f;
+    border: solid $ds-grid-line;
     padding: 1;
 }
 
@@ -1391,21 +1372,6 @@ Button.notes-mode-chip {
     min-width: 34;
     border: solid #6f6f6f;
     padding: 1;
-}
-
-#personas-selected-target-card,
-#personas-readiness-card {
-    width: 100%;
-    height: auto;
-    margin: 1 0;
-    padding: 1;
-    border: solid #6f6f6f;
-    background: $ds-surface-raised;
-}
-
-#personas-selected-target-title,
-#personas-readiness-title {
-    text-style: bold;
 }
 
 .acp-selected-session-row {
@@ -1441,11 +1407,6 @@ Button.notes-mode-chip {
 #acp-list-detail-divider,
 #acp-detail-inspector-divider {
     background: $ds-grid-line;
-}
-
-#personas-list-detail-divider,
-#personas-detail-inspector-divider {
-    background: #7a7a7a;
 }
 
 .artifacts-column-title,
@@ -1906,7 +1867,8 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 .library-mode-chip.is-active,
-.notes-mode-chip.is-active {
+.notes-mode-chip.is-active,
+.personas-mode-chip.is-active {
     border: none;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
@@ -1914,7 +1876,8 @@ Button.settings-category-button.settings-secondary-search-match {
 }
 
 .library-mode-chip.is-active:focus,
-.notes-mode-chip.is-active:focus {
+.notes-mode-chip.is-active:focus,
+.personas-mode-chip.is-active:focus {
     outline: none;
     border: none;
     background: $ds-focus-bg;

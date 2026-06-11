@@ -98,6 +98,8 @@ TCSS variables and `Theme.variables` keys use hyphenated names only.
 | `.ds-toolbar` | local action group |
 | `.ds-shortcut-bar` | active shortcut context and compact status |
 
+Toolbar buttons inside destinations use the shared flat-button vocabulary `.console-action-primary`/`-secondary`/`-subdued`/`-disabled` (see the Shared Flat-Button Vocabulary section of `master-shell-design-system-contract.md`) rather than screen-local button rules.
+
 ## State Classes
 
 | Class | Meaning |

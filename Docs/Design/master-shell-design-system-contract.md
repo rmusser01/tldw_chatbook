@@ -37,6 +37,10 @@ If a runtime slice needs a new visual pattern, update the visual-system contract
 | `.ds-toolbar` | Local action group | Destination wrappers |
 | `.ds-shortcut-bar` | Current-context shortcuts/status | Shell bottom bar |
 
+## Shared Flat-Button Vocabulary
+
+`.console-action-primary`, `.console-action-secondary`, `.console-action-subdued`, and `.console-action-disabled` are the shared cross-screen flat-button vocabulary for destination action toolbars. They render `border: none`, one-row height, and `$ds-surface-raised` (secondary/subdued), `$ds-action-focus`-alpha (primary), or `$ds-surface-panel` (disabled) backgrounds; the exact declarations are verified by `Tests/UI/test_non_obscuring_focus_contract.py`. New destination screens apply these classes to toolbar actions instead of defining screen-local button rules.
+
 ## Required State Classes
 
 `.is-active`, `.is-disabled`, `.is-blocked`, `.is-running`, `.is-paused`, `.is-unsaved`, `.is-stale`, `.is-conflict`, `.needs-approval`, `.source-local`, `.source-server`, `.source-workspace`, `.source-remote-only`, `.source-dry-run`

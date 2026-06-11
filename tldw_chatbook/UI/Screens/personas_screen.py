@@ -138,8 +138,6 @@ class PersonasScreen(BaseAppScreen):
 
     .personas-mode-chip.is-active {
         border: none;
-        background: $primary;
-        color: $background;
         text-style: bold underline;
     }
 
@@ -147,7 +145,6 @@ class PersonasScreen(BaseAppScreen):
         height: 1fr;
         min-height: 20;
         padding: 1;
-        border: solid $surface-lighten-1;
     }
 
     #personas-workbench .destination-workbench-pane {
@@ -155,7 +152,6 @@ class PersonasScreen(BaseAppScreen):
         height: 100%;
         min-height: 18;
         padding: 0 1;
-        border: solid $surface-lighten-1;
     }
 
     #personas-library-pane {
