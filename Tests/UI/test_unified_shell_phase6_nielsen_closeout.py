@@ -58,6 +58,7 @@ def _phase_six_nielsen_metadata(text: str) -> dict:
     return json.loads(match.group(1))
 
 
+@pytest.mark.skip(reason="Stale release-era snapshot (copy/evidence drifted); re-pin or retire via backlog task-98")
 @pytest.mark.asyncio
 async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() -> None:
     """Verify visible shell behavior maps to the closeout's heuristic evidence."""

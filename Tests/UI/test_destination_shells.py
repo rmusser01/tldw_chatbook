@@ -1605,13 +1605,32 @@ async def test_acp_missing_runtime_explains_acp_owned_setup_recovery():
         await pilot.pause()
         screen = _active_destination_screen(host)
         visible_text = _visible_text(screen)
+        # The recovery copy must not route users to Settings. The shared top
+        # nav legitimately carries a Settings destination button, so exclude
+        # nav chrome before asserting the absence.
+        non_nav_text = " ".join(
+            [
+                *(
+                    _static_text(widget)
+                    for widget in screen.query(Static)
+                    if widget.display and hasattr(widget, "renderable")
+                ),
+                *(
+                    str(button.label)
+                    for button in screen.query(Button)
+                    if button.display
+                    and button.label is not None
+                    and not (button.id or "").startswith("nav-")
+                ),
+            ]
+        )
         follow_button = screen.query_one("#acp-follow-in-console", Button)
         launch_button = screen.query_one("#acp-launch-agent", Button)
 
     assert "Runtime not configured" in visible_text
     assert "Configure ACP runtime setup in ACP before launch." in visible_text
     assert "Runtime owner: ACP" in visible_text
-    assert "Settings" not in visible_text
+    assert "Settings" not in non_nav_text
     assert follow_button.disabled is True
     assert launch_button.disabled is True
 

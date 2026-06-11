@@ -30,7 +30,10 @@ TASK = Path("backlog/tasks/task-8.5 - Product-Maturity-Phase-1.5-Visual-Broken-S
 TOP_LEVEL_DESTINATION_IDS = tuple(destination.destination_id for destination in SHELL_DESTINATION_ORDER)
 DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     "home": ("#home-dashboard",),
-    "console": ("#console-live-work-source-readiness", "#chat-window"),
+    # The live-work readiness card only mounts while a launch is pending and
+    # the legacy #chat-window surface is no longer composed; pin the
+    # always-present control bar + native session surface instead.
+    "console": ("#console-control-bar", "#console-session-surface"),
     "library": ("#library-shell",),
     "artifacts": ("#artifacts-shell",),
     "personas": ("#personas-shell",),
