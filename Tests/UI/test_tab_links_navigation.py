@@ -53,6 +53,8 @@ def _expected_current_tab(tab_id: str) -> str:
     """Return the app-level current_tab value for a clicked tab link."""
     if tab_id == TAB_TOOLS_SETTINGS:
         return TAB_MCP
+    if tab_id == TAB_CCP:
+        return "personas"
     return tab_id
 
 

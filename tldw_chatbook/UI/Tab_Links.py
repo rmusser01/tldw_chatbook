@@ -111,6 +111,8 @@ class TabLinks(ScrollableContainer):
         """Update the visual state of tab links."""
         if new_tab_id == TAB_MCP and TAB_TOOLS_SETTINGS in self.tab_ids:
             new_tab_id = TAB_TOOLS_SETTINGS
+        if new_tab_id == "personas" and TAB_CCP in self.tab_ids:
+            new_tab_id = TAB_CCP
         for link in self.query(".tab-link"):
             link.remove_class("-active")
         try:

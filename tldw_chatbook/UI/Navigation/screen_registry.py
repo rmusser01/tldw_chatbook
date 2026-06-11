@@ -75,7 +75,7 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "tldw_chatbook.UI.Screens.library_conversations_screen",
         "LibraryConversationsScreen",
     ),
-    "ccp": ScreenRoute("ccp", TAB_CCP, "tldw_chatbook.UI.Screens.conversation_screen", "ConversationScreen"),
+    "ccp": ScreenRoute("ccp", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"),
     "media": ScreenRoute("media", "media", "tldw_chatbook.UI.Screens.media_screen", "MediaScreen"),
     "notes": ScreenRoute("notes", "notes", "tldw_chatbook.UI.Screens.notes_screen", "NotesScreen"),
     "search": ScreenRoute("search", "search", "tldw_chatbook.UI.Screens.search_screen", "SearchScreen"),
