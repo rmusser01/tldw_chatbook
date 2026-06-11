@@ -1,0 +1,197 @@
+"""Mounted tests for the Personas preview-conversation pane."""
+
+import pytest
+from textual.app import App
+from textual.widgets import Button, Input, Static
+
+from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+    PreviewOpenInConsoleRequested,
+    PreviewReplyRequested,
+    PreviewResetRequested,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+    PersonasPreviewPane,
+)
+
+pytestmark = pytest.mark.asyncio
+
+
+class PreviewApp(App):
+    def __init__(self):
+        super().__init__()
+        self.replies: list[str] = []
+        self.resets = 0
+        self.opens = 0
+
+    def compose(self):
+        yield PersonasPreviewPane(id="personas-preview-pane")
+
+    def on_preview_reply_requested(self, message: PreviewReplyRequested) -> None:
+        self.replies.append(message.user_message)
+
+    def on_preview_reset_requested(self, message: PreviewResetRequested) -> None:
+        self.resets += 1
+
+    def on_preview_open_in_console_requested(
+        self, message: PreviewOpenInConsoleRequested
+    ) -> None:
+        self.opens += 1
+
+
+def _line_texts(app) -> list[str]:
+    return [str(line.renderable) for line in app.query(".personas-preview-line")]
+
+
+async def test_collapsed_by_default_and_toggle_expands():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        body = pilot.app.query_one("#personas-preview-body")
+        assert body.display is False
+        pilot.app.query_one("#personas-preview-toggle", Button).press()
+        await pilot.pause()
+        assert body.display is True
+        pilot.app.query_one("#personas-preview-toggle", Button).press()
+        await pilot.pause()
+        assert body.display is False
+
+
+async def test_expand_api_shows_body():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        pane.expand()
+        await pilot.pause()
+        assert pilot.app.query_one("#personas-preview-body").display is True
+
+
+async def test_seed_append_reset_roundtrip():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        await pane.seed_greeting("Greetings, detective.")
+        await pilot.pause()
+        assert _line_texts(pilot.app) == ["character: Greetings, detective."]
+        pane.append_user("Who are you?")
+        pane.append_reply("Your humble narrator.")
+        await pilot.pause()
+        assert _line_texts(pilot.app) == [
+            "character: Greetings, detective.",
+            "you: Who are you?",
+            "character: Your humble narrator.",
+        ]
+        assert pane.transcript_text() == (
+            "character: Greetings, detective.\n"
+            "you: Who are you?\n"
+            "character: Your humble narrator."
+        )
+        pane.set_status("Ready")
+        await pane.reset()
+        await pilot.pause()
+        assert _line_texts(pilot.app) == ["character: Greetings, detective."]
+        assert str(
+            pilot.app.query_one("#personas-preview-status", Static).renderable
+        ) == ""
+
+
+async def test_seed_empty_greeting_clears_transcript():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        await pane.seed_greeting("Hello.")
+        pane.append_user("Hi")
+        await pilot.pause()
+        await pane.seed_greeting("")
+        await pilot.pause()
+        assert _line_texts(pilot.app) == []
+        assert pane.transcript_text() == ""
+
+
+async def test_double_seed_same_tick_does_not_crash():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        await pane.seed_greeting("First greeting.")
+        await pane.seed_greeting("Second greeting.")
+        await pilot.pause()
+        assert _line_texts(pilot.app) == ["character: Second greeting."]
+
+
+async def test_transcript_lines_carry_role_classes():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        await pane.seed_greeting("Hello.")
+        pane.append_user("Hi")
+        await pilot.pause()
+        you_lines = pilot.app.query(".personas-preview-line-you")
+        character_lines = pilot.app.query(".personas-preview-line-character")
+        assert [str(l.renderable) for l in you_lines] == ["you: Hi"]
+        assert [str(l.renderable) for l in character_lines] == ["character: Hello."]
+
+
+async def test_test_reply_posts_message_and_clears_input():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        pane.expand()
+        await pilot.pause()
+        pilot.app.query_one("#personas-preview-input", Input).value = "Hi there"
+        pilot.app.query_one("#personas-preview-test-reply", Button).press()
+        await pilot.pause()
+        assert pilot.app.replies == ["Hi there"]
+        assert pilot.app.query_one("#personas-preview-input", Input).value == ""
+        assert _line_texts(pilot.app) == ["you: Hi there"]
+
+
+async def test_test_reply_with_empty_input_is_a_noop():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        pane.expand()
+        await pilot.pause()
+        pilot.app.query_one("#personas-preview-input", Input).value = "   "
+        pilot.app.query_one("#personas-preview-test-reply", Button).press()
+        await pilot.pause()
+        assert pilot.app.replies == []
+        assert _line_texts(pilot.app) == []
+
+
+async def test_reset_button_restores_greeting_and_posts_reset():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        pane.expand()
+        await pane.seed_greeting("Hello.")
+        pane.append_user("Hi")
+        pane.append_reply("Hey.")
+        pane.set_status("Ready")
+        await pilot.pause()
+        pilot.app.query_one("#personas-preview-reset", Button).press()
+        await pilot.pause()
+        assert pilot.app.resets == 1
+        assert _line_texts(pilot.app) == ["character: Hello."]
+        assert str(
+            pilot.app.query_one("#personas-preview-status", Static).renderable
+        ) == ""
+
+
+async def test_open_in_console_posts_message():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        pane.expand()
+        await pilot.pause()
+        pilot.app.query_one("#personas-preview-open-console", Button).press()
+        await pilot.pause()
+        assert pilot.app.opens == 1
+
+
+async def test_status_is_readable():
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        pane.set_status("Running")
+        await pilot.pause()
+        status = str(pilot.app.query_one("#personas-preview-status", Static).renderable)
+        assert status == "Running"
+        assert "Traceback" not in status

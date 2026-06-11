@@ -18,9 +18,12 @@ from textual.widgets import Button, Input, Static
 from ...Character_Chat.Character_Chat_Lib import (
     export_character_card_to_json,
     export_character_card_to_png,
+    replace_placeholders,
     validate_character_book,
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Chat.console_chat_models import ConsoleProviderSelection
+from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
 from ...Widgets.confirmation_dialog import UnsavedChangesDialog
 from ...Widgets.CCP_Widgets.ccp_character_card_widget import (
@@ -48,7 +51,11 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
     EditPersonaRequested,
     PersonaProfileEditCancelled,
     PersonaProfileSaveRequested,
+    PreviewOpenInConsoleRequested,
+    PreviewReplyRequested,
+    PreviewResetRequested,
 )
+from ...Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
 from ...Widgets.Persona_Widgets.personas_state import MODE_LABELS, PersonasWorkbenchState
 from ..CCP_Modules import ccp_character_handler
 from ..CCP_Modules.ccp_character_handler import CCPCharacterHandler
@@ -57,6 +64,7 @@ from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.shortcut_context import ShortcutAction, ShortcutContext
 from ..Persona_Modules.personas_conversations_controller import (
     _CONVERSATION_VIEW_ID,
+    _HANDOFF_TRANSCRIPT_CHAR_LIMIT,
     PersonasConversationsController,
 )
 
@@ -217,6 +225,9 @@ class PersonasScreen(BaseAppScreen):
         # Serializes library renders: the pane's update_rows has two
         # suspension points, so interleaved renders could double-mount rows.
         self._render_lock = asyncio.Lock()
+        # Ephemeral preview conversation: in-memory only, never persisted.
+        self._preview_history: list[dict[str, str]] = []
+        self._preview_gateway: ConsoleProviderGateway | None = None
         self.character_handler = CCPCharacterHandler(self)
         self.persona_handler = CCPPersonaHandler(self)
         self.conversations = PersonasConversationsController(self)
@@ -276,6 +287,7 @@ class PersonasScreen(BaseAppScreen):
                             )
                         yield CCPConversationViewWidget(parent_screen=self)
                         yield Static(PLACEHOLDER_COPY, id="personas-mode-placeholder")
+                    yield PersonasPreviewPane(id="personas-preview-pane")
                 yield PersonasInspectorPane(
                     id="personas-inspector-pane",
                     classes="destination-workbench-pane ds-inspector",
@@ -288,9 +300,17 @@ class PersonasScreen(BaseAppScreen):
         await self.character_handler.refresh_character_list()
         self._register_footer_shortcuts()
 
-    def on_unmount(self) -> None:
+    async def on_unmount(self) -> None:
         super().on_unmount()
         self._clear_footer_shortcuts()
+        # Release the preview gateway's HTTP client; unmount must not crash.
+        gateway = self._preview_gateway
+        self._preview_gateway = None
+        if gateway is not None:
+            try:
+                await gateway.aclose()
+            except Exception:
+                logger.warning("Could not close the preview provider gateway.", exc_info=True)
 
     # ===== Library rendering =====
 
@@ -471,6 +491,7 @@ class PersonasScreen(BaseAppScreen):
         library.set_mode(mode)
         # clear_selection empties the conversations panel; drop the caches too.
         self.conversations.reset()
+        await self._reset_preview("")
         await self.query_one(PersonasInspectorPane).clear_selection()
         if mode == "characters":
             await self._render_library_rows()
@@ -520,6 +541,14 @@ class PersonasScreen(BaseAppScreen):
         self.conversations.reset()
         await inspector.show_conversations(())
         self.conversations.load_conversations(entity_id)
+        # Seed the ephemeral preview with the character's greeting, drawn
+        # from the FULL record the load worker delivered (list rows are
+        # id/name-only summaries).
+        record = self._full_character_record(entity_id) or {}
+        greeting = replace_placeholders(
+            str(record.get("first_message") or ""), entity_name, "User"
+        )
+        await self._reset_preview(greeting)
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -539,6 +568,8 @@ class PersonasScreen(BaseAppScreen):
         # Persona profiles have no conversation linkage in the local data.
         self.conversations.reset()
         await inspector.show_conversations(())
+        # Profiles have no first_message concept; start the preview empty.
+        await self._reset_preview("")
 
     # ===== Saved conversations =====
 
@@ -716,6 +747,133 @@ class PersonasScreen(BaseAppScreen):
         # app-level open_chat_with_handoff API with an explicit intent marker.
         event.stop()
         await self._attach_selection_to_console(intent="start_chat")
+
+    # ===== Ephemeral preview conversation =====
+    #
+    # The preview is in-memory only: history lives on the screen, the
+    # transcript lives in the pane, and the provider call goes straight
+    # through the Console gateway. Nothing is ever written to a database.
+
+    async def _reset_preview(self, greeting: str) -> None:
+        """Clear the preview history and reseed the pane's transcript."""
+        self._preview_history.clear()
+        try:
+            await self.query_one(PersonasPreviewPane).seed_greeting(greeting)
+        except QueryError:
+            # Tolerate calls that race screen teardown.
+            pass
+
+    def _ensure_preview_gateway(self) -> ConsoleProviderGateway:
+        """Lazy singleton gateway, config-injected like the Console screen's."""
+        if self._preview_gateway is None:
+            self._preview_gateway = ConsoleProviderGateway(
+                config_provider=lambda: getattr(self.app_instance, "app_config", {}) or {},
+            )
+        return self._preview_gateway
+
+    def _preview_system_prompt(self) -> str:
+        """System prompt for the preview call; draft-aware while editing.
+
+        An open character edit session previews the editor's CURRENT form
+        data (the point of the pane); otherwise the selected full character
+        record or persona profile record is used.
+        """
+        record: dict = {}
+        if self.state.active_mode == "characters":
+            if self._edit_mode in ("edit", "create"):
+                try:
+                    record = self.query_one(CCPCharacterEditorWidget).get_character_data() or {}
+                except Exception:
+                    logger.warning("Could not collect editor data for the preview.", exc_info=True)
+                    record = {}
+            else:
+                record = self._full_character_record(str(self.state.selected_entity_id or "")) or {}
+        elif self.state.active_mode == "personas":
+            record = self._profile_record(self.state.selected_entity_id) or {}
+        parts = [
+            str(record.get(key) or "").strip()
+            for key in ("system_prompt", "personality", "description", "scenario")
+        ]
+        prompt = "\n".join(part for part in parts if part)
+        return prompt or "Stay in character."
+
+    @on(PreviewReplyRequested)
+    def _handle_preview_reply(self, message: PreviewReplyRequested) -> None:
+        message.stop()
+        self._preview_history.append({"role": "user", "content": message.user_message})
+        self._run_preview_reply()
+
+    @work(exclusive=True, group="personas-preview")
+    async def _run_preview_reply(self) -> None:
+        """Resolve the configured provider and stream one preview reply."""
+        pane = self.query_one(PersonasPreviewPane)
+        config = getattr(self.app_instance, "app_config", {}) or {}
+        defaults = config.get("character_defaults", {}) or {}
+        provider = str(defaults.get("provider") or "")
+        model = str(defaults.get("model") or "")
+        selection = ConsoleProviderSelection(provider=provider, explicit_model=model or None)
+        gateway = self._ensure_preview_gateway()
+        # Staleness key: a reply landing after the selection moved is dropped.
+        selection_key = (self.state.selected_entity_kind, self.state.selected_entity_id)
+        try:
+            resolution = await gateway.resolve_for_send(selection)
+        except Exception:
+            logger.error("Preview provider resolution failed.", exc_info=True)
+            pane.set_status("Provider error - try again or configure in Settings")
+            return
+        if not resolution.ready:
+            pane.set_status(
+                resolution.visible_copy or "Provider unavailable - configure in Settings"
+            )
+            return
+        pane.set_status("Running")
+        messages = [
+            {"role": "system", "content": self._preview_system_prompt()}
+        ] + list(self._preview_history)
+        reply = ""
+        try:
+            async for chunk in gateway.stream_chat(resolution, messages):
+                reply += chunk
+        except Exception:
+            logger.error("Preview provider call failed.", exc_info=True)
+            if (
+                self.is_mounted
+                and (self.state.selected_entity_kind, self.state.selected_entity_id)
+                == selection_key
+            ):
+                pane.set_status("Provider error - try again or configure in Settings")
+            return
+        if not self.is_mounted or (
+            self.state.selected_entity_kind,
+            self.state.selected_entity_id,
+        ) != selection_key:
+            # The selection changed while the provider was streaming; the
+            # reply belongs to the old selection's history, which is gone.
+            return
+        self._preview_history.append({"role": "assistant", "content": reply})
+        pane.append_reply(reply)
+        pane.set_status("Ready")
+
+    @on(PreviewResetRequested)
+    def _handle_preview_reset(self, message: PreviewResetRequested) -> None:
+        message.stop()
+        # The pane already restored its transcript to the greeting.
+        self._preview_history.clear()
+
+    @on(PreviewOpenInConsoleRequested)
+    def _handle_preview_open_console(self, message: PreviewOpenInConsoleRequested) -> None:
+        message.stop()
+        transcript = self.query_one(PersonasPreviewPane).transcript_text()
+        truncated = len(transcript) > _HANDOFF_TRANSCRIPT_CHAR_LIMIT
+        staged = self._stage_handoff(
+            item_type="preview-conversation",
+            title="Personas preview conversation",
+            body=transcript[:_HANDOFF_TRANSCRIPT_CHAR_LIMIT],
+            body_truncated=truncated,
+            suggested_prompt="Continue this conversation in character.",
+        )
+        if staged:
+            self._notify("Preview conversation staged in Console.", "information")
 
     # ===== Create / edit =====
 

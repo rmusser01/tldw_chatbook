@@ -37,3 +37,19 @@ class PersonaProfileSaveRequested(Message):
 
 class PersonaProfileEditCancelled(Message):
     """The persona editor form was cancelled."""
+
+
+class PreviewReplyRequested(Message):
+    """A test reply was requested from the preview-conversation pane."""
+
+    def __init__(self, user_message: str) -> None:
+        self.user_message = user_message
+        super().__init__()
+
+
+class PreviewResetRequested(Message):
+    """The preview-conversation transcript was reset."""
+
+
+class PreviewOpenInConsoleRequested(Message):
+    """Open the preview-conversation transcript in Console."""

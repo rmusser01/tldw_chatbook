@@ -1434,3 +1434,243 @@ class TestConsoleActions:
             attach = next(a for a in context.actions if a.label == "attach")
             assert attach.available is True
             assert attach.key == "ctrl+enter"
+
+
+class _FakePreviewGateway:
+    """In-memory gateway double: ready resolution + scripted stream."""
+
+    def __init__(self, chunks=("Hello, ", "world."), gate=None):
+        self.chunks = chunks
+        self.gate = gate
+        self.requests: list[list[dict]] = []
+        self.closed = False
+
+    async def resolve_for_send(self, selection):
+        from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+
+        return ConsoleProviderResolution(
+            provider="openai", base_url="", model="test-model", ready=True
+        )
+
+    async def stream_chat(self, resolution, messages):
+        self.requests.append([dict(m) for m in messages])
+        if self.gate is not None:
+            await self.gate.wait()
+        for chunk in self.chunks:
+            yield chunk
+
+    async def aclose(self):
+        self.closed = True
+
+
+class TestPreviewIntegration:
+    """Ephemeral preview-conversation pane wiring on the screen (Task 13)."""
+
+    @pytest.fixture
+    def stub_conversations(self, monkeypatch):
+        monkeypatch.setattr(
+            character_handler_module, "_default_character_db", lambda: object()
+        )
+        monkeypatch.setattr(
+            conversations_controller_module,
+            "list_character_conversations",
+            lambda db, character_id, limit=50, offset=0: [],
+        )
+
+    async def _select_first_character(self, pilot):
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-library-row-character-1")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        return screen
+
+    async def test_preview_pane_is_mounted_in_work_area(
+        self, mock_app_instance, stub_characters
+    ):
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            pane = screen.query_one("#personas-preview-pane", PersonasPreviewPane)
+            work_area = screen.query_one("#personas-work-area")
+            assert pane in work_area.children
+
+    async def test_blocked_provider_shows_readable_status(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """An unconfigured provider yields readable copy, never a traceback."""
+        from textual.widgets import Static as _Static
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
+        # No character_defaults in config -> empty provider -> blocked.
+        mock_app_instance.app_config = {}
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            status = str(
+                screen.query_one("#personas-preview-status", _Static).renderable
+            )
+            assert status.strip()
+            assert "Traceback" not in status
+
+    async def test_reply_flow_appends_reply_and_history(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        fake = _FakePreviewGateway()
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._ensure_preview_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi there"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+            assert "character: Hello, world." in pane.transcript_text()
+            assert screen._preview_history == [
+                {"role": "user", "content": "Hi there"},
+                {"role": "assistant", "content": "Hello, world."},
+            ]
+            from textual.widgets import Static as _Static
+
+            assert (
+                str(screen.query_one("#personas-preview-status", _Static).renderable)
+                == "Ready"
+            )
+            # The provider saw the system prompt followed by the history.
+            assert fake.requests and fake.requests[0][0]["role"] == "system"
+            assert fake.requests[0][1] == {"role": "user", "content": "Hi there"}
+
+    async def test_draft_aware_system_prompt_uses_editor_data(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_card_widget import (
+            EditCharacterRequested,
+        )
+        from tldw_chatbook.Widgets.CCP_Widgets.ccp_character_editor_widget import (
+            CCPCharacterEditorWidget,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen.post_message(EditCharacterRequested("1"))
+            await pilot.pause()
+            assert screen._edit_mode == "edit"
+            editor = screen.query_one(CCPCharacterEditorWidget)
+            editor._description_area.text = "Draft noir vibes, unsaved."
+            await pilot.pause()
+            prompt = screen._preview_system_prompt()
+            assert "Draft noir vibes, unsaved." in prompt
+
+    async def test_open_in_console_stages_preview_transcript(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        from textual.widgets import Button as _Button
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one(PersonasPreviewPane)
+            pane.append_user("Hi")
+            pane.append_reply("Hello.")
+            await pilot.pause()
+            screen.query_one("#personas-preview-open-console", _Button).press()
+            await pilot.pause()
+        app.open_chat_with_handoff.assert_called_once()
+        payload = app.open_chat_with_handoff.call_args.args[0]
+        assert payload.source == "personas"
+        assert payload.item_type == "preview-conversation"
+        assert payload.title == "Personas preview conversation"
+        assert "you: Hi" in payload.body
+        assert "character: Hello." in payload.body
+        assert payload.suggested_prompt == "Continue this conversation in character."
+
+    async def test_stale_reply_is_dropped_after_selection_change(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        import asyncio
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        gate = asyncio.Event()
+        fake = _FakePreviewGateway(gate=gate)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._ensure_preview_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            # Let the worker reach the gated stream deterministically.
+            for _ in range(50):
+                if fake.requests:
+                    break
+                await pilot.pause()
+            assert fake.requests
+            # Selection changes while the stream is in flight. The gated
+            # preview worker is still running, so release the gate BEFORE
+            # waiting for workers (waiting first deadlocks the test).
+            await pilot.click("#personas-library-row-character-2")
+            await pilot.pause()
+            gate.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            pane = screen.query_one(PersonasPreviewPane)
+            assert "character: Hello, world." not in pane.transcript_text()
+            assert not any(
+                entry["role"] == "assistant" for entry in screen._preview_history
+            )
+            from textual.widgets import Static as _Static
+
+            assert (
+                str(screen.query_one("#personas-preview-status", _Static).renderable)
+                != "Ready"
+            )
+
+    async def test_reset_and_mode_switch_clear_history(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewResetRequested,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._preview_history.append({"role": "user", "content": "Hi"})
+            screen.post_message(PreviewResetRequested())
+            await pilot.pause()
+            assert screen._preview_history == []
+            screen._preview_history.append({"role": "user", "content": "Hi again"})
+            await screen._apply_mode("prompts")
+            await pilot.pause()
+            assert screen._preview_history == []
