@@ -228,6 +228,12 @@ def derive_configured_server_binding(app_config: Mapping[str, Any] | None) -> Co
         )
 
     api_config = app_config.get("tldw_api", {})
+    if not isinstance(api_config, Mapping) or not api_config:
+        # The app's app_config comes from load_settings(), which normalizes
+        # sections and keeps the raw CLI config nested under
+        # COMPREHENSIVE_CONFIG_RAW; [tldw_api] only exists there.
+        raw_config = app_config.get("COMPREHENSIVE_CONFIG_RAW", {})
+        api_config = raw_config.get("tldw_api", {}) if isinstance(raw_config, Mapping) else {}
     if not isinstance(api_config, Mapping):
         api_config = {}
 
