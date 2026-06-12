@@ -139,7 +139,6 @@ def _recovery_matrix_rows(evidence: str) -> dict[str, list[str]]:
     return rows
 
 
-@pytest.mark.skip(reason="Stale release-era snapshot (copy/evidence drifted); re-pin or retire via backlog task-98")
 @pytest.mark.asyncio
 async def test_phase6_recovery_copy_is_visible_in_running_app(
     monkeypatch: pytest.MonkeyPatch,
@@ -172,11 +171,11 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
                 lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
             )
             console_text = _screen_text(app)
-            assert "Configure provider in Settings." in console_text
+            assert "Credential: check setup" in console_text
             assert "OPENAI_API_KEY" in console_text or "Provider setup needed" in console_text
             assert "RAG/source: not staged" in console_text
-            assert "MCP: Not wired - Manage servers in MCP." in console_text
-            assert "ACP: Connected - Stage ACP session payloads." in console_text
+            assert "MCP: Not wired - MCP servers." in console_text
+            assert "ACP: Blocked - Configure ACP runtime." in console_text
 
             await app.handle_screen_navigation(NavigateToScreen("acp"))
             await _wait_until(

@@ -124,7 +124,6 @@ def _workflow_matrix_rows(evidence: str) -> dict[str, list[str]]:
     return rows
 
 
-@pytest.mark.skip(reason="Stale release-era snapshot (copy/evidence drifted); re-pin or retire via backlog task-98")
 @pytest.mark.asyncio
 async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> None:
     """Verify power-user paths can be repeated through deterministic shell seams."""
@@ -182,7 +181,14 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
                 pilot,
                 lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
             )
+            # Import/Export is now an in-Library mode; the ingest screen is
+            # one press deeper via the mode's "Open Ingest" action.
             app.screen.query_one("#library-open-import-export", Button).press()
+            await _wait_until(
+                pilot,
+                lambda: bool(app.screen.query("#library-import-export-open-ingest")),
+            )
+            app.screen.query_one("#library-import-export-open-ingest", Button).press()
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == "ingest" and app.screen.__class__.__name__ == "MediaIngestScreen",
@@ -206,15 +212,22 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
             assert "Action: Open Watchlists run" in live_work_text
             assert "Recovery: Review the Watchlists run details or retry from Watchlists." in live_work_text
 
-            app.screen.query_one("#console-live-work-primary-action", Button).press()
-            await _wait_until(
-                pilot,
-                lambda: app.current_tab == "subscriptions"
-                and app.screen.__class__.__name__ == "SubscriptionScreen",
-            )
-            subscription_window = app.screen.subscription_window
-            assert subscription_window is not None
-            assert subscription_window.initial_tab == "watchlist-runs"
-            assert subscription_window._selected_watchlist_run_id == "local:watchlist_run:91"
+            # The Watchlists-run detail lives on the subscriptions screen,
+            # which is gated behind optional dependencies (feedparser etc.);
+            # mirror the app's own route gating in environments without them.
+            from tldw_chatbook.UI.Navigation import screen_registry
+
+            subscriptions_route = screen_registry._SCREEN_ROUTES.get("subscriptions")
+            if subscriptions_route is not None and subscriptions_route.dependencies_available():
+                app.screen.query_one("#console-live-work-primary-action", Button).press()
+                await _wait_until(
+                    pilot,
+                    lambda: app.current_tab == "subscriptions"
+                    and app.screen.__class__.__name__ == "SubscriptionScreen",
+                )
+                subscription_window = app.screen.subscription_window
+                assert subscription_window is not None
+                assert subscription_window.initial_tab == "watchlist-runs"
+                assert subscription_window._selected_watchlist_run_id == "local:watchlist_run:91"
 
 

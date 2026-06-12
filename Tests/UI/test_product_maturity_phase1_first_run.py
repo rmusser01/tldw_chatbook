@@ -91,7 +91,6 @@ async def _wait_until(
     raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s")
 
 
-@pytest.mark.skip(reason="Stale release-era snapshot (copy/evidence drifted); re-pin or retire via backlog task-98")
 @pytest.mark.asyncio
 async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
     monkeypatch: pytest.MonkeyPatch,
@@ -146,6 +145,14 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
                     pilot,
                     lambda current_tab=current_tab, screen_name=screen_name: (
                         app.current_tab == current_tab and app.screen.__class__.__name__ == screen_name
+                    ),
+                )
+                # Some destinations (Settings categories) populate a beat
+                # after the screen switch; wait for the copy, then assert.
+                await _wait_until(
+                    pilot,
+                    lambda required_copy=required_copy: all(
+                        copy in _screen_text(app) for copy in required_copy
                     ),
                 )
                 screen_text = _screen_text(app)

@@ -115,7 +115,6 @@ def _metadata(text: str) -> dict:
     return json.loads(match.group(1))
 
 
-@pytest.mark.skip(reason="Stale release-era snapshot (copy/evidence drifted); re-pin or retire via backlog task-98")
 @pytest.mark.asyncio
 async def test_release_first_time_replay_exposes_home_console_library_and_setup(
     monkeypatch: pytest.MonkeyPatch,
@@ -150,7 +149,7 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                     "nav-console",
                     "chat",
                     "ChatScreen",
-                    ("Console", "Live work sources", "Provider setup needed"),
+                    ("Console", "Live work sources", "Model: not selected"),
                 ),
                 (
                     "nav-library",
@@ -170,6 +169,14 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                     pilot,
                     lambda current_tab=current_tab, screen_name=screen_name: (
                         app.current_tab == current_tab and app.screen.__class__.__name__ == screen_name
+                    ),
+                )
+                # Some destinations (Settings categories) populate a beat
+                # after the screen switch; wait for the copy, then assert.
+                await _wait_until(
+                    pilot,
+                    lambda required_copy=required_copy: all(
+                        copy in _screen_text(app) for copy in required_copy
                     ),
                 )
                 screen_text = _screen_text(app)
