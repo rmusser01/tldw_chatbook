@@ -2116,7 +2116,7 @@ class PersonasScreen(BaseAppScreen):
                 ShortcutAction(
                     "ctrl+enter", "attach", available=self._console_action_allowed()
                 ),
-                ShortcutAction("ctrl+1-5", "mode"),
+                ShortcutAction("[ ]", "mode"),
             ),
         )
 
