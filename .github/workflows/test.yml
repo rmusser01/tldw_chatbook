@@ -163,13 +163,25 @@ jobs:
           --json-report \
           --json-report-file=ui-test-results.json \
           -v
-    
+
+    - name: Run ui-marked tests outside Tests/UI
+      # A couple dozen ui-marked tests live in other Tests/ directories;
+      # keep collecting them so the directory switch above loses nothing.
+      run: |
+        pytest Tests -m ui --ignore=Tests/UI \
+          --timeout=180 \
+          --json-report \
+          --json-report-file=ui-marked-test-results.json \
+          -v
+
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: ui-test-results
-        path: ui-test-results.json
+        path: |
+          ui-test-results.json
+          ui-marked-test-results.json
   
   all-tests:
     name: Full Test Suite (Manual)
