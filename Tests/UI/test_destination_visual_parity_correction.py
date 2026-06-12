@@ -596,7 +596,9 @@ async def test_library_service_call_awaits_coroutine_functions_without_worker(mo
             "chat",
             ConsoleHarness,
             "#console-workspace-grid",
-            ("#console-left-rail", "#console-main-column", "#console-run-inspector"),
+            # The run inspector is a section inside the right rail; the rail
+            # itself is the third workbench pane.
+            ("#console-left-rail", "#console-main-column", "#console-right-rail"),
             ("#console-send-message", "#console-attach-context", "#console-save-chatbook"),
             ("#console-run-inspector-state",),
             "#console-run-inspector",
@@ -618,9 +620,20 @@ async def test_core_default_empty_or_blocked_states_keep_workbench_geometry(
 ):
     app = _build_test_app()
     host = host_factory(app)
-    async with host.run_test(size=(140, 42)) as pilot:
+    # 160 wide: the Console force-collapses its inspector rail below 150
+    # columns (CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS), and this
+    # contract covers the full three-pane workbench.
+    async with host.run_test(size=(160, 42)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, workbench)
+        if route == "chat":
+            # The inspector rail composes collapsed; open it via its handle
+            # (only honored at >=150 columns) and wait out the recompose.
+            screen.query_one("#console-inspector-rail-open", Button).press()
+            for _ in range(40):
+                await pilot.pause(0.05)
+                if screen.query_one(panes[2]).display:
+                    break
         _assert_ascii_workbench_contract(
             screen,
             workbench=workbench,
@@ -816,9 +829,12 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         ("personas", "#personas-workbench", ("Persona List", "Behavior Profile Detail", "Attachments")),
         ("schedules", "#schedules-workbench", ("Schedule Queue", "Run Detail", "Status Inspector")),
         ("workflows", "#workflows-workbench", ("Procedure Library", "Run Detail", "Run Inspector")),
-        ("acp", "#acp-workbench", ("Agents / Sessions", "Session Detail", "Compatibility / Actions")),
+        # With no runtime configured (the harness default), ACP's middle pane
+        # is the Runtime Setup column rather than Session Detail.
+        ("acp", "#acp-workbench", ("Agents / Sessions", "Runtime Setup", "Compatibility / Actions")),
         ("skills", "#skills-workbench", ("Skill Library", "Skill Detail", "Skill Inspector")),
-        ("settings", "#settings-workbench", ("Settings Sections", "Preference Detail", "Scope Inspector")),
+        # Settings' Overview card title carries the column-title class.
+        ("settings", "#settings-workbench", ("Settings Sections", "Preference Detail", "Overview", "Scope Inspector")),
         ("ccp", "#ccp-workbench", ("Character Library", "Character Detail", "Attach / Validate")),
     ),
 )
@@ -1498,7 +1514,9 @@ async def test_acp_runtime_blocked_state_uses_setup_and_compatibility_columns():
         )
         visible_text = _visible_static_text(screen)
         assert "Agents / Sessions" in visible_text
-        assert "Session Detail" in visible_text
+        # With no runtime, the middle column reads "Runtime Setup" (not the
+        # old combined "Session Detail / Runtime Setup" label).
+        assert "Runtime Setup" in visible_text
         assert "Session Detail / Runtime Setup" not in visible_text
         assert "Compatibility / Actions" in visible_text
         assert "Runtime owner: ACP" in visible_text
@@ -1600,7 +1618,13 @@ COMPACT_DESTINATION_CONTRACTS = {
         "workbench": "#settings-workbench",
         "object": "#settings-category-pane",
         "detail": "#settings-detail-pane",
-        "actions": ("#settings-open-appearance",),
+        # The Overview card grew; #settings-open-appearance now sits below the
+        # compact fold. Any of these visible actions satisfies the contract.
+        "actions": (
+            "#settings-manual-sync-preview",
+            "#settings-save-category",
+            "#settings-open-appearance",
+        ),
     },
 }
 

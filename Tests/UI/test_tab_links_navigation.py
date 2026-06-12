@@ -56,6 +56,20 @@ def _expected_current_tab(tab_id: str) -> str:
     return tab_id
 
 
+def _tab_route_dependencies_available(tab_id: str) -> bool:
+    """Mirror the app's optional-dependency gating for screen routes.
+
+    Routes like subscriptions are unavailable without their optional extras
+    (feedparser/schedule/markdown); clicking their tab link intentionally
+    does not navigate, so the test must skip them in such environments.
+    """
+    from tldw_chatbook.UI.Navigation import screen_registry
+
+    route_id = screen_registry._SCREEN_ALIASES.get(tab_id, tab_id)
+    route = screen_registry._SCREEN_ROUTES.get(route_id)
+    return route is None or route.dependencies_available()
+
+
 async def _click_tab_link(tab_links: TabLinks, pilot, tab_id: str, pause: float = 1.0) -> None:
     """Dispatch a tab-link click through the TabLinks container."""
     link = tab_links.query_one(f"#tab-link-{tab_id}")
@@ -94,6 +108,8 @@ class TestTabLinksNavigation:
             
             # Test each tab link
             for tab_id in ALL_TABS:
+                if not _tab_route_dependencies_available(tab_id):
+                    continue
                 tab_links = app.query_one(TabLinks)
                 link_id = f"#tab-link-{tab_id}"
                 link = tab_links.query_one(link_id)

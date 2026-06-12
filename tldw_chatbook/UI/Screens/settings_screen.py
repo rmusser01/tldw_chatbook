@@ -4807,8 +4807,16 @@ class SettingsScreen(BaseAppScreen):
             for label, value in self.manual_sync_rows:
                 yield self._detail_row(label, value)
             with Horizontal(classes="settings-action-row"):
-                yield Button("Preview manual sync", id="settings-manual-sync-preview")
-                yield Button("Run manual sync", id="settings-manual-sync-run")
+                yield Button(
+                    "Preview manual sync",
+                    id="settings-manual-sync-preview",
+                    tooltip="Show pending Notes/Chat changes without mutating the server.",
+                )
+                yield Button(
+                    "Run manual sync",
+                    id="settings-manual-sync-run",
+                    tooltip="Apply the previewed Notes/Chat changes to the server.",
+                )
             yield Static("Configuration ownership", classes="destination-section")
             for label, value in self._overview_ownership_rows():
                 yield self._detail_row(label, value)

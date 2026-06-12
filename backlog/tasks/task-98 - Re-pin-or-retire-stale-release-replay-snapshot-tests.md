@@ -1,0 +1,27 @@
+---
+id: TASK-98
+title: Re-pin or retire stale release-replay snapshot tests
+status: To Do
+assignee: []
+created_date: '2026-06-11 20:42'
+updated_date: '2026-06-11 23:08'
+labels: []
+dependencies: []
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Quarantined (skip-marked) UI tests that pin release-era whole-app copy/evidence which has since drifted: phase1 empty-setup recovery copy + W+C handoff copy, phase1 core-loop RAG staging replay, phase6 first-time/power-user/recovery/nielsen replays (both unified-shell and product-maturity variants), phase3 source-study evidence doc, destination-action-audit + phase1-closeout artifacts, phase6 focus-visual-sweep evidence. Each needs either re-pinning to current copy or retirement as a historical gate. They run nowhere on CI (only -m ui runs there) and rotted dark.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Every skip-marked test in Tests/UI is either updated to current app behavior or removed with rationale,Full Tests/UI run is green locally
+<!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+UPDATE: the six destination-visual-parity tests were NOT order-dependent — fixed for real in 'Fix the last six destination-visual-parity failures' (Console min-widths could not fit the 100-col compact contract; geometry test ran below the 150-col inspector force-collapse threshold; plus three drifted copy/structure pins). Remaining scope of this task: the 13 skip-marked release-replay copy snapshots only. Full Tests/UI: 1974 passed, 0 failed, 31 skipped.
+<!-- SECTION:NOTES:END -->

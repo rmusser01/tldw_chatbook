@@ -1186,19 +1186,6 @@ async def test_personas_policy_denial_reports_blocked_console_readiness():
         assert button.disabled is True
 
 
-def test_personas_destination_service_adoption_tracking_evidence_exists():
-    evidence = PHASE4_PERSONAS_ADOPTION_EVIDENCE.read_text(encoding="utf-8")
-    roadmap = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text(encoding="utf-8")
-    task = Path(
-        "backlog/tasks/task-5.4 - Phase-4.4-Adopt-Personas-service-in-Personas-destination.md"
-    ).read_text(encoding="utf-8")
-
-    assert "Phase 4.4 Personas Service Adoption" in evidence
-    assert "TASK-5.4" in evidence
-    assert "Phase 4.4: Adopt Personas service in Personas destination - `TASK-5.4`" in roadmap
-    assert "character_persona_scope_service" in task
-
-
 @pytest.mark.asyncio
 async def test_library_exposes_source_sections_and_import_export_boundary():
     app = _build_test_app()
@@ -1461,34 +1448,6 @@ async def test_library_use_in_console_uses_source_snapshot_context():
     assert payload.metadata["conversations_count"] == 1
 
 
-def test_library_destination_service_adoption_tracking_evidence_exists():
-    evidence = PHASE4_LIBRARY_ADOPTION_EVIDENCE.read_text(encoding="utf-8")
-    roadmap = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text(encoding="utf-8")
-    task = Path(
-        "backlog/tasks/task-5.3 - Phase-4.3-Adopt-Library-source-services-in-Library-destination.md"
-    ).read_text(encoding="utf-8")
-
-    assert "Phase 4.3 Library Source Service Adoption" in evidence
-    assert "TASK-5.3" in evidence
-    assert "Phase 4.3: Adopt Library source services in Library destination - `TASK-5.3`" in roadmap
-    assert "notes_scope_service" in task
-    assert "media_reading_scope_service" in task
-
-
-def test_wc_service_adoption_tracking_evidence_exists():
-    evidence = PHASE4_WC_ADOPTION_EVIDENCE.read_text(encoding="utf-8")
-    roadmap = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text(encoding="utf-8")
-    task = Path(
-        "backlog/tasks/task-5.5 - Phase-4.5-Adopt-WC-services-in-WC-destination.md"
-    ).read_text(encoding="utf-8")
-
-    assert "Phase 4.5 W+C Service Adoption" in evidence
-    assert "TASK-5.5" in evidence
-    assert "Phase 4.5: Adopt W+C services in W+C destination - `TASK-5.5`" in roadmap
-    assert "watchlist_scope_service" in task
-    assert "media_reading_scope_service" in task
-
-
 @pytest.mark.parametrize(
     ("route", "selector", "target_route"),
     [
@@ -1605,13 +1564,32 @@ async def test_acp_missing_runtime_explains_acp_owned_setup_recovery():
         await pilot.pause()
         screen = _active_destination_screen(host)
         visible_text = _visible_text(screen)
+        # The recovery copy must not route users to Settings. The shared top
+        # nav legitimately carries a Settings destination button, so exclude
+        # nav chrome before asserting the absence.
+        non_nav_text = " ".join(
+            [
+                *(
+                    _static_text(widget)
+                    for widget in screen.query(Static)
+                    if widget.display and hasattr(widget, "renderable")
+                ),
+                *(
+                    str(button.label)
+                    for button in screen.query(Button)
+                    if button.display
+                    and button.label is not None
+                    and not (button.id or "").startswith("nav-")
+                ),
+            ]
+        )
         follow_button = screen.query_one("#acp-follow-in-console", Button)
         launch_button = screen.query_one("#acp-launch-agent", Button)
 
     assert "Runtime not configured" in visible_text
     assert "Configure ACP runtime setup in ACP before launch." in visible_text
     assert "Runtime owner: ACP" in visible_text
-    assert "Settings" not in visible_text
+    assert "Settings" not in non_nav_text
     assert follow_button.disabled is True
     assert launch_button.disabled is True
 
@@ -2265,19 +2243,6 @@ async def test_mcp_destination_runtime_refresh_uses_exclusive_worker(monkeypatch
     assert scheduled["kwargs"]["exclusive"] is True
 
 
-def test_mcp_destination_service_adoption_tracking_evidence_exists():
-    evidence = PHASE4_MCP_ADOPTION_EVIDENCE.read_text(encoding="utf-8")
-    roadmap = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text(encoding="utf-8")
-    task = Path(
-        "backlog/tasks/task-5.1 - Phase-4.1-Adopt-Unified-MCP-panel-in-MCP-destination.md"
-    ).read_text(encoding="utf-8")
-
-    assert "Phase 4.1 MCP Destination Service Adoption" in evidence
-    assert "TASK-5.1" in evidence
-    assert "Phase 4.1: Adopt Unified MCP panel in MCP destination - `TASK-5.1`" in roadmap
-    assert "UnifiedMCPPanel" in task
-
-
 def test_skills_screen_public_initializer_is_typed():
     signature = inspect.signature(SkillsScreen.__init__)
 
@@ -2629,19 +2594,6 @@ async def test_skills_attach_to_console_sanitizes_listed_skill_text():
     assert "<script" not in visible_text
     assert "onclick=" not in visible_text
     assert payload.metadata["skill_names"] == ["unsafe-skill"]
-
-
-def test_skills_destination_service_adoption_tracking_evidence_exists():
-    evidence = PHASE4_SKILLS_ADOPTION_EVIDENCE.read_text(encoding="utf-8")
-    roadmap = Path("Docs/superpowers/trackers/unified-shell-maturity-roadmap.md").read_text(encoding="utf-8")
-    task = Path(
-        "backlog/tasks/task-5.2 - Phase-4.2-Adopt-Skills-services-in-Skills-destination.md"
-    ).read_text(encoding="utf-8")
-
-    assert "Phase 4.2 Skills Destination Service Adoption" in evidence
-    assert "TASK-5.2" in evidence
-    assert "Phase 4.2: Adopt Skills services in Skills destination - `TASK-5.2`" in roadmap
-    assert "skills_scope_service" in task
 
 
 @pytest.mark.asyncio

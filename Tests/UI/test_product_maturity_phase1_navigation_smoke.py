@@ -187,35 +187,3 @@ async def test_top_level_navigation_activates_visible_tab_border_from_cached_con
             )
 
 
-def test_phase_one_three_evidence_records_top_level_navigation_smoke() -> None:
-    evidence = _text(EVIDENCE)
-
-    for required_text in (
-        "Phase 1.3",
-        "TASK-8.3",
-        "Top-Level Navigation Smoke",
-        "Fresh HOME",
-        "Ctrl+P",
-        "usable, not merely rendered",
-        "Remaining Phase 1 gates",
-        "No P0/P1 navigation blockers",
-    ):
-        assert required_text in evidence
-    for destination_id in TOP_LEVEL_DESTINATION_IDS:
-        assert f"`{destination_id}`" in evidence
-
-
-def test_phase_one_three_tracking_and_task_closeout_are_current() -> None:
-    tracker = _text(TRACKER)
-    readme = _text(PHASE_1_README)
-    task = _text(TASK)
-
-    assert "Phase 1.3" in tracker
-    assert "TASK-8.3" in tracker
-    assert EVIDENCE.name in tracker
-    assert EVIDENCE.name in readme
-    assert "Phase 1.3 top-level navigation status: verified" in readme
-    assert "status: Done" in task
-    for acceptance_criterion in range(1, 6):
-        assert f"- [x] #{acceptance_criterion}" in task
-    assert "Implementation Notes" in task

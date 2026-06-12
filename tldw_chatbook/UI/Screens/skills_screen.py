@@ -54,15 +54,10 @@ class SkillsScreen(BaseAppScreen):
         super().on_mount()
         self._refresh_local_skills_context()
 
-    @work(exclusive=True, thread=True)
-    def _refresh_local_skills_context(self) -> None:
-        records, lookup_error, recovery_state = asyncio.run(self._list_local_skills())
-        self.app.call_from_thread(
-            self._apply_local_skills_context,
-            records,
-            lookup_error,
-            recovery_state,
-        )
+    @work(exclusive=True)
+    async def _refresh_local_skills_context(self) -> None:
+        records, lookup_error, recovery_state = await self._list_local_skills()
+        self._apply_local_skills_context(records, lookup_error, recovery_state)
 
     def _apply_local_skills_context(
         self,
@@ -86,14 +81,22 @@ class SkillsScreen(BaseAppScreen):
         if not callable(list_skills):
             return (), SKILLS_SERVICE_UNAVAILABLE_COPY, None
         try:
-            result = list_skills(
-                mode="local",
-                limit=SKILLS_LOCAL_PAGE_SIZE,
-                offset=0,
-                include_hidden=False,
-            )
-            if inspect.isawaitable(result):
-                result = await result
+            list_kwargs = {
+                "mode": "local",
+                "limit": SKILLS_LOCAL_PAGE_SIZE,
+                "offset": 0,
+                "include_hidden": False,
+            }
+            if inspect.iscoroutinefunction(list_skills):
+                # Async services are expected to cooperate with the loop;
+                # to_thread would only offload coroutine *creation*.
+                result = await list_skills(**list_kwargs)
+            else:
+                # Sync service calls may block (local DB); keep them off the
+                # UI loop. A sync wrapper may still hand back an awaitable.
+                result = await asyncio.to_thread(list_skills, **list_kwargs)
+                if inspect.isawaitable(result):
+                    result = await result
         except PolicyDeniedError as exc:
             logger.info(
                 "Runtime policy denied local Agent Skills listing.",

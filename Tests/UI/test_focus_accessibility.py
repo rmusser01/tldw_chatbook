@@ -131,7 +131,10 @@ def test_console_settings_input_focus_does_not_outline_single_row_value():
     css_content = CSS_PATH.read_text(encoding="utf-8")
 
     block = css_block(css_content, "ConsoleSettingsModal Input:focus")
-    assert "outline: solid $ds-input-focus-accent;" in block
+    # Focus styling moved from an outline (which can repaint over the typed
+    # value in Textual Web) to a tall border with the outline suppressed.
+    assert "border: tall $ds-input-focus-accent;" in block
+    assert "outline: none;" in block
     assert "background: $ds-input-focus-bg;" in block
     assert "color: $ds-text-primary;" in block
     assert "text-style: bold;" in block

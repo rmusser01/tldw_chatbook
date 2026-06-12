@@ -26,11 +26,15 @@ async def test_stts_window_explains_missing_local_speech_dependencies(monkeypatc
         status = app.query_one("#speech-capability-status", Static)
         rendered_status = str(status.render())
 
-        assert rendered_status == "Local speech missing: TTS, STT"
+        # The status now uses the phase-5 recovery taxonomy copy
+        # (headline / Why / Next / Recovery / Owner) instead of a one-liner.
+        assert "Dependency missing" in rendered_status
+        assert "Local speech" in rendered_status
         assert (
             'pip install "tldw_chatbook[local_tts,transcription_faster_whisper,speech_recording]"'
-            in status.tooltip
+            in rendered_status
         )
+        assert "Recovery: Settings > Speech." in rendered_status
 
 
 @pytest.mark.asyncio

@@ -570,6 +570,10 @@ class NavigationButton(Button):
     """
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+
     NavigationButton {
         width: 100%;
         height: 3;

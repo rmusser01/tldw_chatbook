@@ -139,7 +139,8 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         screen.query_one("#library-mode-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
-        assert "Notes: 2" in _visible_text(screen)
+        # The Search/RAG panel renders counts as a pipe row ("... | Notes 2").
+        assert "Notes 2" in _visible_text(screen)
 
 
 @pytest.mark.asyncio

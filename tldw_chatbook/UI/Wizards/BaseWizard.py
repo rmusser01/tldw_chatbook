@@ -250,6 +250,11 @@ class WizardProgress(Horizontal):
     """Visual progress indicator for wizard steps."""
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-accent: $primary;
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+
     WizardProgress {
         layout: horizontal;
         align: center middle;
