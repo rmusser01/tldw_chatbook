@@ -705,12 +705,13 @@ class CCPPromptHandler:
         
         try:
             # Create filters for prompt files
+            # Filters need callable testers; glob strings crash the picker.
             filters = Filters(
-                ("Prompt Files", "*.json;*.yaml;*.yml;*.txt"),
-                ("JSON Files", "*.json"),
-                ("YAML Files", "*.yaml;*.yml"),
-                ("Text Files", "*.txt"),
-                ("All Files", "*.*")
+                ("Prompt Files", lambda p: p.suffix.lower() in (".json", ".yaml", ".yml", ".txt")),
+                ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                ("YAML Files", lambda p: p.suffix.lower() in (".yaml", ".yml")),
+                ("Text Files", lambda p: p.suffix.lower() == ".txt"),
+                ("All Files", lambda p: True),
             )
             
             # Create and show the file picker

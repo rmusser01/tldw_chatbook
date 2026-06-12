@@ -479,9 +479,13 @@ class TranscriptionHistoryViewer(Widget):
         # Show file save dialog
         self.app.push_screen(
             FileSave(
+                # Filters takes (name, Callable[[Path], bool]) tuples; the prior
+                # string/dict form crashed the picker on open.
                 filters=Filters(
-                    ("*.txt", "*.md", "*.json", "*.csv"),
-                    {"Text": ["*.txt"], "Markdown": ["*.md"], "JSON": ["*.json"], "CSV": ["*.csv"]}
+                    ("Text", lambda p: p.suffix.lower() == ".txt"),
+                    ("Markdown", lambda p: p.suffix.lower() == ".md"),
+                    ("JSON", lambda p: p.suffix.lower() == ".json"),
+                    ("CSV", lambda p: p.suffix.lower() == ".csv"),
                 ),
                 filename="transcription_history.txt"
             ),

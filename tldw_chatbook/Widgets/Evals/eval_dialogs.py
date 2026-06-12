@@ -165,15 +165,14 @@ def open_dataset_file_picker(app, callback: Callable[[Path, Dict[str, Any]], Non
                 )
             )
     
-    # Define filters for dataset files
+    # Define filters for dataset files. Filters takes *filters of
+    # (name, Callable[[Path], bool]); glob-string/list testers crash the picker.
     filters = Filters(
-        [
-            ("Dataset Files", ["*.json", "*.jsonl", "*.csv", "*.parquet"]),
-            ("JSON Files", ["*.json", "*.jsonl"]),
-            ("CSV Files", ["*.csv"]),
-            ("Parquet Files", ["*.parquet"]),
-            ("All Files", ["*"])
-        ]
+        ("Dataset Files", lambda p: p.suffix.lower() in (".json", ".jsonl", ".csv", ".parquet")),
+        ("JSON Files", lambda p: p.suffix.lower() in (".json", ".jsonl")),
+        ("CSV Files", lambda p: p.suffix.lower() == ".csv"),
+        ("Parquet Files", lambda p: p.suffix.lower() == ".parquet"),
+        ("All Files", lambda p: True),
     )
     
     # Open enhanced file picker

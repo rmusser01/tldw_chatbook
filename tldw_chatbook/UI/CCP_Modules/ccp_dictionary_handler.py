@@ -489,12 +489,13 @@ class CCPDictionaryHandler:
         
         try:
             # Create filters for dictionary/world book files
+            # Filters need callable testers; glob strings crash the picker.
             filters = Filters(
-                ("Dictionary Files", "*.json;*.csv;*.yaml;*.yml"),
-                ("JSON Files", "*.json"),
-                ("CSV Files", "*.csv"),
-                ("YAML Files", "*.yaml;*.yml"),
-                ("All Files", "*.*")
+                ("Dictionary Files", lambda p: p.suffix.lower() in (".json", ".csv", ".yaml", ".yml")),
+                ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                ("CSV Files", lambda p: p.suffix.lower() == ".csv"),
+                ("YAML Files", lambda p: p.suffix.lower() in (".yaml", ".yml")),
+                ("All Files", lambda p: True),
             )
             
             # Create and show the file picker
