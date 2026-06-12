@@ -186,6 +186,11 @@ class PersonasScreen(BaseAppScreen):
 
     #personas-work-area {
         width: 4fr;
+        /* The center card is the workbench's primary surface; keep it from
+           collapsing to an unusable sliver when the window narrows (~80 col).
+           A full responsive pass (collapsing a side pane, etc.) is tracked
+           separately. */
+        min-width: 40;
     }
 
     #personas-inspector-pane {
