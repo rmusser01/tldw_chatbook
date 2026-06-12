@@ -186,6 +186,11 @@ class PersonasScreen(BaseAppScreen):
 
     #personas-work-area {
         width: 4fr;
+        /* The center card is the workbench's primary surface; keep it from
+           collapsing to an unusable sliver when the window narrows (~80 col).
+           A full responsive pass (collapsing a side pane, etc.) is tracked
+           separately. */
+        min-width: 40;
     }
 
     #personas-inspector-pane {
@@ -1274,10 +1279,10 @@ class PersonasScreen(BaseAppScreen):
             picker = EnhancedFileOpen(
                 title="Import Character Card",
                 filters=Filters(
-                    ("Character Cards", "*.json;*.png"),
-                    ("JSON Files", "*.json"),
-                    ("PNG Files (with embedded data)", "*.png"),
-                    ("All Files", "*.*"),
+                    ("Character Cards", lambda p: p.suffix.lower() in (".json", ".png")),
+                    ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                    ("PNG Files (with embedded data)", lambda p: p.suffix.lower() == ".png"),
+                    ("All Files", lambda p: True),
                 ),
                 context="character_import",
             )
@@ -1372,9 +1377,15 @@ class PersonasScreen(BaseAppScreen):
             safe_name = "".join(c for c in name if c.isalnum() or c in " -_").rstrip()
             default_filename = f"{safe_name or 'export'}.{fmt}"
             if fmt == "png":
-                filters = Filters(("PNG Files", "*.png"), ("All Files", "*.*"))
+                filters = Filters(
+                    ("PNG Files", lambda p: p.suffix.lower() == ".png"),
+                    ("All Files", lambda p: True),
+                )
             else:
-                filters = Filters(("JSON Files", "*.json"), ("All Files", "*.*"))
+                filters = Filters(
+                    ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                    ("All Files", lambda p: True),
+                )
             picker = EnhancedFileSave(
                 title=f"Export as {fmt.upper()}",
                 default_filename=default_filename,
@@ -2110,7 +2121,7 @@ class PersonasScreen(BaseAppScreen):
                 ShortcutAction(
                     "ctrl+enter", "attach", available=self._console_action_allowed()
                 ),
-                ShortcutAction("ctrl+1-5", "mode"),
+                ShortcutAction("[ ]", "mode"),
             ),
         )
 

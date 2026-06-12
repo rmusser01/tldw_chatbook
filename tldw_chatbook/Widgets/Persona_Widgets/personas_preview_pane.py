@@ -94,8 +94,11 @@ class PersonasPreviewPane(Vertical):
             classes="console-action-subdued",
         )
         with Vertical(id="personas-preview-body"):
-            yield Static("", id="personas-preview-status")
             yield VerticalScroll(id="personas-preview-transcript")
+            # The status line is a status region adjacent to the input, kept
+            # BELOW the transcript so provider/error messages never render
+            # above the chronological greeting -> you -> character history.
+            yield Static("", id="personas-preview-status")
             yield Input(placeholder="Test message...", id="personas-preview-input")
             with Horizontal(classes="ds-toolbar"):
                 yield Button(
