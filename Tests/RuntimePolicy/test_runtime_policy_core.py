@@ -173,6 +173,7 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "kanban_boards_tasks": {
         "expected_domain_ids": {"kanban"},
         "expected_action_kinds_by_source": {
+            "local": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
             "server": _action_kinds("browse", "detail", "create", "update", "delete", "launch", "observe"),
         },
     },
@@ -235,6 +236,7 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "server_skills": {
         "expected_domain_ids": {"skills"},
         "expected_action_kinds_by_source": {
+            "local": FULL_CRUD_AND_LAUNCH,
             "server": FULL_CRUD_AND_LAUNCH,
         },
     },
@@ -677,78 +679,146 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         prompt_studio.test_cases.update.server
     """),
     "kanban_boards_tasks": _action_ids("""
+        kanban.activities.list.local
         kanban.activities.list.server
+        kanban.boards.archive.local
         kanban.boards.archive.server
+        kanban.boards.create.local
         kanban.boards.create.server
+        kanban.boards.delete.local
         kanban.boards.delete.server
+        kanban.boards.detail.local
         kanban.boards.detail.server
+        kanban.boards.export.local
         kanban.boards.export.server
+        kanban.boards.import.local
         kanban.boards.import.server
+        kanban.boards.list.local
         kanban.boards.list.server
+        kanban.boards.restore.local
         kanban.boards.restore.server
+        kanban.boards.update.local
         kanban.boards.update.server
+        kanban.card_labels.create.local
         kanban.card_labels.create.server
+        kanban.card_labels.delete.local
         kanban.card_labels.delete.server
+        kanban.card_labels.list.local
         kanban.card_labels.list.server
+        kanban.card_links.create.local
         kanban.card_links.create.server
+        kanban.card_links.delete.local
         kanban.card_links.delete.server
+        kanban.card_links.detail.local
         kanban.card_links.detail.server
+        kanban.card_links.list.local
         kanban.card_links.list.server
+        kanban.cards.archive.local
         kanban.cards.archive.server
+        kanban.cards.create.local
         kanban.cards.create.server
+        kanban.cards.delete.local
         kanban.cards.delete.server
+        kanban.cards.detail.local
         kanban.cards.detail.server
+        kanban.cards.launch.local
         kanban.cards.launch.server
+        kanban.cards.list.local
         kanban.cards.list.server
+        kanban.cards.reorder.local
         kanban.cards.reorder.server
+        kanban.cards.restore.local
         kanban.cards.restore.server
+        kanban.cards.update.local
         kanban.cards.update.server
+        kanban.checklist_items.create.local
         kanban.checklist_items.create.server
+        kanban.checklist_items.delete.local
         kanban.checklist_items.delete.server
+        kanban.checklist_items.detail.local
         kanban.checklist_items.detail.server
+        kanban.checklist_items.list.local
         kanban.checklist_items.list.server
+        kanban.checklist_items.reorder.local
         kanban.checklist_items.reorder.server
+        kanban.checklist_items.update.local
         kanban.checklist_items.update.server
+        kanban.checklists.create.local
         kanban.checklists.create.server
+        kanban.checklists.delete.local
         kanban.checklists.delete.server
+        kanban.checklists.detail.local
         kanban.checklists.detail.server
+        kanban.checklists.list.local
         kanban.checklists.list.server
+        kanban.checklists.reorder.local
         kanban.checklists.reorder.server
+        kanban.checklists.update.local
         kanban.checklists.update.server
+        kanban.comments.create.local
         kanban.comments.create.server
+        kanban.comments.delete.local
         kanban.comments.delete.server
+        kanban.comments.detail.local
         kanban.comments.detail.server
+        kanban.comments.list.local
         kanban.comments.list.server
+        kanban.comments.update.local
         kanban.comments.update.server
+        kanban.labels.create.local
         kanban.labels.create.server
+        kanban.labels.delete.local
         kanban.labels.delete.server
+        kanban.labels.detail.local
         kanban.labels.detail.server
+        kanban.labels.list.local
         kanban.labels.list.server
+        kanban.labels.update.local
         kanban.labels.update.server
+        kanban.lists.archive.local
         kanban.lists.archive.server
+        kanban.lists.create.local
         kanban.lists.create.server
+        kanban.lists.delete.local
         kanban.lists.delete.server
+        kanban.lists.detail.local
         kanban.lists.detail.server
+        kanban.lists.list.local
         kanban.lists.list.server
+        kanban.lists.reorder.local
         kanban.lists.reorder.server
+        kanban.lists.restore.local
         kanban.lists.restore.server
+        kanban.lists.update.local
         kanban.lists.update.server
+        kanban.search.detail.local
         kanban.search.detail.server
+        kanban.search.list.local
         kanban.search.list.server
     """),
     "translation_utility": _action_ids("""
         translation.text.launch.server
     """),
     "server_skills": _action_ids("""
+        skills.context.list.local
         skills.context.list.server
+        skills.create.local
         skills.create.server
+        skills.delete.local
         skills.delete.server
+        skills.detail.local
         skills.detail.server
+        skills.execute.launch.local
         skills.execute.launch.server
+        skills.export.launch.local
         skills.export.launch.server
+        skills.import.launch.local
         skills.import.launch.server
+        skills.list.local
         skills.list.server
+        skills.seed.launch.local
         skills.seed.launch.server
+        skills.update.local
         skills.update.server
     """),
     "server_tools": _action_ids("""
