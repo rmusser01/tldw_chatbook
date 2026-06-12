@@ -4823,6 +4823,12 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Server, sync, workspace, and handoff", classes="destination-section")
             for label, value in self.server_sync_workspace_handoff_rows:
                 yield self._detail_row(label, value)
+            with Horizontal(classes="settings-action-row"):
+                yield Button(
+                    "Switch Source / Server",
+                    id="settings-switch-runtime-source",
+                    tooltip="Choose local-only or bind a tldw server as the runtime source.",
+                )
             yield Static("Provider readiness", classes="destination-section")
             yield self._detail_row(
                 "Provider readiness",
@@ -6487,6 +6493,111 @@ class SettingsScreen(BaseAppScreen):
     def handle_preview_appearance(self, event: Button.Pressed) -> None:
         event.stop()
         self.action_settings_test_category()
+
+    @on(Button.Pressed, "#settings-switch-runtime-source")
+    def handle_switch_runtime_source(self, event: Button.Pressed) -> None:
+        """Open the runtime-source switch modal (callback-based, never wait)."""
+        event.stop()
+        from tldw_chatbook.Widgets.Settings_Widgets.server_switch_modal import ServerSwitchModal
+
+        state = self._runtime_source_state()
+        raw_config = (getattr(self.app_instance, "app_config", {}) or {}).get(
+            "COMPREHENSIVE_CONFIG_RAW", {}
+        )
+        api_config = raw_config.get("tldw_api", {}) if isinstance(raw_config, dict) else {}
+        modal = ServerSwitchModal(
+            current_source=str(getattr(state, "active_source", "local") or "local"),
+            current_server_label=str(
+                getattr(state, "last_known_server_label", "")
+                or getattr(state, "active_server_id", "")
+                or ""
+            ),
+            current_base_url=str(api_config.get("base_url") or ""),
+            current_auth_token=str(api_config.get("auth_token") or ""),
+        )
+        self.app.push_screen(modal, self._handle_runtime_source_switch_result)
+
+    def _handle_runtime_source_switch_result(self, result: dict | None) -> None:
+        if not result:
+            return
+        self.run_worker(
+            self._perform_runtime_source_switch(result),
+            exclusive=True,
+            group="settings-runtime-source-switch",
+        )
+
+    async def _perform_runtime_source_switch(self, result: dict) -> None:
+        """Apply the modal decision: persist, rebind, switch, enroll Sync v2."""
+        app = self.app_instance
+        if result.get("action") == "local":
+            await app.handle_runtime_backend_changed("local")
+            self.app.notify("Runtime source set to local.", severity="information")
+            self._refresh_manual_sync_rows()
+            return
+
+        base_url = str(result.get("base_url") or "").strip()
+        if not base_url:
+            return
+        from tldw_chatbook.config import load_settings, save_setting_to_cli_config
+        from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
+
+        from tldw_chatbook.Utils.input_validation import validate_url
+
+        if not validate_url(base_url):
+            self.app.notify(
+                "Rejected server URL; nothing was changed.", severity="error"
+            )
+            return
+        save_setting_to_cli_config("tldw_api", "base_url", base_url)
+        # Persist the token unconditionally so clearing it in the modal
+        # actually removes the stored credential.
+        auth_token = str(result.get("auth_token") or "").strip()
+        save_setting_to_cli_config("tldw_api", "auth_token", auth_token)
+        app.app_config = load_settings(force_reload=True)
+        load_runtime_policy_for_app(app)
+        await app.handle_runtime_backend_changed("server")
+
+        state = self._runtime_source_state()
+        server_id = str(getattr(state, "active_server_id", "") or "").strip()
+        if not server_id:
+            self.app.notify(
+                "Server could not be bound from the entered URL.", severity="error"
+            )
+            return
+
+        sync_scope_service = getattr(app, "sync_scope_service", None)
+        prepare = getattr(sync_scope_service, "prepare_sync_v2_profile_mode", None)
+        if callable(prepare):
+            import platform
+
+            try:
+                summary = await prepare(
+                    profile_mode="local_first_sync",
+                    server_profile_id=server_id,
+                    display_name=platform.node() or "tldw_chatbook",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Sync v2 profile preparation failed (server_profile_id={}, mode=local_first_sync).",
+                    server_id,
+                    exc_info=True,
+                )
+                self.app.notify(
+                    f"Server activated, but Sync v2 setup failed: {exc}",
+                    severity="warning",
+                )
+            else:
+                dataset = str(summary.get("dataset_id") or "unknown")
+                self.app.notify(
+                    f"Server activated; Sync v2 prepared (dataset {dataset}).",
+                    severity="information",
+                )
+        else:
+            self.app.notify(
+                "Server activated. Sync v2 service is unavailable in this runtime.",
+                severity="warning",
+            )
+        self._refresh_manual_sync_rows()
 
     @on(Button.Pressed, "#settings-manual-sync-preview")
     def handle_manual_sync_preview(self, event: Button.Pressed) -> None:

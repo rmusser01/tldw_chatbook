@@ -590,6 +590,26 @@ _SETTINGS_CACHE: Optional[Dict[str, Any]] = None
 _SETTINGS_CACHE_SOURCE: Optional[Path] = None
 _SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
 
+def resolve_tldw_api_config(app_config) -> Dict:
+    """Return the [tldw_api] section from either config shape.
+
+    Raw CLI config (load_cli_config_and_ensure_existence) carries [tldw_api]
+    at the top level; the app's normalized config (load_settings) keeps the
+    raw CLI config nested under COMPREHENSIVE_CONFIG_RAW. Every reader of the
+    server endpoint/token must accept both shapes.
+    """
+    if not isinstance(app_config, dict) and not hasattr(app_config, "get"):
+        return {}
+    api_config = app_config.get("tldw_api", {}) or {}
+    if not isinstance(api_config, dict) or not api_config:
+        raw_config = app_config.get("COMPREHENSIVE_CONFIG_RAW", {}) or {}
+        nested = raw_config.get("tldw_api", {}) if hasattr(raw_config, "get") else {}
+        api_config = nested if isinstance(nested, dict) else {}
+    if not isinstance(api_config, dict):
+        return {}
+    return dict(api_config)
+
+
 def load_settings(force_reload: bool = False) -> Dict:
     """
     Loads all settings from TOML config files, environment variables, or defaults into a dictionary.

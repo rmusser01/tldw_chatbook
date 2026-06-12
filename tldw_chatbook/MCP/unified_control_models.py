@@ -272,9 +272,9 @@ class ConfiguredServerTarget:
         if not isinstance(app_config, Mapping):
             return None
 
-        api_config = app_config.get("tldw_api", {})
-        if not isinstance(api_config, Mapping):
-            api_config = {}
+        from tldw_chatbook.config import resolve_tldw_api_config
+
+        api_config = resolve_tldw_api_config(app_config)
 
         raw_url = str(api_config.get("base_url") or api_config.get("api_url") or api_config.get("url") or "").strip()
         if not raw_url:

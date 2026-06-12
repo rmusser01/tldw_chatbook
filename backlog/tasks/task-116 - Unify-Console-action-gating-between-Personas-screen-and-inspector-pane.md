@@ -1,5 +1,5 @@
 ---
-id: TASK-96
+id: TASK-116
 title: Unify Console-action gating between Personas screen and inspector pane
 status: To Do
 assignee: []
