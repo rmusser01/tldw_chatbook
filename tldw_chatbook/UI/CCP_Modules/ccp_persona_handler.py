@@ -10,15 +10,15 @@ from .ccp_messages import PersonaMessage, ViewChangeMessage
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
 
 if TYPE_CHECKING:
-    from ..Screens.ccp_screen import CCPScreen
+    from ..Screens.personas_screen import PersonasScreen
 
 logger = logger.bind(module="CCPPersonaHandler")
 
 
 class CCPPersonaHandler:
-    """Handles first-class persona profile operations for the CCP screen."""
+    """Handles first-class persona profile operations for the Personas screen."""
 
-    def __init__(self, window: "CCPScreen"):
+    def __init__(self, window: "PersonasScreen"):
         self.window = window
         self.app_instance = window.app_instance
         self.current_persona_id: Optional[str] = None
@@ -37,6 +37,10 @@ class CCPPersonaHandler:
             if candidate in {"local", "server"}:
                 return candidate
         return "local"
+
+    def current_mode(self) -> str:
+        """Public accessor for the resolved backend mode (local or server)."""
+        return self._current_mode()
 
     def _notify(self, message: str, severity: str = "warning") -> None:
         """Surface a CCP notification when a user action cannot complete."""

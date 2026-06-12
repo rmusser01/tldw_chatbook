@@ -141,16 +141,12 @@ _ROUTABLE_LEGACY_ROUTES = {
     "conversation",
     "study",
     "chatbooks",
-    "ccp",
     "subscriptions",
     "tools_settings",
     "customize",
 }
 
 _CANONICAL_ROUTE_OVERRIDES = {
-    "conversations_characters_prompts": "ccp",
-    "characters": "ccp",
-    "prompts": "ccp",
     "subscription": "subscriptions",
 }
 

@@ -21,6 +21,9 @@ class AppFooterStatus(Widget):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._shortcut_text = self.DEFAULT_SHORTCUT_TEXT
+        #: Source of the active shortcut context (e.g. "personas"); ``None``
+        #: when the default shortcuts are shown.
+        self._shortcut_source: str | None = None
         self._shortcut_display = Static(self._shortcut_text, id="footer-key-quit")
         self._word_count_display: Static = Static("", id="footer-word-count")
         self._token_count_display: Static = Static("Tokens: -- | ", id="footer-token-count")
@@ -43,9 +46,21 @@ class AppFooterStatus(Widget):
 
     def set_shortcut_context(self, context: ShortcutContext) -> None:
         text = context.render() or self.DEFAULT_SHORTCUT_TEXT
+        self._shortcut_source = context.source
         self._set_shortcut_text(text)
 
-    def clear_shortcut_context(self) -> None:
+    def clear_shortcut_context(self, source: str | None = None) -> None:
+        """Reset the footer to the default shortcuts.
+
+        Textual's ``switch_screen`` mounts the incoming screen before
+        unmounting the outgoing one, so an unmount-time clear can race a
+        just-registered context. Passing ``source`` makes the clear a no-op
+        unless that source still owns the context; calling with no argument
+        clears unconditionally (backward compatible).
+        """
+        if source is not None and source != self._shortcut_source:
+            return
+        self._shortcut_source = None
         self._set_shortcut_text(self.DEFAULT_SHORTCUT_TEXT)
 
     def update_db_sizes_display(self, status_string: str) -> None:

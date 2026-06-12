@@ -523,6 +523,7 @@ class PersonaSetupState(BaseModel):
 class PersonaProfileCreate(BaseModel):
     id: StrictStr | None = Field(default=None, min_length=1, max_length=200)
     name: str = Field(..., min_length=1, max_length=200)
+    description: str | None = None
     archetype_key: str | None = Field(default=None, min_length=1, max_length=200)
     character_card_id: int | None = None
     mode: PersonaMode = "session_scoped"
@@ -535,6 +536,7 @@ class PersonaProfileCreate(BaseModel):
 
 class PersonaProfileUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
     character_card_id: int | None = None
     mode: PersonaMode | None = None
     system_prompt: str | None = None

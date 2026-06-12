@@ -32,9 +32,9 @@ def test_legacy_routes_resolve_to_master_destinations():
         "search": ("library", "search"),
         "study": ("library", "study"),
         "chatbooks": ("artifacts", "chatbooks"),
-        "ccp": ("personas", "ccp"),
+        "ccp": ("personas", "personas"),
         "conversation": ("library", "conversation"),
-        "conversations_characters_prompts": ("personas", "ccp"),
+        "conversations_characters_prompts": ("personas", "personas"),
         "subscriptions": ("watchlists_collections", "subscriptions"),
         "tools_settings": ("mcp", "tools_settings"),
         "settings": ("settings", "settings"),
@@ -43,6 +43,21 @@ def test_legacy_routes_resolve_to_master_destinations():
     for route, expected in expectations.items():
         resolved = resolve_shell_route(route)
         assert (resolved.destination_id, resolved.canonical_route) == expected
+
+
+def test_ccp_legacy_routes_resolve_to_personas_destination():
+    for legacy in ("ccp", "characters", "prompts", "conversations_characters_prompts"):
+        resolved = resolve_shell_route(legacy)
+        assert resolved.destination_id == "personas"
+        assert resolved.canonical_route == "personas"
+
+
+def test_ccp_screen_route_loads_personas_screen():
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+
+    screen_name, _tab, screen_class = resolve_screen_target("ccp")
+    assert screen_class is not None
+    assert screen_class.__name__ == "PersonasScreen"
 
 
 def test_each_shell_destination_has_recovery_tooltip_copy():

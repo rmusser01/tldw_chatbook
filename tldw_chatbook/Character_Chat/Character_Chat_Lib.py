@@ -455,7 +455,12 @@ def _get_default_chachanotes_db() -> Optional[CharactersRAGDB]:
 
 
 def fetch_character_names(db: Optional[CharactersRAGDB] = None, limit: int = 1000) -> List[Dict[str, Any]]:
-    """Compatibility wrapper used by older CCP handlers."""
+    """Compatibility wrapper used by older CCP handlers.
+
+    The default ``limit`` must stay in sync with
+    ``PersonasScreen.LIBRARY_FTS_THRESHOLD`` (UI/Screens/personas_screen.py),
+    which switches library search to FTS when the loaded list may be truncated.
+    """
     target_db = db or _get_default_chachanotes_db()
     if target_db is None:
         return []

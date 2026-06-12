@@ -1,0 +1,408 @@
+"""Mounted tests for the Personas library pane."""
+
+import pytest
+from textual.app import App
+from textual.widgets import Button, Input, ListItem, ListView, Static
+
+from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
+    LibraryRow,
+    PersonasLibraryPane,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import (
+    PersonaActionRequested,
+    PersonaEntitySelected,
+    PersonaSearchChanged,
+)
+
+pytestmark = pytest.mark.asyncio
+
+
+def _row_text(item: ListItem) -> str:
+    """Visible text of a library row (the ListItem's inner Static)."""
+    return str(item.query_one(Static).renderable)
+
+
+class LibraryPaneApp(App):
+    def compose(self):
+        yield PersonasLibraryPane(id="personas-library-pane")
+
+
+async def test_pane_renders_search_toolbar_and_empty_state():
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        assert pilot.app.query_one("#personas-library-search", Input)
+        assert pilot.app.query_one("#personas-library-new", Button)
+        assert pilot.app.query_one("#personas-library-import", Button)
+        await pane.update_rows((), total=0, noun="characters")
+        await pilot.pause()
+        empty = pilot.app.query_one("#personas-library-empty", Static)
+        assert "No characters yet" in str(empty.renderable)
+
+
+async def test_update_rows_renders_rows_and_count():
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        rows = (
+            LibraryRow(item_id="1", kind="character", name="Detective Sam"),
+            LibraryRow(item_id="2", kind="character", name="Tutor", is_unsaved=True),
+        )
+        await pane.update_rows(rows, total=2, noun="characters")
+        await pilot.pause()
+        items = pilot.app.query(".personas-library-row")
+        assert len(items) == 2
+        assert "is-unsaved" in pilot.app.query_one(
+            "#personas-library-row-character-2", ListItem
+        ).classes
+        count = pilot.app.query_one("#personas-library-count", Static)
+        assert "2 characters" in str(count.renderable)
+
+
+async def test_filtered_count_shows_n_of_m():
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
+            total=12,
+            noun="characters",
+            filtered=True,
+        )
+        await pilot.pause()
+        count = pilot.app.query_one("#personas-library-count", Static)
+        assert "1 of 12 characters" in str(count.renderable)
+
+
+async def test_row_press_posts_persona_entity_selected():
+    received = []
+
+    class CaptureApp(LibraryPaneApp):
+        def on_persona_entity_selected(self, message: PersonaEntitySelected) -> None:
+            received.append((message.entity_kind, message.entity_id, message.entity_name))
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (LibraryRow(item_id="7", kind="character", name="Detective Sam"),),
+            total=1,
+            noun="characters",
+        )
+        await pilot.pause()
+        await pilot.click("#personas-library-row-character-7")
+        await pilot.pause()
+    assert received == [("character", "7", "Detective Sam")]
+
+
+async def test_search_input_posts_search_changed_and_new_posts_create_action():
+    searches = []
+    actions = []
+
+    class CaptureApp(LibraryPaneApp):
+        def on_persona_search_changed(self, message: PersonaSearchChanged) -> None:
+            searches.append(message.query)
+
+        def on_persona_action_requested(self, message: PersonaActionRequested) -> None:
+            actions.append(message.action)
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        search = pilot.app.query_one("#personas-library-search", Input)
+        search.value = "sam"
+        await pilot.pause()
+        await pilot.click("#personas-library-new")
+        await pilot.pause()
+        await pilot.click("#personas-library-import")
+        await pilot.pause()
+    assert searches[-1] == "sam"
+    assert actions == ["create", "import"]
+
+
+async def test_mark_active_row_applies_is_active_to_selected_only():
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="1", kind="character", name="Detective Sam"),
+                LibraryRow(item_id="2", kind="character", name="Tutor"),
+            ),
+            total=2,
+            noun="characters",
+        )
+        await pilot.pause()
+        pane.mark_active_row("character", "2")
+        assert "is-active" in pilot.app.query_one("#personas-library-row-character-2", ListItem).classes
+        assert "is-active" not in pilot.app.query_one("#personas-library-row-character-1", ListItem).classes
+        # The list highlight follows the active row for keyboard continuity.
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        assert list_view.index == 1
+
+
+async def test_toolbar_and_rows_carry_shared_flat_button_classes():
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        assert pilot.app.query_one("#personas-library-new", Button).has_class(
+            "console-action-secondary"
+        )
+        assert pilot.app.query_one("#personas-library-import", Button).has_class(
+            "console-action-secondary"
+        )
+        await pane.update_rows(
+            (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
+            total=1,
+            noun="characters",
+        )
+        await pilot.pause()
+        row = pilot.app.query_one("#personas-library-row-character-1", ListItem)
+        assert row.has_class("personas-library-row")
+        assert row.has_class("console-action-subdued")
+
+
+async def test_active_row_keeps_subdued_and_is_active_markers():
+    """The bundle's user-tier rule ``ListItem.personas-library-row.is-active``
+    (in _agentic_terminal.tcss) wins over ``.console-action-subdued`` by
+    higher specificity (type + two classes vs. one class) within the same
+    origin tier, so the active row is styled correctly; the widget must
+    keep both marker classes on the row so both rules can apply."""
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="1", kind="character", name="Detective Sam"),
+                LibraryRow(item_id="2", kind="character", name="Tutor"),
+            ),
+            total=2,
+            noun="characters",
+        )
+        await pilot.pause()
+        pane.mark_active_row("character", "1")
+        active = pilot.app.query_one("#personas-library-row-character-1", ListItem)
+        assert active.has_class("console-action-subdued")
+        assert active.has_class("is-active")
+        inactive = pilot.app.query_one("#personas-library-row-character-2", ListItem)
+        assert inactive.has_class("console-action-subdued")
+        assert not inactive.has_class("is-active")
+
+
+async def test_set_mode_toggles_import_button_and_empty_copy():
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        import_button = pilot.app.query_one("#personas-library-import", Button)
+        pane.set_mode("personas")
+        assert import_button.display is False
+        pane.set_mode("characters")
+        assert import_button.display is True
+        pane.set_mode("personas")
+        await pane.update_rows((), total=0, noun="persona profiles")
+        await pilot.pause()
+        empty = pilot.app.query_one("#personas-library-empty", Static)
+        copy = str(empty.renderable)
+        assert "No persona profiles yet" in copy
+        assert "Import" not in copy
+
+
+async def test_update_rows_twice_in_same_tick_does_not_crash():
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        rows_a = (LibraryRow(item_id="1", kind="character", name="First"),)
+        rows_b = (LibraryRow(item_id="2", kind="character", name="Second"),)
+        await pane.update_rows(rows_a, total=1, noun="characters")
+        await pane.update_rows(rows_b, total=1, noun="characters")
+        await pilot.pause()
+        items = pilot.app.query(".personas-library-row")
+        assert len(items) == 1
+        assert items.first(ListItem).id == "personas-library-row-character-2"
+        assert _row_text(items.first(ListItem)) == "Second"
+
+
+async def test_arrow_navigation_and_enter_selects():
+    """Down/Down highlights the second row without selecting; Enter selects it."""
+    received = []
+
+    class CaptureApp(LibraryPaneApp):
+        def on_persona_entity_selected(self, message: PersonaEntitySelected) -> None:
+            received.append((message.entity_kind, message.entity_id, message.entity_name))
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="1", kind="character", name="Detective Sam"),
+                LibraryRow(item_id="2", kind="character", name="Tutor"),
+                LibraryRow(item_id="3", kind="character", name="Navigator"),
+            ),
+            total=3,
+            noun="characters",
+        )
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.press("down")
+        await pilot.pause()
+        # Arrow browsing alone must never fire a selection (guards/dirty
+        # prompts stay quiet until the user explicitly commits with Enter).
+        assert received == []
+        await pilot.press("enter")
+        await pilot.pause()
+    assert received == [("character", "2", "Tutor")]
+
+
+async def test_search_enter_jumps_to_results():
+    """Enter in the search input focuses the list and highlights the first row."""
+    received = []
+
+    class CaptureApp(LibraryPaneApp):
+        def on_persona_entity_selected(self, message: PersonaEntitySelected) -> None:
+            received.append(message.entity_id)
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="1", kind="character", name="Detective Sam"),
+                LibraryRow(item_id="2", kind="character", name="Tutor"),
+            ),
+            total=2,
+            noun="characters",
+        )
+        await pilot.pause()
+        search = pilot.app.query_one("#personas-library-search", Input)
+        search.focus()
+        await pilot.pause()
+        search.value = "sam"
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        assert pilot.app.focused is list_view
+        assert list_view.index == 0
+        # Jumping into the results highlights only; it must not select.
+        assert received == []
+
+
+async def test_search_enter_with_no_rows_does_not_crash():
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows((), total=0, noun="characters")
+        await pilot.pause()
+        search = pilot.app.query_one("#personas-library-search", Input)
+        search.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        assert pilot.app.focused is list_view
+
+
+async def test_highlighted_row_carries_textual_highlight_class():
+    """Textual sets ``-highlight`` (single dash) on the browsed ListItem.
+
+    Our CSS bundle targets ``ListItem.personas-library-row.-highlight``; this
+    test pins the class-name contract so a Textual upgrade that renames the
+    pseudo-class will surface immediately as a test failure rather than a
+    silent visual regression.
+    """
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="1", kind="character", name="Alpha"),
+                LibraryRow(item_id="2", kind="character", name="Beta"),
+            ),
+            total=2,
+            noun="characters",
+        )
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        await pilot.pause()
+        # After pressing down the ListView moves the cursor to index 0
+        # (Textual convention: first press sets the highlight).
+        await pilot.press("down")
+        await pilot.pause()
+        # The highlighted item carries the Textual-internal ``-highlight``
+        # class (single dash), which is what our CSS selector targets.
+        first = pilot.app.query_one("#personas-library-row-character-1", ListItem)
+        assert first.has_class("-highlight"), (
+            "ListItem should carry Textual's '-highlight' (single-dash) class "
+            "when it is the browse cursor; if this fails Textual may have "
+            "renamed the class and our CSS selector needs updating."
+        )
+
+
+async def test_is_active_and_highlight_can_coexist():
+    """An active row that is also the browse cursor must carry both
+    ``is-active`` and ``-highlight`` so the CSS cascade can resolve
+    correctly (the ``.is-active`` rule wins by sheet order).
+
+    ``mark_active_row`` sets ``list_view.index`` to the active row's position,
+    so after focusing the list and pressing down once from index 0 the cursor
+    lands on index 1 (Beta).  We verify the ``-highlight`` class is present on
+    whichever row holds the browse cursor, confirming Textual's class contract.
+    """
+    app = LibraryPaneApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="1", kind="character", name="Alpha"),
+                LibraryRow(item_id="2", kind="character", name="Beta"),
+            ),
+            total=2,
+            noun="characters",
+        )
+        await pilot.pause()
+        list_view = pilot.app.query_one("#personas-library-rows", ListView)
+        list_view.focus()
+        await pilot.pause()
+        # Press down twice so the cursor is on index 1 (Beta), then mark it
+        # active — both ``is-active`` and ``-highlight`` must coexist.
+        await pilot.press("down")
+        await pilot.press("down")
+        await pilot.pause()
+        pane.mark_active_row("character", "2")
+        await pilot.pause()
+        beta = pilot.app.query_one("#personas-library-row-character-2", ListItem)
+        assert beta.has_class("is-active"), "Active marker must be present on Beta"
+        assert beta.has_class("-highlight"), (
+            "Browse cursor class (-highlight) must coexist with is-active on Beta"
+        )
+
+
+async def test_colliding_item_ids_render_without_crash():
+    received = []
+
+    class CaptureApp(LibraryPaneApp):
+        def on_persona_entity_selected(self, message: PersonaEntitySelected) -> None:
+            received.append(message.entity_id)
+
+    app = CaptureApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasLibraryPane)
+        await pane.update_rows(
+            (
+                LibraryRow(item_id="a.b", kind="character", name="Dotted"),
+                LibraryRow(item_id="a b", kind="character", name="Spaced"),
+            ),
+            total=2,
+            noun="characters",
+        )
+        await pilot.pause()
+        buttons = pilot.app.query(".personas-library-row")
+        assert len(buttons) == 2
+        for button in buttons:
+            await pilot.click(f"#{button.id}")
+            await pilot.pause()
+    assert received == ["a.b", "a b"]
