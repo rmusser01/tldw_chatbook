@@ -1476,6 +1476,58 @@ async def test_console_native_tab_strip_creates_and_switches_sessions():
 
 
 @pytest.mark.asyncio
+async def test_console_new_chat_focuses_composer_for_immediate_typing():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        await pilot.press("n")
+        await pilot.pause(0.1)
+
+        assert console.app.focused is composer
+        assert composer.draft_text() == "n"
+
+
+@pytest.mark.asyncio
+async def test_console_tab_switch_focuses_composer_for_immediate_typing():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+
+        await pilot.click(f"#console-session-tab-{first.id}")
+        assert store.active_session_id == first.id
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        await pilot.press("s")
+        await pilot.pause(0.1)
+
+        assert console.app.focused is composer
+        assert composer.draft_text() == "s"
+
+
+@pytest.mark.asyncio
 async def test_console_native_tab_strip_isolates_composer_drafts():
     app = _build_test_app()
     host = ConsoleHarness(app)

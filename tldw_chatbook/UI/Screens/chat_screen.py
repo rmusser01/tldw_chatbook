@@ -4618,6 +4618,7 @@ class ChatScreen(BaseAppScreen):
                 settings=self._default_console_session_settings(),
             )
             await self._sync_native_console_chat_ui()
+            self._focus_console_composer_if_needed(force=True)
             return
         if button_id and button_id.startswith("console-close-session-tab-"):
             event.stop()
@@ -4656,6 +4657,7 @@ class ChatScreen(BaseAppScreen):
             self._set_active_workspace_for_console_session(session_id)
             controller.switch_session(session_id)
             await self._sync_native_console_chat_ui()
+            self._focus_console_composer_if_needed(force=True)
             return
         if button_id and button_id.startswith("console-message-action-"):
             handled = await self.handle_console_message_action(event)
