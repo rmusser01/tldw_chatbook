@@ -12,7 +12,7 @@ from tldw_chatbook.UI.Wizards.EmbeddingSteps import SmartContentSelector
 from tldw_chatbook.Widgets.CCP_Widgets.ccp_sidebar_widget import CCPSidebarWidget
 from tldw_chatbook.Widgets.Evals.eval_additional_dialogs import FileUploadDialog
 from tldw_chatbook.Widgets.NewIngest.SmartFileDropZone import SmartFileDropZone
-from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
+from tldw_chatbook.Widgets.Note_Widgets.notes_workbench_panes import NotesNavigatorPane
 from tldw_chatbook.Widgets.Note_Widgets.notes_sync_widget import NotesSyncWidget
 from tldw_chatbook.Widgets.Note_Widgets.notes_sync_widget_improved import QuickSyncSection
 from tldw_chatbook.Widgets.file_picker_dialog import QuickPickerWidget
@@ -104,7 +104,7 @@ async def test_notes_sync_folder_browse_actions_explain_sync_scope(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_notes_import_button_explains_file_import():
-    app = _WidgetHost(NotesSidebarLeft())
+    app = _WidgetHost(NotesNavigatorPane())
 
     async with app.run_test() as pilot:
         await pilot.pause()
