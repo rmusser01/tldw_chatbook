@@ -32,6 +32,8 @@ class ConsoleRunStatus(str, Enum):
 
 ConsoleMessageStatus = Literal["complete", "pending", "streaming", "stopped", "failed"]
 ConsoleMessageFeedback = Literal["up", "down"]
+CONSOLE_GLOBAL_WORKSPACE_ID = "global"
+DEFAULT_CONSOLE_SESSION_TITLE = "Chat 1"
 
 
 @dataclass(frozen=True)
@@ -48,7 +50,7 @@ class ConsoleStagedSource:
 class ConsoleWorkspaceContext:
     """Workspace and source policy state used before sending to a provider."""
 
-    active_workspace_id: str = "global"
+    active_workspace_id: str = CONSOLE_GLOBAL_WORKSPACE_ID
     staged_sources: tuple[ConsoleStagedSource, ...] = ()
     active_run_id: str | None = None
     handoff_id: str | None = None

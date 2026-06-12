@@ -749,6 +749,80 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
     assert app.saved_settings.top_p == 0.88
 
 
+@pytest.mark.asyncio
+async def test_console_settings_modal_saves_replaced_temperature_input() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        temperature=0.60,
+    )
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        temperature = app.screen.query_one("#console-settings-temperature", Input)
+        body = app.screen.query_one("#console-settings-body")
+        body.scroll_to_widget(temperature)
+        await pilot.pause()
+
+        await pilot.click(temperature)
+        await pilot.press("ctrl+a")
+        await pilot.press("0")
+        await pilot.press(".")
+        await pilot.press("7")
+        assert temperature.value == "0.7"
+
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.temperature == 0.7
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_replaces_focused_sampling_input() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="model-a",
+        temperature=0.60,
+    )
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        temperature = app.screen.query_one("#console-settings-temperature", Input)
+        body = app.screen.query_one("#console-settings-body")
+        body.scroll_to_widget(temperature)
+        await pilot.pause()
+
+        await pilot.click(temperature)
+        await pilot.press("0")
+        await pilot.press(".")
+        await pilot.press("7")
+        await pilot.press("2")
+
+        assert temperature.value == "0.72"
+
+
 @pytest.mark.parametrize(
     ("field_id", "attribute", "backspace_count", "typed_suffix", "expected"),
     [

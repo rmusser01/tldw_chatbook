@@ -820,6 +820,108 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_switch_refreshes_visible_session_tabs():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-change-workspace")
+        store = console._ensure_console_chat_store()
+        first_session = store.ensure_session()
+        assert first_session.workspace_id == "ws-a"
+
+        console.query_one("#console-change-workspace", Button).press()
+        modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
+        switch_button = next(
+            button
+            for button in modal_screen.query(Button)
+            if str(button.label) == "Workspace B"
+        )
+        switch_button.press()
+        await _wait_for_console_screen(host, console, pilot)
+
+        active_session = store.switch_session(store.active_session_id)
+        assert active_session.workspace_id == "ws-b"
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{active_session.id}")
+        assert "Workspace B Chat" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_switch_refresh_is_not_dropped_during_inflight_sync():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-change-workspace")
+        store = console._ensure_console_chat_store()
+        first_session = store.ensure_session()
+        assert first_session.workspace_id == "ws-a"
+
+        first_sync_blocked = asyncio.Event()
+        release_first_sync = asyncio.Event()
+        original_sync_tabs = console._sync_console_native_session_tabs
+        blocked_once = False
+
+        async def blocking_sync_tabs():
+            nonlocal blocked_once
+            await original_sync_tabs()
+            if blocked_once:
+                return
+            blocked_once = True
+            first_sync_blocked.set()
+            await release_first_sync.wait()
+
+        console._sync_console_native_session_tabs = blocking_sync_tabs
+        first_sync_task = asyncio.create_task(console._sync_native_console_chat_ui())
+        await first_sync_blocked.wait()
+
+        console.query_one("#console-change-workspace", Button).press()
+        modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
+        switch_button = next(
+            button
+            for button in modal_screen.query(Button)
+            if str(button.label) == "Workspace B"
+        )
+        switch_button.press()
+        await _wait_for_console_screen(host, console, pilot)
+
+        active_session = store.switch_session(store.active_session_id)
+        assert active_session.workspace_id == "ws-b"
+        release_first_sync.set()
+        await first_sync_task
+
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{active_session.id}")
+        assert "Workspace B Chat" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_mount_uses_active_workspace_title_for_initial_session():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_text(console, pilot, "Workspace A Chat")
+        assert "Workspace A" in _visible_text(console)
+
+
+@pytest.mark.asyncio
 async def test_console_tab_switch_aligns_active_workspace_context():
     app = _build_test_app()
     service = app.workspace_registry_service
@@ -1371,6 +1473,58 @@ async def test_console_native_tab_strip_creates_and_switches_sessions():
 
         assert store.active_session_id == first.id
         assert "Chat 1" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_new_chat_focuses_composer_for_immediate_typing():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        await pilot.press("n")
+        await pilot.pause(0.1)
+
+        assert console.app.focused is composer
+        assert composer.draft_text() == "n"
+
+
+@pytest.mark.asyncio
+async def test_console_tab_switch_focuses_composer_for_immediate_typing():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+
+        await pilot.click(f"#console-session-tab-{first.id}")
+        assert store.active_session_id == first.id
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        await pilot.press("s")
+        await pilot.pause(0.1)
+
+        assert console.app.focused is composer
+        assert composer.draft_text() == "s"
 
 
 @pytest.mark.asyncio
