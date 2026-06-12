@@ -41,6 +41,12 @@ def build_runtime_api_client(
     api_config: dict[str, Any] = {}
     if isinstance(app_config, Mapping):
         api_config = dict(app_config.get("tldw_api", {}) or {})
+        if not api_config:
+            # load_settings() keeps the raw CLI config (and its [tldw_api]
+            # section) nested under COMPREHENSIVE_CONFIG_RAW.
+            raw_config = app_config.get("COMPREHENSIVE_CONFIG_RAW", {})
+            if isinstance(raw_config, Mapping):
+                api_config = dict(raw_config.get("tldw_api", {}) or {})
 
     resolved_endpoint = str(
         endpoint_url

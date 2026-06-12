@@ -2494,11 +2494,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.server_sync_service = ServerSyncService.from_config(
                 self.app_config,
                 policy_enforcer=self.service_policy_enforcer,
+                state_repository=self.sync_state_repository,
             )
         except ValueError:
             self.server_sync_service = ServerSyncService(
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
+                state_repository=self.sync_state_repository,
             )
         self.sync_scope_service = SyncScopeService(
             server_service=self.server_sync_service,
