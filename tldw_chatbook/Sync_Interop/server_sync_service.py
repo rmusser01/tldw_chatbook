@@ -48,11 +48,13 @@ class ServerSyncService:
         app_config: Mapping[str, Any],
         *,
         policy_enforcer: Any | None = None,
+        state_repository: Any | None = None,
     ) -> "ServerSyncService":
         return cls(
             client=None,
             client_provider=build_runtime_api_client_provider_from_config(app_config),
             policy_enforcer=policy_enforcer,
+            state_repository=state_repository,
         )
 
     @classmethod
