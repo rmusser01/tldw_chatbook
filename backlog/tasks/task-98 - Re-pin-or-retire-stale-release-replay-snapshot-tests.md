@@ -1,10 +1,10 @@
 ---
 id: TASK-98
 title: Re-pin or retire stale release-replay snapshot tests
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-06-11 20:42'
-updated_date: '2026-06-11 23:08'
+updated_date: '2026-06-12 00:53'
 labels: []
 dependencies: []
 ---
@@ -23,5 +23,5 @@ Quarantined (skip-marked) UI tests that pin release-era whole-app copy/evidence 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-UPDATE: the six destination-visual-parity tests were NOT order-dependent — fixed for real in 'Fix the last six destination-visual-parity failures' (Console min-widths could not fit the 100-col compact contract; geometry test ran below the 150-col inspector force-collapse threshold; plus three drifted copy/structure pins). Remaining scope of this task: the 13 skip-marked release-replay copy snapshots only. Full Tests/UI: 1974 passed, 0 failed, 31 skipped.
+All quarantined snapshots un-skipped and re-pinned in PR #510. Unskipping exposed a real regression: Use-in-Console handoffs were dead on the native Console (no legacy tab surface); fixed by staging handoffs into the Console live-work lane. Full Tests/UI: 1987 passed, 0 failed, 18 skipped (no quarantine skips remain).
 <!-- SECTION:NOTES:END -->

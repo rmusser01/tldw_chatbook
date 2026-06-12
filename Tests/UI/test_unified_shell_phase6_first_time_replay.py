@@ -116,7 +116,6 @@ def _test_cli_setting(section: str, key: str, default=None):
     return default
 
 
-@pytest.mark.skip(reason="Stale release-era snapshot (copy/evidence drifted); re-pin or retire via backlog task-98")
 @pytest.mark.asyncio
 async def test_first_time_shell_replay_exposes_home_console_and_orientation_paths() -> None:
     """Verify first-time launch exposes the shell's primary orientation paths."""
@@ -156,7 +155,7 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                     "nav-personas",
                     "personas",
                     "PersonasScreen",
-                    ("Personas", "behavior profiles", "Attach to Console"),
+                    ("Personas", "Behavior, characters, prompts, lore", "Attach to Console"),
                 ),
                 (
                     "nav-skills",

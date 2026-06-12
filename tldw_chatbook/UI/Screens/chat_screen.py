@@ -2812,10 +2812,11 @@ class ChatScreen(BaseAppScreen):
 
             tab_container = self._get_tab_container()
             if tab_container is None:
-                self.app_instance.notify(
-                    "Chat tabs are not available for Use in Chat.",
-                    severity="warning",
-                )
+                # The native Console composes no legacy tab surface; stage the
+                # handoff into the Console live-work lane so the context lands
+                # in Staged Context instead of being dropped with a warning.
+                self._stage_handoff_as_console_live_work(payload)
+                self.app_instance.pending_chat_handoff = None
                 return
 
             session_data = self._session_data_for_handoff(payload)
@@ -2834,6 +2835,81 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.pending_chat_handoff = None
         finally:
             self._handoff_consumption_in_progress = False
+
+    def _stage_handoff_as_console_live_work(self, payload: ChatHandoffPayload) -> None:
+        """Stage a Use-in-Console handoff into the native staged-context lane."""
+        from pydantic import ValidationError
+
+        from tldw_chatbook.Chat.citation_evidence_models import (
+            EvidenceBundle,
+            EvidenceReference,
+        )
+        from tldw_chatbook.Utils.input_validation import sanitize_string
+
+        def _safe_text(value: Any, max_length: int = 500) -> str:
+            return sanitize_string(str(value or ""), max_length=max_length).strip()
+
+        # Handoff bodies can reach 80k characters; cap and sanitize at this
+        # boundary before any of it lands in the staged payload.
+        snippet = _safe_text(
+            payload.display_summary or payload.body, max_length=4_000
+        )
+        title = _safe_text(payload.title) or "Untitled"
+        launch_payload: dict[str, Any] = {
+            "target_id": _safe_text(
+                payload.content_ref or payload.source_id or title
+            ),
+            "item_type": _safe_text(payload.item_type),
+            "source_id": _safe_text(payload.source_id),
+            "snippet": snippet,
+            "suggested_prompt": _safe_text(payload.suggested_prompt, max_length=4_000),
+            "runtime_backend": _safe_text(payload.runtime_backend),
+            "source_selector_state": _safe_text(payload.source_selector_state),
+            "metadata": dict(payload.metadata or {}),
+        }
+        if "rag" in (payload.source or "").lower():
+            # RAG-class sources gate Console sends on available evidence;
+            # always carry a single-reference bundle (title stands in when
+            # the snippet is empty) so the handoff cannot dead-end the send.
+            try:
+                launch_payload["evidence_bundle"] = EvidenceBundle(
+                    bundle_id=_safe_text(payload.content_ref or payload.source_id)
+                    or "handoff-evidence",
+                    query=_safe_text(payload.suggested_prompt) or title,
+                    source=_safe_text(payload.source) or "Search/RAG",
+                    references=(
+                        EvidenceReference(
+                            evidence_id="S1",
+                            source_id=_safe_text(payload.source_id) or "unknown",
+                            source_type=_safe_text(payload.item_type) or "rag-result",
+                            title=title,
+                            snippet=snippet or title,
+                            authority_label=_safe_text(payload.runtime_backend) or "local",
+                            content_ref=payload.content_ref,
+                        ),
+                    ),
+                ).to_payload()
+            except (TypeError, ValueError, ValidationError):
+                logger.warning("Could not build evidence bundle for handoff", exc_info=True)
+
+        self._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
+            source=payload.source,
+            title=payload.title,
+            payload=launch_payload,
+            status=payload.status or "staged",
+        )
+        self._pending_console_launch_auto_open_inspector = True
+
+        if payload.suggested_prompt:
+            try:
+                composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+            except QueryError:
+                pass
+            else:
+                if not composer.draft_text().strip():
+                    composer.load_draft(payload.suggested_prompt)
+
+        self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
     async def _apply_handoff_to_chat_session(self, session: Any, payload: ChatHandoffPayload) -> None:
         mount_handoff_card = getattr(session, "mount_handoff_card", None)
