@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
-from tldw_chatbook.config import DEFAULT_CONFIG_PATH
+from tldw_chatbook.config import DEFAULT_CONFIG_PATH, resolve_tldw_api_config
 from tldw_chatbook.tldw_api import TLDWAPIClient
 
 from .source_state import RuntimeSourceStateStore
@@ -38,9 +38,7 @@ def build_runtime_api_client(
     auth_token: str | None = None,
     auth_method: str | None = None,
 ) -> TLDWAPIClient:
-    api_config: dict[str, Any] = {}
-    if isinstance(app_config, Mapping):
-        api_config = dict(app_config.get("tldw_api", {}) or {})
+    api_config: dict[str, Any] = resolve_tldw_api_config(app_config)
 
     resolved_endpoint = str(
         endpoint_url
@@ -227,15 +225,7 @@ def derive_configured_server_binding(app_config: Mapping[str, Any] | None) -> Co
             last_known_server_label=None,
         )
 
-    api_config = app_config.get("tldw_api", {})
-    if not isinstance(api_config, Mapping) or not api_config:
-        # The app's app_config comes from load_settings(), which normalizes
-        # sections and keeps the raw CLI config nested under
-        # COMPREHENSIVE_CONFIG_RAW; [tldw_api] only exists there.
-        raw_config = app_config.get("COMPREHENSIVE_CONFIG_RAW", {})
-        api_config = raw_config.get("tldw_api", {}) if isinstance(raw_config, Mapping) else {}
-    if not isinstance(api_config, Mapping):
-        api_config = {}
+    api_config = resolve_tldw_api_config(app_config)
 
     raw_url = str(api_config.get("base_url") or api_config.get("api_url") or api_config.get("url") or "").strip()
     if not raw_url:
