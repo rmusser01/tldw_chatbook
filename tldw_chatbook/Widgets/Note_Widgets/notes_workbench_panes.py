@@ -3,9 +3,9 @@
 The Notes screen renders a three-pane destination workbench:
 navigator (search/sort + scope lists) | editor | inspector (details + actions),
 plus Sync and Templates mode panes. Every pane is framed and styled with the
-Console design language only — no legacy Notes widgets are embedded.
-List-population logic is shared with the legacy ``NotesSidebarLeft`` via
-``NotesListPopulateMixin`` so the old Notes window keeps working unchanged.
+Console design language only — the legacy Notes window and sidebars were
+removed once this workbench reached feature parity; ``NotesListPopulateMixin``
+holds the scope-list population logic.
 """
 
 from __future__ import annotations
@@ -56,21 +56,10 @@ def template_display_label(key: str, template: dict[str, Any]) -> str:
 class NotesListPopulateMixin:
     """Populate the local/server/workspace list views from item dicts."""
 
-    # Legacy sidebar keeps its instructional empty-state copy; the dense
-    # workbench navigator overrides these with short messages.
     EMPTY_LIST_MESSAGES = {
-        "local": (
-            "No local notes yet. Create Blank Note for a private draft, "
-            "or Import Note to bring in a file."
-        ),
-        "server": (
-            "No server notes yet. Open Server Notes and Create Server Note "
-            "when the server backend is available."
-        ),
-        "workspace": (
-            "No workspaces yet. Create Workspace to organize notes, sources, artifacts, "
-            "and Study materials together."
-        ),
+        "local": "No local notes yet.",
+        "server": "No server notes yet.",
+        "workspace": "No workspaces yet.",
     }
 
     async def _populate_list(
@@ -153,12 +142,6 @@ class NotesListPopulateMixin:
 
 class NotesNavigatorPane(NotesListPopulateMixin, VerticalScroll):
     """Left workbench pane: search/sort, scope lists, create actions."""
-
-    EMPTY_LIST_MESSAGES = {
-        "local": "No local notes yet.",
-        "server": "No server notes yet.",
-        "workspace": "No workspaces yet.",
-    }
 
     DEFAULT_CSS = """
     NotesNavigatorPane > Input {

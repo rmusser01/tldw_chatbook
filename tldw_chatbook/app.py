@@ -187,8 +187,6 @@ from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
-from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
-from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_right import NotesSidebarRight
 from .Widgets.titlebar import TitleBar
 from .Widgets.splash_screen import SplashScreen
 from .LLM_Calls.LLM_API_Calls import (
@@ -1193,8 +1191,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # Load saved width from config, default to 25% if not set
     _saved_width = settings.get("chat_defaults", {}).get("right_sidebar_width", 25)
     chat_right_sidebar_width: reactive[int] = reactive(_saved_width)  # Width percentage for right sidebar
-    notes_sidebar_left_collapsed: reactive[bool] = reactive(False)
-    notes_sidebar_right_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_left_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_right_collapsed: reactive[bool] = reactive(False)
     evals_sidebar_collapsed: reactive[bool] = reactive(False) # Added for Evals tab
@@ -2976,13 +2972,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 "toggle-conv-char-right-sidebar": functools.partial(_handle_sidebar_toggle,
                                                                     reactive_attr="conv_char_sidebar_right_collapsed"),
             },
-            TAB_NOTES: {
-                **notes_events.NOTES_BUTTON_HANDLERS,
-                "toggle-notes-sidebar-left": functools.partial(_handle_sidebar_toggle,
-                                                               reactive_attr="notes_sidebar_left_collapsed"),
-                "toggle-notes-sidebar-right": functools.partial(_handle_sidebar_toggle,
-                                                                reactive_attr="notes_sidebar_right_collapsed"),
-            },
             TAB_MEDIA: {
                 **media_events.MEDIA_BUTTON_HANDLERS,
                 **{f"media-nav-{slugify(media_type)}": functools.partial(_handle_nav, prefix="media",
@@ -3842,12 +3831,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.current_prompt_id = None  # Reset reactives
 
     async def refresh_notes_tab_after_ingest(self) -> None:
-        """Called after notes are ingested from the Ingest tab to refresh the Notes tab."""
-        self.loguru_logger.info("Refreshing Notes tab data after ingestion.")
-        if hasattr(notes_handlers, 'load_and_display_notes_handler'):
-            await notes_handlers.load_and_display_notes_handler(self)
-        else:
-            self.loguru_logger.error("notes_handlers.load_and_display_notes_handler not found for refresh.")
+        """Refresh the Notes screen after notes are ingested from the Ingest tab."""
+        self.loguru_logger.info("Refreshing Notes data after ingestion.")
+        from .UI.Screens.notes_screen import NotesScreen
+
+        if isinstance(self.screen, NotesScreen):
+            await self.screen.refresh_current_scope()
 
     # ##################################################
     # --- Watcher for Search Tab Active Sub-View ---
@@ -5013,18 +5002,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
                     except QueryError:
                         pass
-            # NotesScreen now handles its own auto-save cleanup in on_unmount()
-                
-                # Perform one final auto-save if auto-save is enabled and there are unsaved changes
-                if (hasattr(self, 'notes_auto_save_enabled') and self.notes_auto_save_enabled and
-                    hasattr(self, 'notes_unsaved_changes') and self.notes_unsaved_changes and 
-                    self.current_selected_note_id):
-                    loguru_logger.debug("Performing final auto-save before leaving Notes tab")
-                    # Import here to avoid circular imports
-                    from tldw_chatbook.Event_Handlers.notes_events import _perform_auto_save
-                    # Schedule the auto-save as a background task
-                    self.run_worker(_perform_auto_save(self), name="notes_final_autosave")
-            
+            # NotesScreen owns its own auto-save lifecycle (on_unmount).
             try: self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
             except QueryError: logging.warning(f"Watcher: Could not find old button #tab-{old_tab}")
             try: self.query_one(f"#{old_tab}-window").display = False
@@ -5278,31 +5256,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Sidebar might not be created yet
             pass
 
-    def watch_notes_sidebar_left_collapsed(self, collapsed: bool) -> None:
-        """Hide or show the notes left sidebar."""
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        try:
-            sidebar = self.query_one("#notes-sidebar-left", NotesSidebarLeft)
-            sidebar.display = not collapsed
-            # Optional: adjust layout of notes-main-content if needed
-        except QueryError:
-            logging.error("Notes left sidebar widget (#notes-sidebar-left) not found.")
 
-    def watch_notes_sidebar_right_collapsed(self, collapsed: bool) -> None:
-        """Hide or show the notes right sidebar."""
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        try:
-            sidebar = self.query_one("#notes-sidebar-right", NotesSidebarRight)
-            sidebar.display = not collapsed
-            # Optional: adjust layout of notes-main-content if needed
-        except QueryError:
-            logging.error("Notes right sidebar widget (#notes-sidebar-right) not found.")
     
     def watch_notes_unsaved_changes(self, has_unsaved: bool) -> None:
         """Update the unsaved changes indicator."""
@@ -5445,82 +5399,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.log.debug(f"Could not initialize audio models: {e}")
 
     async def save_current_note(self) -> bool:
-        """Saves the currently selected note's title and content to the database."""
+        """Save the currently selected note via the active Notes screen."""
         from .UI.Screens.notes_screen import NotesScreen
 
         if isinstance(self.screen, NotesScreen):
             return await self.screen._save_current_note()
-        if not self.notes_service or not self.current_selected_note_id or self.current_selected_note_version is None:
-            logging.warning("No note selected or service unavailable. Cannot save.")
-            # Optionally: self.notify("No note selected to save.", severity="warning")
-            return False
-
-        try:
-            editor = self.query_one("#notes-editor-area", TextArea)
-            title_input = self.query_one("#notes-title-input", Input)
-            current_content = editor.text
-            current_title = title_input.value
-
-            # Check if title or content actually changed to avoid unnecessary saves.
-            # This requires storing the original loaded title/content if not already done by reactives.
-            # For now, we save unconditionally if a note is selected.
-            # A more advanced check could compare with self.current_selected_note_title and self.current_selected_note_content
-
-            logging.info(
-                f"Attempting to save note ID: {self.current_selected_note_id}, Version: {self.current_selected_note_version}")
-            success = self.notes_service.update_note(
-                user_id=self.notes_user_id,
-                note_id=self.current_selected_note_id,
-                update_data={'title': current_title, 'content': current_content},
-                expected_version=self.current_selected_note_version
-            )
-            if success:
-                logging.info(f"Note {self.current_selected_note_id} saved successfully.")
-                # Update version and potentially title/content reactive vars if update_note returns new state
-                # For now, we re-fetch to get the new version.
-                updated_note_details = self.notes_service.get_note_by_id(
-                    user_id=self.notes_user_id,
-                    note_id=self.current_selected_note_id
-                )
-                if updated_note_details:
-                    self.current_selected_note_version = updated_note_details.get('version')
-                    self.current_selected_note_title = updated_note_details.get('title')  # Update reactive
-                    # self.current_selected_note_content = updated_note_details.get('content') # Update reactive
-
-                    # Refresh the list in the left sidebar to reflect title changes and update item version
-                    await notes_handlers.load_and_display_notes_handler(self)
-                    # self.notify("Note saved!", severity="information") # If notifications are setup
-                else:
-                    # Note might have been deleted by another client after our successful update, though unlikely.
-                    logging.warning(f"Note {self.current_selected_note_id} not found after presumably successful save.")
-                    # self.notify("Note saved, but failed to refresh details.", severity="warning")
-
-                return True
-            else:
-                # This path should ideally not be reached if update_note raises exceptions on failure.
-                logging.warning(
-                    f"notes_service.update_note for {self.current_selected_note_id} returned False without raising error.")
-                # self.notify("Failed to save note (unknown reason).", severity="error")
-                return False
-
-        except ConflictError as e:
-            logging.error(f"Conflict saving note {self.current_selected_note_id}: {e}", exc_info=True)
-            # self.notify(f"Save conflict: {e}. Please reload the note.", severity="error")
-            # Optionally, offer to reload the note or overwrite. For now, just log.
-            # await self.handle_save_conflict() # A new method to manage this
-            return False
-        except CharactersRAGDBError as e:
-            logging.error(f"Database error saving note {self.current_selected_note_id}: {e}", exc_info=True)
-            # self.notify("Error saving note to database.", severity="error")
-            return False
-        except QueryError as e:
-            logging.error(f"UI component not found while saving note: {e}", exc_info=True)
-            # self.notify("UI error while saving note.", severity="error")
-            return False
-        except Exception as e:
-            logging.error(f"Unexpected error saving note {self.current_selected_note_id}: {e}", exc_info=True)
-            # self.notify("Unexpected error saving note.", severity="error")
-            return False
+        logging.warning("save_current_note called outside the Notes screen; nothing to save.")
+        return False
 
 
     #######################################################################
@@ -6871,28 +6756,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             loguru_logger.debug("Cancelled auto-save timer during app quit")
         
         # Perform final save if on Notes tab with unsaved changes (respect auto-save setting)
-        if (self.current_tab == TAB_NOTES and 
-            hasattr(self, 'notes_unsaved_changes') and 
-            self.notes_unsaved_changes and 
-            self.current_selected_note_id):
-            # Check if we should save based on auto-save setting
-            should_save = hasattr(self, 'notes_auto_save_enabled') and self.notes_auto_save_enabled
-            if should_save:
-                loguru_logger.debug("Performing final auto-save during app quit")
-            else:
-                loguru_logger.debug("Skipping final save during app quit (auto-save disabled)")
-            
-            if should_save:
-                try:
-                    # Import here to avoid circular imports
-                    from tldw_chatbook.Event_Handlers.notes_events import save_current_note_handler
-                    # Run synchronously since we're quitting
-                    import asyncio
-                    loop = asyncio.new_event_loop()
-                    loop.run_until_complete(save_current_note_handler(self))
-                    loop.close()
-                except Exception as e:
-                    loguru_logger.error(f"Error performing final save during quit: {e}")
+        # NotesScreen owns note autosave; no legacy quit-save path remains.
         
         # Try to save caches but don't let it block quitting
         try:

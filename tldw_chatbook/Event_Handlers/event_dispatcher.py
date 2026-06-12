@@ -75,7 +75,6 @@ class EventDispatcher:
             **conv_char_events.CCP_BUTTON_HANDLERS,
             
             # Notes
-            **notes_events.NOTES_BUTTON_HANDLERS,
             
             # Media
             **media_events.MEDIA_BUTTON_HANDLERS,
