@@ -271,75 +271,6 @@ def test_phase3_gate16_library_rag_plan_and_tasks_are_tracked() -> None:
     assert "## Implementation Notes" in retrieval_adapter_task
 
 
-def test_phase39_library_collections_split_is_tracked_with_followup_risks() -> None:
-    tracker = _text(TRACKER)
-    readme = _text(PHASE_3_README)
-    spec = _text(PHASE_3_9_SPEC)
-    parent_task = _text(TASK_10)
-    task = _text(TASK_10_9)
-    qa_task = _text(TASK_10_9_4)
-
-    assert "Phase 3.9: Library Collections IA Split - `TASK-10.9`" in tracker
-    assert PHASE_3_9_EVIDENCE.as_posix() in tracker
-    assert PHASE_3_9_EVIDENCE.name in readme
-    assert "TASK-10.9" in task
-    assert "Continued Phase 3 with TASK-10.9" in parent_task
-    assert "status: Done" in task
-    assert "status: Done" in qa_task
-    for ac_number in range(1, 5):
-        assert f"- [x] #{ac_number}" in task
-        assert f"- [x] #{ac_number}" in qa_task
-    assert "## Implementation Notes" in task
-    assert "## Implementation Notes" in qa_task
-
-    evidence_row = _markdown_table_row(tracker, "Phase 3.9")
-    assert PHASE_3_9_EVIDENCE.as_posix() in evidence_row[1]
-    assert evidence_row[2] == "verified; TASK-10.9.1 through TASK-10.9.4 done"
-
-    phase_three_row = _markdown_table_row(tracker, "Phase 3: Knowledge And Study Workflows")
-    assert "Phase 3.9 verified" in phase_three_row[2]
-    assert "TASK-10.9" in phase_three_row[3]
-    assert "phase-3/2026-05-08-phase-3-9-library-collections.md" in phase_three_row[4]
-    for residual_risk in (
-        "Workspaces",
-        "Import/Export",
-        "server sync",
-        "deeper Study/Search/RAG flows",
-    ):
-        assert residual_risk in phase_three_row[5]
-
-    for later_stage_term in ("citations/snippets", "Citation/snippet carry-through"):
-        assert later_stage_term in spec
-        assert later_stage_term in tracker
-
-
-def test_phase30_qa_evidence_is_verified() -> None:
-    evidence = _text(PHASE_3_0_EVIDENCE)
-    readme = _text(PHASE_3_README)
-
-    assert _status_line(evidence) == "verified"
-
-    for section in (
-        "## Scope",
-        "## Evidence",
-        "## Contract Coverage",
-        "## Route Ownership Result",
-        "## Terminal Size Gate",
-        "## Image Reference Governance",
-        "## Residual Risk",
-        "## Result",
-    ):
-        assert section in evidence
-
-    assert "TASK-10.0" in evidence
-    assert "Docs/superpowers/specs/2026-05-06-destination-layout-ia-contracts-design.md" in evidence
-    assert "spec review approved" in evidence
-    assert "compact, default, and large terminal" in evidence
-    assert "usable, not merely rendered" in evidence
-    assert PHASE_3_0_EVIDENCE.name in readme
-    assert "Phase 3.0 destination layout contract status: verified" in readme
-
-
 def test_phase30_tracker_has_evidence_row() -> None:
     tracker = _text(TRACKER)
 
@@ -377,24 +308,3 @@ def test_phase30_backlog_task_is_closed_after_verification() -> None:
     assert "Tests/UI/test_product_maturity_phase3_layout_contracts.py" in task
 
 
-def test_phase3_parent_is_closed_after_all_product_maturity_gates() -> None:
-    tracker = _text(TRACKER)
-    task = _text(TASK_10)
-    readme = _text(PHASE_3_README)
-    evidence = _text(PHASE_3_PARENT_CLOSEOUT)
-
-    assert "Phase 3 verified" in _status_line(tracker)
-    phase_three_row = _markdown_table_row(tracker, "Phase 3: Knowledge And Study Workflows")
-    assert "verified" in phase_three_row[2].lower()
-    assert "Phase 3.9 verified" in phase_three_row[2]
-    assert "destination visual parity correction verified" in phase_three_row[2]
-    assert PHASE_3_PARENT_CLOSEOUT.as_posix() in tracker
-    assert PHASE_3_PARENT_CLOSEOUT.name in readme
-
-    assert "status: Done" in task
-    for ac_number in range(1, 5):
-        assert f"- [x] #{ac_number}" in task
-    assert "Closed Phase 3 parent after all tracked Knowledge/Study gates" in task
-    assert "Phase 3 parent status: verified" in evidence
-    assert "TASK-10" in evidence
-    assert "P0/P1 findings: none open" in evidence

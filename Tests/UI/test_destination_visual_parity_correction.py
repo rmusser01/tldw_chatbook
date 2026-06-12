@@ -14,7 +14,6 @@ from textual.widgets import Static
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     StaticWatchlistsScopeService,
-    StaticPersonasScopeService,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
     StaticLibraryNotesScopeService,
@@ -29,7 +28,6 @@ from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Screens import (
     artifacts_screen as artifacts_screen_module,
     library_screen as library_screen_module,
-    personas_screen as personas_screen_module,
     schedules_screen as schedules_screen_module,
     skills_screen as skills_screen_module,
     watchlists_collections_screen as wc_screen_module,
@@ -596,7 +594,9 @@ async def test_library_service_call_awaits_coroutine_functions_without_worker(mo
             "chat",
             ConsoleHarness,
             "#console-workspace-grid",
-            ("#console-left-rail", "#console-main-column", "#console-run-inspector"),
+            # The run inspector is a section inside the right rail; the rail
+            # itself is the third workbench pane.
+            ("#console-left-rail", "#console-main-column", "#console-right-rail"),
             ("#console-send-message", "#console-attach-context", "#console-save-chatbook"),
             ("#console-run-inspector-state",),
             "#console-run-inspector",
@@ -618,9 +618,20 @@ async def test_core_default_empty_or_blocked_states_keep_workbench_geometry(
 ):
     app = _build_test_app()
     host = host_factory(app)
-    async with host.run_test(size=(140, 42)) as pilot:
+    # 160 wide: the Console force-collapses its inspector rail below 150
+    # columns (CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS), and this
+    # contract covers the full three-pane workbench.
+    async with host.run_test(size=(160, 42)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, workbench)
+        if route == "chat":
+            # The inspector rail composes collapsed; open it via its handle
+            # (only honored at >=150 columns) and wait out the recompose.
+            screen.query_one("#console-inspector-rail-open", Button).press()
+            for _ in range(40):
+                await pilot.pause(0.05)
+                if screen.query_one(panes[2]).display:
+                    break
         _assert_ascii_workbench_contract(
             screen,
             workbench=workbench,
@@ -706,13 +717,17 @@ SOURCE_PREP_WORKBENCHES = {
         "markers": ("#artifacts-console-unavailable",),
         "marker_container": "#artifacts-inspector-pane",
     },
+    # Personas is now a destination-native workbench (library / work area /
+    # inspector). Its empty/count state renders inside the library pane; the
+    # legacy thin-shell empty/error/loading markers were retired with the
+    # snapshot worker.
     "personas": {
         "workbench": "#personas-workbench",
         "strip": "#personas-mode-strip",
-        "panes": ("#personas-list-pane", "#personas-detail-pane", "#personas-inspector-pane"),
-        "actions": ("#personas-open-profiles", "#personas-attach-to-console"),
-        "markers": ("#personas-empty-state", "#personas-service-error", "#personas-loading-state"),
-        "marker_container": "#personas-detail-pane",
+        "panes": ("#personas-library-pane", "#personas-work-area", "#personas-inspector-pane"),
+        "actions": ("#personas-library-new", "#personas-attach-to-console"),
+        "markers": ("#personas-library-empty", "#personas-library-count"),
+        "marker_container": "#personas-library-pane",
     },
     "watchlists_collections": {
         "workbench": "#watchlists-workbench",
@@ -813,12 +828,21 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
     ("route", "workbench", "expected_titles"),
     (
         ("artifacts", "#artifacts-workbench", ("Artifact List", "Artifact Preview", "Provenance")),
-        ("personas", "#personas-workbench", ("Persona List", "Behavior Profile Detail", "Attachments")),
+        # The personas work area renders mode-driven section headers
+        # (Character / Character Editor / Persona Profile) instead of a fixed
+        # column title, so only the library and inspector panes carry
+        # *-column-title statics.
+        ("personas", "#personas-workbench", ("Library", "Inspector")),
         ("schedules", "#schedules-workbench", ("Schedule Queue", "Run Detail", "Status Inspector")),
         ("workflows", "#workflows-workbench", ("Procedure Library", "Run Detail", "Run Inspector")),
-        ("acp", "#acp-workbench", ("Agents / Sessions", "Session Detail", "Compatibility / Actions")),
+        # With no runtime configured (the harness default), ACP's middle pane
+        # is the Runtime Setup column rather than Session Detail.
+        ("acp", "#acp-workbench", ("Agents / Sessions", "Runtime Setup", "Compatibility / Actions")),
         ("skills", "#skills-workbench", ("Skill Library", "Skill Detail", "Skill Inspector")),
-        ("settings", "#settings-workbench", ("Settings Sections", "Preference Detail", "Scope Inspector")),
+        # Settings' Overview card title carries the column-title class.
+        ("settings", "#settings-workbench", ("Settings Sections", "Preference Detail", "Overview", "Scope Inspector")),
+        # The legacy ccp route/screen was retired; its workbench is the Personas
+        # destination, covered by Tests/UI/test_personas_workbench.py.
     ),
 )
 @pytest.mark.asyncio
@@ -931,61 +955,60 @@ async def test_artifacts_empty_state_exposes_full_artifact_workbench_taxonomy():
 
 @pytest.mark.asyncio
 async def test_personas_workbench_exposes_approved_three_column_ia():
-    app = _build_test_app()
-    app.character_persona_scope_service = StaticPersonasScopeService(
-        characters=[
-            {"name": "Research Analyst", "id": 1, "description": "Synthesizes evidence."},
-        ],
-        profiles=[
-            {"name": "Fiction Character", "id": "profile-1", "description": "Roleplay voice."},
-        ],
-    )
-    host = DestinationHarness(app, "personas")
+    """The destination-native workbench renders library / work area / inspector.
 
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#personas-characters-summary")
-        visible_text = _visible_static_text(screen)
-        buttons = _visible_button_labels(screen)
-
-        for expected in (
-            "Personas | Behavior, characters, prompts, lore | Ready | Local/Server",
-            "Modes: Personas | Characters | Prompts | Dictionaries | Lore | Import/Export",
-            "Persona List",
-            "Behavior Profile Detail",
-            "Attachments",
-            "Research Analyst",
-            "Fiction Character",
-            "Console: ready",
-            "Workflows: ready",
-        ):
-            assert expected in visible_text
-        assert "Column 1:" not in visible_text
-        assert "Column 2:" not in visible_text
-        assert "Column 3:" not in visible_text
-        assert {"Open Personas", "Attach to Console"}.issubset(buttons)
-
-
-@pytest.mark.asyncio
-async def test_personas_workbench_has_explicit_column_dividers_for_future_resize():
+    The legacy thin-shell snapshot summary (#personas-characters-summary) was
+    retired with the workbench rebuild; the deep behavior contract lives in
+    Tests/UI/test_personas_workbench.py.
+    """
     app = _build_test_app()
     host = DestinationHarness(app, "personas")
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#personas-workbench")
-        left_pane = screen.query_one("#personas-list-pane")
-        detail_pane = screen.query_one("#personas-detail-pane")
-        inspector_pane = screen.query_one("#personas-inspector-pane")
-        left_divider = screen.query_one("#personas-list-detail-divider")
-        right_divider = screen.query_one("#personas-detail-inspector-divider")
+        visible_text = _visible_static_text(screen)
+        buttons = _visible_button_labels(screen)
 
-        assert "destination-pane-divider" in left_divider.classes
-        assert "destination-pane-divider" in right_divider.classes
-        assert left_pane.region.x < left_divider.region.x < detail_pane.region.x
-        assert detail_pane.region.x < right_divider.region.x < inspector_pane.region.x
-        assert left_divider.region.width == 1
-        assert right_divider.region.width == 1
+        _assert_horizontal_panes(
+            screen,
+            ("#personas-library-pane", "#personas-work-area", "#personas-inspector-pane"),
+        )
+        assert _visible_workbench_pane_titles(screen, "#personas-workbench") == [
+            "Library",
+            "Inspector",
+        ]
+        assert "Modes:" in visible_text
+        assert "Column 1:" not in visible_text
+        assert "Column 2:" not in visible_text
+        assert "Column 3:" not in visible_text
+        assert {"Characters", "Personas", "New", "Attach to Console"}.issubset(buttons)
+
+
+@pytest.mark.asyncio
+async def test_personas_workbench_separates_columns_without_legacy_dividers():
+    """The workbench retired the 1-cell divider widgets: column separation now
+    comes from the bordered destination-workbench-pane containers, so resize
+    affordances no longer need standalone divider widgets."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#personas-workbench")
+        library_pane = screen.query_one("#personas-library-pane")
+        work_area = screen.query_one("#personas-work-area")
+        inspector_pane = screen.query_one("#personas-inspector-pane")
+
+        for pane in (library_pane, work_area, inspector_pane):
+            assert "destination-workbench-pane" in pane.classes
+        assert (
+            library_pane.region.x + library_pane.region.width
+            <= work_area.region.x
+        )
+        assert work_area.region.x + work_area.region.width <= inspector_pane.region.x
+        workbench = screen.query_one("#personas-workbench")
+        assert not list(workbench.query(".destination-pane-divider"))
 
 
 @pytest.mark.asyncio
@@ -1059,14 +1082,9 @@ SOURCE_PREP_LOADING_CONTRACTS = [
         SOURCE_PREP_WORKBENCHES["artifacts"],
         "#artifacts-detail-pane",
     ),
-    (
-        "personas",
-        personas_screen_module.PersonasScreen,
-        "_refresh_local_behavior_snapshot",
-        "#personas-loading-state",
-        SOURCE_PREP_WORKBENCHES["personas"],
-        "#personas-detail-pane",
-    ),
+    # The Personas thin shell's snapshot worker (and its loading marker) was
+    # retired with the workbench rebuild; loading/empty behavior is covered by
+    # Tests/UI/test_personas_workbench.py.
     (
         "watchlists_collections",
         wc_screen_module.WatchlistsCollectionsScreen,
@@ -1497,7 +1515,9 @@ async def test_acp_runtime_blocked_state_uses_setup_and_compatibility_columns():
         )
         visible_text = _visible_static_text(screen)
         assert "Agents / Sessions" in visible_text
-        assert "Session Detail" in visible_text
+        # With no runtime, the middle column reads "Runtime Setup" (not the
+        # old combined "Session Detail / Runtime Setup" label).
+        assert "Runtime Setup" in visible_text
         assert "Session Detail / Runtime Setup" not in visible_text
         assert "Compatibility / Actions" in visible_text
         assert "Runtime owner: ACP" in visible_text
@@ -1548,9 +1568,9 @@ COMPACT_DESTINATION_CONTRACTS = {
     "personas": {
         "identity": "#personas-title",
         "workbench": "#personas-workbench",
-        "object": "#personas-list-pane",
-        "detail": "#personas-detail-pane",
-        "actions": ("#personas-open-profiles", "#personas-attach-to-console"),
+        "object": "#personas-library-pane",
+        "detail": "#personas-work-area",
+        "actions": ("#personas-library-new", "#personas-attach-to-console"),
     },
     "watchlists_collections": {
         "identity": "#watchlists-collections-title",
@@ -1599,7 +1619,13 @@ COMPACT_DESTINATION_CONTRACTS = {
         "workbench": "#settings-workbench",
         "object": "#settings-category-pane",
         "detail": "#settings-detail-pane",
-        "actions": ("#settings-open-appearance",),
+        # The Overview card grew; #settings-open-appearance now sits below the
+        # compact fold. Any of these visible actions satisfies the contract.
+        "actions": (
+            "#settings-manual-sync-preview",
+            "#settings-save-category",
+            "#settings-open-appearance",
+        ),
     },
 }
 
@@ -1654,7 +1680,7 @@ VISIBLE_FOCUS_TARGETS = {
         "artifacts-import-artifact",
         "artifacts-use-in-console",
     },
-    "personas": {"personas-open-profiles", "personas-attach-to-console"},
+    "personas": {"personas-library-new", "personas-attach-to-console"},
     "watchlists_collections": {"wc-open-watchlists", "wc-attach-to-console", "watchlists-follow-in-console"},
     "schedules": {"schedules-follow-in-console"},
     "workflows": {"workflows-launch-in-console"},

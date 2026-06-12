@@ -479,6 +479,7 @@ async def test_app_level_runtime_backend_callback_updates_backend_and_forwards()
         current_runtime_backend="server",
         runtime_backend="server",
         screen=SimpleNamespace(handle_runtime_backend_changed=screen_callback),
+        invalidate_screen_cache=Mock(),
     )
 
     await TldwCli.handle_runtime_backend_changed(app_like, "local")

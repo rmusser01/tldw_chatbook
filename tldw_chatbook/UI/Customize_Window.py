@@ -27,6 +27,10 @@ class CustomizeWindow(Container):
     """
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+
     CustomizeWindow {
         layout: horizontal;
         height: 100%;

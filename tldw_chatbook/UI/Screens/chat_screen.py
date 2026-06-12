@@ -2254,7 +2254,9 @@ class ChatScreen(BaseAppScreen):
                     classes="console-region destination-workbench-pane",
                 )
                 left_rail.styles.width = "3fr"
-                left_rail.styles.min_width = 30
+                # Compact contract: left rail + main column + the collapsed
+                # inspector handle (11) must fit a 100-column terminal.
+                left_rail.styles.min_width = 24
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
                 with self._frame_console_region(left_rail):
@@ -2321,7 +2323,7 @@ class ChatScreen(BaseAppScreen):
 
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"
-                main_column.styles.min_width = 60
+                main_column.styles.min_width = 56
                 with main_column:
                     transcript_region = self._frame_console_region(
                         Vertical(id="console-transcript-region", classes="console-region"),

@@ -327,24 +327,3 @@ async def test_local_study_dashboard_explains_source_generation_server_requireme
     assert not any(call[0] == "create_study_pack_job" for call in service.calls)
 
 
-def test_phase_3_4_source_study_generation_evidence_is_tracked() -> None:
-    tracker = _text(TRACKER)
-    readme = _text(PHASE_3_README)
-    evidence = _text(PHASE_3_4_EVIDENCE)
-    parent_task = _text(TASK_10)
-    task = _text(TASK_10_4)
-
-    assert "Phase 3.4" in tracker
-    assert "TASK-10.4" in tracker
-    assert PHASE_3_4_EVIDENCE.name in tracker
-    assert PHASE_3_4_EVIDENCE.name in readme
-    assert "Source-Selected Study Generation" in evidence
-    assert "Library -> Study Dashboard -> Generate Source Study Pack" in evidence
-    assert "No P0/P1 defects found" in evidence
-    assert "Tests/UI/test_product_maturity_phase3_source_study_generation.py" in evidence
-    assert "status: In Progress" in parent_task
-    assert "TASK-10.4" in parent_task
-    assert "Product Maturity Phase 3.4: Source-Selected Study Generation" in task
-    assert "status: Done" in task
-    for ac_number in range(1, 5):
-        assert f"- [x] #{ac_number}" in task

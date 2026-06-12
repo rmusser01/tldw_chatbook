@@ -29,6 +29,12 @@ class LLMManagementWindow(Container):
     """
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+    $ds-surface-raised: $surface;
+    $ds-text-primary: $text;
+
     LLMManagementWindow {
         layout: horizontal;
         height: 100%;

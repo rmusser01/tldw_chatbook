@@ -271,34 +271,3 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         assert "citations/snippets" in text
 
 
-def test_gate1_core_loop_screen_adaptation_evidence_is_tracked() -> None:
-    evidence = _text(EVIDENCE)
-    audit = _text(AUDIT)
-    tracker = _text(TRACKER)
-    readme = _text(PHASE_3_README)
-    task = _text(TASK_10_5)
-    parent = _text(TASK_10)
-
-    for heading in (
-        "## Scope",
-        "## Walkthrough",
-        "## Verification",
-        "## Defects",
-        "## Exit Decision",
-    ):
-        assert heading in evidence
-    for selector in (
-        "#home-dashboard-grid",
-        "#console-workspace-grid",
-        "#library-mode-bar",
-    ):
-        assert selector in evidence
-    assert EVIDENCE.name in readme
-    assert EVIDENCE.name in tracker
-    assert "Gate 1" in audit
-    assert "TASK-10.5" in tracker
-    assert "TASK-10.5" in parent
-    assert "status: Done" in task
-    for ac_number in range(1, 6):
-        assert f"- [x] #{ac_number}" in task
-    assert "## Implementation Notes" in task

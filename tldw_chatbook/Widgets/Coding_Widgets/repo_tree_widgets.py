@@ -48,6 +48,10 @@ class TreeNode(Widget):
     """A single node in the repository tree view."""
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+
     TreeNode {
         height: 3;
         width: 100%;

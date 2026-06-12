@@ -200,6 +200,12 @@ class ChatbooksWindowImproved(Screen):
     ]
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-input-focus-accent: $primary;
+    $ds-input-focus-bg: $surface;
+    $ds-input-focus-border: $primary;
+    $ds-text-primary: $text;
+
     ChatbooksWindowImproved {
         layout: vertical;
         background: $background;
