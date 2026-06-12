@@ -133,7 +133,8 @@ jobs:
   ui-tests:
     name: UI Tests
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 45
+
     steps:
     - uses: actions/checkout@v4
     
@@ -153,8 +154,12 @@ jobs:
         pip install textual-dev
     
     - name: Run UI tests
+      # Run the full Tests/UI directory, not just the 47 ui-marked tests —
+      # the unmarked ~2000 tests previously ran nowhere and rotted silently
+      # (repaired in PRs #508/#510; suite is green as of those merges).
       run: |
-        pytest -m ui \
+        pytest Tests/UI \
+          --timeout=180 \
           --json-report \
           --json-report-file=ui-test-results.json \
           -v
