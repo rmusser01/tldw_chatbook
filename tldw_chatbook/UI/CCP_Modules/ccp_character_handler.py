@@ -780,12 +780,13 @@ class CCPCharacterHandler:
         
         try:
             # Create filters for character card files
+            # Filters need callable testers; glob strings crash the picker.
             filters = Filters(
-                ("Character Cards", "*.json;*.png;*.yaml;*.yml"),
-                ("JSON Files", "*.json"),
-                ("PNG Files (with embedded data)", "*.png"),
-                ("YAML Files", "*.yaml;*.yml"),
-                ("All Files", "*.*")
+                ("Character Cards", lambda p: p.suffix.lower() in (".json", ".png", ".yaml", ".yml")),
+                ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                ("PNG Files (with embedded data)", lambda p: p.suffix.lower() == ".png"),
+                ("YAML Files", lambda p: p.suffix.lower() in (".yaml", ".yml")),
+                ("All Files", lambda p: True),
             )
             
             # Create and show the file picker
