@@ -336,10 +336,9 @@ class RuntimeServerContextProvider:
         return normalized or None
 
     def _legacy_api_config(self) -> Mapping[str, Any]:
-        if not isinstance(self.app_config, Mapping):
-            return {}
-        api_config = self.app_config.get("tldw_api", {})
-        return api_config if isinstance(api_config, Mapping) else {}
+        from tldw_chatbook.config import resolve_tldw_api_config
+
+        return resolve_tldw_api_config(self.app_config)
 
     def _should_allow_legacy_config(
         self,

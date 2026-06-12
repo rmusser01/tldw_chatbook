@@ -17,6 +17,8 @@ def _make_app_like(*, base_url: str = "https://Example.COM:8443/api/") -> Simple
             }
         },
         app_state=AppState(),
+        # handle_runtime_backend_changed invalidates the screen cache.
+        invalidate_screen_cache=lambda: None,
     )
 
 
@@ -659,6 +661,7 @@ async def test_handle_runtime_backend_changed_forwards_resolved_authoritative_ba
         app_config={},
         app_state=AppState(),
         screen=SimpleNamespace(handle_runtime_backend_changed=screen_callback),
+        invalidate_screen_cache=lambda: None,
     )
     context = load_runtime_policy_for_app(app_like, store=store)
 
