@@ -403,7 +403,9 @@ class TestChatTabContainer:
         assert tab_container.active_session_id == "def67890"
         
         # Verify tab bar was updated
-        tab_container.tab_bar.set_active_tab.assert_called_once_with("def67890")
+        # switch_to_tab_async sets the bar state without re-emitting the
+        # activation event (the container already handled it).
+        tab_container.tab_bar.set_active_tab.assert_called_once_with("def67890", emit=False)
     
     @pytest.mark.asyncio
     async def test_switch_to_nonexistent_tab(self, tab_container):
