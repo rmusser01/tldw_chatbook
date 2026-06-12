@@ -13,11 +13,16 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Static
 
+from ...Utils.input_validation import validate_text_input
 from .personas_pane_messages import (
     PreviewOpenInConsoleRequested,
     PreviewReplyRequested,
     PreviewResetRequested,
 )
+
+#: Boundary cap for one preview test message; generous for a test exchange
+#: while keeping pathological pastes out of the provider request.
+PREVIEW_MESSAGE_MAX_CHARS = 4000
 
 
 class PersonasPreviewPane(Vertical):
@@ -244,12 +249,27 @@ class PersonasPreviewPane(Vertical):
         body.display = not body.display
 
     def _submit_preview_message(self) -> None:
-        """Shared Test Reply path: guard, clear, append, request a reply."""
+        """Shared Test Reply path: validate, clear, append, request a reply.
+
+        Rejections keep the draft in the input (so it stays editable) and
+        surface a readable status instead of posting the message.
+        """
         field = self.query_one("#personas-preview-input", Input)
         text = field.value.strip()
         if not text:
             return
+        if len(text) > PREVIEW_MESSAGE_MAX_CHARS:
+            self.set_status(
+                f"Message too long (max {PREVIEW_MESSAGE_MAX_CHARS} characters)."
+            )
+            return
+        if not validate_text_input(
+            text, max_length=PREVIEW_MESSAGE_MAX_CHARS, allow_html=False
+        ):
+            self.set_status("Message contains content that cannot be sent.")
+            return
         field.value = ""
+        self.set_status("")
         self.append_user(text)
         self.post_message(PreviewReplyRequested(text))
 

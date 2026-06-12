@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -371,8 +372,13 @@ class PersonasScreen(BaseAppScreen):
         if query:
             if total >= self.LIBRARY_FTS_THRESHOLD:
                 # Large library: use FTS so the full DB corpus is searched
-                # even when the loaded list is a page-size truncation.
-                matched = ccp_character_handler.search_characters_fts(query)
+                # even when the loaded list is a page-size truncation. The
+                # query runs in a thread so the DB call never blocks the UI
+                # loop (the render lock below is only taken afterwards, so
+                # the await cannot deadlock it).
+                matched = await asyncio.to_thread(
+                    ccp_character_handler.search_characters_fts, query
+                )
             else:
                 # Small library: filter in-memory, case-insensitively on name.
                 q_lower = query.lower()
@@ -1002,10 +1008,11 @@ class PersonasScreen(BaseAppScreen):
         messages = [
             {"role": "system", "content": self._preview_system_prompt()}
         ] + history
-        reply = ""
-        streamed = False
-        try:
-            async for chunk in gateway.stream_chat(resolution, messages):
+        async def _consume(res: Any) -> str | None:
+            """Render one provider stream into the pane; None means stale-abort."""
+            consumed = ""
+            opened = False
+            async for chunk in gateway.stream_chat(res, messages):
                 if _stale():
                     # The selection changed or the preview was reset while the
                     # provider was streaming. The invalidation paths reseed the
@@ -1013,25 +1020,57 @@ class PersonasScreen(BaseAppScreen):
                     # covers the window before that reseed lands, and is a
                     # no-op afterwards.
                     await pane.discard_partial_reply()
-                    return
-                reply += chunk
+                    return None
+                consumed += chunk
                 if chunk:
                     # Progressive rendering: the first chunk opens the reply
                     # line, later chunks grow it in place.
-                    if not streamed:
+                    if not opened:
                         pane.begin_reply()
-                        streamed = True
+                        opened = True
                     pane.append_reply_chunk(chunk)
+            return consumed
+
+        try:
+            reply = await _consume(resolution)
         except Exception:
-            logger.error("Preview provider call failed.", exc_info=True)
-            if not _stale():
-                # Keep the user's transcript line, but pop the unanswered
-                # history entry so a retry does not duplicate the turn, and
-                # remove any half-streamed reply line - the reply never
-                # completed, so the transcript must not keep a fragment.
-                self._pop_orphaned_preview_user_turn()
+            logger.error(
+                "Preview provider call failed; retrying without streaming.",
+                exc_info=True,
+            )
+            if _stale():
                 await pane.discard_partial_reply()
-                pane.set_status("Provider error - try again or configure in Settings")
+                return
+            # Non-streaming fallback: retry ONCE with streaming disabled.
+            # Any half-streamed fragment belongs to the failed attempt and
+            # must not prefix the retry's rendering.
+            await pane.discard_partial_reply()
+            pane.set_status("Retrying without streaming...")
+            try:
+                retry_resolution = await gateway.resolve_for_send(
+                    dataclasses.replace(selection, streaming=False)
+                )
+                if not retry_resolution.ready:
+                    raise RuntimeError(
+                        retry_resolution.visible_copy or "provider unavailable"
+                    )
+                reply = await _consume(retry_resolution)
+            except Exception:
+                logger.error("Preview non-streaming retry failed.", exc_info=True)
+                if not _stale():
+                    # Keep the user's transcript line, but pop the unanswered
+                    # history entry so a retry does not duplicate the turn, and
+                    # remove any half-streamed reply line - the reply never
+                    # completed, so the transcript must not keep a fragment.
+                    # The orphan pop happens only HERE, after both attempts.
+                    self._pop_orphaned_preview_user_turn()
+                    await pane.discard_partial_reply()
+                    pane.set_status(
+                        "Provider error - try again or configure in Settings"
+                    )
+                return
+        if reply is None:
+            # A stale-abort inside _consume already discarded the partial line.
             return
         if _stale():
             # Same staleness rule for a stream that ended after invalidation.
@@ -1416,7 +1455,19 @@ class PersonasScreen(BaseAppScreen):
 
     @staticmethod
     def _write_text_file(target_path: str, content: str) -> None:
-        Path(target_path).expanduser().write_text(content, encoding="utf-8")
+        """Write export text after validating the destination at the boundary.
+
+        Mirrors the PNG export's check: the chosen path is validated against
+        its own parent (``validate_path`` rejects hidden/dot components and
+        resolution escapes) so legitimate user-chosen directories stay valid.
+        """
+        from ...Utils.path_validation import validate_path
+
+        target = Path(target_path).expanduser()
+        if not target.parent.exists():
+            raise ValueError(f"destination directory does not exist: {target.parent}")
+        validated = validate_path(target, base_directory=target.parent)
+        validated.write_text(content, encoding="utf-8")
 
     # ===== Delete =====
 

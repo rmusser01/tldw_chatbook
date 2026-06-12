@@ -25,7 +25,7 @@ class EditCharacterRequested(Message):
     Relocated from the retired ``CCP_Widgets.ccp_character_card_widget``.
     """
 
-    def __init__(self, character_id: int) -> None:
+    def __init__(self, character_id: str) -> None:
         super().__init__()
         self.character_id = character_id
 

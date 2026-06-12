@@ -114,6 +114,26 @@ def test_ccp_fetch_all_characters_accepts_current_list_shape(monkeypatch):
     assert fetch_all_characters() == [{"id": "3", "name": "Gamma"}]
 
 
+def test_delete_character_returns_false_when_db_unavailable(monkeypatch):
+    """A missing local DB must read as a failed delete, not an AttributeError."""
+    from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
+
+    monkeypatch.setattr(ccp_character_handler, "_default_character_db", lambda: None)
+
+    assert ccp_character_handler.delete_character(1, 1) is False
+
+
+def test_delete_character_returns_false_for_non_numeric_id(monkeypatch):
+    """A non-numeric id must read as a failed delete, not a ValueError."""
+    from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
+
+    db = Mock()
+    monkeypatch.setattr(ccp_character_handler, "_default_character_db", lambda: db)
+
+    assert ccp_character_handler.delete_character("not-a-number", 1) is False
+    db.soft_delete_character_card.assert_not_called()
+
+
 def test_legacy_ccp_dictionary_list_wrapper_uses_current_db_api(monkeypatch):
     db = Mock()
     monkeypatch.setattr(

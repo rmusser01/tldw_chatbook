@@ -117,7 +117,8 @@ def delete_character(character_id: CharacterId, expected_version: int) -> bool:
 
     Thin seam over ``soft_delete_character_card`` for the destination
     workbench. Returns ``True`` on success (including the already-deleted
-    idempotent case, which the DB API also reports as ``True``).
+    idempotent case, which the DB API also reports as ``True``) and ``False``
+    when the local DB is unavailable or the id is not a local numeric id.
 
     Raises:
         ConflictError: When ``expected_version`` no longer matches the DB
@@ -126,7 +127,15 @@ def delete_character(character_id: CharacterId, expected_version: int) -> bool:
     """
     local_id = _coerce_local_character_id(character_id)
     db = _default_character_db()
-    return bool(db.soft_delete_character_card(int(local_id), int(expected_version)))
+    if db is None:
+        logger.warning("delete_character: no local character DB available.")
+        return False
+    try:
+        numeric_id = int(local_id)
+    except (TypeError, ValueError):
+        logger.warning(f"delete_character: non-numeric character id {character_id!r}.")
+        return False
+    return bool(db.soft_delete_character_card(numeric_id, int(expected_version)))
 
 
 def import_character_card(file_path: str) -> Any:

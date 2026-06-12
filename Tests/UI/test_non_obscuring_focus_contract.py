@@ -552,6 +552,7 @@ def test_console_composer_action_availability_states_are_visually_distinct():
             for block in css_blocks(text, "#console-send-message")
             if "height: 1;" in block
         )
+        primary = css_block(text, ".console-action-primary")
         secondary = css_block(text, ".console-action-secondary")
         subdued = css_block(text, ".console-action-subdued")
         disabled = css_block(text, ".console-action-disabled")
@@ -561,6 +562,11 @@ def test_console_composer_action_availability_states_are_visually_distinct():
         assert "min-height: 1;" in console_button_base
         assert "color:" not in console_button_base
         assert "text-style:" not in console_button_base
+
+        assert "border: none;" in primary
+        assert "background: $ds-action-focus 35%;" in primary
+        assert "color: $ds-text-primary;" in primary
+        assert "text-style: bold;" in primary
 
         assert "border: none;" in secondary
         assert "background: $ds-surface-raised;" in secondary

@@ -771,6 +771,37 @@ class TestSearch:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam"]
 
+    async def test_fts_search_runs_off_the_event_loop(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        """The FTS query must not run synchronously on the UI loop."""
+        import asyncio
+
+        loop_seen: list[bool] = []
+
+        def fake_fts(search_term: str, limit: int = 50):
+            try:
+                asyncio.get_running_loop()
+                loop_seen.append(True)
+            except RuntimeError:
+                loop_seen.append(False)
+            return [{"id": 1, "name": "Detective Sam"}]
+
+        monkeypatch.setattr(character_handler_module, "search_characters_fts", fake_fts)
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            screen.LIBRARY_FTS_THRESHOLD = 2
+            screen.query_one("#personas-library-search").value = "sam"
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert loop_seen == [False]
+            rows = screen.query(".personas-library-row")
+            assert [_row_text(r) for r in rows] == ["Detective Sam"]
+
     async def test_concurrent_renders_do_not_duplicate_rows(
         self, mock_app_instance, stub_characters
     ):
@@ -999,6 +1030,58 @@ class TestImportExport:
             assert captured["output_path"] == str(target)
             assert any(
                 "Exported to" in message and severity == "information"
+                for message, severity in notifications
+            )
+
+    async def test_export_json_rejects_hidden_directory_destination(
+        self, mock_app_instance, stub_characters, stub_db, monkeypatch, tmp_path
+    ):
+        """The JSON write path validates the destination like the PNG path."""
+        monkeypatch.setattr(
+            personas_screen_module,
+            "export_character_card_to_json",
+            lambda db, character_id, include_image=True: '{"name": "Detective Sam"}',
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            hidden_dir = tmp_path / ".sneaky"
+            hidden_dir.mkdir()
+            target = hidden_dir / "out.json"
+            await screen._export_selected_character(str(target), fmt="json")
+            await pilot.pause()
+            assert not target.exists()
+            assert any(
+                "Export failed" in message and severity == "error"
+                for message, severity in notifications
+            )
+
+    async def test_export_json_rejects_missing_destination_directory(
+        self, mock_app_instance, stub_characters, stub_db, monkeypatch, tmp_path
+    ):
+        """A destination in a nonexistent directory fails readably."""
+        monkeypatch.setattr(
+            personas_screen_module,
+            "export_character_card_to_json",
+            lambda db, character_id, include_image=True: '{"name": "Detective Sam"}',
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            target = tmp_path / "missing" / "out.json"
+            await screen._export_selected_character(str(target), fmt="json")
+            await pilot.pause()
+            assert not target.exists()
+            assert any(
+                "Export failed" in message and severity == "error"
                 for message, severity in notifications
             )
 
@@ -1727,7 +1810,11 @@ class _FakePreviewGateway:
     ``gate`` holds the stream BEFORE the first chunk; ``mid_gate`` holds it
     between the first chunk and the rest; ``error`` raises before any chunk
     unless ``error_after_first`` is set, in which case the first chunk is
-    yielded and the error raised on the next pull.
+    yielded and the error raised on the next pull. ``stream_failures`` makes
+    that many stream_chat calls raise before any chunk, then later calls
+    succeed (exercises the non-streaming retry). ``selections`` records every
+    selection passed to resolve_for_send so tests can assert the retry's
+    ``streaming`` flag.
     """
 
     def __init__(
@@ -1737,18 +1824,22 @@ class _FakePreviewGateway:
         mid_gate=None,
         error=None,
         error_after_first=False,
+        stream_failures=0,
     ):
         self.chunks = chunks
         self.gate = gate
         self.mid_gate = mid_gate
         self.error = error
         self.error_after_first = error_after_first
+        self.stream_failures = stream_failures
         self.requests: list[list[dict]] = []
+        self.selections: list = []
         self.closed = False
 
     async def resolve_for_send(self, selection):
         from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 
+        self.selections.append(selection)
         return ConsoleProviderResolution(
             provider="openai", base_url="", model="test-model", ready=True
         )
@@ -1757,6 +1848,9 @@ class _FakePreviewGateway:
         self.requests.append([dict(m) for m in messages])
         if self.gate is not None:
             await self.gate.wait()
+        if self.stream_failures > 0:
+            self.stream_failures -= 1
+            raise RuntimeError("stream transport failed")
         if self.error is not None and not self.error_after_first:
             raise self.error
         for index, chunk in enumerate(self.chunks):
@@ -2278,6 +2372,76 @@ class TestPreviewIntegration:
             )
             assert status.strip()
             assert "Traceback" not in status
+
+    async def test_stream_failure_falls_back_to_non_streaming_once(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A failed stream retries exactly once with streaming disabled."""
+        from textual.widgets import Static as _Static
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        fake = _FakePreviewGateway(stream_failures=1)
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._ensure_preview_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # Both attempts resolved; the retry disabled streaming.
+            assert [s.streaming for s in fake.selections] == [True, False]
+            assert len(fake.requests) == 2
+            pane = screen.query_one(PersonasPreviewPane)
+            assert "character: Hello, world." in pane.transcript_text()
+            assert screen._preview_history[-1] == {
+                "role": "assistant",
+                "content": "Hello, world.",
+            }
+            assert (
+                str(screen.query_one("#personas-preview-status", _Static).renderable)
+                == "Ready"
+            )
+
+    async def test_both_attempts_failing_keeps_error_semantics(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """When the non-streaming retry also fails the existing error
+        semantics apply: orphan user turn popped, readable error status."""
+        from textual.widgets import Static as _Static
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        fake = _FakePreviewGateway(error=RuntimeError("provider exploded"))
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            screen._ensure_preview_gateway = lambda: fake
+            screen.post_message(PreviewReplyRequested("Hi"))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # Streaming attempt + one non-streaming retry, no more.
+            assert [s.streaming for s in fake.selections] == [True, False]
+            assert len(fake.requests) == 2
+            assert screen._preview_history == []
+            pane = screen.query_one(PersonasPreviewPane)
+            assert "Hello" not in pane.transcript_text()
+            status = str(
+                screen.query_one("#personas-preview-status", _Static).renderable
+            )
+            assert "Provider error" in status
 
     async def test_empty_reply_sets_status_without_bare_line(
         self, mock_app_instance, stub_characters, stub_conversations

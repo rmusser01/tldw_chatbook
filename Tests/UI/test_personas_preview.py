@@ -178,6 +178,47 @@ async def test_enter_in_input_submits_like_test_reply():
         assert _line_texts(pilot.app) == ["you: Hi there"]
 
 
+async def test_oversized_message_is_rejected_with_readable_status():
+    """A message over the cap is not posted; the input keeps the draft."""
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        pane.expand()
+        await pilot.pause()
+        field = pilot.app.query_one("#personas-preview-input", Input)
+        oversized = "x" * 4001
+        field.value = oversized
+        pilot.app.query_one("#personas-preview-test-reply", Button).press()
+        await pilot.pause()
+        assert pilot.app.replies == []
+        assert _line_texts(pilot.app) == []
+        assert field.value == oversized  # the draft stays editable
+        status = str(
+            pilot.app.query_one("#personas-preview-status", Static).renderable
+        )
+        assert "Message too long (max 4000 characters)." == status
+
+
+async def test_scripty_message_is_rejected_with_readable_status():
+    """Injection-shaped input is rejected at the boundary, never posted."""
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        pane.expand()
+        await pilot.pause()
+        field = pilot.app.query_one("#personas-preview-input", Input)
+        field.value = "<script>alert(1)</script>"
+        pilot.app.query_one("#personas-preview-test-reply", Button).press()
+        await pilot.pause()
+        assert pilot.app.replies == []
+        assert _line_texts(pilot.app) == []
+        status = str(
+            pilot.app.query_one("#personas-preview-status", Static).renderable
+        )
+        assert status.strip()
+        assert "Traceback" not in status
+
+
 async def test_enter_with_empty_input_is_a_noop():
     app = PreviewApp()
     async with app.run_test() as pilot:
