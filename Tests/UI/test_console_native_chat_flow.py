@@ -286,6 +286,39 @@ async def test_console_native_missing_key_blocks_before_clearing_generic_draft()
 
 
 @pytest.mark.asyncio
+async def test_console_native_enter_on_setup_blocked_send_shows_recovery_feedback():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "MISSING_OPENAI_KEY"}
+    }
+    app.console_provider_gateway_factory = lambda: ConsoleProviderGateway(
+        config_provider=lambda: app.app_config,
+        environ={},
+    )
+    notifications: list[tuple[str, dict]] = []
+    app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("preserve this from keyboard")
+
+        await pilot.press("enter")
+        await pilot.pause(0.05)
+
+        assert composer.draft_text() == "preserve this from keyboard"
+        assert notifications == [
+            (
+                "Add API Key in Settings before sending.",
+                {"severity": "warning"},
+            )
+        ]
+
+
+@pytest.mark.asyncio
 async def test_console_native_blocked_send_preserves_composer_text_and_shows_recovery():
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
