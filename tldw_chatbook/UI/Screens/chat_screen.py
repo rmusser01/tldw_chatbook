@@ -2838,45 +2838,58 @@ class ChatScreen(BaseAppScreen):
 
     def _stage_handoff_as_console_live_work(self, payload: ChatHandoffPayload) -> None:
         """Stage a Use-in-Console handoff into the native staged-context lane."""
+        from pydantic import ValidationError
+
         from tldw_chatbook.Chat.citation_evidence_models import (
             EvidenceBundle,
             EvidenceReference,
         )
+        from tldw_chatbook.Utils.input_validation import sanitize_string
 
-        snippet = (payload.display_summary or payload.body or "").strip()
+        def _safe_text(value: Any, max_length: int = 500) -> str:
+            return sanitize_string(str(value or ""), max_length=max_length).strip()
+
+        # Handoff bodies can reach 80k characters; cap and sanitize at this
+        # boundary before any of it lands in the staged payload.
+        snippet = _safe_text(
+            payload.display_summary or payload.body, max_length=4_000
+        )
+        title = _safe_text(payload.title) or "Untitled"
         launch_payload: dict[str, Any] = {
-            "target_id": payload.content_ref or payload.source_id or payload.title,
-            "item_type": payload.item_type,
-            "source_id": payload.source_id,
+            "target_id": _safe_text(
+                payload.content_ref or payload.source_id or title
+            ),
+            "item_type": _safe_text(payload.item_type),
+            "source_id": _safe_text(payload.source_id),
             "snippet": snippet,
-            "suggested_prompt": payload.suggested_prompt,
-            "runtime_backend": payload.runtime_backend,
-            "source_selector_state": payload.source_selector_state,
+            "suggested_prompt": _safe_text(payload.suggested_prompt, max_length=4_000),
+            "runtime_backend": _safe_text(payload.runtime_backend),
+            "source_selector_state": _safe_text(payload.source_selector_state),
             "metadata": dict(payload.metadata or {}),
         }
-        if snippet and "rag" in (payload.source or "").lower():
+        if "rag" in (payload.source or "").lower():
             # RAG-class sources gate Console sends on available evidence;
-            # carry the handoff snippet as a single-reference bundle.
+            # always carry a single-reference bundle (title stands in when
+            # the snippet is empty) so the handoff cannot dead-end the send.
             try:
                 launch_payload["evidence_bundle"] = EvidenceBundle(
-                    bundle_id=str(
-                        payload.content_ref or payload.source_id or "handoff-evidence"
-                    ),
-                    query=str(payload.suggested_prompt or payload.title or ""),
-                    source=str(payload.source or "Search/RAG"),
+                    bundle_id=_safe_text(payload.content_ref or payload.source_id)
+                    or "handoff-evidence",
+                    query=_safe_text(payload.suggested_prompt) or title,
+                    source=_safe_text(payload.source) or "Search/RAG",
                     references=(
                         EvidenceReference(
                             evidence_id="S1",
-                            source_id=str(payload.source_id or "unknown"),
-                            source_type=str(payload.item_type or "rag-result"),
-                            title=str(payload.title or "Untitled"),
-                            snippet=snippet,
-                            authority_label=str(payload.runtime_backend or "local"),
+                            source_id=_safe_text(payload.source_id) or "unknown",
+                            source_type=_safe_text(payload.item_type) or "rag-result",
+                            title=title,
+                            snippet=snippet or title,
+                            authority_label=_safe_text(payload.runtime_backend) or "local",
                             content_ref=payload.content_ref,
                         ),
                     ),
                 ).to_payload()
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, ValidationError):
                 logger.warning("Could not build evidence bundle for handoff", exc_info=True)
 
         self._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
