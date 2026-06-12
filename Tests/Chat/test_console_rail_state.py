@@ -186,7 +186,11 @@ def test_console_context_rail_badge_ignores_empty_staged_summary():
 
 
 def test_console_context_rail_badge_ignores_default_workspace_display_labels():
-    for workspace_label in ("No workspace selected", "Workspace: Local Default"):
+    for workspace_label in (
+        "No workspace selected",
+        "Workspace: Local Default",
+        "Workspace: Default",
+    ):
         assert (
             build_console_context_rail_badge(
                 workspace_label=workspace_label,

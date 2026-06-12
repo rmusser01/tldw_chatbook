@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import replace
 from datetime import datetime
@@ -88,6 +89,16 @@ class SyncRequested(Message):
 class NotesScreen(BaseAppScreen):
     """Notes management screen with scope-aware state."""
 
+    # Keyboard-only operation, following the Settings/Library single-letter
+    # convention: these fire when focus is outside text-entry widgets and are
+    # surfaced in the footer.
+    BINDINGS = [
+        ("s", "notes_save_note", "Save Note"),
+        ("n", "notes_new_note", "New Note"),
+        ("slash", "notes_focus_search", "Search Notes"),
+        ("e", "notes_focus_editor", "Focus Editor"),
+    ]
+
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
     # equal-specificity selectors and takes precedence when loaded.
@@ -103,11 +114,13 @@ class NotesScreen(BaseAppScreen):
         overflow: hidden;
     }
 
-    #notes-mode-label {
-        width: 8;
-        min-width: 8;
+    #notes-status-row {
+        width: 1fr;
+        min-width: 0;
         height: 1;
         min-height: 1;
+        text-align: right;
+        color: $text-muted;
     }
 
     Button.notes-mode-chip {
@@ -156,6 +169,33 @@ class NotesScreen(BaseAppScreen):
         padding: 1;
     }
 
+    #notes-action-bar {
+        height: 3;
+        min-height: 3;
+        padding: 0 1;
+        border: round $surface-lighten-1;
+        align: left middle;
+    }
+
+    .notes-action-bar-group {
+        width: 100%;
+        height: 1;
+        min-height: 1;
+        align: left middle;
+    }
+
+    .notes-action-bar-spacer {
+        width: 1fr;
+        min-width: 0;
+        height: 1;
+    }
+
+    .notes-action-bar-group Button {
+        height: 1;
+        min-height: 1;
+        margin-left: 1;
+    }
+
     .unsaved-indicator {
         color: $text-muted;
         margin: 0 1;
@@ -178,6 +218,11 @@ class NotesScreen(BaseAppScreen):
     .word-count {
         color: $text-muted;
         margin: 0 1;
+    }
+
+    .notes-action-bar-sep {
+        color: $text-muted;
+        width: 1;
     }
 
     #notes-preview-toggle {
@@ -219,6 +264,10 @@ class NotesScreen(BaseAppScreen):
             "artifacts": [],
         }
         self._skip_next_resume_refresh = False
+        # Serializes list population: a modal dismiss resumes the screen and
+        # refreshes concurrently with worker-driven refreshes; interleaved
+        # ListView appends would duplicate rows.
+        self._populate_lock = asyncio.Lock()
         logger.debug("NotesScreen initialized with scope-aware state")
 
     NOTES_MODES = {
@@ -230,23 +279,19 @@ class NotesScreen(BaseAppScreen):
     def compose_content(self) -> ComposeResult:
         with Vertical(id="notes-shell"):
             yield Static("Notes", id="notes-title", classes="ds-destination-header")
-            yield Static(
-                "Capture, search, and reuse notes; sync to disk; create from templates.",
-                id="notes-purpose",
-                classes="destination-purpose",
-            )
-            yield Static(
-                self._status_row_label(),
-                id="notes-status-row",
-                classes="destination-status-row",
-            )
+            # Console-style header: title plus one dense line that carries the
+            # mode chips and the scope/status summary.
             with DestinationModeStrip(id="notes-mode-strip", classes="destination-mode-strip"):
-                yield Static("Modes:", id="notes-mode-label", classes="destination-section")
                 for mode_id, mode in self.NOTES_MODES.items():
                     classes = "notes-mode-chip"
                     if mode_id == self.state.active_mode:
                         classes = f"{classes} is-active"
                     yield Button(mode["label"], id=mode["button_id"], classes=classes)
+                yield Static(
+                    self._status_row_label(),
+                    id="notes-status-row",
+                    classes="destination-status-row",
+                )
 
             notes_region = Horizontal(
                 id="notes-mode-region-notes",
@@ -306,22 +351,68 @@ class NotesScreen(BaseAppScreen):
             sync_region = Vertical(id="notes-mode-region-sync", classes="ds-panel")
             sync_region.display = self.state.active_mode == "sync"
             with sync_region:
-                yield Static("Sync", classes="destination-section")
-                yield Static(
-                    "Sync local notes to and from a folder on disk.",
-                    id="notes-sync-region-copy",
-                )
                 yield NotesSyncPane(self.app_instance, id="notes-sync-pane")
 
             templates_region = Vertical(id="notes-mode-region-templates", classes="ds-panel")
             templates_region.display = self.state.active_mode == "templates"
             with templates_region:
-                yield Static("Templates", classes="destination-section")
                 yield NotesTemplatesPane(id="notes-templates-pane")
+
+            # Console-composer-style docked action bar: status on the left,
+            # right-aligned compact actions; contents swap with the active mode.
+            with Horizontal(id="notes-action-bar"):
+                notes_bar = Horizontal(id="notes-action-bar-notes", classes="notes-action-bar-group")
+                notes_bar.display = self.state.active_mode == "notes"
+                with notes_bar:
+                    yield Label("Ready", id="notes-unsaved-indicator", classes="unsaved-indicator")
+                    yield Label("|", classes="notes-action-bar-sep")
+                    yield Label("0 words", id="notes-word-count", classes="word-count")
+                    yield Static("", classes="notes-action-bar-spacer")
+                    yield Button(
+                        "Save",
+                        id="notes-save-button",
+                        compact=True,
+                        classes="destination-action-button console-action-primary",
+                    )
+                    yield Button(
+                        "Preview",
+                        id="notes-preview-toggle",
+                        compact=True,
+                        classes="destination-action-button console-action-secondary",
+                    )
+                    yield Button(
+                        "Use in Console",
+                        id="notes-use-in-chat-button",
+                        compact=True,
+                        classes="destination-action-button console-action-secondary",
+                    )
+
+                sync_bar = Horizontal(id="notes-action-bar-sync", classes="notes-action-bar-group")
+                sync_bar.display = self.state.active_mode == "sync"
+                with sync_bar:
+                    yield Static("", classes="notes-action-bar-spacer")
+                    yield Button(
+                        "Sync Now",
+                        id="quick-sync-btn",
+                        compact=True,
+                        classes="destination-action-button console-action-primary",
+                    )
+
+                templates_bar = Horizontal(id="notes-action-bar-templates", classes="notes-action-bar-group")
+                templates_bar.display = self.state.active_mode == "templates"
+                with templates_bar:
+                    yield Static("", classes="notes-action-bar-spacer")
+                    yield Button(
+                        "Create Note from Template",
+                        id="notes-templates-create-button",
+                        compact=True,
+                        classes="destination-action-button console-action-primary",
+                    )
 
     def watch_state(self, old_state: NotesScreenState, new_state: NotesScreenState) -> None:
         if old_state.has_unsaved_changes != new_state.has_unsaved_changes:
             self._update_unsaved_indicator()
+            self._update_status_row()
         if old_state.auto_save_status != new_state.auto_save_status:
             self._update_save_status()
         if old_state.word_count != new_state.word_count:
@@ -347,13 +438,36 @@ class NotesScreen(BaseAppScreen):
             state.active_mode = "notes"
         return state
 
+    _scope_item_count: int = 0
+
     def _status_row_label(self) -> str:
+        # Each mode summarizes its own context; carrying the editor's
+        # "saved" state into Sync or Templates would be misleading.
+        if self.state.active_mode == "sync":
+            last_sync = getattr(self.app_instance, "last_sync_time", None)
+            last_text = (
+                last_sync.strftime("%Y-%m-%d %H:%M")
+                if isinstance(last_sync, datetime)
+                else "never"
+            )
+            return f"Sync | last sync: {last_text}"
+        if self.state.active_mode == "templates":
+            from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
+
+            count = len(NOTE_TEMPLATES)
+            noun = "template" if count == 1 else "templates"
+            return f"Templates | {count} {noun}"
         scope_labels = {
             ScopeType.LOCAL_NOTE: "Local",
             ScopeType.SERVER_NOTE: "Server",
             ScopeType.WORKSPACE: "Workspace",
         }
-        return f"{scope_labels.get(self.state.scope_type, 'Local')} | Notes"
+        scope_label = scope_labels.get(self.state.scope_type, "Local")
+        item_noun = "workspace" if self.state.scope_type == ScopeType.WORKSPACE else "note"
+        if self._scope_item_count != 1:
+            item_noun += "s"
+        save_state = "unsaved" if self.state.has_unsaved_changes else "saved"
+        return f"{scope_label} | {self._scope_item_count} {item_noun} | {save_state}"
 
     def _update_status_row(self) -> None:
         try:
@@ -397,8 +511,14 @@ class NotesScreen(BaseAppScreen):
             self.query_one("#notes-mode-region-templates").display = (
                 self.state.active_mode == "templates"
             )
+            self.query_one("#notes-action-bar-notes").display = self.state.active_mode == "notes"
+            self.query_one("#notes-action-bar-sync").display = self.state.active_mode == "sync"
+            self.query_one("#notes-action-bar-templates").display = (
+                self.state.active_mode == "templates"
+            )
         except QueryError:
             return
+        self._update_status_row()
 
     def _set_state(self, **changes: Any) -> None:
         self.state = self.validate_state(replace(self.state, **changes))
@@ -555,7 +675,6 @@ class NotesScreen(BaseAppScreen):
             workspace_panel = self.query_one("#workspace-context-panel", WorkspaceContextPanel)
             save_button = self.query_one("#notes-save-button", Button)
             preview_button = self.query_one("#notes-preview-toggle", Button)
-            sync_button = self.query_one("#notes-sync-button", Button)
             unsaved_indicator = self.query_one("#notes-unsaved-indicator", Label)
             word_count = self.query_one("#notes-word-count", Label)
             inspector_pane = self.query_one("#notes-inspector-pane", NotesInspectorPane)
@@ -570,7 +689,6 @@ class NotesScreen(BaseAppScreen):
 
             save_button.display = is_note_editor
             preview_button.display = is_note_editor
-            sync_button.display = self.state.scope_type == ScopeType.LOCAL_NOTE and is_note_editor
             unsaved_indicator.display = is_note_editor
             word_count.display = is_note_editor
 
@@ -982,16 +1100,19 @@ class NotesScreen(BaseAppScreen):
     async def _populate_scope_list_if_available(self, items: list[dict[str, Any]]) -> None:
         if not self.is_mounted:
             return
-        try:
-            navigator = self.query_one("#notes-navigator-pane", NotesNavigatorPane)
-            if self.state.scope_type == ScopeType.LOCAL_NOTE:
-                await navigator.populate_local_notes_list(items)
-            elif self.state.scope_type == ScopeType.SERVER_NOTE:
-                await navigator.populate_server_notes_list(items)
-            else:
-                await navigator.populate_workspaces_list(items)
-        except QueryError:
-            return
+        async with self._populate_lock:
+            try:
+                navigator = self.query_one("#notes-navigator-pane", NotesNavigatorPane)
+                if self.state.scope_type == ScopeType.LOCAL_NOTE:
+                    await navigator.populate_local_notes_list(items)
+                elif self.state.scope_type == ScopeType.SERVER_NOTE:
+                    await navigator.populate_server_notes_list(items)
+                else:
+                    await navigator.populate_workspaces_list(items)
+            except QueryError:
+                return
+            self._scope_item_count = len(items)
+            self._update_status_row()
 
     async def _populate_notes_list_if_available(self, notes_list_data: list[dict[str, Any]]) -> None:
         await self._populate_scope_list_if_available(notes_list_data)
@@ -1607,7 +1728,10 @@ class NotesScreen(BaseAppScreen):
 
     def _update_word_count_display(self) -> None:
         try:
-            self.query_one("#notes-word-count", Label).update(f"Words: {self.state.word_count}")
+            word_noun = "word" if self.state.word_count == 1 else "words"
+            self.query_one("#notes-word-count", Label).update(
+                f"{self.state.word_count} {word_noun}"
+            )
         except QueryError:
             return
 
@@ -2527,20 +2651,49 @@ class NotesScreen(BaseAppScreen):
         success = await self._save_current_note()
         self.post_message(NoteSaved(self._get_current_resource_id(), success))
 
-    @on(Button.Pressed, "#notes-sync-button")
-    def handle_sync_button(self, event: Button.Pressed) -> None:
+    @on(Button.Pressed, "#quick-sync-btn")
+    def handle_sync_now_button(self, event: Button.Pressed) -> None:
         event.stop()
-        if self.state.scope_type != ScopeType.LOCAL_NOTE or not self._is_note_editor_context():
-            self._notify("Sync is only available for local notes.", severity="warning")
-            return
         self.post_message(SyncRequested())
-        self._set_state(active_mode="sync")
+        try:
+            pane = self.query_one("#notes-sync-pane", NotesSyncPane)
+        except QueryError:
+            return
+        pane.start_sync()
 
     @on(Button.Pressed, "#notes-preview-toggle")
     async def handle_preview_toggle(self, event: Button.Pressed) -> None:
         event.stop()
         self._set_state(is_preview_mode=not self.state.is_preview_mode)
         await self._toggle_preview_mode()
+
+    async def action_notes_save_note(self) -> None:
+        if not self._is_note_editor_context():
+            self._notify("Select a note before saving.", severity="warning")
+            return
+        success = await self._save_current_note()
+        self.post_message(NoteSaved(self._get_current_resource_id(), success))
+
+    async def action_notes_new_note(self) -> None:
+        if self.state.active_mode != "notes":
+            self._set_state(active_mode="notes")
+        await self._create_new_note()
+
+    def action_notes_focus_search(self) -> None:
+        if self.state.active_mode != "notes":
+            self._set_state(active_mode="notes")
+        try:
+            self.query_one("#notes-search-input", Input).focus()
+        except QueryError:
+            return
+
+    def action_notes_focus_editor(self) -> None:
+        if self.state.active_mode != "notes":
+            self._set_state(active_mode="notes")
+        try:
+            self.query_one("#notes-editor-area", TextArea).focus()
+        except QueryError:
+            return
 
     @on(Button.Pressed, "#notes-navigator-rail-collapse")
     def handle_navigator_rail_collapse(self, event: Button.Pressed) -> None:
@@ -2595,8 +2748,17 @@ class NotesScreen(BaseAppScreen):
             "time": now.strftime("%H:%M"),
             "datetime": now.strftime("%Y-%m-%d %H:%M"),
         }
-        title = str(template.get("title", "New Note")).format(**template_data)
-        content = str(template.get("content", "")).format(**template_data)
+        # Templates can come from the user's note_templates.json; unknown
+        # placeholders or malformed format syntax must not crash the action.
+        try:
+            title = str(template.get("title", "New Note")).format(**template_data)
+            content = str(template.get("content", "")).format(**template_data)
+        except (KeyError, ValueError, IndexError) as exc:
+            self._notify(
+                f"Template '{template_key}' has an invalid placeholder: {exc}",
+                severity="error",
+            )
+            return False
         new_note_id = self.notes_service.add_note(
             user_id=self.notes_user_id,
             title=title,
@@ -2635,6 +2797,15 @@ class NotesScreen(BaseAppScreen):
         if created:
             self._set_state(active_mode="notes")
 
+    @on(NotesTemplatesPane.CreateRequested)
+    async def handle_templates_pane_create_requested(
+        self, event: NotesTemplatesPane.CreateRequested
+    ) -> None:
+        event.stop()
+        created = await self._create_local_note_from_template(event.template_key)
+        if created:
+            self._set_state(active_mode="notes")
+
     @on(Button.Pressed, "#notes-import-button")
     def handle_import_button(self, event: Button.Pressed) -> None:
         event.stop()
@@ -2650,6 +2821,9 @@ class NotesScreen(BaseAppScreen):
             import_callback,
         )
 
+    _IMPORT_NOTE_MAX_CHARS = 2_000_000
+    _IMPORT_NOTE_TITLE_MAX_CHARS = 300
+
     async def _import_note_from_path(self, selected_path: Optional[Path]) -> None:
         if selected_path is None:
             return
@@ -2658,19 +2832,36 @@ class NotesScreen(BaseAppScreen):
             return
 
         from tldw_chatbook.Event_Handlers.notes_events import _parse_note_from_file_content
+        from tldw_chatbook.Utils.input_validation import sanitize_string
+        from tldw_chatbook.Utils.path_validation import validate_path_simple
 
         try:
-            file_content = Path(selected_path).read_text(encoding="utf-8")
+            note_path = validate_path_simple(selected_path, require_exists=True)
+        except ValueError as exc:
+            self._notify(f"Rejected import path: {exc}", severity="error")
+            return
+        try:
+            file_content = await asyncio.to_thread(
+                note_path.read_text, encoding="utf-8", errors="replace"
+            )
         except OSError as exc:
             self._notify(f"Could not read file: {exc}", severity="error")
             return
-        title, content = _parse_note_from_file_content(Path(selected_path), file_content)
-        if title is None:
-            title = Path(selected_path).stem or "Imported Note"
+        if len(file_content) > self._IMPORT_NOTE_MAX_CHARS:
+            self._notify(
+                "Import rejected: file is larger than the supported note size.",
+                severity="error",
+            )
+            return
+        title, content = _parse_note_from_file_content(note_path, file_content)
+        title = sanitize_string(title or "", max_length=self._IMPORT_NOTE_TITLE_MAX_CHARS)
+        if not title:
+            title = note_path.stem or "Imported Note"
+        content = (content or "").replace("\x00", "")
         new_note_id = self.notes_service.add_note(
             user_id=self.notes_user_id,
             title=title,
-            content=content or "",
+            content=content,
         )
         if not new_note_id:
             self._notify("Failed to import note.", severity="error")
@@ -2685,25 +2876,18 @@ class NotesScreen(BaseAppScreen):
         ascending = not self.state.sort_ascending
         self._set_state(sort_ascending=ascending)
         try:
-            event.button.label = "↑ Oldest First" if ascending else "↓ Newest First"
+            event.button.label = "↑ Oldest" if ascending else "↓ Newest"
         except Exception:
             pass
         await self.refresh_current_scope()
 
-    @on(Button.Pressed, "#notes-save-current-button")
-    async def handle_save_current_button(self, event: Button.Pressed) -> None:
-        event.stop()
-        success = await self._save_current_note()
-        self.post_message(NoteSaved(self._get_current_resource_id(), success))
-
-    @on(Button.Pressed, "#notes-search-button")
-    async def handle_search_button(self, event: Button.Pressed) -> None:
-        event.stop()
-        search_term = self.query_one("#notes-search-input", Input).value.strip()
-        keyword_filter = self.query_one("#notes-keyword-filter-input", Input).value.strip()
-        await self._perform_filtered_search(search_term, keyword_filter)
-
     @on(Button.Pressed, "#notes-delete-button")
+    def on_delete_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        # push_screen_wait requires a worker context; awaiting the
+        # confirmation dialog directly from the message pump crashes the app.
+        self.run_worker(self.handle_delete_button(event), exclusive=True, group="notes-delete")
+
     async def handle_delete_button(self, event: Button.Pressed) -> None:
         event.stop()
         deleted_id = self._get_current_resource_id()
@@ -2761,6 +2945,11 @@ class NotesScreen(BaseAppScreen):
         await self._save_current_workspace_details()
 
     @on(Button.Pressed, "#workspace-add-source-button")
+    def on_workspace_add_source_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        # The media picker is awaited via push_screen_wait, which needs a worker.
+        self.run_worker(self.handle_workspace_add_source_button(event), exclusive=True, group="notes-add-source")
+
     async def handle_workspace_add_source_button(self, event: Button.Pressed) -> None:
         event.stop()
         await self._create_workspace_source()
@@ -2917,6 +3106,8 @@ class NotesScreen(BaseAppScreen):
 
     @on(Select.Changed, "#notes-sort-select")
     async def handle_sort_changed(self, event: Select.Changed) -> None:
+        if event.select.value == self.state.sort_by:
+            return
         self._set_state(sort_by=event.select.value)
         await self.refresh_current_scope()
 
@@ -2985,6 +3176,13 @@ class NotesScreen(BaseAppScreen):
         self._consume_pending_workspace_return_context()
         await self.refresh_current_scope()
         self._skip_next_resume_refresh = True
+        self._update_scope_context_ui()
+        # The pane's list widgets finish composing after this hook, so the
+        # populate above can no-op on QueryError; repaint once they exist.
+        self.call_after_refresh(self._repopulate_after_compose)
+
+    async def _repopulate_after_compose(self) -> None:
+        await self._populate_scope_list_if_available(list(self.state.notes_list))
         self._update_scope_context_ui()
 
     async def on_screen_resume(self) -> None:

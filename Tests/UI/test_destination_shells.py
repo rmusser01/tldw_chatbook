@@ -163,6 +163,19 @@ class StaticLibraryConversationScopeService:
         return {"items": list(self.conversations), "pagination": {"total": len(self.conversations)}}
 
 
+def _link_library_items_to_active_workspace(app, items) -> None:
+    active_workspace = app.workspace_registry_service.get_active_workspace()
+    if active_workspace is None:
+        return
+    for item_type, item_id, title in items:
+        app.workspace_registry_service.link_membership(
+            active_workspace.workspace_id,
+            item_type=item_type,
+            item_id=item_id,
+            title=title,
+        )
+
+
 class RaisingLibraryNotesScopeService:
     async def list_notes(self, **kwargs):
         raise RuntimeError("notes unavailable")
@@ -357,9 +370,18 @@ def _static_text(widget: Static) -> str:
 
 def _visible_text(screen) -> str:
     return " ".join(
-        _static_text(widget)
-        for widget in screen.query(Static)
-        if widget.display and hasattr(widget, "renderable")
+        [
+            *(
+                _static_text(widget)
+                for widget in screen.query(Static)
+                if widget.display and hasattr(widget, "renderable")
+            ),
+            *(
+                str(button.label)
+                for button in screen.query(Button)
+                if button.display and button.label is not None
+            ),
+        ]
     )
 
 
@@ -803,6 +825,15 @@ async def test_library_destination_lists_local_source_snapshot_from_services():
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
         [{"title": "Planning Chat", "id": "chat-1"}]
     )
+    _link_library_items_to_active_workspace(
+        app,
+        (
+            ("note", "note-1", "Research Note"),
+            ("note", "note-2", "Meeting Note"),
+            ("media", "media-1", "Transcript A"),
+            ("conversation", "chat-1", "Planning Chat"),
+        ),
+    )
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -812,13 +843,15 @@ async def test_library_destination_lists_local_source_snapshot_from_services():
         text = _visible_text(screen)
         button = screen.query_one("#library-use-in-console", Button)
 
-        assert "Local Library snapshot" in text
+        assert "Library Content Hub" in text
+        assert "Landing page for ingested content" in text
         assert "Notes: 2" in text
         assert "Media: 1" in text
         assert "Conversations: 1" in text
         assert "Research Note" in text
         assert "Transcript A" in text
         assert "Planning Chat" in text
+        assert "Console handoff is secondary" in text
         assert button.disabled is False
 
     assert app.notes_scope_service.calls[0] == {
@@ -853,7 +886,7 @@ async def test_library_destination_empty_state_disables_console_handoff():
         await _wait_for_library_snapshot(screen, pilot)
         button = screen.query_one("#library-use-in-console", Button)
 
-        assert "No local Library sources are available yet." in _visible_text(screen)
+        assert "No local Library content yet." in _visible_text(screen)
         assert button.disabled is True
         assert "Stage Library source context" in str(button.tooltip)
 
@@ -867,6 +900,13 @@ async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     app.open_chat_with_handoff = Mock()
+    _link_library_items_to_active_workspace(
+        app,
+        tuple(
+            ("note", f"note-{index}", f"Research Note {index}")
+            for index in range(1, 6)
+        ),
+    )
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -979,6 +1019,14 @@ async def test_library_use_in_console_uses_source_snapshot_context():
         [{"title": "Planning Chat", "id": "chat-1"}]
     )
     app.open_chat_with_handoff = Mock()
+    _link_library_items_to_active_workspace(
+        app,
+        (
+            ("note", "note-1", "Research Note"),
+            ("media", "media-1", "Transcript A"),
+            ("conversation", "chat-1", "Planning Chat"),
+        ),
+    )
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -1037,8 +1085,6 @@ def test_wc_service_adoption_tracking_evidence_exists():
     [
         ("library", "#library-open-notes", "notes"),
         ("library", "#library-open-media", "media"),
-        ("library", "#library-open-conversations", "conversation"),
-        ("library", "#library-open-import-export", "ingest"),
         ("artifacts", "#artifacts-open-chatbooks", "chatbooks"),
         # The Personas destination is now a native workbench and no longer
         # hands off to the legacy CCP route via #personas-open-profiles.
@@ -1058,6 +1104,70 @@ async def test_destination_action_buttons_emit_compatibility_routes(route, selec
         await _wait_for_route(seen_routes, target_route, pilot)
 
     assert seen_routes[-1] == target_route
+
+
+@pytest.mark.asyncio
+async def test_library_conversations_action_switches_to_native_mode_without_route_handoff():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    seen_routes = []
+    host = DestinationHarness(app, "library", seen_routes)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-open-conversations")
+        await pilot.click("#library-open-conversations")
+        await _wait_for_selector(screen, pilot, "#library-conversations-browser-title")
+
+        assert getattr(screen, "_active_mode") == "conversations"
+        assert "Conversations mode" in _visible_text(screen)
+
+    assert seen_routes == []
+
+
+@pytest.mark.asyncio
+async def test_library_import_export_action_switches_to_native_mode_without_route_handoff():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    seen_routes = []
+    host = DestinationHarness(app, "library", seen_routes)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-open-import-export")
+        await pilot.click("#library-open-import-export")
+        await _wait_for_selector(screen, pilot, "#library-import-export-workflow-title")
+
+        assert getattr(screen, "_active_mode") == "import-export"
+        assert "Import/Export mode" in _visible_text(screen)
+
+    assert seen_routes == []
+
+
+@pytest.mark.asyncio
+async def test_library_import_export_dedicated_import_action_emits_ingest_route():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    seen_routes = []
+    host = DestinationHarness(app, "library", seen_routes)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await pilot.click("#library-open-import-export")
+        await _wait_for_selector(screen, pilot, "#library-import-export-open-ingest")
+        await pilot.click("#library-import-export-open-ingest")
+        await _wait_for_route(seen_routes, "ingest", pilot)
+
+    assert seen_routes[-1] == "ingest"
 
 
 @pytest.mark.asyncio

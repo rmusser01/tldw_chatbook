@@ -1,6 +1,6 @@
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -12,7 +12,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleVariantSet,
 )
-from tldw_chatbook.Chat.console_message_actions import ConsoleSaveDestination
+from tldw_chatbook.Chat.console_message_actions import (
+    ConsoleMessageActionService,
+    ConsoleSaveDestination,
+)
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
@@ -43,10 +46,19 @@ class MutableTranscriptHarness(App):
 
 
 class SaveAsModalHarness(App):
+    def __init__(self, destinations: list[ConsoleSaveDestination] | None = None) -> None:
+        super().__init__()
+        self.destinations = save_as_modal_destinations() if destinations is None else destinations
+        self.selected_destination: str | None = None
+
     def on_mount(self) -> None:
         self.push_screen(
-            ConsoleSaveAsModal(destinations=save_as_modal_destinations())
+            ConsoleSaveAsModal(destinations=self.destinations),
+            self._capture_destination,
         )
+
+    def _capture_destination(self, destination: str | None) -> None:
+        self.selected_destination = destination
 
 
 def save_as_modal_destinations() -> list[ConsoleSaveDestination]:
@@ -240,8 +252,25 @@ def test_console_transcript_selected_message_shows_action_row():
 
     plain = transcript.to_plain_text(width=80)
 
-    assert "Copy Edit Save as... Regen ---> Good Bad Del" in plain
+    assert "Copy Edit Save as... ♻ ---> 👍 👎 🗑" in plain
     assert "|" not in plain
+
+
+def test_console_user_message_regenerate_action_is_disabled_and_blocks_dispatch():
+    message = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="prompt", id="m1")
+    service = ConsoleMessageActionService()
+
+    regenerate = next(
+        action
+        for action in service.available_actions(message)
+        if action.action_id == "regenerate"
+    )
+    result = service.dispatch("regenerate", message)
+
+    assert not regenerate.enabled
+    assert regenerate.disabled_reason == "Only assistant messages can be regenerated."
+    assert result.status == "blocked"
+    assert result.visible_copy == "Only assistant messages can be regenerated."
 
 
 def test_console_transcript_selected_message_does_not_apply_inline_border_geometry():
@@ -274,7 +303,7 @@ def test_console_transcript_action_row_stays_within_terminal_width_budget():
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... Regen ---> Good Bad Del"
+    assert action_row == "Copy Edit Save as... ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 48
 
 
@@ -315,7 +344,7 @@ def test_console_transcript_variant_action_row_stays_within_terminal_width_budge
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... < > Regen ---> Good Bad Del"
+    assert action_row == "Copy Edit Save as... < > ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 52
 
 
@@ -336,7 +365,7 @@ def test_console_transcript_failed_action_row_includes_retry_without_exceeding_b
         if line.startswith("Copy")
     )
 
-    assert action_row == "Copy Edit Save as... Try Regen ---> Good Bad Del"
+    assert action_row == "Copy Edit Save as... Try ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 52
 
 
@@ -352,7 +381,10 @@ async def test_console_transcript_keyboard_selects_messages_and_enter_shows_acti
 
     assert "Copy" in text
     assert "Save as..." in text
-    assert "Regen" in text
+    assert "♻" in text
+    assert "👍" in text
+    assert "👎" in text
+    assert "🗑" in text
     assert "|" not in text
 
 
@@ -366,7 +398,10 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
 
     assert "Copy" in text
     assert "Save as..." in text
-    assert "Regen" in text
+    assert "♻" in text
+    assert "👍" in text
+    assert "👎" in text
+    assert "🗑" in text
     assert "|" not in text
 
 
@@ -396,7 +431,10 @@ async def test_console_transcript_action_buttons_have_stable_ids():
 
     assert "Copy" in text
     assert "Save as..." in text
-    assert "Regen" in text
+    assert "♻" in text
+    assert "👍" in text
+    assert "👎" in text
+    assert "🗑" in text
     assert "|" not in text
 
 
@@ -439,6 +477,47 @@ async def test_save_as_modal_lists_available_and_wip_destinations():
     assert "Chatbook" in text
     assert "Note" in text
     assert "WIP: save as Note is not wired yet." in text
+
+
+@pytest.mark.asyncio
+async def test_save_as_modal_available_destination_is_clickable_control():
+    app = SaveAsModalHarness(
+        destinations=[
+            ConsoleSaveDestination(label="Chatbook", available=True, reason=""),
+            ConsoleSaveDestination(
+                label="Note",
+                available=False,
+                reason="WIP: save as Note is not wired yet.",
+            ),
+        ]
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _wait_for_selector(app.screen, pilot, "#console-save-as-destination-chatbook")
+        destination_button = app.screen.query_one("#console-save-as-destination-chatbook", Button)
+        text = _visible_text(app.screen)
+
+        assert destination_button.disabled is False
+        assert "Note [WIP]" in text
+        assert not app.screen.query("#console-save-as-destination-note")
+
+        await pilot.click("#console-save-as-destination-chatbook")
+        await pilot.pause(0.1)
+
+    assert app.selected_destination == "Chatbook"
+
+
+@pytest.mark.asyncio
+async def test_save_as_modal_harness_preserves_empty_destination_list():
+    app = SaveAsModalHarness(destinations=[])
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _wait_for_selector(app.screen, pilot, "#console-save-as-modal")
+        text = _visible_text(app.screen)
+
+    assert "No Save as destinations are wired for selected messages yet." in text
+    assert "Chatbook" not in text
+    assert "Note" not in text
 
 
 @pytest.mark.asyncio

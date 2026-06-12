@@ -99,9 +99,10 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(
             "Study",
             "Flashcards",
             "Quizzes",
-            "Source Browser",
-            "Source Detail / Search Results",
-            "Inspector",
+            "Library Modules",
+            "Content Hub",
+            "Hub Inspector",
+            "Library Content Hub",
             "No source selected.",
             "Research Note",
             "Transcript A",
@@ -194,7 +195,7 @@ def test_phase_3_3_library_contract_layout_evidence_is_tracked() -> None:
     ):
         assert selector in evidence
     assert "Tests/UI/test_product_maturity_phase3_library_contract_layout.py" in evidence
-    assert "status: In Progress" in parent_task
+    assert "status: Done" in parent_task
     assert "TASK-10.3" in parent_task
     assert "TASK-10.3" in task
     assert "status: Done" in task

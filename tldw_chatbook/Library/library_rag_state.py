@@ -289,13 +289,21 @@ class LibraryRagScopeState:
         status = "ready"
         if total_count == 0:
             status = "blocked"
-            recovery_copy = _recovery_copy(
-                status_label="No sources",
-                unavailable_what="Library Search/RAG",
-                why="No Library sources are available for retrieval",
-                next_action="Add or import Library sources before querying",
-                recovery_action="Library Import/Export",
-                owner="Library source index",
+            recovery_copy = "\n".join(
+                (
+                    _recovery_copy(
+                        status_label="No sources",
+                        unavailable_what="Library Search/RAG",
+                        why="No Library sources are available for retrieval",
+                        next_action="Add or import Library sources before querying",
+                        recovery_action="Library Import/Export",
+                        owner="Library source index",
+                    ),
+                    "Recovery checklist",
+                    "1. Import Library sources.",
+                    "2. Run Search/RAG.",
+                    "3. Select evidence, then Use in Console.",
+                )
             )
         elif not any(option.selected for option in options):
             status = "blocked"
@@ -389,16 +397,16 @@ class LibraryRagQueryState:
             owner = "user"
             next_action = "Remove markup or script content before running Search/RAG"
             recovery_action = "Query input"
-        elif not normalized_query:
-            disabled_reason = "Enter a question or search query."
-            owner = "user"
-            next_action = "Type a query before running Search/RAG"
-            recovery_action = "Query input"
         elif not has_source_scope:
             disabled_reason = "Select at least one Library source."
             owner = "Library source scope"
             next_action = "Select or import a source before querying"
             recovery_action = "Library source scope"
+        elif not normalized_query:
+            disabled_reason = "Enter a question or search query."
+            owner = "user"
+            next_action = "Type a query before running Search/RAG"
+            recovery_action = "Query input"
         elif not dependencies_ready:
             disabled_reason = "Install or enable Search/RAG dependencies."
             owner = "optional dependency"
@@ -525,6 +533,129 @@ class LibraryRagResultRow:
     @property
     def citation_labels(self) -> tuple[str, ...]:
         return tuple(citation.label for citation in self.citations)
+
+    @property
+    def source_type_badge_label(self) -> str:
+        """Compact source type label for evidence rows."""
+        return (
+            _provenance_text(self.provenance, "source_type")
+            or _provenance_text(self.provenance, "item_type")
+            or _provenance_text(self.provenance, "type")
+            or "source"
+        )
+
+    @property
+    def workspace_badge_label(self) -> str:
+        """Compact workspace authority label for evidence rows."""
+        workspace_ids = _provenance_text_tuple(self.provenance, "workspace_ids")
+        workspace_id = _provenance_text(self.provenance, "workspace_id")
+        if workspace_id and workspace_id not in workspace_ids:
+            workspace_ids = (*workspace_ids, workspace_id)
+        if not workspace_ids:
+            return "all workspaces"
+        if len(workspace_ids) == 1:
+            return workspace_ids[0]
+        return f"{len(workspace_ids)} workspaces"
+
+    @property
+    def citation_count_badge_label(self) -> str:
+        """Compact citation count label for evidence rows."""
+        count = len(self.citations)
+        suffix = "citation" if count == 1 else "citations"
+        return f"{count} {suffix}"
+
+    @property
+    def eligibility_badge_label(self) -> str:
+        """Compact active-context eligibility label for evidence rows."""
+        explicit_eligible = _coerce_optional_bool(
+            self.provenance.get("active_context_eligible")
+        )
+        if explicit_eligible is True:
+            return "eligible"
+        if explicit_eligible is False:
+            return "blocked"
+        workspace_ids = _provenance_text_tuple(self.provenance, "workspace_ids")
+        if workspace_ids and not _provenance_text(self.provenance, "active_workspace_id"):
+            return "blocked"
+        return "eligible"
+
+    @property
+    def row_badge_label(self) -> str:
+        """One-line source authority summary for result list scanning."""
+        return " | ".join(
+            (
+                self.source_type_badge_label,
+                self.workspace_badge_label,
+                self.citation_count_badge_label,
+                self.eligibility_badge_label,
+            )
+        )
+
+    @property
+    def source_identity_label(self) -> str:
+        """User-facing source/chunk identity for selected evidence inspection."""
+        if self.source_id and self.chunk_id:
+            return f"Source: {self.source_id} / {self.chunk_id}"
+        if self.source_id:
+            return f"Source: {self.source_id}"
+        if self.chunk_id:
+            return f"Chunk: {self.chunk_id}"
+        return "Source: unavailable"
+
+    @property
+    def score_label(self) -> str:
+        """User-facing retrieval score when the adapter provides one."""
+        return "" if self.score is None else f"Score: {self.score:.3f}"
+
+    @property
+    def runtime_label(self) -> str:
+        """User-facing runtime/backend identity for selected evidence inspection."""
+        return f"Runtime: {self.runtime_backend or 'local'}"
+
+    @property
+    def authority_display_label(self) -> str:
+        """User-facing authority label aligned with evidence handoff metadata."""
+        explicit_label = _provenance_text(self.provenance, "authority_label")
+        if explicit_label:
+            return f"Authority: {explicit_label}"
+
+        workspace_ids = _provenance_text_tuple(self.provenance, "workspace_ids")
+        workspace_id = _provenance_text(self.provenance, "workspace_id")
+        if workspace_id and workspace_id not in workspace_ids:
+            workspace_ids = (*workspace_ids, workspace_id)
+        if workspace_ids:
+            return f"Authority: Workspace: {', '.join(workspace_ids)}"
+
+        runtime_backend = self.runtime_backend.lower()
+        source_authority = (
+            "server"
+            if runtime_backend.startswith("server") or "server" in runtime_backend
+            else "local"
+        )
+        return f"Authority: Source authority: {source_authority}"
+
+    @property
+    def eligibility_label(self) -> str:
+        """User-facing active-context eligibility for selected evidence inspection."""
+        explicit_eligible = _coerce_optional_bool(
+            self.provenance.get("active_context_eligible")
+        )
+        explicit_reason = _provenance_text(self.provenance, "eligibility_reason")
+        if explicit_eligible is True:
+            return "Eligibility: available for active workspace"
+        if explicit_eligible is False:
+            reason = explicit_reason.replace("_", " ") if explicit_reason else "blocked"
+            return f"Eligibility: blocked for active workspace ({reason})"
+
+        workspace_ids = _provenance_text_tuple(self.provenance, "workspace_ids")
+        if workspace_ids and not _provenance_text(self.provenance, "active_workspace_id"):
+            return "Eligibility: blocked until an active workspace is available"
+        return "Eligibility: available for active context"
+
+    @property
+    def handoff_label(self) -> str:
+        """User-facing statement of what the Console handoff preserves."""
+        return "Handoff: snippet + citations + source/chunk IDs"
 
 
 @dataclass(frozen=True)
@@ -718,6 +849,41 @@ def _normalize_citation(value: Any) -> LibraryRagCitation:
             chunk_id=_sanitize_display_text(value.get("chunk_id"), "", escape=False),
         )
     return LibraryRagCitation(label=_sanitize_display_text(value, "Citation"))
+
+
+def _provenance_text(provenance: Mapping[str, Any], key: str) -> str:
+    return _sanitize_display_text(
+        provenance.get(key),
+        "",
+        max_length=LIBRARY_RAG_DISPLAY_MAX_LENGTH,
+    )
+
+
+def _provenance_text_tuple(provenance: Mapping[str, Any], key: str) -> tuple[str, ...]:
+    value = provenance.get(key)
+    values = _as_sequence(value)
+    normalized = tuple(
+        _sanitize_display_text(
+            item,
+            "",
+            max_length=LIBRARY_RAG_DISPLAY_MAX_LENGTH,
+        )
+        for item in values
+    )
+    return tuple(text for text in normalized if text)
+
+
+def _coerce_optional_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "enabled", "eligible", "available"}:
+        return True
+    if text in {"0", "false", "no", "n", "disabled", "blocked", "ineligible"}:
+        return False
+    return None
 
 
 def _result_id(source_id: str, chunk_id: str, title: str) -> str:

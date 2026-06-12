@@ -11,6 +11,9 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-001](001-adopt-backlog-decisions-as-canonical-adrs.md) | Accepted | Use `backlog/decisions/` as the canonical ADR location and require ADR checks for significant architectural choices. |
 | [ADR-002](002-openai-compatible-model-discovery.md) | Accepted | Keep OpenAI-compatible model discovery local, manual, and scoped to configured providers with explicit user persistence. |
 | [ADR-003](003-settings-library-rag-defaults.md) | Accepted | Keep Library/RAG Settings scoped to persisted global defaults while Library owns active search and Console owns staged context. |
+| [ADR-004](004-settings-storage-defaults-restart-boundary.md) | Accepted | Keep Settings storage defaults persisted under `database` config while active storage handles remain restart-boundary owned. |
+| [ADR-005](005-console-workspace-server-readiness.md) | Accepted | Keep Console workspace switching local-first while exposing honest server-readiness, handoff, runtime, and ACP task/run states behind adapter boundaries. |
+| [ADR-006](006-provider-aware-generation-settings.md) | Accepted | Keep Settings as the owner of persisted generation defaults while Console resolves effective session settings and provider adapters translate sampler/thinking controls into provider-specific request payloads. |
 
 ## Historical Decision Material
 

@@ -85,6 +85,19 @@ from .settings_library_rag_defaults import (
     normalise_library_rag_search_mode,
     validate_library_rag_defaults,
 )
+from .settings_privacy_security import (
+    SettingsPrivacyPosture,
+    build_privacy_posture_rows,
+    build_settings_privacy_posture,
+)
+from .settings_storage_defaults import (
+    STORAGE_FIELD_LABELS,
+    SettingsStorageDefaults,
+    build_storage_check_rows,
+    build_storage_save_sections,
+    load_storage_defaults,
+    validate_storage_defaults,
+)
 from ..Navigation.main_navigation import NavigateToScreen
 
 
@@ -95,7 +108,53 @@ PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "en
 PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_temperature": "temperature",
     "model_profile_top_p": "top_p",
+    "model_profile_min_p": "min_p",
+    "model_profile_top_k": "top_k",
+    "model_profile_max_tokens": "max_tokens",
+    "model_profile_seed": "seed",
+    "model_profile_presence_penalty": "presence_penalty",
+    "model_profile_frequency_penalty": "frequency_penalty",
+    "model_profile_reasoning_effort": "reasoning_effort",
+    "model_profile_reasoning_summary": "reasoning_summary",
+    "model_profile_verbosity": "verbosity",
+    "model_profile_thinking_effort": "thinking_effort",
+    "model_profile_thinking_budget_tokens": "thinking_budget_tokens",
     "model_profile_streaming": "streaming",
+}
+REASONING_EFFORT_OPTIONS = frozenset({"", "none", "minimal", "low", "medium", "high", "xhigh"})
+REASONING_SUMMARY_OPTIONS = frozenset({"", "auto", "concise", "detailed", "none"})
+VERBOSITY_OPTIONS = frozenset({"", "low", "medium", "high"})
+THINKING_EFFORT_OPTIONS = frozenset({"", "off", "low", "medium", "high", "xhigh", "max"})
+OPENAI_REASONING_PROVIDER_KEYS = frozenset({"openai"})
+ANTHROPIC_THINKING_PROVIDER_KEYS = frozenset({"anthropic"})
+OPENAI_REASONING_PROFILE_FIELD_KEYS = frozenset(
+    {
+        "model_profile_reasoning_effort",
+        "model_profile_reasoning_summary",
+        "model_profile_verbosity",
+    }
+)
+ANTHROPIC_THINKING_PROFILE_FIELD_KEYS = frozenset(
+    {
+        "model_profile_thinking_effort",
+        "model_profile_thinking_budget_tokens",
+    }
+)
+MODEL_PROFILE_INPUT_PLACEHOLDERS = {
+    "model_profile_temperature": "0.0 - 2.0",
+    "model_profile_top_p": "0.0 - 1.0",
+    "model_profile_min_p": "optional 0.0 - 1.0",
+    "model_profile_top_k": "optional whole number",
+    "model_profile_max_tokens": "optional whole number",
+    "model_profile_seed": "optional whole number",
+    "model_profile_presence_penalty": "-2.0 - 2.0",
+    "model_profile_frequency_penalty": "-2.0 - 2.0",
+    "model_profile_reasoning_effort": "none, minimal, low, medium, high, xhigh",
+    "model_profile_reasoning_summary": "auto, concise, detailed, none",
+    "model_profile_verbosity": "low, medium, high",
+    "model_profile_thinking_effort": "off, low, medium, high, xhigh, max",
+    "model_profile_thinking_budget_tokens": "optional >= 1024",
+    "model_profile_streaming": "true or false",
 }
 PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
@@ -146,7 +205,17 @@ CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
         "streaming",
         "temperature",
         "top_p",
+        "min_p",
+        "top_k",
         "max_tokens",
+        "seed",
+        "presence_penalty",
+        "frequency_penalty",
+        "reasoning_effort",
+        "reasoning_summary",
+        "verbosity",
+        "thinking_effort",
+        "thinking_budget_tokens",
     }
 )
 CONSOLE_BEHAVIOR_SAVE_ORDER = (
@@ -155,7 +224,17 @@ CONSOLE_BEHAVIOR_SAVE_ORDER = (
     "streaming",
     "temperature",
     "top_p",
+    "min_p",
+    "top_k",
     "max_tokens",
+    "seed",
+    "presence_penalty",
+    "frequency_penalty",
+    "reasoning_effort",
+    "reasoning_summary",
+    "verbosity",
+    "thinking_effort",
+    "thinking_budget_tokens",
     *CONSOLE_BACKGROUND_EFFECT_SAVE_ORDER,
 )
 ADVANCED_CONFIG_GUIDED_PATHS = (
@@ -213,37 +292,13 @@ PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "vllm": "http://127.0.0.1:8000/v1",
 }
 PROVIDER_CREDENTIAL_ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-SENSITIVE_CONFIG_EXACT_KEYS = frozenset(
-    {
-        "api_key",
-        "apikey",
-        "api-key",
-        "api_token",
-        "auth_token",
-        "access_token",
-        "refresh_token",
-        "client_secret",
-        "secret_key",
-        "secret",
-        "token",
-        "password",
-    }
-)
-SENSITIVE_CONFIG_KEY_PATTERNS = (
-    "api_key",
-    "apikey",
-    "api-key",
-    "_key",
-    "_token",
-    "_secret",
-    "_password",
-)
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
     {
         SettingsCategoryId.PROVIDERS_MODELS,
         SettingsCategoryId.APPEARANCE,
         SettingsCategoryId.CONSOLE_BEHAVIOR,
         SettingsCategoryId.LIBRARY_RAG,
+        SettingsCategoryId.STORAGE,
     }
 )
 SETTINGS_OVERVIEW_BOUNDARY_ROWS = (
@@ -567,6 +622,7 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_provider_endpoint = False
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
+        self._syncing_provider_model_value = False
         self._syncing_provider_manual = False
         self._syncing_provider_selection = False
         self._syncing_console_threshold = False
@@ -574,7 +630,10 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_background_effects = False
         self._syncing_library_rag_defaults = False
         self._syncing_appearance_defaults = False
+        self._syncing_storage_defaults = False
         self._active_settings_field_id: str | None = None
+        self._navigation_provider: str | None = None
+        self._navigation_model: str | None = None
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
         self._storage_check_rows: tuple[str, ...] = (
@@ -589,6 +648,7 @@ class SettingsScreen(BaseAppScreen):
         self._console_behavior_saved_this_session = False
         self._library_rag_result = "Library/RAG defaults have not been saved this session."
         self._appearance_result = "Appearance defaults have not been saved this session."
+        self._storage_result = "Storage defaults have not been saved this session."
         self._advanced_config_result = "Advanced config validation: not run"
         self._advanced_config_validated_text: str | None = None
         self._ownership_by_category_cache = self._build_ownership_by_category()
@@ -665,7 +725,7 @@ class SettingsScreen(BaseAppScreen):
                 SettingsCategoryId.STORAGE,
                 "Storage",
                 "Config path, local databases, and file locations.",
-                "Local",
+                "Guided",
             ),
             SettingsCategorySummary(
                 SettingsCategoryId.PRIVACY_SECURITY,
@@ -918,13 +978,27 @@ class SettingsScreen(BaseAppScreen):
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.STORAGE,
-                owns_config_sections=("paths", "database"),
+                owns_config_sections=(
+                    "database.USER_DB_BASE_DIR",
+                    "database.chachanotes_db_path",
+                    "database.prompts_db_path",
+                    "database.media_db_path",
+                    "database.research_db_path",
+                    "database.writing_db_path",
+                    "database.library_collections_db_path",
+                    "database.workspaces_db_path",
+                ),
                 reads_runtime_state_from=("local filesystem", "configured database paths"),
-                writes_allowed=False,
-                runtime_owner="Storage services",
-                boundary_copy="Settings observes local paths and writability without moving data.",
-                recovery_copy="Verify paths before changing storage roots outside this slice.",
-                read_only_reason="Storage edits require a dedicated source-of-truth and migration task.",
+                writes_allowed=True,
+                runtime_owner="Settings persisted defaults; storage services active handles",
+                boundary_copy=(
+                    "Settings edits persisted database path defaults only; active database "
+                    "handles keep their current paths until restart."
+                ),
+                recovery_copy=(
+                    "Validate paths, save the config-only change, then restart Chatbook to "
+                    "activate new storage defaults."
+                ),
             ),
             SettingsOwnershipRecord(
                 category=SettingsCategoryId.PRIVACY_SECURITY,
@@ -1095,12 +1169,62 @@ class SettingsScreen(BaseAppScreen):
             maximum=1.0,
         )
 
+    def _loaded_console_default_min_p(self) -> float | str:
+        return self._loaded_optional_float_default("min_p", minimum=0.0, maximum=1.0)
+
+    def _loaded_console_default_top_k(self) -> int | str:
+        return self._loaded_optional_int_default("top_k", minimum=0)
+
     def _loaded_console_default_max_tokens(self) -> int | str:
-        chat_defaults = self._chat_defaults()
-        value = chat_defaults.get("max_tokens", "")
+        return self._loaded_optional_int_default("max_tokens", minimum=1)
+
+    def _loaded_console_default_seed(self) -> int | str:
+        return self._loaded_optional_int_default("seed", minimum=0)
+
+    def _loaded_console_default_presence_penalty(self) -> float | str:
+        return self._loaded_optional_float_default(
+            "presence_penalty",
+            minimum=-2.0,
+            maximum=2.0,
+        )
+
+    def _loaded_console_default_frequency_penalty(self) -> float | str:
+        return self._loaded_optional_float_default(
+            "frequency_penalty",
+            minimum=-2.0,
+            maximum=2.0,
+        )
+
+    def _loaded_console_default_choice(self, key: str, allowed: frozenset[str]) -> str:
+        value = str(self._chat_defaults().get(key, "") or "").strip().lower()
+        return value if value in allowed else ""
+
+    def _loaded_console_default_thinking_budget_tokens(self) -> int | str:
+        return self._loaded_optional_int_default("thinking_budget_tokens", minimum=1024)
+
+    def _loaded_optional_float_default(
+        self,
+        key: str,
+        *,
+        minimum: float,
+        maximum: float,
+    ) -> float | str:
+        value = self._chat_defaults().get(key, "")
         if value is None or str(value).strip() == "":
             return ""
-        return coerce_int_setting(value, 0, minimum=1) or ""
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return ""
+        return number if minimum <= number <= maximum else ""
+
+    def _loaded_optional_int_default(self, key: str, *, minimum: int) -> int | str:
+        value = self._chat_defaults().get(key, "")
+        if value is None or str(value).strip() == "":
+            return ""
+        invalid_sentinel = minimum - 1
+        coerced = coerce_int_setting(value, invalid_sentinel, minimum=minimum)
+        return coerced if minimum <= coerced else ""
 
     def _console_behavior_loaded_values(self) -> dict[str, object]:
         return {
@@ -1109,7 +1233,29 @@ class SettingsScreen(BaseAppScreen):
             "streaming": self._loaded_console_default_streaming(),
             "temperature": self._loaded_console_default_temperature(),
             "top_p": self._loaded_console_default_top_p(),
+            "min_p": self._loaded_console_default_min_p(),
+            "top_k": self._loaded_console_default_top_k(),
             "max_tokens": self._loaded_console_default_max_tokens(),
+            "seed": self._loaded_console_default_seed(),
+            "presence_penalty": self._loaded_console_default_presence_penalty(),
+            "frequency_penalty": self._loaded_console_default_frequency_penalty(),
+            "reasoning_effort": self._loaded_console_default_choice(
+                "reasoning_effort",
+                REASONING_EFFORT_OPTIONS,
+            ),
+            "reasoning_summary": self._loaded_console_default_choice(
+                "reasoning_summary",
+                REASONING_SUMMARY_OPTIONS,
+            ),
+            "verbosity": self._loaded_console_default_choice(
+                "verbosity",
+                VERBOSITY_OPTIONS,
+            ),
+            "thinking_effort": self._loaded_console_default_choice(
+                "thinking_effort",
+                THINKING_EFFORT_OPTIONS,
+            ),
+            "thinking_budget_tokens": self._loaded_console_default_thinking_budget_tokens(),
         }
 
     def _loaded_console_background_effects(self) -> dict[str, object]:
@@ -1300,6 +1446,34 @@ class SettingsScreen(BaseAppScreen):
             return False
         return self._library_rag_validation_result().valid
 
+    def _storage_loaded_defaults(self) -> SettingsStorageDefaults:
+        return load_storage_defaults(self._app_config_mapping())
+
+    def _storage_loaded_values(self) -> dict[str, object]:
+        return asdict(self._storage_loaded_defaults())
+
+    def _storage_draft(self) -> SettingsDraft | None:
+        return self._settings_drafts.get(SettingsCategoryId.STORAGE)
+
+    def _storage_setting_values(self) -> dict[str, object]:
+        loaded = self._storage_loaded_values()
+        draft = self._storage_draft()
+        return {
+            key: draft.values[key] if draft is not None and key in draft.values else value
+            for key, value in loaded.items()
+        }
+
+    def _storage_current_defaults(self) -> SettingsStorageDefaults:
+        return SettingsStorageDefaults(**self._storage_setting_values())
+
+    def _storage_validation_result(self):
+        return validate_storage_defaults(self._storage_current_defaults())
+
+    def _storage_save_enabled(self) -> bool:
+        if not self._category_has_unsaved_changes(SettingsCategoryId.STORAGE):
+            return False
+        return self._storage_validation_result().valid
+
     def _category_has_unsaved_changes(self, category: SettingsCategoryId) -> bool:
         draft = self._settings_drafts.get(category)
         return bool(draft and draft.is_dirty)
@@ -1319,13 +1493,19 @@ class SettingsScreen(BaseAppScreen):
                     return f"Guided edits: {validation.message}"
                 return "Guided edits: Save or Revert Library/RAG defaults."
             return "Guided edits: change a Library/RAG default first."
+        if category is SettingsCategoryId.STORAGE:
+            if self._category_has_unsaved_changes(category):
+                validation = self._storage_validation_result()
+                if not validation.valid:
+                    return f"Guided edits: {validation.message}"
+                return "Guided edits: Save or Revert Storage defaults."
+            return "Guided edits: change a Storage default first."
         if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             if self._category_has_unsaved_changes(category):
                 return "Guided edits: Save or Revert changes."
             return "Guided edits: change a field first."
         messages = {
             SettingsCategoryId.OVERVIEW: "Guided edits: choose Providers or Console.",
-            SettingsCategoryId.STORAGE: "Guided edits: Storage is read-only.",
             SettingsCategoryId.PRIVACY_SECURITY: "Guided edits: use Check Privacy.",
             SettingsCategoryId.DIAGNOSTICS: "Guided edits: use Validate/Reload.",
             SettingsCategoryId.ADVANCED_CONFIG: "Guided edits: use Raw TOML controls.",
@@ -1340,6 +1520,8 @@ class SettingsScreen(BaseAppScreen):
             return self._appearance_save_enabled()
         if category is SettingsCategoryId.LIBRARY_RAG:
             return self._library_rag_save_enabled()
+        if category is SettingsCategoryId.STORAGE:
+            return self._storage_save_enabled()
         return (
             category in GUIDED_SETTINGS_MUTATION_CATEGORIES
             and self._category_has_unsaved_changes(category)
@@ -1550,6 +1732,10 @@ class SettingsScreen(BaseAppScreen):
             validation = self._library_rag_validation_result()
             if not validation.valid:
                 return f"State: Needs correction | {validation.message}"
+        if category is SettingsCategoryId.STORAGE and self._category_has_unsaved_changes(category):
+            validation = self._storage_validation_result()
+            if not validation.valid:
+                return f"State: Needs correction | {validation.message}"
         if self._category_has_unsaved_changes(category):
             return "State: Unsaved changes | Save or Revert before leaving this category."
         if category is SettingsCategoryId.ADVANCED_CONFIG:
@@ -1565,7 +1751,10 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.APPEARANCE:
             return "State: Visual defaults | Settings owns launch and web display defaults."
         if category is SettingsCategoryId.STORAGE:
-            return "State: Local paths | Verify write access before changing storage locations."
+            return (
+                "State: Storage defaults | Changes apply on next launch; "
+                "active handles stay unchanged."
+            )
         if category is SettingsCategoryId.PRIVACY_SECURITY:
             return "State: Local privacy | Secrets stay redacted in validation and diagnostics."
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
@@ -1888,6 +2077,84 @@ class SettingsScreen(BaseAppScreen):
             except QueryError:
                 continue
             widget.set_class(key == invalid_key, "settings-invalid-input")
+
+    def _stage_storage_value(self, key: str, value: object) -> None:
+        category = SettingsCategoryId.STORAGE
+        draft = self._settings_drafts.setdefault(category, SettingsDraft(category=category))
+        draft.set_value(
+            key,
+            self._storage_loaded_values().get(key),
+            str(value if value is not None else ""),
+        )
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+
+    def _storage_field_selector(self, key: str) -> str | None:
+        return {
+            "user_db_base_dir": "#settings-storage-user-db-base-dir",
+            "chachanotes_db_path": "#settings-storage-chachanotes-db-path",
+            "prompts_db_path": "#settings-storage-prompts-db-path",
+            "media_db_path": "#settings-storage-media-db-path",
+            "research_db_path": "#settings-storage-research-db-path",
+            "writing_db_path": "#settings-storage-writing-db-path",
+            "library_collections_db_path": "#settings-storage-library-collections-db-path",
+            "workspaces_db_path": "#settings-storage-workspaces-db-path",
+        }.get(key)
+
+    def _storage_invalid_field_key(self) -> str | None:
+        validation = self._storage_validation_result()
+        if validation.valid:
+            return None
+        message = validation.message
+        for key, label in STORAGE_FIELD_LABELS.items():
+            if message.startswith(str(label)):
+                return key
+        return None
+
+    def _update_storage_validation_classes(self) -> None:
+        invalid_key = self._storage_invalid_field_key()
+        for key in STORAGE_FIELD_LABELS:
+            selector = self._storage_field_selector(key)
+            if selector is None:
+                continue
+            try:
+                widget = self.query_one(selector)
+            except QueryError:
+                continue
+            widget.set_class(key == invalid_key, "settings-invalid-input")
+
+    def _mark_storage_settings_staged(self) -> None:
+        category = SettingsCategoryId.STORAGE
+        if self._category_has_unsaved_changes(category):
+            validation = self._storage_validation_result()
+            self._storage_result = (
+                "Storage defaults staged. Restart Chatbook to use saved paths."
+                if validation.valid
+                else validation.message
+            )
+        else:
+            self._storage_result = "Storage defaults match last loaded values."
+        self._set_static_text("#settings-storage-save-result", self._storage_result)
+        self._update_storage_validation_classes()
+        self._update_draft_status_widgets(category)
+
+    def _sync_storage_widgets(self) -> None:
+        values = self._storage_setting_values()
+        self._syncing_storage_defaults = True
+        try:
+            for key, value in values.items():
+                selector = self._storage_field_selector(key)
+                if selector is None:
+                    continue
+                try:
+                    self.query_one(selector, Input).value = str(value)
+                except QueryError:
+                    pass
+        finally:
+            self._syncing_storage_defaults = False
+        self._set_static_text("#settings-storage-save-result", self._storage_result)
+        self._update_storage_validation_classes()
+        self._update_draft_status_widgets(SettingsCategoryId.STORAGE)
 
     def _library_rag_preview_rows(self) -> tuple[str, str, str]:
         values = self._library_rag_setting_values()
@@ -2604,118 +2871,36 @@ class SettingsScreen(BaseAppScreen):
         self.app.notify("Storage check finished.", severity="information")
 
     @work(exclusive=True, thread=True)
-    def _storage_check_worker(self) -> None:
-        rows = self._storage_check_results()
+    def _storage_check_worker(self, values: SettingsStorageDefaults | None = None) -> None:
+        rows = (
+            build_storage_check_rows(values)
+            if values is not None
+            else self._storage_check_results()
+        )
         self.app.call_from_thread(self._apply_storage_check_result, rows)
 
-    @staticmethod
-    def _is_sensitive_config_key(key: object) -> bool:
-        key_text = str(key).strip().lower()
-        if not key_text or key_text.endswith("_env_var"):
-            return False
-        return key_text in SENSITIVE_CONFIG_EXACT_KEYS or any(
-            key_text.endswith(pattern) for pattern in SENSITIVE_CONFIG_KEY_PATTERNS
-        )
-
-    @staticmethod
-    def _is_configured_secret_value(value: object) -> bool:
-        if value is None:
-            return False
-        if isinstance(value, str):
-            value_text = value.strip()
-            if not value_text or value_text in {"None", "null"}:
-                return False
-            if value_text.startswith("<") and value_text.endswith(">"):
-                return False
-            return True
-        return False
-
-    def _iter_config_leaf_values(self, value: object):
-        if isinstance(value, Mapping):
-            for key, child_value in value.items():
-                if isinstance(child_value, Mapping):
-                    yield from self._iter_config_leaf_values(child_value)
-                else:
-                    yield key, child_value
-
-    def _sensitive_config_field_count(self, app_config: object) -> int:
-        return sum(
-            1
-            for key, value in self._iter_config_leaf_values(app_config)
-            if self._is_sensitive_config_key(key)
-            and self._is_configured_secret_value(value)
-        )
-
-    @staticmethod
-    def _provider_env_var_status_counts(app_config: object) -> tuple[int, int, int]:
-        if not isinstance(app_config, Mapping):
-            return 0, 0, 0
-        api_settings = app_config.get("api_settings", {})
-        if not isinstance(api_settings, Mapping):
-            return 0, 0, 0
-        present = 0
-        missing = 0
-        for provider_config in api_settings.values():
-            if not isinstance(provider_config, Mapping):
-                continue
-            for key, value in provider_config.items():
-                key_text = str(key).strip().lower()
-                env_var = str(value or "").strip()
-                if not key_text.endswith("_env_var") or not env_var:
-                    continue
-                if os.environ.get(env_var):
-                    present += 1
-                else:
-                    missing += 1
-        return present, missing, present + missing
-
-    def _provider_config_secret_count(self, app_config: object) -> int:
-        if not isinstance(app_config, Mapping):
-            return 0
-        api_settings = app_config.get("api_settings", {})
-        if not isinstance(api_settings, Mapping):
-            return 0
-        count = 0
-        for provider_config in api_settings.values():
-            if not isinstance(provider_config, Mapping):
-                continue
-            count += sum(
-                1
-                for key, value in self._iter_config_leaf_values(provider_config)
-                if self._is_sensitive_config_key(key)
-                and self._is_configured_secret_value(value)
-            )
-        return count
-
-    def _privacy_check_results(self, app_config: object | None = None) -> tuple[str, ...]:
+    def _settings_privacy_posture(
+        self,
+        app_config: object | None = None,
+    ) -> SettingsPrivacyPosture:
         if app_config is None:
             app_config = getattr(self.app_instance, "app_config", {}) or {}
-        encryption_config = app_config.get("encryption", {}) if isinstance(app_config, Mapping) else {}
-        encryption_enabled = (
-            bool(encryption_config.get("enabled"))
-            if isinstance(encryption_config, Mapping)
-            else False
-        )
-        secret_count = self._sensitive_config_field_count(app_config)
-        provider_secret_count = self._provider_config_secret_count(app_config)
-        env_present, env_missing, env_total = self._provider_env_var_status_counts(app_config)
+        return build_settings_privacy_posture(app_config)
+
+    def _privacy_posture_rows(self, app_config: object | None = None) -> tuple[str, ...]:
+        return build_privacy_posture_rows(self._settings_privacy_posture(app_config))
+
+    def _privacy_check_results(self, app_config: object | None = None) -> tuple[str, ...]:
+        posture = self._settings_privacy_posture(app_config)
         return (
             "Privacy check: complete",
-            f"Config encryption: {'enabled' if encryption_enabled else 'disabled'}",
-            f"Sensitive config fields: {secret_count} present",
-            (
-                "Provider env vars: "
-                f"{env_present} present / {env_missing} missing / {env_total} configured"
-            ),
+            *build_privacy_posture_rows(posture),
             (
                 "Provider key source: "
-                f"environment {env_present} present / {env_missing} missing; "
-                f"provider config secrets {provider_secret_count} present"
+                f"environment {posture.provider_env_present} present / "
+                f"{posture.provider_env_missing} missing; provider config secrets "
+                f"{posture.provider_config_secrets} present"
             ),
-            "Data boundary: local data stays local unless explicit server handoff or sync is enabled",
-            "Server boundary: server tokens are reported as configured/missing only",
-            "Redaction: active; raw secret values hidden",
-            "Privacy safety: no secret values were printed or written.",
         )
 
     def _privacy_check_text(self) -> str:
@@ -3089,6 +3274,17 @@ class SettingsScreen(BaseAppScreen):
             "credential_env_var": self._provider_credential_env_var(provider),
             "model_profile_temperature": profile.get("temperature", ""),
             "model_profile_top_p": profile.get("top_p", ""),
+            "model_profile_min_p": profile.get("min_p", ""),
+            "model_profile_top_k": profile.get("top_k", ""),
+            "model_profile_max_tokens": profile.get("max_tokens", ""),
+            "model_profile_seed": profile.get("seed", ""),
+            "model_profile_presence_penalty": profile.get("presence_penalty", ""),
+            "model_profile_frequency_penalty": profile.get("frequency_penalty", ""),
+            "model_profile_reasoning_effort": profile.get("reasoning_effort", ""),
+            "model_profile_reasoning_summary": profile.get("reasoning_summary", ""),
+            "model_profile_verbosity": profile.get("verbosity", ""),
+            "model_profile_thinking_effort": profile.get("thinking_effort", ""),
+            "model_profile_thinking_budget_tokens": profile.get("thinking_budget_tokens", ""),
             "model_profile_streaming": profile.get("streaming", ""),
         }
 
@@ -3099,6 +3295,47 @@ class SettingsScreen(BaseAppScreen):
             key: draft.values[key] if draft is not None and key in draft.values else value
             for key, value in loaded.items()
         }
+
+    def _provider_setting_values_mapping(self) -> Mapping[str, object]:
+        values = self._provider_setting_values()
+        return values if isinstance(values, Mapping) else {}
+
+    def _provider_display_setting_values(self) -> dict[str, object]:
+        """Return provider values for rendering without staging navigation context."""
+        values = dict(self._provider_setting_values_mapping())
+        if self._provider_draft() is not None or not self._navigation_provider:
+            return values
+        provider = self._navigation_provider
+        model = self._navigation_model or str(values.get("model") or "").strip()
+        profile = self._provider_model_profile(provider, model)
+        display_values = dict(values)
+        display_values.update(
+            {
+                "provider": provider,
+                "model": model,
+                "endpoint": self._provider_endpoint_value(provider),
+                "credential_env_var": self._provider_credential_env_var(provider),
+                "model_profile_temperature": profile.get("temperature", ""),
+                "model_profile_top_p": profile.get("top_p", ""),
+                "model_profile_min_p": profile.get("min_p", ""),
+                "model_profile_top_k": profile.get("top_k", ""),
+                "model_profile_max_tokens": profile.get("max_tokens", ""),
+                "model_profile_seed": profile.get("seed", ""),
+                "model_profile_presence_penalty": profile.get("presence_penalty", ""),
+                "model_profile_frequency_penalty": profile.get("frequency_penalty", ""),
+                "model_profile_reasoning_effort": profile.get("reasoning_effort", ""),
+                "model_profile_reasoning_summary": profile.get("reasoning_summary", ""),
+                "model_profile_verbosity": profile.get("verbosity", ""),
+                "model_profile_thinking_effort": profile.get("thinking_effort", ""),
+                "model_profile_thinking_budget_tokens": profile.get("thinking_budget_tokens", ""),
+                "model_profile_streaming": profile.get("streaming", ""),
+            }
+        )
+        return display_values
+
+    def _clear_navigation_provider_context(self) -> None:
+        self._navigation_provider = None
+        self._navigation_model = None
 
     @staticmethod
     def _normalise_optional_float(
@@ -3131,6 +3368,101 @@ class SettingsScreen(BaseAppScreen):
             label="Top P",
         )
 
+    def _normalise_model_profile_min_p(self, value: object) -> float | str:
+        return self._normalise_optional_float(
+            value,
+            min_value=0.0,
+            max_value=1.0,
+            label="Min P",
+        )
+
+    def _normalise_optional_int(
+        self,
+        value: object,
+        *,
+        min_value: int,
+        label: str,
+    ) -> int | str:
+        text = "" if value is None else str(value).strip()
+        if not text:
+            return ""
+        if not text.isdecimal() or int(text) < min_value:
+            raise ValueError(f"{label} must be a whole number of at least {min_value}.")
+        return int(text)
+
+    def _normalise_model_profile_top_k(self, value: object) -> int | str:
+        return self._normalise_optional_int(value, min_value=0, label="Top K")
+
+    def _normalise_model_profile_max_tokens(self, value: object) -> int | str:
+        return self._normalise_optional_int(value, min_value=1, label="Max tokens")
+
+    def _normalise_model_profile_seed(self, value: object) -> int | str:
+        return self._normalise_optional_int(value, min_value=0, label="Seed")
+
+    def _normalise_model_profile_presence_penalty(self, value: object) -> float | str:
+        return self._normalise_optional_float(
+            value,
+            min_value=-2.0,
+            max_value=2.0,
+            label="Presence penalty",
+        )
+
+    def _normalise_model_profile_frequency_penalty(self, value: object) -> float | str:
+        return self._normalise_optional_float(
+            value,
+            min_value=-2.0,
+            max_value=2.0,
+            label="Frequency penalty",
+        )
+
+    @staticmethod
+    def _normalise_optional_choice(
+        value: object,
+        *,
+        allowed: frozenset[str],
+        label: str,
+    ) -> str:
+        text = "" if value is None else str(value).strip().lower()
+        if text in allowed:
+            return text
+        allowed_values = ", ".join(sorted(item for item in allowed if item))
+        raise ValueError(f"{label} must be one of: {allowed_values}.")
+
+    def _normalise_model_profile_reasoning_effort(self, value: object) -> str:
+        return self._normalise_optional_choice(
+            value,
+            allowed=REASONING_EFFORT_OPTIONS,
+            label="Reasoning effort",
+        )
+
+    def _normalise_model_profile_reasoning_summary(self, value: object) -> str:
+        return self._normalise_optional_choice(
+            value,
+            allowed=REASONING_SUMMARY_OPTIONS,
+            label="Reasoning summary",
+        )
+
+    def _normalise_model_profile_verbosity(self, value: object) -> str:
+        return self._normalise_optional_choice(
+            value,
+            allowed=VERBOSITY_OPTIONS,
+            label="Verbosity",
+        )
+
+    def _normalise_model_profile_thinking_effort(self, value: object) -> str:
+        return self._normalise_optional_choice(
+            value,
+            allowed=THINKING_EFFORT_OPTIONS,
+            label="Thinking effort",
+        )
+
+    def _normalise_model_profile_thinking_budget_tokens(self, value: object) -> int | str:
+        return self._normalise_optional_int(
+            value,
+            min_value=1024,
+            label="Thinking budget tokens",
+        )
+
     @staticmethod
     def _normalise_optional_bool(value: object) -> bool | str:
         if isinstance(value, bool):
@@ -3144,6 +3476,58 @@ class SettingsScreen(BaseAppScreen):
         if normalized in {"false", "0"}:
             return False
         raise ValueError("Streaming must be true or false.")
+
+    @staticmethod
+    def _provider_supports_openai_reasoning(provider: object) -> bool:
+        return provider_config_key(str(provider or "")) in OPENAI_REASONING_PROVIDER_KEYS
+
+    @staticmethod
+    def _provider_supports_anthropic_thinking(provider: object) -> bool:
+        return provider_config_key(str(provider or "")) in ANTHROPIC_THINKING_PROVIDER_KEYS
+
+    def _model_profile_field_supported(self, provider: object, draft_key: str) -> bool:
+        if draft_key in OPENAI_REASONING_PROFILE_FIELD_KEYS:
+            return self._provider_supports_openai_reasoning(provider)
+        if draft_key in ANTHROPIC_THINKING_PROFILE_FIELD_KEYS:
+            return self._provider_supports_anthropic_thinking(provider)
+        return True
+
+    def _unsupported_model_profile_placeholder(self, provider: object) -> str:
+        provider_label = self._provider_display_name(str(provider or "").strip())
+        if not provider_label:
+            provider_label = "this provider"
+        return f"Unavailable for {provider_label}"
+
+    def _model_profile_input_placeholder(self, provider: object, draft_key: str) -> str:
+        if not self._model_profile_field_supported(provider, draft_key):
+            return self._unsupported_model_profile_placeholder(provider)
+        return MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key]
+
+    def _model_profile_input_value(
+        self,
+        provider: object,
+        draft_key: str,
+        value: object,
+    ) -> str:
+        if not self._model_profile_field_supported(provider, draft_key):
+            return ""
+        return self._profile_input_value(value)
+
+    def _provider_generation_support_copy(self, provider: object) -> str:
+        provider_label = self._provider_display_name(str(provider or "").strip())
+        if not provider_label:
+            provider_label = "this provider"
+        reasoning_status = (
+            f"Reasoning available for {provider_label}"
+            if self._provider_supports_openai_reasoning(provider)
+            else f"Reasoning unavailable for {provider_label}"
+        )
+        thinking_status = (
+            f"Thinking available for {provider_label}"
+            if self._provider_supports_anthropic_thinking(provider)
+            else f"Thinking unavailable for {provider_label}"
+        )
+        return f"{reasoning_status}; {thinking_status}."
 
     def _provider_form_values_from_widgets(self) -> dict[str, object]:
         loaded_values = self._provider_loaded_setting_values()
@@ -3181,9 +3565,49 @@ class SettingsScreen(BaseAppScreen):
         model_profile_top_p = self._normalise_model_profile_top_p(
             self.query_one("#settings-model-profile-top-p", Input).value
         )
+        model_profile_min_p = self._normalise_model_profile_min_p(
+            self.query_one("#settings-model-profile-min-p", Input).value
+        )
+        model_profile_top_k = self._normalise_model_profile_top_k(
+            self.query_one("#settings-model-profile-top-k", Input).value
+        )
+        model_profile_max_tokens = self._normalise_model_profile_max_tokens(
+            self.query_one("#settings-model-profile-max-tokens", Input).value
+        )
+        model_profile_seed = self._normalise_model_profile_seed(
+            self.query_one("#settings-model-profile-seed", Input).value
+        )
+        model_profile_presence_penalty = self._normalise_model_profile_presence_penalty(
+            self.query_one("#settings-model-profile-presence-penalty", Input).value
+        )
+        model_profile_frequency_penalty = self._normalise_model_profile_frequency_penalty(
+            self.query_one("#settings-model-profile-frequency-penalty", Input).value
+        )
+        model_profile_reasoning_effort = self._normalise_model_profile_reasoning_effort(
+            self.query_one("#settings-model-profile-reasoning-effort", Input).value
+        )
+        model_profile_reasoning_summary = self._normalise_model_profile_reasoning_summary(
+            self.query_one("#settings-model-profile-reasoning-summary", Input).value
+        )
+        model_profile_verbosity = self._normalise_model_profile_verbosity(
+            self.query_one("#settings-model-profile-verbosity", Input).value
+        )
+        model_profile_thinking_effort = self._normalise_model_profile_thinking_effort(
+            self.query_one("#settings-model-profile-thinking-effort", Input).value
+        )
+        model_profile_thinking_budget_tokens = self._normalise_model_profile_thinking_budget_tokens(
+            self.query_one("#settings-model-profile-thinking-budget-tokens", Input).value
+        )
         model_profile_streaming = self._normalise_optional_bool(
             self.query_one("#settings-model-profile-streaming", Input).value
         )
+        if not self._provider_supports_openai_reasoning(provider):
+            model_profile_reasoning_effort = ""
+            model_profile_reasoning_summary = ""
+            model_profile_verbosity = ""
+        if not self._provider_supports_anthropic_thinking(provider):
+            model_profile_thinking_effort = ""
+            model_profile_thinking_budget_tokens = ""
         return {
             "provider": provider,
             "model": model,
@@ -3191,6 +3615,17 @@ class SettingsScreen(BaseAppScreen):
             "credential_env_var": credential_env_var,
             "model_profile_temperature": model_profile_temperature,
             "model_profile_top_p": model_profile_top_p,
+            "model_profile_min_p": model_profile_min_p,
+            "model_profile_top_k": model_profile_top_k,
+            "model_profile_max_tokens": model_profile_max_tokens,
+            "model_profile_seed": model_profile_seed,
+            "model_profile_presence_penalty": model_profile_presence_penalty,
+            "model_profile_frequency_penalty": model_profile_frequency_penalty,
+            "model_profile_reasoning_effort": model_profile_reasoning_effort,
+            "model_profile_reasoning_summary": model_profile_reasoning_summary,
+            "model_profile_verbosity": model_profile_verbosity,
+            "model_profile_thinking_effort": model_profile_thinking_effort,
+            "model_profile_thinking_budget_tokens": model_profile_thinking_budget_tokens,
             "model_profile_streaming": model_profile_streaming,
         }
 
@@ -3313,7 +3748,7 @@ class SettingsScreen(BaseAppScreen):
             try:
                 return self.query_one("#settings-provider-value", Input).value.strip()
             except QueryError:
-                return str(self._provider_setting_values().get("provider") or "").strip()
+                return str(self._provider_setting_values_mapping().get("provider") or "").strip()
 
     def _sync_provider_manual_widget(self, provider: str) -> None:
         try:
@@ -3378,6 +3813,9 @@ class SettingsScreen(BaseAppScreen):
         current_profile = model_defaults.get(model_name, {})
         next_profile = copy.deepcopy(current_profile) if isinstance(current_profile, Mapping) else {}
         for draft_key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items():
+            if not self._model_profile_field_supported(provider, draft_key):
+                next_profile.pop(profile_key, None)
+                continue
             value = values.get(draft_key, "")
             if value == "":
                 next_profile.pop(profile_key, None)
@@ -3434,17 +3872,33 @@ class SettingsScreen(BaseAppScreen):
     def _sync_provider_model_profile_widgets(self, provider: str, model: str) -> None:
         profile = self._provider_model_profile(provider, model)
         input_values = {
-            "#settings-model-profile-temperature": profile.get("temperature", ""),
-            "#settings-model-profile-top-p": profile.get("top_p", ""),
-            "#settings-model-profile-streaming": profile.get("streaming", ""),
+            "model_profile_temperature": profile.get("temperature", ""),
+            "model_profile_top_p": profile.get("top_p", ""),
+            "model_profile_min_p": profile.get("min_p", ""),
+            "model_profile_top_k": profile.get("top_k", ""),
+            "model_profile_max_tokens": profile.get("max_tokens", ""),
+            "model_profile_seed": profile.get("seed", ""),
+            "model_profile_presence_penalty": profile.get("presence_penalty", ""),
+            "model_profile_frequency_penalty": profile.get("frequency_penalty", ""),
+            "model_profile_reasoning_effort": profile.get("reasoning_effort", ""),
+            "model_profile_reasoning_summary": profile.get("reasoning_summary", ""),
+            "model_profile_verbosity": profile.get("verbosity", ""),
+            "model_profile_thinking_effort": profile.get("thinking_effort", ""),
+            "model_profile_thinking_budget_tokens": profile.get("thinking_budget_tokens", ""),
+            "model_profile_streaming": profile.get("streaming", ""),
         }
         self._syncing_provider_model_profile = True
         try:
-            for selector, value in input_values.items():
+            for draft_key, value in input_values.items():
+                selector = f"#settings-{draft_key.replace('_', '-')}"
                 try:
-                    self.query_one(selector, Input).value = self._profile_input_value(value)
+                    widget = self.query_one(selector, Input)
                 except QueryError:
-                    pass
+                    continue
+                supported = self._model_profile_field_supported(provider, draft_key)
+                widget.disabled = not supported
+                widget.placeholder = self._model_profile_input_placeholder(provider, draft_key)
+                widget.value = self._profile_input_value(value) if supported else ""
         finally:
             self._syncing_provider_model_profile = False
 
@@ -3579,7 +4033,7 @@ class SettingsScreen(BaseAppScreen):
                 Input,
             ).value.strip()
         except QueryError:
-            values = self._provider_setting_values()
+            values = self._provider_setting_values_mapping()
             endpoint = str(values.get("endpoint") or "").strip()
             credential_env_var = str(values.get("credential_env_var") or "").strip()
         provider_settings: dict[str, object] = {}
@@ -3873,7 +4327,7 @@ class SettingsScreen(BaseAppScreen):
         try:
             provider = self._provider_widget_value()
         except QueryError:
-            provider = str(self._provider_setting_values().get("provider") or "")
+            provider = str(self._provider_setting_values_mapping().get("provider") or "")
         try:
             endpoint = self.query_one("#settings-provider-endpoint-value", Input).value.strip()
         except QueryError:
@@ -3904,6 +4358,10 @@ class SettingsScreen(BaseAppScreen):
             )
         except QueryError:
             pass
+        self._set_static_text(
+            "#settings-provider-generation-support",
+            self._provider_generation_support_copy(provider),
+        )
         self._refresh_provider_field_guidance()
 
     def _detail_row(self, label: str, value: object, *, identifier: str | None = None) -> Static:
@@ -3914,7 +4372,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _provider_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
-        provider = str(self._provider_setting_values().get("provider") or "").strip()
+        provider = str(self._provider_setting_values_mapping().get("provider") or "").strip()
         endpoint_key = self._provider_endpoint_row(provider).removeprefix("Endpoint key: ")
         provider_config_prefix = (
             f"api_settings.{provider_config_key(provider)}"
@@ -3970,6 +4428,90 @@ class SettingsScreen(BaseAppScreen):
                 ("Purpose", "Optional token-probability cutoff for this provider and model profile."),
                 ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.top_p"),
                 ("Validation", "number from 0.0 to 1.0, or blank for inherited default"),
+            )
+        model_profile_guidance = {
+            "settings-model-profile-min-p": (
+                "Min P",
+                "Optional minimum-probability sampling cutoff for local/provider profiles.",
+                "min_p",
+                "number from 0.0 to 1.0, or blank for inherited default",
+            ),
+            "settings-model-profile-top-k": (
+                "Top K",
+                "Optional token candidate count for providers that support top-k sampling.",
+                "top_k",
+                "whole number of at least 0, or blank for inherited default",
+            ),
+            "settings-model-profile-max-tokens": (
+                "Max tokens",
+                "Optional response length ceiling for this provider and model profile.",
+                "max_tokens",
+                "whole number of at least 1, or blank for inherited default",
+            ),
+            "settings-model-profile-seed": (
+                "Seed",
+                "Optional deterministic generation seed for providers that support it.",
+                "seed",
+                "whole number of at least 0, or blank for inherited default",
+            ),
+            "settings-model-profile-presence-penalty": (
+                "Presence penalty",
+                "Optional penalty for introducing tokens already present in the conversation.",
+                "presence_penalty",
+                "number from -2.0 to 2.0, or blank for inherited default",
+            ),
+            "settings-model-profile-frequency-penalty": (
+                "Frequency penalty",
+                "Optional penalty for repeating frequent tokens in the response.",
+                "frequency_penalty",
+                "number from -2.0 to 2.0, or blank for inherited default",
+            ),
+            "settings-model-profile-reasoning-effort": (
+                "Reasoning effort",
+                "Optional OpenAI Responses reasoning level for reasoning-capable models.",
+                "reasoning_effort",
+                "none, minimal, low, medium, high, xhigh, or blank for inherited default",
+            ),
+            "settings-model-profile-reasoning-summary": (
+                "Reasoning summary",
+                "Optional OpenAI reasoning summary detail for supported models.",
+                "reasoning_summary",
+                "auto, concise, detailed, none, or blank for inherited default",
+            ),
+            "settings-model-profile-verbosity": (
+                "Verbosity",
+                "Optional OpenAI text verbosity hint for GPT-5-style Responses models.",
+                "verbosity",
+                "low, medium, high, or blank for inherited default",
+            ),
+            "settings-model-profile-thinking-effort": (
+                "Thinking effort",
+                "Optional Anthropic-style thinking level mapped to provider token budgets.",
+                "thinking_effort",
+                "off, low, medium, high, xhigh, max, or blank for inherited default",
+            ),
+            "settings-model-profile-thinking-budget-tokens": (
+                "Think budget",
+                "Optional explicit thinking token budget for providers that expose it.",
+                "thinking_budget_tokens",
+                "whole number of at least 1024, or blank for inherited default",
+            ),
+        }
+        if field_id in model_profile_guidance:
+            label, purpose, key, validation = model_profile_guidance[field_id]
+            draft_key = field_id.removeprefix("settings-").replace("-", "_")
+            if not self._model_profile_field_supported(provider, draft_key):
+                return (
+                    ("Focused setting", label),
+                    ("Availability", self._unsupported_model_profile_placeholder(provider)),
+                    ("Saved as", "not saved for the selected provider"),
+                    ("Validation", "select a provider that supports this control before editing"),
+                )
+            return (
+                ("Focused setting", label),
+                ("Purpose", purpose),
+                ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.{key}"),
+                ("Validation", validation),
             )
         if field_id == "settings-model-profile-streaming":
             return (
@@ -4054,6 +4596,47 @@ class SettingsScreen(BaseAppScreen):
                 f"{label}: {value}",
             )
 
+    def _storage_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
+        field_id = self._active_settings_field_id
+        field_by_id = {
+            (self._storage_field_selector(key) or "").removeprefix("#"): key
+            for key in STORAGE_FIELD_LABELS
+        }
+        key = field_by_id.get(field_id or "")
+        if key is None:
+            return (
+                ("Focused setting", "Storage defaults"),
+                ("Purpose", "Configure persisted database path defaults for the next launch."),
+                ("Saved as", "database.*"),
+                ("Validation", "path text only; no files are moved, created, or reconnected"),
+            )
+        label = STORAGE_FIELD_LABELS[key]
+        saved_key = (
+            "database.USER_DB_BASE_DIR"
+            if key == "user_db_base_dir"
+            else f"database.{key}"
+        )
+        purpose = (
+            "Base directory fallback for local Chatbook data."
+            if key == "user_db_base_dir"
+            else f"Path to the local {label} file used after restart."
+        )
+        return (
+            ("Focused setting", label),
+            ("Purpose", purpose),
+            ("Saved as", saved_key),
+            ("Validation", "must be a safe path; database paths must end in .db, .sqlite, or .sqlite3"),
+        )
+
+    def _refresh_storage_field_guidance(self) -> None:
+        if self._active_category_id() is not SettingsCategoryId.STORAGE:
+            return
+        for index, (label, value) in enumerate(self._storage_field_guidance_rows()):
+            self._set_static_text(
+                f"#settings-storage-field-guide-{index}",
+                f"{label}: {value}",
+            )
+
     def _split_detail_row(self, text: str) -> Static:
         label, separator, value = text.partition(":")
         if not separator:
@@ -4095,9 +4678,19 @@ class SettingsScreen(BaseAppScreen):
                 ("Boundary", "server handoff does not move local source content unless explicitly requested"),
             ),
             SettingsCategoryId.PRIVACY_SECURITY: (
-                ("Affected config", "secret redaction, local privacy boundaries, and future encryption controls"),
-                ("Recovery", "validate diagnostics output and rotate exposed credentials outside Chatbook"),
-                ("Boundary", "raw secret values are not displayed in Settings validation results"),
+                ("Affected config", "encryption posture, credential-source status, and redaction status"),
+                (
+                    "Credential source",
+                    "Environment variables are preferred for provider credentials.",
+                ),
+                (
+                    "Recovery",
+                    "open Providers & Models for provider defaults or Advanced Config for expert repair",
+                ),
+                (
+                    "Boundary",
+                    "raw secret values are never displayed; encryption mutation needs a password-gated flow",
+                ),
             ),
             SettingsCategoryId.CONSOLE_BEHAVIOR: (
                 ("Affected config", "chat_defaults fallbacks plus Console composer paste behavior"),
@@ -4252,7 +4845,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _render_provider_detail(self) -> ComposeResult:
         resolved = self._resolve_provider_model_for_settings()
-        values = self._provider_setting_values()
+        values = self._provider_display_setting_values()
+        provider = str(values["provider"])
         yield Static("Providers & Models", classes="destination-section settings-column-title")
         with Vertical(id="settings-providers-models-card", classes="settings-focus-card"):
             yield self._render_category_state_banner(SettingsCategoryId.PROVIDERS_MODELS)
@@ -4260,27 +4854,26 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Provider", classes="settings-input-label")
                 yield Select(
                     self._provider_select_options(),
-                    value=self._provider_select_value_for_provider(str(values["provider"])),
+                    value=self._provider_select_value_for_provider(provider),
                     id="settings-provider-value",
                     classes="settings-compact-select",
                     allow_blank=False,
                     compact=True,
                 )
             manual_provider_classes = "settings-input-row"
-            if self._provider_select_value_for_provider(str(values["provider"])) != PROVIDER_MANUAL_SELECT_VALUE:
+            if self._provider_select_value_for_provider(provider) != PROVIDER_MANUAL_SELECT_VALUE:
                 manual_provider_classes += " settings-provider-manual-hidden"
             with Horizontal(id="settings-provider-manual-row", classes=manual_provider_classes):
                 yield Static("Manual", classes="settings-input-label")
                 yield Input(
                     value=str(values["provider"])
-                    if self._provider_select_value_for_provider(str(values["provider"])) == PROVIDER_MANUAL_SELECT_VALUE
+                    if self._provider_select_value_for_provider(provider) == PROVIDER_MANUAL_SELECT_VALUE
                     else "",
                     id="settings-provider-manual-value",
                     classes="settings-compact-input",
                     placeholder="Custom provider key",
                     disabled=(
-                        self._provider_select_value_for_provider(str(values["provider"]))
-                        != PROVIDER_MANUAL_SELECT_VALUE
+                        self._provider_select_value_for_provider(provider) != PROVIDER_MANUAL_SELECT_VALUE
                     ),
                 )
             with Horizontal(classes="settings-input-row"):
@@ -4318,6 +4911,158 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="0.0 - 1.0",
                 )
             with Horizontal(classes="settings-input-row"):
+                yield Static("Min P", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(values["model_profile_min_p"]),
+                    id="settings-model-profile-min-p",
+                    classes="settings-compact-input",
+                    placeholder="optional 0.0 - 1.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Top K", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(values["model_profile_top_k"]),
+                    id="settings-model-profile-top-k",
+                    classes="settings-compact-input",
+                    placeholder="optional whole number",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Max tokens", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(values["model_profile_max_tokens"]),
+                    id="settings-model-profile-max-tokens",
+                    classes="settings-compact-input",
+                    placeholder="optional whole number",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Seed", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(values["model_profile_seed"]),
+                    id="settings-model-profile-seed",
+                    classes="settings-compact-input",
+                    placeholder="optional whole number",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Presence", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(values["model_profile_presence_penalty"]),
+                    id="settings-model-profile-presence-penalty",
+                    classes="settings-compact-input",
+                    placeholder="-2.0 - 2.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Frequency", classes="settings-input-label")
+                yield Input(
+                    value=self._profile_input_value(values["model_profile_frequency_penalty"]),
+                    id="settings-model-profile-frequency-penalty",
+                    classes="settings-compact-input",
+                    placeholder="-2.0 - 2.0",
+                )
+            yield Static(
+                self._provider_generation_support_copy(provider),
+                id="settings-provider-generation-support",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Reasoning", classes="settings-input-label")
+                yield Input(
+                    value=self._model_profile_input_value(
+                        provider,
+                        "model_profile_reasoning_effort",
+                        values["model_profile_reasoning_effort"],
+                    ),
+                    id="settings-model-profile-reasoning-effort",
+                    classes="settings-compact-input",
+                    placeholder=self._model_profile_input_placeholder(
+                        provider,
+                        "model_profile_reasoning_effort",
+                    ),
+                    disabled=not self._model_profile_field_supported(
+                        provider,
+                        "model_profile_reasoning_effort",
+                    ),
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Summary", classes="settings-input-label")
+                yield Input(
+                    value=self._model_profile_input_value(
+                        provider,
+                        "model_profile_reasoning_summary",
+                        values["model_profile_reasoning_summary"],
+                    ),
+                    id="settings-model-profile-reasoning-summary",
+                    classes="settings-compact-input",
+                    placeholder=self._model_profile_input_placeholder(
+                        provider,
+                        "model_profile_reasoning_summary",
+                    ),
+                    disabled=not self._model_profile_field_supported(
+                        provider,
+                        "model_profile_reasoning_summary",
+                    ),
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Verbosity", classes="settings-input-label")
+                yield Input(
+                    value=self._model_profile_input_value(
+                        provider,
+                        "model_profile_verbosity",
+                        values["model_profile_verbosity"],
+                    ),
+                    id="settings-model-profile-verbosity",
+                    classes="settings-compact-input",
+                    placeholder=self._model_profile_input_placeholder(
+                        provider,
+                        "model_profile_verbosity",
+                    ),
+                    disabled=not self._model_profile_field_supported(
+                        provider,
+                        "model_profile_verbosity",
+                    ),
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Thinking", classes="settings-input-label")
+                yield Input(
+                    value=self._model_profile_input_value(
+                        provider,
+                        "model_profile_thinking_effort",
+                        values["model_profile_thinking_effort"],
+                    ),
+                    id="settings-model-profile-thinking-effort",
+                    classes="settings-compact-input",
+                    placeholder=self._model_profile_input_placeholder(
+                        provider,
+                        "model_profile_thinking_effort",
+                    ),
+                    disabled=not self._model_profile_field_supported(
+                        provider,
+                        "model_profile_thinking_effort",
+                    ),
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Think budget", classes="settings-input-label")
+                yield Input(
+                    value=self._model_profile_input_value(
+                        provider,
+                        "model_profile_thinking_budget_tokens",
+                        values["model_profile_thinking_budget_tokens"],
+                    ),
+                    id="settings-model-profile-thinking-budget-tokens",
+                    classes="settings-compact-input",
+                    placeholder=self._model_profile_input_placeholder(
+                        provider,
+                        "model_profile_thinking_budget_tokens",
+                    ),
+                    restrict=r"^[0-9]*$",
+                    disabled=not self._model_profile_field_supported(
+                        provider,
+                        "model_profile_thinking_budget_tokens",
+                    ),
+                )
+            with Horizontal(classes="settings-input-row"):
                 yield Static("Streaming", classes="settings-input-label")
                 yield Input(
                     value=self._profile_input_value(values["model_profile_streaming"]),
@@ -4331,7 +5076,7 @@ class SettingsScreen(BaseAppScreen):
                     value=str(values["endpoint"]),
                     id="settings-provider-endpoint-value",
                     classes="settings-compact-input",
-                    placeholder=self._provider_endpoint_placeholder(str(values["provider"])),
+                    placeholder=self._provider_endpoint_placeholder(provider),
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Credential env", classes="settings-input-label")
@@ -4339,7 +5084,7 @@ class SettingsScreen(BaseAppScreen):
                     value=str(values["credential_env_var"]),
                     id="settings-provider-credential-env-var",
                     classes="settings-compact-input",
-                    placeholder=self._provider_credential_placeholder(str(values["provider"])),
+                    placeholder=self._provider_credential_placeholder(provider),
                 )
             yield Static(
                 self._provider_catalog_summary(),
@@ -4453,6 +5198,29 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(id="settings-console-behavior-card", classes="settings-secondary-card"):
             title = "Console paste collapse" if compact else "Console Behavior"
             yield Static(title, classes="destination-section")
+            yield Static("Composer paste handling", classes="destination-section")
+            yield Static(
+                "Collapse large pasted chunks only when they exceed the threshold.",
+                id="settings-console-collapse-large-pastes-label",
+            )
+            yield Button(
+                self._collapse_large_pastes_button_label(),
+                id="settings-console-collapse-large-pastes-toggle",
+                tooltip="Toggle compact display for large pasted Console chunks.",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Threshold", classes="settings-input-label")
+                yield Input(
+                    value=str(self._paste_collapse_threshold_value()),
+                    id="settings-console-paste-collapse-threshold",
+                    classes="settings-compact-input",
+                    placeholder=str(DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD),
+                    restrict=r"^[0-9]*$",
+                )
+            yield Static(
+                "Normal typing stays literal. The canonical message payload is preserved.",
+                id="settings-console-collapse-large-pastes-help",
+            )
             yield Static("Global fallback defaults", classes="destination-section")
             yield Static(
                 "Used when no provider+model profile or active Console session overrides them.",
@@ -4484,6 +5252,23 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="0.0 - 1.0",
                 )
             with Horizontal(classes="settings-input-row"):
+                yield Static("Min P", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(self._console_behavior_value("min_p")),
+                    id="settings-console-default-min-p",
+                    classes="settings-compact-input",
+                    placeholder="optional 0.0 - 1.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Top K", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(self._console_behavior_value("top_k")),
+                    id="settings-console-default-top-k",
+                    classes="settings-compact-input",
+                    placeholder="optional whole number",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
                 yield Static("Max tokens", classes="settings-input-label")
                 yield Input(
                     value=self._console_input_value(self._console_behavior_value("max_tokens")),
@@ -4492,33 +5277,93 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="optional whole number",
                     restrict=r"^[0-9]*$",
                 )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Seed", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(self._console_behavior_value("seed")),
+                    id="settings-console-default-seed",
+                    classes="settings-compact-input",
+                    placeholder="optional deterministic seed",
+                    restrict=r"^[0-9]*$",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Presence", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("presence_penalty")
+                    ),
+                    id="settings-console-default-presence-penalty",
+                    classes="settings-compact-input",
+                    placeholder="-2.0 - 2.0",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Frequency", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("frequency_penalty")
+                    ),
+                    id="settings-console-default-frequency-penalty",
+                    classes="settings-compact-input",
+                    placeholder="-2.0 - 2.0",
+                )
+            yield Static(
+                "Reasoning and thinking controls are sent only to providers that support them.",
+                id="settings-console-reasoning-help",
+                classes="settings-detail-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Reasoning", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("reasoning_effort")
+                    ),
+                    id="settings-console-default-reasoning-effort",
+                    classes="settings-compact-input",
+                    placeholder="none, minimal, low, medium, high, xhigh",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Summary", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("reasoning_summary")
+                    ),
+                    id="settings-console-default-reasoning-summary",
+                    classes="settings-compact-input",
+                    placeholder="auto, concise, detailed, none",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Verbosity", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(self._console_behavior_value("verbosity")),
+                    id="settings-console-default-verbosity",
+                    classes="settings-compact-input",
+                    placeholder="low, medium, high",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Thinking", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("thinking_effort")
+                    ),
+                    id="settings-console-default-thinking-effort",
+                    classes="settings-compact-input",
+                    placeholder="off, low, medium, high, xhigh, max",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Think budget", classes="settings-input-label")
+                yield Input(
+                    value=self._console_input_value(
+                        self._console_behavior_value("thinking_budget_tokens")
+                    ),
+                    id="settings-console-default-thinking-budget-tokens",
+                    classes="settings-compact-input",
+                    placeholder="optional tokens, min 1024",
+                    restrict=r"^[0-9]*$",
+                )
             yield Static(
                 "chat_defaults.streaming is canonical; enable_streaming is read as fallback only.",
                 id="settings-console-streaming-compatibility",
                 classes="settings-status-row",
-            )
-            yield Static("Composer paste handling", classes="destination-section")
-            yield Static(
-                "Collapse large pasted chunks only when they exceed the threshold.",
-                id="settings-console-collapse-large-pastes-label",
-            )
-            yield Button(
-                self._collapse_large_pastes_button_label(),
-                id="settings-console-collapse-large-pastes-toggle",
-                tooltip="Toggle compact display for large pasted Console chunks.",
-            )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Threshold", classes="settings-input-label")
-                yield Input(
-                    value=str(self._paste_collapse_threshold_value()),
-                    id="settings-console-paste-collapse-threshold",
-                    classes="settings-compact-input",
-                    placeholder=str(DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD),
-                    restrict=r"^[0-9]*$",
-                )
-            yield Static(
-                "Normal typing stays literal. The canonical message payload is preserved.",
-                id="settings-console-collapse-large-pastes-help",
             )
             yield Static("Background effects", classes="destination-section")
             yield Button(
@@ -4893,10 +5738,30 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-status-row",
                 )
         elif category is SettingsCategoryId.STORAGE:
+            values = self._storage_setting_values()
+            try:
+                config_path: object = self._config_path()
+            except (OSError, RuntimeError, ValueError) as exc:
+                config_path = f"invalid - {redact_secret_text(str(exc))}"
             yield Static("Storage", classes="destination-section settings-column-title")
             with Vertical(id="settings-storage-card", classes="settings-focus-card"):
                 yield self._render_category_state_banner(SettingsCategoryId.STORAGE)
-                yield self._detail_row("Safety check", "verify write access before changing storage roots")
+                yield Static("Storage defaults", classes="destination-section")
+                yield self._detail_row("Scope", "persisted local database path defaults")
+                yield self._detail_row(
+                    "Activation",
+                    "Changes apply on next launch; active database handles keep current paths",
+                )
+                yield self._detail_row(
+                    "Safety",
+                    "Save writes config only; no files are moved or reconnected",
+                )
+                yield self._detail_row("Config path", config_path)
+                yield Static("Draft path check", classes="destination-section")
+                yield self._detail_row(
+                    "Check mode",
+                    "non-mutating; reports parent readiness for the current config runtime",
+                )
                 with Horizontal(id="settings-storage-actions", classes="settings-action-row"):
                     yield Button(
                         "Check Storage",
@@ -4908,7 +5773,25 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-storage-check-result",
                     classes="settings-status-row settings-storage-check-result",
                 )
-                yield Static("Local paths", classes="destination-section")
+                yield Static(
+                    self._storage_result,
+                    id="settings-storage-save-result",
+                    classes="settings-status-row",
+                )
+                yield Static("Database paths", classes="destination-section")
+                for key, label in STORAGE_FIELD_LABELS.items():
+                    selector = self._storage_field_selector(key)
+                    if selector is None:
+                        continue
+                    with Horizontal(classes="settings-input-row"):
+                        yield Static(label, classes="settings-input-label")
+                        yield Input(
+                            value=str(values[key]),
+                            id=selector.removeprefix("#"),
+                            classes="settings-compact-input",
+                            placeholder="~/path/to/database.db",
+                        )
+                yield Static("Runtime local paths", classes="destination-section")
                 for path_summary in self._known_storage_paths():
                     yield self._split_detail_row(path_summary)
                 yield self._detail_row("Config directory status", self._config_writable_status())
@@ -4916,29 +5799,42 @@ class SettingsScreen(BaseAppScreen):
                     "Handoff boundary",
                     "database and media paths remain local unless a server handoff is explicit",
                 )
-                yield self._detail_row(
-                    "Storage mutation",
-                    "unavailable/WIP - validation only; no files are moved or rewritten",
-                )
         elif category is SettingsCategoryId.PRIVACY_SECURITY:
+            posture = self._settings_privacy_posture()
             yield Static("Privacy & Security", classes="destination-section settings-column-title")
             with Vertical(id="settings-privacy-security-card", classes="settings-focus-card"):
                 yield self._render_category_state_banner(SettingsCategoryId.PRIVACY_SECURITY)
                 yield Static("Privacy posture", classes="destination-section")
                 yield self._detail_row(
-                    "Secrets",
-                    "read from environment/config and hidden from diagnostics",
+                    "Config encryption",
+                    "enabled" if posture.encryption_enabled else "disabled",
                 )
                 yield self._detail_row(
-                    "Validation redaction",
-                    "API key, token, password, and secret assignments",
+                    "Redaction",
+                    "active; raw secret values hidden",
                 )
-                yield self._detail_row("Encryption", "not configured from this Settings slice")
-                yield self._detail_row("Secret redaction", "enabled for diagnostics and validation errors")
-                yield self._detail_row("Audit posture", "expose status, not raw credentials")
                 yield self._detail_row(
-                    "Credential mutation",
-                    "unavailable/WIP - rotate or edit secrets in the owning credential source",
+                    "Sensitive config fields",
+                    f"{posture.sensitive_config_fields} present",
+                )
+                yield self._detail_row(
+                    "Provider config secrets",
+                    f"{posture.provider_config_secrets} present",
+                )
+                yield Static("Credential sources", classes="destination-section")
+                yield self._detail_row(
+                    "Provider env vars",
+                    (
+                        f"{posture.provider_env_present} present / "
+                        f"{posture.provider_env_missing} missing / "
+                        f"{posture.provider_env_configured} configured"
+                    ),
+                )
+                yield self._detail_row("Preferred source", "environment variables")
+                yield self._detail_row("Config secrets", "counted only; raw values are never displayed")
+                yield self._detail_row(
+                    "Recovery actions",
+                    "Check Privacy | Open Providers & Models | Open Advanced Config",
                 )
                 with Horizontal(id="settings-privacy-actions", classes="settings-action-row"):
                     yield Button(
@@ -4946,6 +5842,23 @@ class SettingsScreen(BaseAppScreen):
                         id="settings-check-privacy",
                         tooltip="Verify secret and redaction status without exposing values.",
                     )
+                    yield Button(
+                        "Open Providers & Models",
+                        id="settings-open-provider-credentials",
+                        tooltip="Review provider, endpoint, and credential-source defaults.",
+                    )
+                    yield Button(
+                        "Open Advanced Config",
+                        id="settings-open-advanced-config",
+                        tooltip="Open guarded raw TOML recovery for expert repair.",
+                    )
+                yield Static("Data boundary", classes="destination-section")
+                yield self._detail_row("Local data", posture.data_boundary)
+                yield self._detail_row("Server tokens", posture.server_boundary)
+                yield self._detail_row(
+                    "Credential mutation",
+                    "unavailable/WIP - password-gated flow required",
+                )
                 yield Static(
                     self._privacy_check_text(),
                     id="settings-privacy-check-result",
@@ -5188,6 +6101,32 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-open-appearance",
                 tooltip="Open the dedicated Customize theme editor.",
             )
+        elif summary.category is SettingsCategoryId.STORAGE:
+            yield Static("Affects local database path defaults after restart.", classes="destination-section")
+            yield self._detail_row(
+                "Affected config",
+                "config file path, local database paths, media storage roots",
+            )
+            yield Static("Focused field guide", classes="destination-section")
+            for index, (label, value) in enumerate(self._storage_field_guidance_rows()):
+                yield self._detail_row(
+                    label,
+                    value,
+                    identifier=f"settings-storage-field-guide-{index}",
+                )
+            yield Static("Boundary", classes="destination-section")
+            yield self._detail_row(
+                "Restart required",
+                "saved paths are picked up on next launch; active handles stay unchanged",
+            )
+            yield self._detail_row(
+                "No migration",
+                "Settings does not move files, create directories, or reconnect databases",
+            )
+            yield self._detail_row("Runtime owner", ownership.runtime_owner)
+            yield self._detail_row("Writes allowed", "Yes")
+            yield self._detail_row("Recovery", ownership.recovery_copy)
+            return
         else:
             yield Static("Impact and boundaries", classes="destination-section")
             yield Static(summary.description)
@@ -5326,6 +6265,87 @@ class SettingsScreen(BaseAppScreen):
         next_index = max(0, min(len(category_values) - 1, current_index + delta))
         self._focus_category(category_values[next_index])
 
+    def apply_navigation_context(self, context: Mapping[str, object]) -> None:
+        """Apply destination-specific navigation context after cross-screen routing.
+
+        Args:
+            context: Route context keys. `category` selects the Settings category, and
+                optional `provider` / `model` values preselect the Providers & Models
+                view when there are no unsaved provider edits.
+
+        Returns:
+            None. Navigation context only targets visible UI state; it does not stage or
+            persist settings changes.
+        """
+        category = context.get("category")
+        if isinstance(category, SettingsCategoryId):
+            category_value = category.value
+        elif isinstance(category, str):
+            category_value = category
+        else:
+            return
+        valid_categories = {summary.category.value for summary in self._category_summaries()}
+        if category_value not in valid_categories:
+            logger.debug("Ignoring unknown Settings navigation category: %s", category_value)
+            return
+        if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
+            self._clear_navigation_provider_context()
+            self._select_category(category_value, restore_focus=True)
+            return
+        provider = str(context.get("provider") or "").strip()
+        if not provider:
+            self._clear_navigation_provider_context()
+            self._select_category(category_value, restore_focus=True)
+            return
+        model = str(context.get("model") or "").strip()
+        if self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS):
+            self._clear_navigation_provider_context()
+            self._select_category(category_value, restore_focus=True)
+            logger.debug(
+                "Preserving dirty Providers & Models draft while routing to provider=%s model=%s",
+                provider,
+                model,
+            )
+            return
+        self._navigation_provider = provider
+        self._navigation_model = model
+        self._select_category(category_value, restore_focus=True)
+        self.call_after_refresh(self._apply_navigation_provider_context, provider, model)
+
+    def _apply_navigation_provider_context(self, provider: str, model: str = "") -> None:
+        """Synchronize mounted provider widgets after route-targeted navigation.
+
+        Args:
+            provider: Provider key to highlight in the mounted Providers & Models UI.
+            model: Optional model name to show with the highlighted provider.
+
+        Returns:
+            None. This method updates mounted widgets only and does not create a
+            SettingsDraft.
+        """
+        if self.active_category != SettingsCategoryId.PROVIDERS_MODELS.value:
+            return
+        provider_value = str(provider or "").strip()
+        if not provider_value:
+            return
+        if self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS):
+            return
+        provider_settings = self._provider_setting_values_mapping()
+        model_value = str(model or provider_settings.get("model") or "").strip()
+        self._sync_provider_manual_widget(provider_value)
+        self._sync_provider_credential_widget(provider_value)
+        try:
+            self._syncing_provider_model_value = True
+            try:
+                self.query_one("#settings-model-value", Input).value = model_value
+            finally:
+                self._syncing_provider_model_value = False
+        except QueryError:
+            pass
+        self._sync_provider_model_profile_widgets(provider_value, model_value)
+        self._update_provider_dynamic_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
     def _select_category(self, category_value: str, *, restore_focus: bool = False) -> None:
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
             self._active_settings_field_id = None
@@ -5354,6 +6374,22 @@ class SettingsScreen(BaseAppScreen):
             )
             self._refresh_appearance_field_guidance()
             return
+        if active_category is SettingsCategoryId.STORAGE:
+            storage_field_ids = {
+                "settings-storage-user-db-base-dir",
+                "settings-storage-chachanotes-db-path",
+                "settings-storage-prompts-db-path",
+                "settings-storage-media-db-path",
+                "settings-storage-research-db-path",
+                "settings-storage-writing-db-path",
+                "settings-storage-library-collections-db-path",
+                "settings-storage-workspaces-db-path",
+            }
+            self._active_settings_field_id = (
+                widget_id if widget_id in storage_field_ids else None
+            )
+            self._refresh_storage_field_guidance()
+            return
         if active_category is not SettingsCategoryId.PROVIDERS_MODELS:
             self._active_settings_field_id = None
             return
@@ -5365,6 +6401,17 @@ class SettingsScreen(BaseAppScreen):
             "settings-provider-credential-env-var",
             "settings-model-profile-temperature",
             "settings-model-profile-top-p",
+            "settings-model-profile-min-p",
+            "settings-model-profile-top-k",
+            "settings-model-profile-max-tokens",
+            "settings-model-profile-seed",
+            "settings-model-profile-presence-penalty",
+            "settings-model-profile-frequency-penalty",
+            "settings-model-profile-reasoning-effort",
+            "settings-model-profile-reasoning-summary",
+            "settings-model-profile-verbosity",
+            "settings-model-profile-thinking-effort",
+            "settings-model-profile-thinking-budget-tokens",
             "settings-model-profile-streaming",
         }
         self._active_settings_field_id = (
@@ -5526,6 +6573,14 @@ class SettingsScreen(BaseAppScreen):
         self._stage_console_default_value("top_p", value)
         self._mark_console_behavior_settings_staged()
 
+    @on(Input.Changed, "#settings-console-default-min-p")
+    def handle_console_default_min_p_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input("min_p", event.value, self._normalise_model_profile_min_p)
+
+    @on(Input.Changed, "#settings-console-default-top-k")
+    def handle_console_default_top_k_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input("top_k", event.value, self._normalise_model_profile_top_k)
+
     @on(Input.Changed, "#settings-console-default-max-tokens")
     def handle_console_default_max_tokens_changed(self, event: Input.Changed) -> None:
         if self._syncing_console_defaults:
@@ -5535,6 +6590,76 @@ class SettingsScreen(BaseAppScreen):
         except ValueError:
             value = event.value
         self._stage_console_default_value("max_tokens", value)
+        self._mark_console_behavior_settings_staged()
+
+    @on(Input.Changed, "#settings-console-default-seed")
+    def handle_console_default_seed_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input("seed", event.value, self._normalise_model_profile_seed)
+
+    @on(Input.Changed, "#settings-console-default-presence-penalty")
+    def handle_console_default_presence_penalty_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "presence_penalty",
+            event.value,
+            self._normalise_model_profile_presence_penalty,
+        )
+
+    @on(Input.Changed, "#settings-console-default-frequency-penalty")
+    def handle_console_default_frequency_penalty_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "frequency_penalty",
+            event.value,
+            self._normalise_model_profile_frequency_penalty,
+        )
+
+    @on(Input.Changed, "#settings-console-default-reasoning-effort")
+    def handle_console_default_reasoning_effort_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "reasoning_effort",
+            event.value,
+            self._normalise_model_profile_reasoning_effort,
+        )
+
+    @on(Input.Changed, "#settings-console-default-reasoning-summary")
+    def handle_console_default_reasoning_summary_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "reasoning_summary",
+            event.value,
+            self._normalise_model_profile_reasoning_summary,
+        )
+
+    @on(Input.Changed, "#settings-console-default-verbosity")
+    def handle_console_default_verbosity_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "verbosity",
+            event.value,
+            self._normalise_model_profile_verbosity,
+        )
+
+    @on(Input.Changed, "#settings-console-default-thinking-effort")
+    def handle_console_default_thinking_effort_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "thinking_effort",
+            event.value,
+            self._normalise_model_profile_thinking_effort,
+        )
+
+    @on(Input.Changed, "#settings-console-default-thinking-budget-tokens")
+    def handle_console_default_thinking_budget_tokens_changed(self, event: Input.Changed) -> None:
+        self._stage_console_default_input(
+            "thinking_budget_tokens",
+            event.value,
+            self._normalise_model_profile_thinking_budget_tokens,
+        )
+
+    def _stage_console_default_input(self, key: str, raw_value: object, normalizer) -> None:
+        if self._syncing_console_defaults:
+            return
+        try:
+            value = normalizer(raw_value)
+        except ValueError:
+            value = raw_value
+        self._stage_console_default_value(key, value)
         self._mark_console_behavior_settings_staged()
 
     def _mark_console_behavior_settings_staged(self) -> None:
@@ -5714,9 +6839,66 @@ class SettingsScreen(BaseAppScreen):
         )
         self._mark_library_rag_settings_staged()
 
+    @on(Input.Changed, "#settings-storage-user-db-base-dir")
+    def handle_storage_user_db_base_dir_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("user_db_base_dir", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-chachanotes-db-path")
+    def handle_storage_chachanotes_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("chachanotes_db_path", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-prompts-db-path")
+    def handle_storage_prompts_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("prompts_db_path", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-media-db-path")
+    def handle_storage_media_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("media_db_path", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-research-db-path")
+    def handle_storage_research_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("research_db_path", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-writing-db-path")
+    def handle_storage_writing_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("writing_db_path", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-library-collections-db-path")
+    def handle_storage_library_collections_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("library_collections_db_path", event.value)
+        self._mark_storage_settings_staged()
+
+    @on(Input.Changed, "#settings-storage-workspaces-db-path")
+    def handle_storage_workspaces_db_path_changed(self, event: Input.Changed) -> None:
+        if self._syncing_storage_defaults:
+            return
+        self._stage_storage_value("workspaces_db_path", event.value)
+        self._mark_storage_settings_staged()
+
     def _apply_provider_value_change(self, provider: str) -> None:
+        self._clear_navigation_provider_context()
         loaded_provider = str(self._provider_loaded_setting_values().get("provider") or "")
-        previous_provider = str(self._provider_setting_values().get("provider") or "")
+        previous_provider = str(self._provider_setting_values_mapping().get("provider") or "")
         provider_changed = (
             bool(provider)
             and provider_config_key(provider) != provider_config_key(previous_provider)
@@ -5752,7 +6934,7 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one("#settings-model-value", Input).value = provider_default_model
             except QueryError:
                 pass
-        model = str(self._provider_setting_values().get("model") or "")
+        model = str(self._provider_setting_values_mapping().get("model") or "")
         self._sync_provider_model_profile_widgets(staged_provider, model)
         self._clear_provider_auxiliary_draft_keys()
         self._reset_provider_model_discovery_state()
@@ -5770,6 +6952,14 @@ class SettingsScreen(BaseAppScreen):
             if selected_value == PROVIDER_MANUAL_SELECT_VALUE
             else selected_value
         )
+        if (
+            self._navigation_provider
+            and provider_config_key(provider) == provider_config_key(self._navigation_provider)
+        ):
+            return
+        current_provider = str(self._provider_setting_values_mapping().get("provider") or "")
+        if provider_config_key(provider) == provider_config_key(current_provider):
+            return
         self._apply_provider_value_change(provider)
 
     @on(Input.Changed, "#settings-provider-manual-value")
@@ -5780,9 +6970,18 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-model-value")
     def handle_model_value_changed(self, event: Input.Changed) -> None:
-        self._stage_provider_value("model", event.value.strip() or None)
-        provider = str(self._provider_setting_values().get("provider") or "")
-        self._sync_provider_model_profile_widgets(provider, event.value.strip())
+        if self._syncing_provider_model_value:
+            return
+        model_value = event.value.strip()
+        if self._navigation_model is not None and model_value == self._navigation_model:
+            return
+        current_model = str(self._provider_setting_values_mapping().get("model") or "").strip()
+        if model_value == current_model:
+            return
+        self._clear_navigation_provider_context()
+        self._stage_provider_value("model", model_value or None)
+        provider = str(self._provider_setting_values_mapping().get("provider") or "")
+        self._sync_provider_model_profile_widgets(provider, model_value)
         self._clear_provider_model_profile_draft_keys()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
@@ -5828,6 +7027,105 @@ class SettingsScreen(BaseAppScreen):
         except ValueError:
             value = event.value
         self._stage_provider_value("model_profile_top_p", value)
+        self._update_provider_dynamic_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Input.Changed, "#settings-model-profile-min-p")
+    def handle_model_profile_min_p_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_min_p",
+            event.value,
+            self._normalise_model_profile_min_p,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-top-k")
+    def handle_model_profile_top_k_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_top_k",
+            event.value,
+            self._normalise_model_profile_top_k,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-max-tokens")
+    def handle_model_profile_max_tokens_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_max_tokens",
+            event.value,
+            self._normalise_model_profile_max_tokens,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-seed")
+    def handle_model_profile_seed_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_seed",
+            event.value,
+            self._normalise_model_profile_seed,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-presence-penalty")
+    def handle_model_profile_presence_penalty_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_presence_penalty",
+            event.value,
+            self._normalise_model_profile_presence_penalty,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-frequency-penalty")
+    def handle_model_profile_frequency_penalty_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_frequency_penalty",
+            event.value,
+            self._normalise_model_profile_frequency_penalty,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-reasoning-effort")
+    def handle_model_profile_reasoning_effort_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_reasoning_effort",
+            event.value,
+            self._normalise_model_profile_reasoning_effort,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-reasoning-summary")
+    def handle_model_profile_reasoning_summary_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_reasoning_summary",
+            event.value,
+            self._normalise_model_profile_reasoning_summary,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-verbosity")
+    def handle_model_profile_verbosity_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_verbosity",
+            event.value,
+            self._normalise_model_profile_verbosity,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-thinking-effort")
+    def handle_model_profile_thinking_effort_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_thinking_effort",
+            event.value,
+            self._normalise_model_profile_thinking_effort,
+        )
+
+    @on(Input.Changed, "#settings-model-profile-thinking-budget-tokens")
+    def handle_model_profile_thinking_budget_tokens_changed(self, event: Input.Changed) -> None:
+        self._stage_model_profile_input(
+            "model_profile_thinking_budget_tokens",
+            event.value,
+            self._normalise_model_profile_thinking_budget_tokens,
+        )
+
+    def _stage_model_profile_input(self, key: str, raw_value: object, normalizer) -> None:
+        if self._syncing_provider_model_profile:
+            return
+        try:
+            value = normalizer(raw_value)
+        except ValueError:
+            value = raw_value
+        self._stage_provider_value(key, value)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -5885,6 +7183,16 @@ class SettingsScreen(BaseAppScreen):
     def handle_check_privacy(self, event: Button.Pressed) -> None:
         event.stop()
         self.action_settings_test_category()
+
+    @on(Button.Pressed, "#settings-open-provider-credentials")
+    def handle_open_provider_credentials(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._select_category(SettingsCategoryId.PROVIDERS_MODELS.value, restore_focus=True)
+
+    @on(Button.Pressed, "#settings-open-advanced-config")
+    def handle_open_advanced_config_from_privacy(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._select_category(SettingsCategoryId.ADVANCED_CONFIG.value, restore_focus=True)
 
     @on(Button.Pressed, "#settings-validate-config")
     def handle_validate_config(self, event: Button.Pressed) -> None:
@@ -5997,6 +7305,7 @@ class SettingsScreen(BaseAppScreen):
             selected_profile = self._provider_model_profile(provider, model)
             model_profile_dirty = any(
                 key in dirty_keys
+                and self._model_profile_field_supported(provider, key)
                 and values.get(key, "") != selected_profile.get(profile_key, "")
                 for key, profile_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
             )
@@ -6104,6 +7413,28 @@ class SettingsScreen(BaseAppScreen):
                 self.app.notify("Failed to save provider and model settings.", severity="error")
             return
 
+        if category is SettingsCategoryId.STORAGE:
+            if not self._category_has_unsaved_changes(category):
+                self.app.notify("No Settings changes to save.", severity="information")
+                return
+            values = self._storage_current_defaults()
+            validation = validate_storage_defaults(values)
+            if not validation.valid:
+                self._storage_result = validation.message
+                self._set_static_text("#settings-storage-save-result", self._storage_result)
+                self._update_storage_validation_classes()
+                self._update_draft_status_widgets(category)
+                self.app.notify(validation.message, severity="error")
+                return
+            section_values = build_storage_save_sections(
+                self._app_config_mapping(),
+                values,
+            )
+            self._storage_result = "Storage defaults saving..."
+            self._set_static_text("#settings-storage-save-result", self._storage_result)
+            self._settings_save_storage_worker(section_values)
+            return
+
         if category is SettingsCategoryId.LIBRARY_RAG:
             if not self._category_has_unsaved_changes(category):
                 self.app.notify("No Settings changes to save.", severity="information")
@@ -6177,9 +7508,61 @@ class SettingsScreen(BaseAppScreen):
                     dirty_values["top_p"] = self._normalise_console_default_top_p(
                         dirty_values["top_p"]
                     )
+                if "min_p" in dirty_values:
+                    dirty_values["min_p"] = self._normalise_model_profile_min_p(
+                        dirty_values["min_p"]
+                    )
+                if "top_k" in dirty_values:
+                    dirty_values["top_k"] = self._normalise_model_profile_top_k(
+                        dirty_values["top_k"]
+                    )
                 if "max_tokens" in dirty_values:
                     dirty_values["max_tokens"] = self._normalise_console_default_max_tokens(
                         dirty_values["max_tokens"]
+                    )
+                if "seed" in dirty_values:
+                    dirty_values["seed"] = self._normalise_model_profile_seed(
+                        dirty_values["seed"]
+                    )
+                if "presence_penalty" in dirty_values:
+                    dirty_values["presence_penalty"] = (
+                        self._normalise_model_profile_presence_penalty(
+                            dirty_values["presence_penalty"]
+                        )
+                    )
+                if "frequency_penalty" in dirty_values:
+                    dirty_values["frequency_penalty"] = (
+                        self._normalise_model_profile_frequency_penalty(
+                            dirty_values["frequency_penalty"]
+                        )
+                    )
+                if "reasoning_effort" in dirty_values:
+                    dirty_values["reasoning_effort"] = (
+                        self._normalise_model_profile_reasoning_effort(
+                            dirty_values["reasoning_effort"]
+                        )
+                    )
+                if "reasoning_summary" in dirty_values:
+                    dirty_values["reasoning_summary"] = (
+                        self._normalise_model_profile_reasoning_summary(
+                            dirty_values["reasoning_summary"]
+                        )
+                    )
+                if "verbosity" in dirty_values:
+                    dirty_values["verbosity"] = self._normalise_model_profile_verbosity(
+                        dirty_values["verbosity"]
+                    )
+                if "thinking_effort" in dirty_values:
+                    dirty_values["thinking_effort"] = (
+                        self._normalise_model_profile_thinking_effort(
+                            dirty_values["thinking_effort"]
+                        )
+                    )
+                if "thinking_budget_tokens" in dirty_values:
+                    dirty_values["thinking_budget_tokens"] = (
+                        self._normalise_model_profile_thinking_budget_tokens(
+                            dirty_values["thinking_budget_tokens"]
+                        )
                     )
                 if "background_effects.fps" in dirty_values:
                     dirty_values["background_effects.fps"] = (
@@ -6262,6 +7645,10 @@ class SettingsScreen(BaseAppScreen):
             self._library_rag_result = "Library/RAG defaults reverted to last loaded values."
             self._sync_library_rag_widgets()
             self._update_draft_status_widgets(category)
+        elif category is SettingsCategoryId.STORAGE:
+            self._storage_result = "Storage defaults reverted to last loaded values."
+            self._sync_storage_widgets()
+            self._update_draft_status_widgets(category)
         elif category is SettingsCategoryId.PROVIDERS_MODELS:
             values = self._provider_setting_values()
             try:
@@ -6284,18 +7671,12 @@ class SettingsScreen(BaseAppScreen):
                 )
                 credential_input.value = str(values["credential_env_var"])
                 credential_input.placeholder = self._provider_credential_placeholder(provider)
-                self.query_one("#settings-model-profile-temperature", Input).value = str(
-                    values["model_profile_temperature"]
-                )
-                self.query_one("#settings-model-profile-top-p", Input).value = str(
-                    values["model_profile_top_p"]
-                )
-                profile_streaming = values["model_profile_streaming"]
-                self.query_one("#settings-model-profile-streaming", Input).value = (
-                    str(profile_streaming).lower()
-                    if isinstance(profile_streaming, bool)
-                    else str(profile_streaming)
-                )
+                for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS:
+                    profile_value = values[draft_key]
+                    self.query_one(
+                        f"#settings-{draft_key.replace('_', '-')}",
+                        Input,
+                    ).value = self._profile_input_value(profile_value)
             except QueryError:
                 pass
             self._provider_save_result = "Provider settings reverted to last loaded values."
@@ -6331,7 +7712,7 @@ class SettingsScreen(BaseAppScreen):
         if self._active_category_id() is SettingsCategoryId.STORAGE:
             self._storage_check_rows = ("Storage check: running",)
             self._update_storage_check_widgets()
-            self._storage_check_worker()
+            self._storage_check_worker(self._storage_current_defaults())
             self.app.notify("Storage check started.", severity="information")
             return
         if self._active_category_id() is SettingsCategoryId.PRIVACY_SECURITY:
@@ -6389,6 +7770,10 @@ class SettingsScreen(BaseAppScreen):
     def _save_library_rag_sections(section_values: Mapping[str, object]) -> bool:
         return SettingsConfigAdapter().save_sections(section_values)
 
+    @staticmethod
+    def _save_storage_sections(section_values: Mapping[str, object]) -> bool:
+        return SettingsConfigAdapter().save_sections(section_values)
+
     def _app_config_update_target(self):
         app_config = getattr(self.app_instance, "app_config", None)
         if callable(getattr(app_config, "update", None)):
@@ -6444,6 +7829,32 @@ class SettingsScreen(BaseAppScreen):
         saved = self._save_library_rag_sections(section_values)
         self.app.call_from_thread(
             self._apply_library_rag_save_result,
+            saved,
+            dict(section_values),
+        )
+
+    def _apply_storage_save_result(
+        self,
+        saved: bool,
+        section_values: Mapping[str, object],
+    ) -> None:
+        if saved:
+            self._app_config_update_target().update(copy.deepcopy(dict(section_values)))
+            self._settings_drafts.pop(SettingsCategoryId.STORAGE, None)
+            self._storage_result = "Storage defaults saved. Restart Chatbook to use saved paths."
+            self._set_static_text("#settings-storage-save-result", self._storage_result)
+            self._sync_storage_widgets()
+            self.app.notify("Storage defaults saved.", severity="information")
+            return
+        self._storage_result = "Failed to save Storage defaults."
+        self._set_static_text("#settings-storage-save-result", self._storage_result)
+        self.app.notify(self._storage_result, severity="error")
+
+    @work(exclusive=True, thread=True)
+    def _settings_save_storage_worker(self, section_values: Mapping[str, object]) -> None:
+        saved = self._save_storage_sections(section_values)
+        self.app.call_from_thread(
+            self._apply_storage_save_result,
             saved,
             dict(section_values),
         )
@@ -6524,7 +7935,29 @@ class SettingsScreen(BaseAppScreen):
             "#settings-console-default-streaming": self._console_behavior_value("streaming"),
             "#settings-console-default-temperature": self._console_behavior_value("temperature"),
             "#settings-console-default-top-p": self._console_behavior_value("top_p"),
+            "#settings-console-default-min-p": self._console_behavior_value("min_p"),
+            "#settings-console-default-top-k": self._console_behavior_value("top_k"),
             "#settings-console-default-max-tokens": self._console_behavior_value("max_tokens"),
+            "#settings-console-default-seed": self._console_behavior_value("seed"),
+            "#settings-console-default-presence-penalty": self._console_behavior_value(
+                "presence_penalty"
+            ),
+            "#settings-console-default-frequency-penalty": self._console_behavior_value(
+                "frequency_penalty"
+            ),
+            "#settings-console-default-reasoning-effort": self._console_behavior_value(
+                "reasoning_effort"
+            ),
+            "#settings-console-default-reasoning-summary": self._console_behavior_value(
+                "reasoning_summary"
+            ),
+            "#settings-console-default-verbosity": self._console_behavior_value("verbosity"),
+            "#settings-console-default-thinking-effort": self._console_behavior_value(
+                "thinking_effort"
+            ),
+            "#settings-console-default-thinking-budget-tokens": self._console_behavior_value(
+                "thinking_budget_tokens"
+            ),
         }
         self._syncing_console_defaults = True
         try:

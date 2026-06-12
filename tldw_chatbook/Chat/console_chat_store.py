@@ -10,6 +10,7 @@ from loguru import logger
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
+    ConsoleMessageFeedback,
     ConsoleMessageRole,
     ConsoleMessageStatus,
     ConsoleVariant,
@@ -260,6 +261,56 @@ class ConsoleChatStore:
         self._materialize_stream_buffer(message)
         return self._snapshot(message)
 
+    def set_message_feedback(
+        self,
+        message_id: str,
+        feedback: ConsoleMessageFeedback | None,
+    ) -> ConsoleChatMessage:
+        """Record user feedback on a complete Console message."""
+        message = self._message_or_raise(message_id)
+        self._materialize_stream_buffer(message)
+        if message.status in {"pending", "streaming"}:
+            raise ValueError("Wait for response to finish before recording feedback.")
+        message.feedback = feedback
+        self._persist_existing_message(message, update_feedback=True)
+        return self._snapshot(message)
+
+    def update_message_content(self, message_id: str, content: str) -> ConsoleChatMessage:
+        """Update a complete Console message or its currently selected variant."""
+        if not content.strip():
+            raise ValueError("Message content cannot be blank.")
+        message = self._message_or_raise(message_id)
+        self._materialize_stream_buffer(message)
+        if message.status in {"pending", "streaming"}:
+            raise ValueError("Wait for response to finish before editing this message.")
+        if message.variants is None:
+            message.content = content
+        else:
+            selected_index = message.variants.selected_index
+            message.variants.variants[selected_index] = replace(
+                message.variants.variants[selected_index],
+                content=content,
+            )
+            message.content = message.variants.current.content
+        self._persist_existing_message(message)
+        return self._snapshot(message)
+
+    def delete_message(self, message_id: str) -> ConsoleChatMessage:
+        """Remove a complete Console message from the local transcript."""
+        message = self._message_or_raise(message_id)
+        self._materialize_stream_buffer(message)
+        if message.status in {"pending", "streaming"}:
+            raise ValueError("Wait for response to finish before deleting this message.")
+        session_id = self._message_session_index.pop(message_id)
+        messages = self._messages_by_session[session_id]
+        self._messages_by_session[session_id] = [
+            candidate for candidate in messages if candidate.id != message_id
+        ]
+        self._stream_chunks_by_message.pop(message_id, None)
+        self._stream_materialized_counts.pop(message_id, None)
+        self._pending_persistence_message_ids.discard(message_id)
+        return self._snapshot(message)
+
     def session_id_for_message(self, message_id: str) -> str:
         """Return the owning session ID for a message."""
         if message_id not in self._message_session_index:
@@ -390,12 +441,17 @@ class ConsoleChatStore:
             image_mime_type=None,
             message_id=None,
             parent_message_id=None,
-            feedback=None,
+            feedback=message.feedback,
         )
         self._pending_persistence_message_ids.discard(message.id)
         self._enqueue_sync_v2_message_if_ready(message)
 
-    def _persist_existing_message(self, message: ConsoleChatMessage) -> None:
+    def _persist_existing_message(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        update_feedback: bool = False,
+    ) -> None:
         if self.persistence is None:
             return
         if message.persisted_message_id is None:
@@ -407,9 +463,9 @@ class ConsoleChatStore:
             image_data=None,
             image_mime_type=None,
             parent_message_id=None,
-            feedback=None,
+            feedback=message.feedback,
             update_parent=False,
-            update_feedback=False,
+            update_feedback=update_feedback,
         )
         self._enqueue_sync_v2_message_if_ready(message)
 

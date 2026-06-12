@@ -3,7 +3,7 @@
 Date: 2026-06-01
 Branch: codex/provider-cdp-uat-execution
 Spec: Docs/superpowers/specs/2026-05-31-provider-cdp-uat-design.md
-Backlog task: TASK-75 - Provider CDP UAT sweep
+Backlog task: TASK-84 - Provider CDP UAT sweep
 Textual-web URL: http://127.0.0.1:8897
 Isolated QA root: `${TMPDIR:-system temp}/tldw-chatbook-provider-cdp-uat` via `run_textual_web_with_env.py`
 Isolated HOME: `<qa-root>/home`

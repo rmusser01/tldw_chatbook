@@ -162,11 +162,19 @@ ConsoleSettingsModal {
 .console-settings-control {
     width: 1fr;
     min-width: 0;
-    height: 1;
-    min-height: 1;
 }
 
-ConsoleSettingsModal Input,
+ConsoleSettingsModal Input {
+    width: 1fr;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
 ConsoleSettingsModal Select {
     width: 1fr;
     min-width: 0;
@@ -175,6 +183,11 @@ ConsoleSettingsModal Select {
     border: none;
     background: $ds-surface-raised;
     color: $ds-text-primary;
+}
+
+ConsoleSettingsModal Checkbox {
+    height: 1;
+    min-height: 1;
 }
 
 ConsoleSettingsModal Select > SelectCurrent {
@@ -201,7 +214,26 @@ ConsoleSettingsModal Select > SelectCurrent .arrow {
     color: $ds-text-muted;
 }
 
-ConsoleSettingsModal Input:focus,
+ConsoleSettingsModal Input:focus {
+    height: 3;
+    min-height: 3;
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+ConsoleSettingsModal Input > .input--cursor {
+    background: $ds-input-focus-accent;
+    color: $ds-surface-panel;
+}
+
+ConsoleSettingsModal Input > .input--selection {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+}
+
 ConsoleSettingsModal Select:focus {
     border: none;
     border-bottom: none;
@@ -214,6 +246,33 @@ ConsoleSettingsModal Select:focus > SelectCurrent {
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+ConsoleSettingsModal Select > SelectOverlay {
+    padding: 0 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+    min-width: 30;
+}
+
+ConsoleSettingsModal Select > SelectOverlay Option {
+    padding: 0 2;
+    min-height: 3;
+    background: $ds-surface-inspector;
+    color: $ds-text-primary;
+}
+
+ConsoleSettingsModal Select > SelectOverlay Option:hover {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+ConsoleSettingsModal Select > SelectOverlay Option.-selected {
+    padding: 0 2;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .console-settings-modal-actions {
@@ -280,12 +339,10 @@ ConsoleSettingsModal Select:focus > SelectCurrent {
 #home-purpose,
 #console-purpose,
 #library-purpose,
-#notes-purpose,
 #artifacts-purpose,
 #mcp-purpose,
 #console-status-row,
 #library-status-row,
-#notes-status-row,
 #notes-mode-strip,
 #console-mode-bar,
 #artifacts-mode-strip,
@@ -1249,12 +1306,20 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     overflow: hidden;
 }
 
-#library-mode-label,
-#notes-mode-label {
+#library-mode-label {
     width: $ds-library-mode-label-width;
     min-width: $ds-library-mode-label-width;
     height: $ds-library-mode-bar-height;
     min-height: $ds-library-mode-bar-height;
+}
+
+#notes-status-row {
+    width: 1fr;
+    min-width: 0;
+    height: $ds-destination-compact-strip-height;
+    min-height: $ds-destination-compact-strip-height;
+    text-align: right;
+    color: $ds-text-muted;
 }
 
 Button.library-mode-chip,
@@ -1276,9 +1341,6 @@ Button.notes-mode-chip {
 }
 
 #library-contract-grid,
-#notes-mode-region-notes,
-#notes-mode-region-sync,
-#notes-mode-region-templates,
 #artifacts-workbench,
 #personas-workbench,
 #watchlists-workbench,
@@ -1295,6 +1357,20 @@ Button.notes-mode-chip {
     overflow: hidden;
     border: solid $ds-grid-line;
     background: $ds-surface-panel;
+}
+
+/* Notes mode regions hold framed panes (Console rail framing), so the
+   regions themselves stay chrome-free like Console's main area. */
+#notes-mode-region-notes,
+#notes-mode-region-sync,
+#notes-mode-region-templates {
+    height: 1fr;
+    min-height: 20;
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+    border: none;
+    background: transparent;
 }
 
 #artifacts-list-pane,
@@ -1821,10 +1897,291 @@ Button.settings-category-button.settings-secondary-search-match {
     background: $ds-surface-panel;
 }
 
-#library-source-browser,
-#library-source-inspector,
-#notes-navigator-pane,
-#notes-inspector-pane {
+#library-source-browser {
+    width: $ds-library-source-browser-width;
+    min-width: $ds-library-source-browser-width;
+    max-width: $ds-library-source-browser-width;
+    height: 100%;
+    min-height: 20;
+    padding: 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    overflow-y: auto;
+}
+
+/* Notes form controls mirror the Console settings control language exactly:
+   quiet tall-bordered inputs, single-row flattened selects, accent focus. */
+#notes-shell Input {
+    height: 3;
+    min-height: 3;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#notes-shell Input:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#notes-shell Input > .input--cursor {
+    background: $ds-input-focus-accent;
+    color: $ds-surface-panel;
+}
+
+#notes-shell Select {
+    height: 1;
+    min-height: 1;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#notes-shell Select > SelectCurrent {
+    width: 1fr;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    content-align: left middle;
+}
+
+#notes-shell Select > SelectCurrent Static#label {
+    width: 1fr;
+    height: 1;
+    background: transparent;
+    color: $ds-text-primary;
+}
+
+#notes-shell Select > SelectCurrent .arrow {
+    background: transparent;
+    color: $ds-text-muted;
+}
+
+#notes-shell Select:focus {
+    border: none;
+    border-bottom: none;
+    outline: solid $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+}
+
+#notes-shell TextArea {
+    border: tall $ds-surface-panel;
+    background: $ds-surface-panel;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+#notes-shell TextArea:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+}
+
+/* The keywords editor reads as a form control, not an editor surface. */
+#notes-shell TextArea.notes-keywords-textarea {
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+
+#notes-shell ListView {
+    border: none;
+    background: $ds-surface-panel;
+    padding: 0;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+Button.notes-delete-action {
+    color: $ds-status-error;
+}
+
+/* Docked Notes action bar mirrors the Console composer chrome. */
+#notes-action-bar {
+    height: 3;
+    min-height: 3;
+    max-height: 3;
+    padding: 0 1;
+    margin: 0;
+    border: round #6f7782;
+    background: $ds-surface-panel;
+    align: left middle;
+}
+
+.notes-action-bar-group {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    align: left middle;
+}
+
+.notes-action-bar-spacer {
+    width: 1fr;
+    min-width: 0;
+    height: 1;
+}
+
+.notes-action-bar-group Button {
+    height: 1;
+    min-height: 1;
+    margin-left: 1;
+}
+
+/* Sync mode: framed setup form + Console-transcript-style activity log. */
+#notes-sync-pane {
+    height: 1fr;
+    min-height: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+#notes-sync-setup {
+    width: 44;
+    min-width: 30;
+    height: 100%;
+    padding: 0 1;
+    margin: 0 1 0 0;
+    border: solid #6f7782;
+    background: $ds-surface-panel;
+}
+
+#notes-sync-activity {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    padding: 0 1;
+    border: solid #6f7782;
+    background: $ds-surface-panel;
+}
+
+.notes-sync-field-label {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+    color: $ds-text-muted;
+    text-style: bold;
+}
+
+.notes-sync-auto-label {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+    text-style: bold;
+}
+
+#notes-sync-activity-log {
+    height: 1fr;
+    min-height: 0;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+.notes-sync-activity-line {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+.notes-sync-activity-line.activity-success {
+    color: $ds-status-ready;
+}
+
+.notes-sync-activity-line.activity-error {
+    color: $ds-status-error;
+}
+
+/* Templates mode: framed list beside a framed full-height preview. */
+#notes-templates-pane {
+    height: 1fr;
+    min-height: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+#notes-templates-list-pane {
+    width: 36;
+    min-width: 24;
+    height: 100%;
+    padding: 0 1;
+    margin: 0 1 0 0;
+    border: solid #6f7782;
+    background: $ds-surface-panel;
+}
+
+#notes-template-preview-pane {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    padding: 0 1;
+    border: solid #6f7782;
+    background: $ds-surface-panel;
+}
+
+#notes-template-preview-scroll {
+    height: 1fr;
+    min-height: 0;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+/* Navigator scope lists stay dense and top-aligned like Console rails. */
+#notes-navigator-pane ListView {
+    height: auto;
+    min-height: 1;
+    max-height: 10;
+}
+
+/* Sort row: the global `Select { width: 100%; }` rule would otherwise
+   inflate the select and push the order toggle out of the row. */
+#notes-sort-row {
+    height: 1;
+    min-height: 1;
+    margin-bottom: 1;
+    align: left middle;
+}
+
+#notes-sort-row > Static {
+    width: 6;
+    min-width: 6;
+    color: $ds-text-muted;
+}
+
+#notes-sort-row Select {
+    width: 1fr;
+    min-width: 0;
+    margin: 0;
+}
+
+#notes-sort-row Button {
+    margin-left: 1;
+}
+
+
+#library-source-inspector {
     width: 2fr;
     min-width: 0;
     height: 100%;
@@ -1835,14 +2192,46 @@ Button.settings-category-button.settings-secondary-search-match {
     overflow-y: auto;
 }
 
-#library-source-detail,
-#notes-editor-pane {
+/* Console's rendered frame color (#6f7782) — see chat_screen.CONSOLE_FRAME_COLOR. */
+#notes-navigator-pane,
+#notes-inspector-pane {
+    width: 2fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 20;
+    padding: 1;
+    border: solid #6f7782;
+    background: $ds-surface-panel;
+    overflow-y: auto;
+}
+
+#notes-navigator-pane,
+#notes-inspector-pane {
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
+#library-source-detail {
     width: 5fr;
     min-width: 0;
     height: 100%;
     min-height: 20;
     padding: 1;
     border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    overflow-y: auto;
+}
+
+#notes-editor-pane {
+    width: 5fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 20;
+    padding: 1;
+    border: solid #6f7782;
     background: $ds-surface-panel;
     overflow-y: auto;
 }
@@ -1944,7 +2333,12 @@ ListItem.personas-library-row.is-active.-highlight {
     min-width: $ds-library-source-action-min-width;
     height: $ds-library-source-action-height;
     min-height: $ds-library-source-action-height;
-    margin: 0;
+    margin: 0 0 1 0;
+}
+
+.library-source-action-spacer {
+    height: 1;
+    min-height: 1;
 }
 
 .library-source-action:focus {
@@ -1952,6 +2346,126 @@ ListItem.personas-library-row.is-active.-highlight {
     color: $ds-focus-fg;
     text-style: bold underline;
     outline: none;
+}
+
+.library-rag-region {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 1 0;
+}
+
+#library-rag-query-controls {
+    height: 7;
+    min-height: 7;
+}
+
+#library-rag-query-controls.has-recovery {
+    height: 10;
+    min-height: 10;
+}
+
+#library-rag-source-scope {
+    height: 2;
+    min-height: 2;
+}
+
+#library-rag-source-scope.has-recovery {
+    height: 12;
+    min-height: 12;
+}
+
+#library-rag-query-row {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+}
+
+#library-rag-results {
+    height: 1fr;
+    min-height: 8;
+}
+
+#library-rag-query-input {
+    width: 1fr;
+    min-width: 0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-raised;
+}
+
+#library-rag-query-input:focus {
+    border: solid $ds-input-focus-border;
+    border-bottom: solid $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+}
+
+#library-rag-scope-summary {
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-rag-run-query {
+    width: 18;
+    min-width: 16;
+    margin: 0 0 0 1;
+    background: $ds-action-focus 35%;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-rag-run-query:disabled {
+    background: $ds-surface-raised;
+    color: $ds-text-disabled;
+    text-style: none;
+}
+
+.library-rag-result-row {
+    padding: 0 1;
+    margin: 1 0 0 0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+.library-rag-result-row.is-selected {
+    border: heavy $ds-focus-accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+.library-rag-result-badges {
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: bold;
+}
+
+.library-rag-recovery-action {
+    width: 28;
+    min-width: 18;
+    background: $ds-status-warning 30%;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.library-rag-console-action {
+    width: 18;
+    min-width: 16;
+    background: $ds-action-focus 35%;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.library-rag-center-console-action {
+    width: 24;
+    min-width: 18;
+    margin: 1 0 0 0;
+}
+
+.library-rag-console-action:disabled {
+    background: $ds-surface-raised;
+    color: $ds-text-disabled;
+    text-style: none;
 }
 
 .is-disabled {

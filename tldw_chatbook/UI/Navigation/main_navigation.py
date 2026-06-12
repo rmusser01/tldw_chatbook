@@ -18,9 +18,10 @@ if TYPE_CHECKING:
 class NavigateToScreen(Message):
     """Message to request navigation to a specific screen."""
     
-    def __init__(self, screen_name: str):
+    def __init__(self, screen_name: str, screen_context: dict[str, object] | None = None):
         super().__init__()
         self.screen_name = screen_name
+        self.screen_context = dict(screen_context or {})
 
 
 class NavigationButton(Button):
@@ -45,8 +46,8 @@ class MainNavigationBar(Container):
 
     DEFAULT_CSS = """
     MainNavigationBar {
-        height: 4;
-        min-height: 4;
+        height: 3;
+        min-height: 3;
         width: 100%;
         dock: top;
         background: $background;
@@ -68,8 +69,8 @@ class MainNavigationBar(Container):
         min-width: 4;
         background: $surface-darken-1;
         border: solid $surface-lighten-2;
-        height: 4;
-        min-height: 4;
+        height: 3;
+        min-height: 3;
         content-align: center middle;
     }
 
@@ -113,7 +114,7 @@ class MainNavigationBar(Container):
     .nav-overflow-hint {
         width: auto;
         padding: 0;
-        height: 4;
+        height: 3;
         content-align: center middle;
         color: $text-muted;
     }

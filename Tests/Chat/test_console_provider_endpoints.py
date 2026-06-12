@@ -1,4 +1,6 @@
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    first_configured_endpoint,
+    generic_endpoint_differs,
     normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
 )
@@ -62,3 +64,23 @@ def test_safe_endpoint_display_allows_schemeless_single_label_host_with_port() -
     display = safe_endpoint_display("local-service:9090/v1")
 
     assert display == "local-service:9090/v1"
+
+
+def test_first_configured_endpoint_accepts_api_base_url_alias() -> None:
+    endpoint = first_configured_endpoint(
+        {
+            "api_url": "http://localhost:8080/completion",
+            "api_base_url": "http://127.0.0.1:9099/v1",
+        }
+    )
+
+    assert endpoint == "http://127.0.0.1:9099/v1"
+
+
+def test_generic_endpoint_differs_accepts_api_base_url_alias() -> None:
+    differs = generic_endpoint_differs(
+        "http://127.0.0.1:9099/v1",
+        {"api_base_url": "http://127.0.0.1:9099/v1"},
+    )
+
+    assert differs is False

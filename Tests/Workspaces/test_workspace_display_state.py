@@ -6,6 +6,8 @@ from pathlib import Path
 
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import (
+    ConsoleWorkspaceACPHandoffState,
+    DEFAULT_WORKSPACE_ID,
     LocalWorkspaceRegistryService,
     RuntimeBindingKind,
     RuntimeBindingStatus,
@@ -13,10 +15,12 @@ from tldw_chatbook.Workspaces import (
     WorkspaceRecord,
     WorkspaceRuntimeBinding,
     WorkspaceSyncStatus,
+    WorkspaceTransferPolicy,
 )
 from tldw_chatbook.Workspaces import display_state
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceConversationRow,
+    ConsoleWorkspaceServerAdapterState,
     build_library_workspace_depth_state,
     build_console_workspace_state,
 )
@@ -43,17 +47,21 @@ def test_console_workspace_state_explains_missing_service() -> None:
 
 def test_console_workspace_state_explains_no_active_workspace(tmp_path: Path) -> None:
     service = _registry(tmp_path)
+    service.ensure_default_workspace()
 
     state = build_console_workspace_state(
         registry_service=service,
         current_conversation=None,
     )
 
-    assert state.workspace_label == "Workspace: Local Default"
-    assert state.authority_label == "Authority: local registry ready"
+    assert state.workspace_label == "Workspace: Default"
+    assert state.authority_label == "Authority: local-only"
     assert state.change_workspace_enabled is False
     assert state.new_conversation_enabled is False
-    assert state.recovery_copy == "Workspace switching: locked"
+    assert state.runtime_label == "Runtime: none, file tools disabled"
+    assert state.recovery_copy == ""
+    assert state.server_readiness_label == "Server: local fallback"
+    assert service.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
 
 
 def test_console_workspace_state_reports_active_workspace_and_runtime(tmp_path: Path) -> None:
@@ -155,6 +163,66 @@ def test_console_workspace_state_maps_workspace_sync_status_before_promotion(tmp
         assert state.sync_label == expected_label
 
 
+def test_console_workspace_state_distinguishes_server_and_authority_readiness(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        (
+            WorkspaceAuthority.LOCAL_ONLY,
+            None,
+            "Server: local fallback",
+            "Local registry is authoritative",
+        ),
+        (
+            WorkspaceAuthority.REMOTE_ONLY,
+            None,
+            "Server: remote-only",
+            "not materialized locally",
+        ),
+        (
+            WorkspaceAuthority.CONFLICT,
+            None,
+            "Server: conflict",
+            "review required",
+        ),
+        (
+            WorkspaceAuthority.RUNTIME_MISSING,
+            None,
+            "Server: runtime missing",
+            "runtime binding cannot be restored",
+        ),
+        (
+            WorkspaceAuthority.SERVER_BACKED,
+            ConsoleWorkspaceServerAdapterState(
+                available=False,
+                detail="No tldw_server workspace API configured.",
+            ),
+            "Server: unavailable",
+            "adapter boundary",
+        ),
+    )
+
+    for authority, adapter_state, expected_label, expected_detail in cases:
+        service = _registry(tmp_path / authority.value)
+        service.create_workspace(
+            workspace_id=f"ws-{authority.value}",
+            name=f"Workspace {authority.value}",
+            authority=authority,
+            sync_status=WorkspaceSyncStatus.BLOCKED,
+        )
+        service.set_active_workspace(f"ws-{authority.value}")
+
+        state = build_console_workspace_state(
+            registry_service=service,
+            current_conversation=None,
+            server_adapter_state=adapter_state,
+        )
+
+        assert state.server_readiness_label == expected_label
+        assert expected_detail in state.server_readiness_detail
+        assert "No background sync" in state.server_readiness_detail
+
+
 def test_console_workspace_state_derives_conversation_rows_from_memberships(
     tmp_path: Path,
 ) -> None:
@@ -178,6 +246,104 @@ def test_console_workspace_state_derives_conversation_rows_from_memberships(
     assert state.conversation_rows[0].conversation_id == "conv-1"
     assert state.conversation_rows[0].title == "Planning thread"
     assert state.conversation_rows[0].selected is True
+
+
+def test_console_workspace_state_exposes_handoff_transfer_policy_rows(
+    tmp_path: Path,
+) -> None:
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Research Sprint")
+    service.set_active_workspace("ws-a")
+    service.link_membership(
+        "ws-a",
+        item_type="note",
+        item_id="note-1",
+        role="source",
+        title="Copied note",
+        transfer_policy=WorkspaceTransferPolicy.COPY,
+    )
+    service.link_membership(
+        "ws-a",
+        item_type="media",
+        item_id="media-1",
+        role="source",
+        title="Referenced media",
+        transfer_policy=WorkspaceTransferPolicy.REFERENCE,
+    )
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="conv-1",
+        role="workspace-thread",
+        title="Metadata thread",
+        transfer_policy=WorkspaceTransferPolicy.METADATA_ONLY,
+    )
+    service.link_membership(
+        "ws-a",
+        item_type="artifact",
+        item_id="artifact-1",
+        role="source",
+        title="Local secret draft",
+        transfer_policy=WorkspaceTransferPolicy.LOCAL_ONLY,
+    )
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation="conv-1",
+    )
+
+    rows_by_id = {row.item_id: row for row in state.handoff_rows}
+    assert rows_by_id["note-1"].handoff_label == "Handoff: copy"
+    assert rows_by_id["media-1"].handoff_label == "Handoff: reference"
+    assert rows_by_id["conv-1"].handoff_label == "Handoff: metadata-only"
+    assert rows_by_id["artifact-1"].handoff_label == "Handoff: local-only"
+    assert rows_by_id["artifact-1"].portable is False
+    assert "not portable" in rows_by_id["artifact-1"].detail
+
+
+def test_console_workspace_state_exposes_acp_task_run_handoff_readiness_and_audit(
+    tmp_path: Path,
+) -> None:
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Research Sprint")
+    service.set_active_workspace("ws-a")
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=None,
+        acp_handoff_state=ConsoleWorkspaceACPHandoffState(
+            status="failed",
+            detail="ACP runtime package failed preflight.",
+            audit_detail="Audit: no secrets copied; source references only.",
+        ),
+    )
+
+    assert state.acp_handoff_label == "ACP task/run: failed"
+    assert state.acp_handoff_detail == "ACP runtime package failed preflight."
+    assert state.acp_handoff_audit == "Audit: no secrets copied; source references only."
+
+
+def test_console_workspace_state_normalizes_acp_handoff_ready_and_blocked_states(
+    tmp_path: Path,
+) -> None:
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Research Sprint")
+    service.set_active_workspace("ws-a")
+
+    for status in ("ready", "blocked"):
+        state = build_console_workspace_state(
+            registry_service=service,
+            current_conversation=None,
+            acp_handoff_state=ConsoleWorkspaceACPHandoffState(
+                status=status,
+                detail=f"ACP handoff is {status}.",
+                audit_detail=f"Audit: {status} preflight visible.",
+            ),
+        )
+
+        assert state.acp_handoff_label == f"ACP task/run: {status}"
+        assert state.acp_handoff_detail == f"ACP handoff is {status}."
+        assert state.acp_handoff_audit == f"Audit: {status} preflight visible."
 
 
 def test_console_workspace_state_treats_none_memberships_as_empty() -> None:

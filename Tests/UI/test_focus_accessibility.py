@@ -126,6 +126,17 @@ def test_generated_input_focus_uses_thin_border_and_bottom_emphasis():
         assert "border-bottom: solid $ds-input-focus-accent;" in block
 
 
+def test_console_settings_input_focus_does_not_outline_single_row_value():
+    """Console Settings inputs keep typed values visible in Textual Web."""
+    css_content = CSS_PATH.read_text(encoding="utf-8")
+
+    block = css_block(css_content, "ConsoleSettingsModal Input:focus")
+    assert "outline: solid $ds-input-focus-accent;" in block
+    assert "background: $ds-input-focus-bg;" in block
+    assert "color: $ds-text-primary;" in block
+    assert "text-style: bold;" in block
+
+
 @pytest.mark.asyncio
 async def test_keyboard_navigation_visible():
     """Test that keyboard navigation shows visible focus indicators."""

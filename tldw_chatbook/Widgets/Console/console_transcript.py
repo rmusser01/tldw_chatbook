@@ -410,8 +410,8 @@ class ConsoleTranscript(VerticalScroll):
         actions = []
         for action in ConsoleMessageActionService().available_actions(message):
             if action.action_id == "feedback":
-                actions.append(("feedback-up", "Good", True, ""))
-                actions.append(("feedback-down", "Bad", True, ""))
+                actions.append(("feedback-up", "👍", True, ""))
+                actions.append(("feedback-down", "👎", True, ""))
                 continue
             actions.append(
                 (
@@ -427,8 +427,8 @@ class ConsoleTranscript(VerticalScroll):
         buttons: list[Button] = []
         for action in ConsoleMessageActionService().available_actions(message):
             if action.action_id == "feedback":
-                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-up", "Good")))
-                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-down", "Bad")))
+                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-up", "👍")))
+                buttons.append(self._action_button(message, ConsoleMessageAction("feedback-down", "👎")))
                 continue
             buttons.append(self._action_button(message, action))
         return Horizontal(*buttons, id=f"console-message-actions-{message.id}", classes="console-transcript-action-row")

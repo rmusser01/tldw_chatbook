@@ -88,6 +88,39 @@ class LibraryCollectionsPanel(Vertical):
                         id="library-collection-description",
                     )
                     yield Static(
+                        "Source membership",
+                        id="library-collection-membership-heading",
+                        classes="destination-section",
+                    )
+                    yield Static(
+                        f"Membership: {selected.item_count_label}",
+                        id="library-collection-membership-count",
+                    )
+                    yield Static(
+                        f"Authority: {selected.source_authority}",
+                        id="library-collection-source-authority",
+                    )
+                    yield Static(
+                        "Workspace boundary",
+                        id="library-collection-workspace-heading",
+                        classes="destination-section",
+                    )
+                    yield Static(
+                        "Visible globally; active workspace controls staging and manipulation.",
+                        id="library-collection-workspace-rule",
+                    )
+                    yield Static(
+                        "Available now: create, rename, delete local Collection metadata.",
+                        id="library-collection-local-actions",
+                    )
+                    yield Static(
+                        (
+                            "Deferred: collection-scoped Search/RAG, Study, "
+                            "Console handoff, and server sync promotion."
+                        ),
+                        id="library-collection-deferred-actions",
+                    )
+                    yield Static(
                         "Write Sync Safety",
                         id="library-collection-sync-safety-heading",
                         classes="destination-section",

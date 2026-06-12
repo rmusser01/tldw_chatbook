@@ -19,11 +19,11 @@ Implements the Library portion of Docs/superpowers/specs/2026-06-09-notes-workbe
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Status row no longer duplicates purpose line
-- [x] #2 Inspector heading rendered once
-- [x] #3 Duplicate source-browser buttons removed with mode chips as the single path
+- [x] #1 Status row no longer duplicates purpose line (superseded: PR #503's dynamic per-mode status row already removed the duplication)
+- [x] #2 Inspector heading rendered once (superseded: PR #503 renamed nested headings to mode-specific titles, e.g. "Hub inspector")
+- [x] #3 Duplicate source-browser buttons removed with mode chips as the single path (superseded: PR #503 made the Library Modules buttons load-bearing hub navigation with active-state sync; they stay)
 - [x] #4 No inline styles.width/height assignments remain in library_screen.py compose
-- [x] #5 Empty states expose a primary action
+- [x] #5 Empty states expose a primary action (superseded: PR #503's hub empty-state copy is deliberate and test-pinned)
 - [x] #6 Library/destination UI test suites pass
 <!-- AC:END -->
 
@@ -39,12 +39,19 @@ Implements the Library portion of Docs/superpowers/specs/2026-06-09-notes-workbe
 
 ## Implementation Notes
 
-- Slimmed `#library-status-row` to `{status} | Local`; the dropped prefix duplicated the purpose line. Status taxonomy (Unavailable/Empty/etc.) unchanged.
-- Mode strip is now one row: removed all inline `styles.*` from the mode bar/label/chips and the `LIBRARY_MODE_*` sizing constants; sizing lives in `$ds-library-mode-*` tokens (now 1) plus `Button.library-mode-chip` TCSS. The active-chip style dropped its border (a border consumes the whole row at height 1) in favor of background + bold underline; specificity had to be `Button.library-mode-chip` to beat Textual's `Button.-style-default` tall borders.
-- Removed the nested duplicate "Inspector" heading and the `#library-active-mode-next-action` prose row (mount anchors retargeted to `#library-active-mode-description`); folded the collections later-stage disclaimer into the mode description.
-- Removed `#library-open-search`/`#library-open-collections` buttons + handlers (pure duplicates of mode chips). Kept Open Notes/Media/Conversations and Import/Export Sources (real navigation).
-- Empty state now shows a primary "Import Sources" button (`#library-empty-import-sources` → ingest) instead of instructional copy; inspector empty state shortened to one line.
-- Deleted `_frame_library_region` (hardcoded `#6f7782` border) — panes now use `.library-region`/ID rules with `$ds-grid-line`. Added `LibraryScreen.DEFAULT_CSS` with the baseline workbench geometry so harness tests (no app stylesheet) render correctly; app TCSS keeps equal specificity and wins.
-- Tests: updated 9 pinned test files; fixed 5 previously-failing tests (3 mode-strip geometry, design-system chip contract, gate1 collections copy); zero new failures vs baseline (33 pre-existing failures in the `-k "library or destination or replay or focus"` selection remain, all unrelated to Library).
-- QA captures: `Docs/superpowers/qa/library-ux-fixes/`.
+Scope was reconciled with PR #503 (Library content hub / Search-RAG evidence workflow),
+which landed on dev after this task was planned and superseded the status-row, heading,
+duplicate-button, and empty-state items with its own deliberate, test-pinned design.
+
+Delivered:
+- Single-row mode strip: removed all inline `styles.*` from the mode bar/label/chips and panes,
+  plus the `LIBRARY_MODE_*`/`LIBRARY_SOURCE_*_WIDTH`/`LIBRARY_FRAME_*` constants; sizing lives in
+  `$ds-library-mode-*` tokens (now 1) and TCSS pane rules (browser keeps #503's fixed 31 cols).
+- `Button.library-mode-chip` selector out-specifies Textual's `Button.-style-default` tall borders;
+  active chip reads via background + bold underline (border would eat the 1-row chip). Restored the
+  `bold underline` non-obscuring focus signal that #503 had regressed to plain `bold`.
+- Deleted `_frame_library_region` (hardcoded `#6f7782` border) in favor of `$ds-grid-line` TCSS;
+  added `LibraryScreen.DEFAULT_CSS` baseline geometry for stylesheet-less harness tests.
+- Updated the two stale chip-contract tests (master-shell design system, non-obscuring focus) that
+  were already failing on dev; both now pass. Zero new failures vs the dev baseline.
 - ADR: none required — implements the existing design-system contract.

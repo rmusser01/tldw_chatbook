@@ -222,8 +222,10 @@ class SyncProgressSection(Container):
     def update_progress(self, current: int, total: int, status: str = None):
         """Update progress display."""
         bar = self.query_one("#sync-progress-bar", ProgressBar)
+        if total > 0 and bar.total != total:
+            bar.total = total
         bar.progress = current
-        
+
         if status:
             self.query_one("#progress-status", Static).update(status)
     

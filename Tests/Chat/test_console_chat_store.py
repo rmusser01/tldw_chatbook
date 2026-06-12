@@ -6,7 +6,7 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
 
 
 def test_store_creates_session_and_appends_messages():
@@ -23,6 +23,56 @@ def test_store_creates_session_and_appends_messages():
         ConsoleMessageRole.USER,
         ConsoleMessageRole.ASSISTANT,
     ]
+
+
+def test_store_records_message_feedback():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    updated = store.set_message_feedback(message.id, "up")
+
+    assert updated.feedback == "up"
+    assert store.get_message(message.id).feedback == "up"
+
+
+def test_store_deletes_message_from_transcript():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    deleted = store.delete_message(message.id)
+
+    assert deleted.id == message.id
+    assert store.messages_for_session(session.id) == []
+    with pytest.raises(KeyError):
+        store.get_message(message.id)
+
+
+def test_store_updates_message_content():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="answer")
+
+    updated = store.update_message_content(message.id, "edited answer")
+
+    assert updated.content == "edited answer"
+    assert store.get_message(message.id).content == "edited answer"
+
+
+def test_store_updates_current_variant_content():
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    message = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="first")
+    store.add_variant(message.id, "second")
+
+    updated = store.update_message_content(message.id, "edited second")
+
+    assert updated.content == "edited second"
+    assert updated.variants is not None
+    assert updated.variants.selected_index == 1
+    assert updated.variants.current.content == "edited second"
+    assert updated.variants.variants[0].content == "first"
 
 
 def test_store_updates_streaming_message_and_marks_stopped():
@@ -552,6 +602,40 @@ def test_store_persists_workspace_session_with_real_chat_persistence_service(tmp
         assert persisted_message["content"] == "hello"
         workspace_conversations = registry.list_workspace_conversations("workspace-a")
         assert [item.item_id for item in workspace_conversations] == [conversation_id]
+    finally:
+        db.close()
+
+
+def test_store_persists_default_workspace_chat_without_runtime_access(tmp_path):
+    db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    try:
+        registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="test_client")
+        )
+        registry.ensure_default_workspace()
+        store = ConsoleChatStore(
+            persistence=ChatPersistenceService(db, workspace_registry=registry)
+        )
+        session = store.ensure_session(title="Chat 1", workspace_id=DEFAULT_WORKSPACE_ID)
+
+        conversation_id = store.persist_session_if_needed(session.id)
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="default workspace chat remains usable",
+            persist=True,
+        )
+
+        conversation = db.get_conversation_by_id(conversation_id)
+        persisted_message = db.get_message_by_id(message.persisted_message_id)
+        workspace_conversations = registry.list_workspace_conversations(DEFAULT_WORKSPACE_ID)
+        assert conversation is not None
+        assert persisted_message is not None
+        assert conversation["scope_type"] == "workspace"
+        assert conversation["workspace_id"] == DEFAULT_WORKSPACE_ID
+        assert persisted_message["content"] == "default workspace chat remains usable"
+        assert [item.item_id for item in workspace_conversations] == [conversation_id]
+        assert registry.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
     finally:
         db.close()
 

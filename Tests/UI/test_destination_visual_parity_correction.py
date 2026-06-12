@@ -136,6 +136,7 @@ def _assert_ascii_workbench_contract(
     workbench: str,
     panes: tuple[str, str, str],
     strip: str | None = None,
+    strip_max_height: int = 2,
     actions: tuple[str, ...] = (),
     height: int = 42,
     start_by: int = 12,
@@ -143,7 +144,7 @@ def _assert_ascii_workbench_contract(
 ) -> None:
     """Assert the rendered layout matches the ASCII list/detail/inspector contract."""
     if strip is not None:
-        _assert_strip_compact(screen, strip)
+        _assert_strip_compact(screen, strip, max_height=strip_max_height)
     workbench_widget = screen.query_one(workbench)
     assert workbench_widget.region.y <= start_by, f"{workbench} starts too low: {workbench_widget.region}"
     _assert_visible_in_viewport(workbench_widget, height=height, context=workbench)
@@ -325,7 +326,8 @@ async def test_library_mode_strip_is_compact_and_workbench_visible():
             workbench="#library-contract-grid",
             panes=("#library-source-browser", "#library-source-detail", "#library-source-inspector"),
             strip="#library-mode-bar",
-            actions=("#library-open-notes", "#library-open-media", "#library-mode-search", "#library-use-in-console"),
+            strip_max_height=3,
+            actions=("#library-open-notes", "#library-open-media", "#library-open-search", "#library-use-in-console"),
             height=42,
         )
 
@@ -339,7 +341,7 @@ async def test_library_mode_strip_keeps_all_mode_chips_visible():
         await _wait_for_selector(library, pilot, "#library-contract-grid")
         mode_bar = library.query_one("#library-mode-bar")
         mode_label = library.query_one("#library-mode-label")
-        assert mode_bar.region.height <= 2
+        assert mode_bar.region.height <= 3
         assert mode_label.region.width <= 8
         for button in library.query(".library-mode-chip"):
             assert button.region.x >= mode_bar.region.x
@@ -364,6 +366,25 @@ async def test_library_workbench_prioritizes_middle_column_width():
         assert source_inspector.region.width < source_detail.region.width
         assert source_detail.region.width >= source_browser.region.width * 1.35
         assert source_detail.region.width >= source_inspector.region.width * 1.35
+
+
+@pytest.mark.asyncio
+async def test_library_source_browser_stays_content_fit_at_wide_viewport():
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+    async with host.run_test(size=(212, 64)) as pilot:
+        library = _active_destination_screen(host)
+        await _wait_for_selector(library, pilot, "#library-contract-grid")
+
+        source_browser = library.query_one("#library-source-browser")
+        source_detail = library.query_one("#library-source-detail")
+        source_inspector = library.query_one("#library-source-inspector")
+        source_action = library.query_one("#library-open-import-export", Button)
+
+        assert source_action.region.width <= source_browser.region.width
+        assert source_browser.region.width <= source_action.region.width + 8
+        assert source_detail.region.width >= source_browser.region.width * 2.5
+        assert source_inspector.region.width > source_browser.region.width
 
 
 @pytest.mark.asyncio
@@ -396,13 +417,11 @@ async def test_library_empty_state_reports_empty_with_next_action():
         await _wait_for_selector(library, pilot, "#library-source-empty")
 
         status_row = str(library.query_one("#library-status-row", Static).renderable)
-        import_button_label = str(
-            library.query_one("#library-empty-import-sources", Button).label
-        )
+        visible_text = " ".join(str(widget.renderable) for widget in library.query(Static))
 
     assert "Empty" in status_row
     assert "Ready" not in status_row
-    assert import_button_label == "Import Sources"
+    assert "Import media, create notes, or open Library Search/RAG after indexing." in visible_text
 
 
 @pytest.mark.asyncio
@@ -416,21 +435,19 @@ async def test_library_inspector_uses_empty_state_until_item_selected():
         library = _active_destination_screen(host)
         await _wait_for_selector(library, pilot, "#library-source-empty")
 
-        inspector_title = str(
-            library.query_one("#library-source-inspector-title", Static).renderable
-        )
+        inspector_title = str(library.query_one("#library-inspector-title", Static).renderable)
         inspector_text = " ".join(
             str(widget.renderable)
             for widget in library.query("#library-source-inspector Static")
         )
         has_source_authority = bool(list(library.query("#library-source-authority")))
-        duplicate_inspector_headings = list(library.query("#library-inspector-title"))
 
-    assert inspector_title == "Inspector"
+    assert inspector_title == "Hub inspector"
     assert "No source selected." in inspector_text
+    assert "Library remains a hub; Notes, Media, Search/RAG, and Study own deeper work." in inspector_text
+    assert "Notes owner: Notes screen handles editing" in inspector_text
     assert "Source Inspector" not in inspector_text
     assert not has_source_authority
-    assert not duplicate_inspector_headings
 
 
 @pytest.mark.asyncio
@@ -439,9 +456,9 @@ async def test_library_source_browser_collections_action_switches_to_collections
     host = DestinationHarness(app, "library")
     async with host.run_test(size=(140, 42)) as pilot:
         library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-mode-collections")
+        await _wait_for_selector(library, pilot, "#library-open-collections")
 
-        library.query_one("#library-mode-collections", Button).press()
+        library.query_one("#library-open-collections", Button).press()
         await _wait_for_selector(library, pilot, "#library-collections-panel")
 
         active_mode_title = str(library.query_one("#library-active-mode-title", Static).renderable)
@@ -457,9 +474,9 @@ async def test_library_source_browser_search_action_switches_to_search_mode():
     host = DestinationHarness(app, "library")
     async with host.run_test(size=(140, 42)) as pilot:
         library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-mode-search")
+        await _wait_for_selector(library, pilot, "#library-open-search")
 
-        library.query_one("#library-mode-search", Button).press()
+        library.query_one("#library-open-search", Button).press()
         await _wait_for_selector(library, pilot, "#library-search-rag-panel")
 
         active_mode_title = str(library.query_one("#library-active-mode-title", Static).renderable)
@@ -589,7 +606,7 @@ async def test_library_service_call_awaits_coroutine_functions_without_worker(mo
             lambda app: DestinationHarness(app, "library"),
             "#library-contract-grid",
             ("#library-source-browser", "#library-source-detail", "#library-source-inspector"),
-            ("#library-open-notes", "#library-open-media", "#library-mode-search", "#library-use-in-console"),
+            ("#library-open-notes", "#library-open-media", "#library-open-search", "#library-use-in-console"),
             ("#library-source-empty", "#library-source-error", "#library-source-loading"),
             "#library-source-detail",
         ),
@@ -636,7 +653,8 @@ async def test_library_loading_state_preserves_workbench_geometry(monkeypatch):
             workbench="#library-contract-grid",
             panes=("#library-source-browser", "#library-source-detail", "#library-source-inspector"),
             strip="#library-mode-bar",
-            actions=("#library-open-notes", "#library-open-media", "#library-mode-search"),
+            strip_max_height=3,
+            actions=("#library-open-notes", "#library-open-media", "#library-open-search"),
             height=42,
         )
         _assert_marker_inside_container(
@@ -1512,7 +1530,7 @@ COMPACT_DESTINATION_CONTRACTS = {
         "workbench": "#library-contract-grid",
         "object": "#library-source-browser",
         "detail": "#library-source-detail",
-        "actions": ("#library-mode-search", "#library-use-in-console", "#library-open-notes"),
+        "actions": ("#library-open-search", "#library-use-in-console", "#library-open-notes"),
     },
     "artifacts": {
         "identity": "#artifacts-title",
@@ -1628,7 +1646,7 @@ async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_
 VISIBLE_FOCUS_TARGETS = {
     "home": {"home-primary-action", "home-open-details", "home-open-in-console", "home-open-chatbook-details"},
     "chat": {"console-send-message", "console-attach-context", "console-save-chatbook", "console-run-library-rag"},
-    "library": {"library-open-notes", "library-open-media", "library-mode-search", "library-use-in-console"},
+    "library": {"library-open-notes", "library-open-media", "library-open-search", "library-use-in-console"},
     "artifacts": {
         "artifacts-open-chatbooks",
         "artifacts-open-console",

@@ -14,6 +14,7 @@ from tldw_chatbook.Sync_Interop.sync_readiness import (
 )
 
 from .models import (
+    DEFAULT_WORKSPACE_ID,
     RuntimeBindingStatus,
     WorkspaceAuthority,
     WorkspaceEligibility,
@@ -22,6 +23,7 @@ from .models import (
     WorkspaceRecord,
     WorkspaceRuntimeBinding,
     WorkspaceSyncStatus,
+    WorkspaceTransferPolicy,
 )
 from .eligibility import evaluate_workspace_eligibility
 
@@ -47,6 +49,59 @@ class ConsoleWorkspaceConversationRow:
 
 
 @dataclass(frozen=True)
+class ConsoleWorkspaceServerAdapterState:
+    """Server adapter availability for future workspace hydration paths.
+
+    Attributes:
+        available: Whether a server workspace adapter is available for the
+            active workspace context.
+        detail: Human-readable readiness or recovery detail for the adapter.
+    """
+
+    available: bool
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class ConsoleWorkspaceHandoffRow:
+    """One source/conversation/artifact handoff eligibility row.
+
+    Attributes:
+        item_type: Type of item being considered for workspace handoff.
+        item_id: Stable item identifier from the source registry.
+        title: Display title shown in the Console workspace context.
+        transfer_policy: Copy/reference/metadata/local-only handoff policy.
+        handoff_label: User-facing policy label.
+        portable: Whether the item can be staged into the active workspace.
+        detail: Recovery or audit detail explaining the handoff state.
+    """
+
+    item_type: str
+    item_id: str
+    title: str
+    transfer_policy: WorkspaceTransferPolicy
+    handoff_label: str
+    portable: bool
+    detail: str
+
+
+@dataclass(frozen=True)
+class ConsoleWorkspaceACPHandoffState:
+    """Visible readiness state for future ACP task/run package handoff.
+
+    Attributes:
+        status: Machine-readable readiness state such as unavailable, ready,
+            blocked, or failed.
+        detail: User-facing readiness or recovery copy.
+        audit_detail: Audit summary for the last ACP package handoff attempt.
+    """
+
+    status: str = "unavailable"
+    detail: str = "ACP task/run package handoff is not wired."
+    audit_detail: str = "Audit: no ACP package was sent."
+
+
+@dataclass(frozen=True)
 class ConsoleWorkspaceContextState:
     """Renderable Console workspace context snapshot."""
 
@@ -62,6 +117,14 @@ class ConsoleWorkspaceContextState:
     new_conversation_enabled: bool
     new_conversation_recovery: str
     recovery_copy: str
+    server_readiness_label: str = "Server: local fallback"
+    server_readiness_detail: str = (
+        "Local registry is authoritative. No background sync is running."
+    )
+    handoff_rows: tuple[ConsoleWorkspaceHandoffRow, ...] = ()
+    acp_handoff_label: str = "ACP task/run: unavailable"
+    acp_handoff_detail: str = "ACP task/run package handoff is not wired."
+    acp_handoff_audit: str = "Audit: no ACP package was sent."
 
 
 @dataclass(frozen=True)
@@ -103,6 +166,8 @@ def build_console_workspace_state(
     registry_service: Any,
     current_conversation: str | None,
     conversations: Iterable[ConsoleWorkspaceConversationRow] | None = None,
+    server_adapter_state: ConsoleWorkspaceServerAdapterState | None = None,
+    acp_handoff_state: ConsoleWorkspaceACPHandoffState | None = None,
 ) -> ConsoleWorkspaceContextState:
     """Build Console workspace display state from the local registry seam.
 
@@ -114,12 +179,18 @@ def build_console_workspace_state(
             conversation row, when it belongs to the active workspace.
         conversations: Optional prebuilt conversation rows. When omitted, rows
             are derived from `conversation` workspace memberships.
+        server_adapter_state: Optional server adapter readiness snapshot used
+            to render unavailable, ready, conflict, or remote-only workspace
+            hydration states without starting sync.
+        acp_handoff_state: Optional ACP task/run package handoff snapshot used
+            to render unavailable, ready, failed, blocked, and audit states.
 
     Returns:
         Renderable Console workspace context state.
     """
 
     if registry_service is None:
+        acp_state = _acp_handoff_state(acp_handoff_state)
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="No workspace selected",
@@ -133,6 +204,15 @@ def build_console_workspace_state(
             new_conversation_enabled=False,
             new_conversation_recovery="Workspace service not ready.",
             recovery_copy="Workspace service not ready. Restart or open Settings if this persists.",
+            server_readiness_label="Server: unavailable",
+            server_readiness_detail=(
+                "Workspace registry service is not ready. Server-backed hydration "
+                "remains behind the workspace adapter boundary. No background sync "
+                "is running."
+            ),
+            acp_handoff_label=acp_state[0],
+            acp_handoff_detail=acp_state[1],
+            acp_handoff_audit=acp_state[2],
         )
 
     try:
@@ -142,6 +222,7 @@ def build_console_workspace_state(
             "Failed to read active workspace for Console context rail",
             exc_info=True,
         )
+        acp_state = _acp_handoff_state(acp_handoff_state)
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="No workspace selected",
@@ -155,11 +236,21 @@ def build_console_workspace_state(
             new_conversation_enabled=False,
             new_conversation_recovery="Workspace registry could not be read.",
             recovery_copy="Workspace registry could not be read. Check local workspace storage.",
+            server_readiness_label="Server: unavailable",
+            server_readiness_detail=(
+                "Workspace registry could not be read. Server-backed hydration "
+                "remains behind the workspace adapter boundary. No background sync "
+                "is running."
+            ),
+            acp_handoff_label=acp_state[0],
+            acp_handoff_detail=acp_state[1],
+            acp_handoff_audit=acp_state[2],
         )
 
     if active_workspace is None:
         workspaces = _safe_workspaces(registry_service)
         can_switch = bool(workspaces)
+        acp_state = _acp_handoff_state(acp_handoff_state)
         return ConsoleWorkspaceContextState(
             heading="Convos & Workspaces",
             workspace_label="Workspace: Local Default",
@@ -177,23 +268,40 @@ def build_console_workspace_state(
             recovery_copy=(
                 "" if can_switch else "Workspace switching: locked"
             ),
+            server_readiness_label="Server: local fallback",
+            server_readiness_detail=(
+                "Local registry fallback is active. No background sync is running."
+            ),
+            acp_handoff_label=acp_state[0],
+            acp_handoff_detail=acp_state[1],
+            acp_handoff_audit=acp_state[2],
         )
 
     runtime_bindings = _safe_runtime_bindings(registry_service, active_workspace)
     workspaces = _safe_workspaces(registry_service)
     can_switch = len(workspaces) > 1
+    is_default_workspace = active_workspace.workspace_id == DEFAULT_WORKSPACE_ID
     source_rows = (
         tuple(conversations)
         if conversations is not None
         else _conversation_rows_from_memberships(registry_service, active_workspace)
     )
     rows = tuple(_select_conversation(row, current_conversation) for row in source_rows)
+    server_label, server_detail = _server_readiness(
+        active_workspace,
+        server_adapter_state,
+    )
+    acp_state = _acp_handoff_state(acp_handoff_state)
     return ConsoleWorkspaceContextState(
         heading="Convos & Workspaces",
         workspace_label=f"Workspace: {active_workspace.name}",
         authority_label=f"Authority: {active_workspace.authority.value}",
         sync_label=_workspace_sync_label(active_workspace),
-        runtime_label=_runtime_label(runtime_bindings),
+        runtime_label=(
+            "Runtime: none, file tools disabled"
+            if is_default_workspace and not runtime_bindings
+            else _runtime_label(runtime_bindings)
+        ),
         conversation_rows=rows,
         conversation_empty_copy="No conversations in this workspace yet.",
         change_workspace_enabled=can_switch,
@@ -203,8 +311,16 @@ def build_console_workspace_state(
         new_conversation_enabled=False,
         new_conversation_recovery="Workspace conversation creation lands in a later slice.",
         recovery_copy=(
-            "" if can_switch else "Workspace switching: only one workspace available."
+            ""
+            if can_switch or is_default_workspace
+            else "Workspace switching: only one workspace available."
         ),
+        server_readiness_label=server_label,
+        server_readiness_detail=server_detail,
+        handoff_rows=_handoff_rows_from_memberships(registry_service, active_workspace),
+        acp_handoff_label=acp_state[0],
+        acp_handoff_detail=acp_state[1],
+        acp_handoff_audit=acp_state[2],
     )
 
 
@@ -309,6 +425,28 @@ def build_library_workspace_depth_state(
             )
             if row is not None:
                 rows.append(row)
+    workspace_display_name = (
+        "Local Default"
+        if active_workspace.workspace_id == DEFAULT_WORKSPACE_ID
+        else active_workspace.name
+    )
+    if not rows:
+        return LibraryWorkspaceDepthState(
+            heading="Workspaces",
+            workspace_label=f"Workspace: {workspace_display_name}",
+            workspace_name=workspace_display_name,
+            visibility_label=LIBRARY_WORKSPACE_VISIBILITY_COPY,
+            handoff_label="Console/RAG handoff: unavailable until sources exist",
+            context_handoff_enabled=False,
+            context_handoff_tooltip="Add Library sources before staging context in Console.",
+            source_authority_label=f"Source authority: active workspace {active_workspace.workspace_id}",
+            collections_membership_label=LIBRARY_WORKSPACE_COLLECTIONS_COPY,
+            import_export_label=LIBRARY_WORKSPACE_IMPORT_EXPORT_COPY,
+            source_rows=(),
+            recovery_copy=(
+                "Workspace switching changes context eligibility, not Library visibility."
+            ),
+        )
     eligible_count = sum(row.active_context_eligible for row in rows)
     blocked_count = len(rows) - eligible_count
     handoff_enabled = bool(rows) and blocked_count == 0
@@ -322,8 +460,8 @@ def build_library_workspace_depth_state(
     )
     return LibraryWorkspaceDepthState(
         heading="Workspaces",
-        workspace_label=f"Workspace: {active_workspace.name}",
-        workspace_name=active_workspace.name,
+        workspace_label=f"Workspace: {workspace_display_name}",
+        workspace_name=workspace_display_name,
         visibility_label=LIBRARY_WORKSPACE_VISIBILITY_COPY,
         handoff_label=(
             f"Console/RAG handoff: {eligible_count} eligible"
@@ -395,6 +533,55 @@ def _conversation_rows_from_memberships(
             )
         )
     return tuple(rows)
+
+
+def _handoff_rows_from_memberships(
+    registry_service: Any,
+    active_workspace: WorkspaceRecord,
+) -> tuple[ConsoleWorkspaceHandoffRow, ...]:
+    try:
+        memberships = registry_service.list_workspace_memberships(active_workspace.workspace_id)
+    except Exception:
+        logger.warning(
+            "Failed to read workspace memberships for Console handoff readiness",
+            exc_info=True,
+        )
+        return ()
+    rows: list[ConsoleWorkspaceHandoffRow] = []
+    for membership in memberships or ():
+        rows.append(_handoff_row_from_membership(membership))
+    return tuple(rows)
+
+
+def _handoff_row_from_membership(
+    membership: WorkspaceMembership,
+) -> ConsoleWorkspaceHandoffRow:
+    policy = membership.transfer_policy
+    label = f"Handoff: {policy.value}"
+    portable = policy != WorkspaceTransferPolicy.LOCAL_ONLY
+    details = {
+        WorkspaceTransferPolicy.COPY: (
+            "Eligible by copying source content into an explicit handoff package."
+        ),
+        WorkspaceTransferPolicy.REFERENCE: (
+            "Eligible by uploading a stable source reference or pointer."
+        ),
+        WorkspaceTransferPolicy.METADATA_ONLY: (
+            "Eligible as metadata only; source content is not copied."
+        ),
+        WorkspaceTransferPolicy.LOCAL_ONLY: (
+            "Local-only; not portable to server or ACP package handoff."
+        ),
+    }
+    return ConsoleWorkspaceHandoffRow(
+        item_type=membership.item_type,
+        item_id=membership.item_id,
+        title=membership.title or membership.item_id,
+        transfer_policy=policy,
+        handoff_label=label,
+        portable=portable,
+        detail=details[policy],
+    )
 
 
 def _library_source_rows_without_workspace(
@@ -574,9 +761,73 @@ def _runtime_label(bindings: tuple[WorkspaceRuntimeBinding, ...]) -> str:
     if not bindings:
         return "Runtime: none"
     ready_count = sum(binding.status == RuntimeBindingStatus.READY for binding in bindings)
-    return (
+    missing_count = sum(binding.status == RuntimeBindingStatus.MISSING for binding in bindings)
+    label = (
         f"Runtime: {len(bindings)} {_plural('binding', len(bindings))}, "
         f"{ready_count} ready"
+    )
+    if missing_count:
+        label = f"{label}, {missing_count} missing"
+    return label
+
+
+def _server_readiness(
+    active_workspace: WorkspaceRecord,
+    server_adapter_state: ConsoleWorkspaceServerAdapterState | None,
+) -> tuple[str, str]:
+    no_sync = "No background sync is running."
+    adapter_boundary = "Server-backed hydration remains behind the workspace adapter boundary."
+    if server_adapter_state is not None and not server_adapter_state.available:
+        detail = server_adapter_state.detail.strip() or "No server workspace adapter is available."
+        return "Server: unavailable", f"{detail} {adapter_boundary} {no_sync}"
+
+    authority = active_workspace.authority
+    if authority == WorkspaceAuthority.REMOTE_ONLY:
+        return (
+            "Server: remote-only",
+            f"Remote workspace is visible but not materialized locally. {adapter_boundary} {no_sync}",
+        )
+    if authority == WorkspaceAuthority.CONFLICT:
+        return (
+            "Server: conflict",
+            f"Local and server workspace state disagree; review required. {no_sync}",
+        )
+    if authority == WorkspaceAuthority.RUNTIME_MISSING:
+        return (
+            "Server: runtime missing",
+            f"Workspace metadata exists but the runtime binding cannot be restored. {no_sync}",
+        )
+    if authority in {WorkspaceAuthority.SERVER_BACKED, WorkspaceAuthority.SYNCING_FROM_SERVER}:
+        return (
+            "Server: adapter ready",
+            f"Server identity exists, but hydration still requires an explicit adapter action. {no_sync}",
+        )
+    if authority == WorkspaceAuthority.SYNCING_TO_SERVER:
+        return (
+            "Server: handoff pending",
+            f"Workspace is marked for explicit handoff; automatic sync is not active. {no_sync}",
+        )
+    if authority == WorkspaceAuthority.DETACHED:
+        return (
+            "Server: detached",
+            f"Workspace was previously server-backed but cannot verify server identity. {no_sync}",
+        )
+    return (
+        "Server: local fallback",
+        f"Local registry is authoritative for this workspace. {no_sync}",
+    )
+
+
+def _acp_handoff_state(
+    state: ConsoleWorkspaceACPHandoffState | None,
+) -> tuple[str, str, str]:
+    if state is None:
+        state = ConsoleWorkspaceACPHandoffState()
+    status = str(state.status or "unavailable").strip().lower() or "unavailable"
+    return (
+        f"ACP task/run: {status}",
+        state.detail.strip() or "ACP task/run package handoff is not wired.",
+        state.audit_detail.strip() or "Audit: no ACP package was sent.",
     )
 
 
