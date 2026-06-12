@@ -3236,3 +3236,78 @@ class TestConfirmationDialogEscape:
             await pilot.pause()
             assert results == [False]
             assert not isinstance(pilot.app.screen, ConfirmationDialog)
+
+
+class TestImportExportFilters:
+    """The file-picker filters must use callable testers, not glob strings.
+
+    Regression guard for the P0 crash: ``Filter.__call__`` does
+    ``self.tester(path)``; a glob STRING tester ("*.json") raises
+    ``TypeError: 'str' object is not callable`` and tears down the session
+    when Import / Export JSON / Export PNG is pressed. We drive the real
+    import/export workers, capture the picker actually built, and assert
+    every filter is callable and returns a bool without raising.
+    """
+
+    @staticmethod
+    def _assert_filters_callable(filters) -> None:
+        from pathlib import Path
+
+        # ``selections`` enumerates every registered filter; each must be a
+        # callable tester that survives being invoked on a Path.
+        assert bool(filters)
+        for _name, filter_id in filters.selections:
+            entry = filters[filter_id]
+            for sample in (Path("x.json"), Path("x.png"), Path("x.txt")):
+                result = entry(sample)
+                assert isinstance(result, bool)
+
+    async def _capture_picker(self, pilot, screen, launch):
+        from unittest.mock import AsyncMock
+
+        captured: dict = {}
+
+        async def _fake_push_screen_wait(picker):
+            captured["picker"] = picker
+            return None  # user cancels; the worker returns cleanly
+
+        pilot.app.push_screen_wait = AsyncMock(side_effect=_fake_push_screen_wait)
+        await launch()
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "picker" in captured, "picker was never pushed"
+        return captured["picker"]
+
+    async def test_import_filters_are_callable(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            picker = await self._capture_picker(
+                pilot, screen, screen._import_dialog_worker
+            )
+            self._assert_filters_callable(picker.filters)
+
+    async def test_export_json_filters_are_callable(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            picker = await self._capture_picker(
+                pilot, screen, lambda: screen._export_dialog_worker("json")
+            )
+            self._assert_filters_callable(picker.filters)
+
+    async def test_export_png_filters_are_callable(
+        self, mock_app_instance, stub_characters
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            picker = await self._capture_picker(
+                pilot, screen, lambda: screen._export_dialog_worker("png")
+            )
+            self._assert_filters_callable(picker.filters)
