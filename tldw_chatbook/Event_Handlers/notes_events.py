@@ -2,6 +2,7 @@
 # Description:
 #
 # Imports
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -119,7 +120,6 @@ def _parse_note_from_file_content(file_path: Path, file_content_str: str) -> Tup
 #
 # --- Template Definitions ---
 
-import json
 from pathlib import Path
 
 def load_note_templates():
