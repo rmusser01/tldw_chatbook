@@ -14,8 +14,6 @@ from textual import on
 from textual.message import Message
 from textual.validation import Length
 
-if TYPE_CHECKING:
-    from ...UI.Screens.ccp_screen import CCPScreen, CCPScreenState
 
 logger = logger.bind(module="CCPDictionaryEditorWidget")
 
@@ -359,7 +357,8 @@ class CCPDictionaryEditorWidget(Container):
     """
     
     # Reactive state reference (will be linked to parent screen's state)
-    state: reactive[Optional['CCPScreenState']] = reactive(None)
+    # Legacy CCPScreenState holder retained for compatibility (screen retired).
+    state: reactive[Optional[Any]] = reactive(None)
     
     # Current dictionary data being edited
     dictionary_data: reactive[Dict[str, Any]] = reactive({})
@@ -376,7 +375,7 @@ class CCPDictionaryEditorWidget(Container):
     # Is active/enabled
     is_active: reactive[bool] = reactive(True)
     
-    def __init__(self, parent_screen: Optional['CCPScreen'] = None, **kwargs):
+    def __init__(self, parent_screen: Optional[Any] = None, **kwargs):
         """Initialize the dictionary editor widget.
         
         Args:

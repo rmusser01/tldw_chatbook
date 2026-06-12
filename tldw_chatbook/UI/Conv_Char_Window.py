@@ -24,13 +24,11 @@ from .CCP_Modules import (
     CCPPromptHandler,
     CCPDictionaryHandler,
     CCPMessageManager,
-    CCPSidebarHandler,
     ConversationMessage,
     CharacterMessage,
     PromptMessage,
     DictionaryMessage,
     ViewChangeMessage,
-    SidebarMessage,
     LoadingManager,
     setup_ccp_enhancements
 )
@@ -89,7 +87,6 @@ class CCPWindow(Container):
         self.prompt_handler = CCPPromptHandler(self)
         self.dictionary_handler = CCPDictionaryHandler(self)
         self.message_manager = CCPMessageManager(self)
-        self.sidebar_handler = CCPSidebarHandler(self)
         
         # Initialize loading manager for async operation feedback
         self.loading_manager = LoadingManager(self)
@@ -506,9 +503,19 @@ class CCPWindow(Container):
     
     @on(Button.Pressed, "#toggle-ccp-sidebar")
     async def handle_sidebar_toggle(self, event: Button.Pressed) -> None:
-        """Handle sidebar toggle button press."""
+        """Handle sidebar toggle button press.
+
+        Inlined from the retired CCPSidebarHandler.toggle_sidebar().
+        """
         event.stop()
-        await self.sidebar_handler.toggle_sidebar()
+        self.sidebar_collapsed = not self.sidebar_collapsed
+        try:
+            sidebar = self.query_one("#ccp-sidebar")
+            toggle_button = self.query_one("#toggle-ccp-sidebar", Button)
+            sidebar.set_class(self.sidebar_collapsed, "collapsed")
+            toggle_button.label = "▶" if self.sidebar_collapsed else "◀"
+        except NoMatches:
+            logger.warning("Could not toggle CCP sidebar: sidebar widgets not found")
     
     @on(Button.Pressed, "#conv-char-load-button")
     async def handle_load_conversation(self, event: Button.Pressed) -> None:

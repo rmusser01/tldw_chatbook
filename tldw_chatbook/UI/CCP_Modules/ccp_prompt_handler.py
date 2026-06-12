@@ -6,12 +6,16 @@ from textual import work
 from textual.widgets import ListView, ListItem, Input, TextArea, Button, Static
 
 from .ccp_messages import PromptMessage, ViewChangeMessage
-from ...Widgets.CCP_Widgets.ccp_sidebar_widget import CCPSidebarWidget
 
 if TYPE_CHECKING:
     from ..Conv_Char_Window import CCPWindow
 
 logger = logger.bind(module="CCPPromptHandler")
+
+# Relocated from the retired CCPSidebarWidget.EMPTY_STATE_TEXT["prompts"].
+PROMPTS_EMPTY_STATE_TEXT = (
+    "No prompts yet. Create New Prompt to save reusable Chat instructions."
+)
 
 
 class CCPPromptHandler:
@@ -172,7 +176,7 @@ class CCPPromptHandler:
             self._prompt_result_ids = {}
 
             if not self.search_results:
-                results_list.append(ListItem(Static(CCPSidebarWidget.empty_state_text("prompts"))))
+                results_list.append(ListItem(Static(PROMPTS_EMPTY_STATE_TEXT)))
                 return
             
             for index, prompt in enumerate(self.search_results):

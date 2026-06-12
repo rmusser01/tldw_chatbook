@@ -42,6 +42,28 @@ def _normalize_character_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
+def search_characters_fts(search_term: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """FTS search over character cards for large libraries.
+
+    The user's raw term is wrapped as a quoted FTS5 prefix query
+    (``"term"*``) so operator characters (``"``,  ``(``, ``-``, ...) are
+    treated literally and matching is prefix-based, consistent with the
+    in-memory substring filter used for small libraries.
+    """
+    term = (search_term or "").strip()
+    if not term:
+        return []
+    db = _default_character_db()
+    if db is None:
+        return []
+    escaped = term.replace('"', '""')
+    match_query = f'"{escaped}"*'
+    return [
+        _normalize_character_payload(row)
+        for row in db.search_character_cards(match_query, limit=limit)
+    ]
+
+
 def fetch_all_characters() -> List[Dict[str, Any]]:
     """Compatibility helper for CCP tests and UI refreshes."""
     from ...Character_Chat.Character_Chat_Lib import fetch_character_names
@@ -90,11 +112,43 @@ def update_character(character_id: CharacterId, data: Dict[str, Any]) -> bool:
     )
 
 
-def import_character_card(file_path: str) -> Any:
-    """Compatibility helper for character import."""
-    from ...Character_Chat.ccv3_parser import import_character_card_json
+def delete_character(character_id: CharacterId, expected_version: int) -> bool:
+    """Soft-delete a character card with optimistic locking.
 
-    return import_character_card_json(file_path)
+    Thin seam over ``soft_delete_character_card`` for the destination
+    workbench. Returns ``True`` on success (including the already-deleted
+    idempotent case, which the DB API also reports as ``True``) and ``False``
+    when the local DB is unavailable or the id is not a local numeric id.
+
+    Raises:
+        ConflictError: When ``expected_version`` no longer matches the DB
+            record (or the record disappeared) - the optimistic lock was lost.
+        CharactersRAGDBError: For other database failures.
+    """
+    local_id = _coerce_local_character_id(character_id)
+    db = _default_character_db()
+    if db is None:
+        logger.warning("delete_character: no local character DB available.")
+        return False
+    try:
+        numeric_id = int(local_id)
+    except (TypeError, ValueError):
+        logger.warning(f"delete_character: non-numeric character id {character_id!r}.")
+        return False
+    return bool(db.soft_delete_character_card(numeric_id, int(expected_version)))
+
+
+def import_character_card(file_path: str) -> Any:
+    """Compatibility helper for character import.
+
+    Delegates to ``import_and_save_character_from_file`` (the previous
+    ``ccv3_parser.import_character_card_json`` target is an empty module).
+    Returns the imported character's DB id, or ``None`` when the file does
+    not contain a valid character card.
+    """
+    from ...Character_Chat.Character_Chat_Lib import import_and_save_character_from_file
+
+    return import_and_save_character_from_file(_default_character_db(), file_path)
 
 
 class CCPCharacterHandler:

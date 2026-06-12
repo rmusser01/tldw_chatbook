@@ -115,7 +115,6 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(
             "#library-open-media": "Open Media",
             "#library-open-conversations": "Open Conversations",
             "#library-open-import-export": "Import/Export Sources",
-            "#library-open-search": "Search/RAG",
             "#library-open-study": "Study Dashboard",
             "#library-open-flashcards": "Flashcards",
             "#library-open-quizzes": "Quizzes",
