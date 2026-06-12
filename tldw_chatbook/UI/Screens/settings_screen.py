@@ -6541,10 +6541,18 @@ class SettingsScreen(BaseAppScreen):
         from tldw_chatbook.config import load_settings, save_setting_to_cli_config
         from tldw_chatbook.runtime_policy.bootstrap import load_runtime_policy_for_app
 
+        from tldw_chatbook.Utils.input_validation import validate_url
+
+        if not validate_url(base_url):
+            self.app.notify(
+                "Rejected server URL; nothing was changed.", severity="error"
+            )
+            return
         save_setting_to_cli_config("tldw_api", "base_url", base_url)
+        # Persist the token unconditionally so clearing it in the modal
+        # actually removes the stored credential.
         auth_token = str(result.get("auth_token") or "").strip()
-        if auth_token:
-            save_setting_to_cli_config("tldw_api", "auth_token", auth_token)
+        save_setting_to_cli_config("tldw_api", "auth_token", auth_token)
         app.app_config = load_settings(force_reload=True)
         load_runtime_policy_for_app(app)
         await app.handle_runtime_backend_changed("server")
@@ -6569,7 +6577,11 @@ class SettingsScreen(BaseAppScreen):
                     display_name=platform.node() or "tldw_chatbook",
                 )
             except Exception as exc:
-                logger.warning("Sync v2 profile preparation failed.", exc_info=True)
+                logger.warning(
+                    "Sync v2 profile preparation failed (server_profile_id={}, mode=local_first_sync).",
+                    server_id,
+                    exc_info=True,
+                )
                 self.app.notify(
                     f"Server activated, but Sync v2 setup failed: {exc}",
                     severity="warning",

@@ -11,6 +11,8 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import httpx
+from urllib.parse import urlsplit
+
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -158,6 +160,34 @@ class ServerSwitchModal(ModalScreen[Optional[dict]]):
         except QueryError:
             return ""
 
+    def _validated_root_url(self) -> str | None:
+        """Return the entered URL if it is a usable server ROOT, else None.
+
+        The runtime API client appends /api/v1/... itself, so the URL must be
+        scheme + host[:port] with no path/query/fragment; anything else is
+        rejected here instead of producing confusing joined endpoints later.
+        """
+        from tldw_chatbook.Utils.input_validation import validate_url
+
+        url = self._entered_url()
+        if not url:
+            self._set_status("Enter a server URL first.")
+            return None
+        parts = urlsplit(url)
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            self._set_status("Use a full URL with scheme, e.g. http://127.0.0.1:8000")
+            return None
+        if parts.path.strip("/") or parts.query or parts.fragment:
+            self._set_status(
+                "Enter the server root only (no path) — e.g. http://host:8000; "
+                "the client adds /api/v1/... itself."
+            )
+            return None
+        if not validate_url(url):
+            self._set_status("That URL did not pass validation; check it and retry.")
+            return None
+        return url
+
     def _entered_token(self) -> str:
         try:
             return self.query_one("#server-switch-token", Input).value.strip()
@@ -167,9 +197,8 @@ class ServerSwitchModal(ModalScreen[Optional[dict]]):
     @on(Button.Pressed, "#server-switch-test")
     def handle_test_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        url = self._entered_url()
+        url = self._validated_root_url()
         if not url:
-            self._set_status("Enter a server URL to test.")
             return
         self._set_status(f"Testing {url} ...")
         self._run_connection_test(url, self._entered_token())
@@ -186,12 +215,20 @@ class ServerSwitchModal(ModalScreen[Optional[dict]]):
                         headers={"X-API-KEY": token},
                         json={},
                     )
-                    if probe.status_code == 401:
-                        auth_state = "token REJECTED (401)"
+                    if probe.status_code in {401, 403}:
+                        auth_state = f"token REJECTED (HTTP {probe.status_code})"
+                    elif probe.status_code == 404:
+                        auth_state = "could not verify (sync endpoint missing, HTTP 404)"
+                    elif probe.status_code >= 500:
+                        auth_state = f"could not verify (server error HTTP {probe.status_code})"
                     else:
+                        # 2xx, or 422 schema rejection — the token itself passed.
                         auth_state = f"token accepted (HTTP {probe.status_code})"
         except httpx.HTTPError as exc:
             self._set_status(f"Unreachable: {exc.__class__.__name__}: {exc}")
+            return
+        except Exception as exc:  # never leave the status stuck on "Testing..."
+            self._set_status(f"Test failed: {exc.__class__.__name__}: {exc}")
             return
         self._set_status(
             f"Reachable (HTTP {reach.status_code}). Auth: {auth_state}."
@@ -200,9 +237,8 @@ class ServerSwitchModal(ModalScreen[Optional[dict]]):
     @on(Button.Pressed, "#server-switch-activate")
     def handle_activate_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        url = self._entered_url()
+        url = self._validated_root_url()
         if not url:
-            self._set_status("Enter a server URL before activating.")
             return
         self.dismiss(
             {
