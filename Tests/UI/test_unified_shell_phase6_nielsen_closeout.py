@@ -58,7 +58,6 @@ def _phase_six_nielsen_metadata(text: str) -> dict:
     return json.loads(match.group(1))
 
 
-@pytest.mark.skip(reason="Stale release-era snapshot (copy/evidence drifted); re-pin or retire via backlog task-98")
 @pytest.mark.asyncio
 async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() -> None:
     """Verify visible shell behavior maps to the closeout's heuristic evidence."""
@@ -90,7 +89,7 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             )
             console_text = _screen_text(app)
             assert "Live work sources" in console_text
-            assert "ACP: Not wired" in console_text
+            assert "ACP: Blocked - Configure ACP runtime." in console_text
             assert "MCP: Not wired" in console_text
             assert "RAG: Connected" in console_text
 
@@ -121,7 +120,7 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
                 lambda: app.current_tab == "settings" and app.screen.__class__.__name__ == "SettingsScreen",
             )
             settings_text = _screen_text(app)
-            assert "Settings owns global preferences" in settings_text
-            assert "runtime MCP, ACP, and tool control stay in their own destinations" in settings_text
+            assert "Global preferences, appearance, accounts, storage" in settings_text
+            assert "Runtime controls stay in MCP and ACP" in settings_text
 
 
