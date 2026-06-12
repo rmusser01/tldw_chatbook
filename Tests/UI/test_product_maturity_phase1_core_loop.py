@@ -9,11 +9,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from textual.widgets import Static, TextArea
+from textual.widgets import Static
 
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
-from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
+from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -111,7 +111,6 @@ def _test_cli_setting(section: str, key: str, default=None):
     return default
 
 
-@pytest.mark.skip(reason="Stale release-era snapshot (copy/evidence drifted); re-pin or retire via backlog task-98")
 @pytest.mark.asyncio
 async def test_search_rag_result_stages_context_into_console_core_loop() -> None:
     app = _build_test_app()
@@ -141,25 +140,29 @@ async def test_search_rag_result_stages_context_into_console_core_loop() -> None
                 lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
                 context="console route after RAG handoff",
             )
+            # The native Console stages handoffs into its live-work lane
+            # (staged source count, inspector rows, evidence) instead of
+            # mounting the legacy ChatHandoffCard.
             await _wait_until(
                 pilot,
-                lambda: bool(app.screen.query(ChatHandoffCard)),
-                context="staged RAG context card",
+                lambda: app.pending_chat_handoff is None,
+                context="handoff consumed into Console staged context",
+            )
+            await _wait_until(
+                pilot,
+                lambda: "Sources: 1 staged"
+                in str(app.screen.query_one("#console-sources-label", Static).renderable),
+                context="staged source count",
             )
 
-            card_text = "\n".join(
-                str(card.query_one(".chat-handoff-card-body", Static).renderable)
-                for card in app.screen.query(ChatHandoffCard)
+            screen_text = "\n".join(
+                str(widget.renderable) for widget in app.screen.query(Static)
             )
-            draft_text = "\n".join(widget.text for widget in app.screen.query(TextArea))
+            assert "RAG: on" in screen_text
+            assert "Live work: Transcript chunk: Agentic terminal design" in screen_text
+            assert "Evidence: 1/1 available" in screen_text
 
-            assert "Context staged from RAG Search" in card_text
-            assert "Title: Transcript chunk: Agentic terminal design" in card_text
-            assert "Type: rag-result" in card_text
-            assert "Backend: local" in card_text
-            assert "Source: Local source" in card_text
-            assert "score: 0.91" in card_text
-            assert payload.suggested_prompt in draft_text
-            assert app.pending_chat_handoff is None
+            composer = app.screen.query_one("#console-native-composer", ConsoleComposerBar)
+            assert payload.suggested_prompt in composer.draft_text()
 
 

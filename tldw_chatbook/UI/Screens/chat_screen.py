@@ -2812,10 +2812,11 @@ class ChatScreen(BaseAppScreen):
 
             tab_container = self._get_tab_container()
             if tab_container is None:
-                self.app_instance.notify(
-                    "Chat tabs are not available for Use in Chat.",
-                    severity="warning",
-                )
+                # The native Console composes no legacy tab surface; stage the
+                # handoff into the Console live-work lane so the context lands
+                # in Staged Context instead of being dropped with a warning.
+                self._stage_handoff_as_console_live_work(payload)
+                self.app_instance.pending_chat_handoff = None
                 return
 
             session_data = self._session_data_for_handoff(payload)
@@ -2834,6 +2835,68 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.pending_chat_handoff = None
         finally:
             self._handoff_consumption_in_progress = False
+
+    def _stage_handoff_as_console_live_work(self, payload: ChatHandoffPayload) -> None:
+        """Stage a Use-in-Console handoff into the native staged-context lane."""
+        from tldw_chatbook.Chat.citation_evidence_models import (
+            EvidenceBundle,
+            EvidenceReference,
+        )
+
+        snippet = (payload.display_summary or payload.body or "").strip()
+        launch_payload: dict[str, Any] = {
+            "target_id": payload.content_ref or payload.source_id or payload.title,
+            "item_type": payload.item_type,
+            "source_id": payload.source_id,
+            "snippet": snippet,
+            "suggested_prompt": payload.suggested_prompt,
+            "runtime_backend": payload.runtime_backend,
+            "source_selector_state": payload.source_selector_state,
+            "metadata": dict(payload.metadata or {}),
+        }
+        if snippet and "rag" in (payload.source or "").lower():
+            # RAG-class sources gate Console sends on available evidence;
+            # carry the handoff snippet as a single-reference bundle.
+            try:
+                launch_payload["evidence_bundle"] = EvidenceBundle(
+                    bundle_id=str(
+                        payload.content_ref or payload.source_id or "handoff-evidence"
+                    ),
+                    query=str(payload.suggested_prompt or payload.title or ""),
+                    source=str(payload.source or "Search/RAG"),
+                    references=(
+                        EvidenceReference(
+                            evidence_id="S1",
+                            source_id=str(payload.source_id or "unknown"),
+                            source_type=str(payload.item_type or "rag-result"),
+                            title=str(payload.title or "Untitled"),
+                            snippet=snippet,
+                            authority_label=str(payload.runtime_backend or "local"),
+                            content_ref=payload.content_ref,
+                        ),
+                    ),
+                ).to_payload()
+            except (TypeError, ValueError):
+                logger.warning("Could not build evidence bundle for handoff", exc_info=True)
+
+        self._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
+            source=payload.source,
+            title=payload.title,
+            payload=launch_payload,
+            status=payload.status or "staged",
+        )
+        self._pending_console_launch_auto_open_inspector = True
+
+        if payload.suggested_prompt:
+            try:
+                composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+            except QueryError:
+                pass
+            else:
+                if not composer.draft_text().strip():
+                    composer.load_draft(payload.suggested_prompt)
+
+        self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
     async def _apply_handoff_to_chat_session(self, session: Any, payload: ChatHandoffPayload) -> None:
         mount_handoff_card = getattr(session, "mount_handoff_card", None)

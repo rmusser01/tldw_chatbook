@@ -148,7 +148,6 @@ async def _wait_until(
     raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s for {context}")
 
 
-@pytest.mark.skip(reason="Stale release-era snapshot (copy/evidence drifted); re-pin or retire via backlog task-98")
 @pytest.mark.asyncio
 async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
     monkeypatch: pytest.MonkeyPatch,
@@ -178,15 +177,24 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
                 lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
                 context="console setup route",
             )
+            # In a clean run no model is selected yet, so the setup blocker is
+            # the model choice, surfaced as the "Choose Model" settings action.
+            # The persistent blocker strip is reserved for API-key-class
+            # blockers by design and stays hidden here.
             await _wait_until(
                 pilot,
-                lambda: bool(app.screen.query("#console-provider-blocker")),
+                lambda: any(
+                    b.display and str(b.label) == "Choose Model"
+                    for b in app.screen.query("#console-settings-open")
+                ),
                 context="console provider setup blocker",
             )
-            console_provider_blocker = app.screen.query_one("#console-provider-blocker", Static)
-            console_text = str(console_provider_blocker.renderable)
-            assert "Provider setup needed: OpenAI missing API key" in console_text
-            assert "-> Settings" not in console_text
+            assert (
+                app.screen._console_provider_blocker_copy()
+                == "Provider setup needed: choose a model"
+            )
+            blocker_strip = app.screen.query("#console-provider-blocker")
+            assert blocker_strip and blocker_strip[0].display is False
             assert app.screen.query_one("#console-open-provider-settings", Button)
             assert "More: Ctrl+P" in _screen_text(app)
 
@@ -260,7 +268,7 @@ async def test_optional_dependency_missing_state_exposes_owner_and_setup_action(
         (
             "watchlists_collections",
             "#wc-attach-to-console",
-            "W+C services unavailable; retry W+C later.",
+            "Watchlists services unavailable; retry Watchlists later.",
             "wc-error",
         ),
         (
@@ -271,7 +279,6 @@ async def test_optional_dependency_missing_state_exposes_owner_and_setup_action(
         ),
     ],
 )
-@pytest.mark.skip(reason="Stale release-era snapshot (copy/evidence drifted); re-pin or retire via backlog task-98")
 @pytest.mark.asyncio
 async def test_service_unavailable_states_disable_false_console_handoffs(
     route: str,
