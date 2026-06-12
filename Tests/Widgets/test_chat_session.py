@@ -462,13 +462,25 @@ class TestChatSessionStateManagement:
     
     def test_check_streaming_state(self, chat_session):
         """Test periodic streaming state check."""
+        from unittest.mock import PropertyMock
+
         chat_session._update_button_state = Mock()
-        
-        # Call the check method
-        chat_session._check_streaming_state()
-        
-        # Verify button state was updated
+        chat_session._stop_streaming_check_timer = Mock()
+
+        # Active, mounted sessions refresh the send/stop button.
+        chat_session._is_active = True
+        with patch.object(
+            type(chat_session), "is_mounted", new_callable=PropertyMock, return_value=True
+        ):
+            chat_session._check_streaming_state()
         chat_session._update_button_state.assert_called_once()
+
+        # Inactive sessions stop their timer instead of touching the button.
+        chat_session._update_button_state.reset_mock()
+        chat_session._is_active = False
+        chat_session._check_streaming_state()
+        chat_session._update_button_state.assert_not_called()
+        chat_session._stop_streaming_check_timer.assert_called_once()
     
     def test_worker_state_tracking(self, chat_session):
         """Test tracking of worker state in session data."""
