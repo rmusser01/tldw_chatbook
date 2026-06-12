@@ -9,6 +9,8 @@ from uuid import uuid4
 from loguru import logger
 
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_GLOBAL_WORKSPACE_ID,
+    DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleChatMessage,
     ConsoleMessageFeedback,
     ConsoleMessageRole,
@@ -66,8 +68,8 @@ class ConsoleChatSyncProducer(Protocol):
 class ConsoleChatSession:
     """A native Console chat session."""
 
-    title: str = "Chat 1"
-    workspace_id: str = "global"
+    title: str = DEFAULT_CONSOLE_SESSION_TITLE
+    workspace_id: str = CONSOLE_GLOBAL_WORKSPACE_ID
     id: str = field(default_factory=lambda: str(uuid4()))
     persisted_conversation_id: str | None = None
     settings: ConsoleSessionSettings | None = None
@@ -118,7 +120,7 @@ class ConsoleChatStore:
     def ensure_session(
         self,
         *,
-        title: str = "Chat 1",
+        title: str = DEFAULT_CONSOLE_SESSION_TITLE,
         workspace_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
@@ -130,7 +132,7 @@ class ConsoleChatStore:
     def create_session(
         self,
         *,
-        title: str = "Chat 1",
+        title: str = DEFAULT_CONSOLE_SESSION_TITLE,
         workspace_id: str | None = None,
         settings: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
@@ -618,9 +620,9 @@ class ConsoleChatStore:
 
     @staticmethod
     def _persistence_scope(session: ConsoleChatSession) -> tuple[str, str | None]:
-        if session.workspace_id and session.workspace_id != "global":
+        if session.workspace_id and session.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID:
             return "workspace", session.workspace_id
-        return "global", None
+        return CONSOLE_GLOBAL_WORKSPACE_ID, None
 
     @staticmethod
     def _validate_can_stream(message: ConsoleChatMessage) -> None:
