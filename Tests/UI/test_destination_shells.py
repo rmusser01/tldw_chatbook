@@ -1494,9 +1494,9 @@ async def test_acp_running_runtime_presents_actionable_hierarchy_without_dead_ac
 async def test_destination_action_buttons_explain_their_outcome(route):
     if route == "personas":
         pytest.skip(
-            "Personas workbench embeds the legacy CCP card/editor widgets, whose "
-            "buttons lack tooltips; the audit is re-enabled once the workbench "
-            "wiring tasks replace or retire those widgets."
+            "Several ds-native Personas workbench buttons (card Edit, editor "
+            "Save/Cancel, preview controls) do not carry tooltips yet; re-enable "
+            "this audit when tooltips are added (tracked as a UX follow-up)."
         )
     app = _build_test_app()
     host = DestinationHarness(app, route)
