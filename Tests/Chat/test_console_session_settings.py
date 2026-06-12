@@ -368,7 +368,30 @@ def test_readiness_allows_llamacpp_default_endpoint_without_saved_config() -> No
     assert readiness.native_send_supported is True
 
 
-def test_readiness_blocks_llamacpp_custom_endpoint_without_saved_config() -> None:
+def test_readiness_allows_llamacpp_session_endpoint_override() -> None:
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="llama3",
+            base_url="http://127.0.0.1:9099",
+        ),
+        app_config={
+            "api_settings": {
+                "llama_cpp": {
+                    "api_url": "http://localhost:8080/completion",
+                    "model": "llama3",
+                },
+            },
+            "chat_defaults": {"provider": "llama_cpp", "model": "llama3"},
+        },
+        environ={},
+    )
+
+    assert readiness.label == "Ready"
+    assert readiness.native_send_supported is True
+
+
+def test_readiness_allows_llamacpp_custom_endpoint_without_saved_config() -> None:
     readiness = build_console_settings_readiness(
         ConsoleSessionSettings(
             provider="llama_cpp",
@@ -379,10 +402,8 @@ def test_readiness_blocks_llamacpp_custom_endpoint_without_saved_config() -> Non
         environ={},
     )
 
-    assert readiness.label == "Endpoint not saved"
-    assert readiness.native_send_supported is False
-    assert "Selected endpoint: http://127.0.0.1:9191" in readiness.detail
-    assert "Saved endpoint: not saved" in readiness.detail
+    assert readiness.label == "Ready"
+    assert readiness.native_send_supported is True
 
 
 def test_readiness_blocks_unsaved_generic_endpoint_with_safe_details() -> None:

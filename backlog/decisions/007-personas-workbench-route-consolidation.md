@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-06-10
-Related Task: [backlog/tasks/task-90 - Personas-workbench-foundation-and-route-consolidation-ADR.md](../tasks/task-90%20-%20Personas-workbench-foundation-and-route-consolidation-ADR.md)
+Related Task: [backlog/tasks/task-110 - Personas-workbench-foundation-and-route-consolidation-ADR.md](../tasks/task-110%20-%20Personas-workbench-foundation-and-route-consolidation-ADR.md)
 Supersedes: N/A
 
 ## Decision

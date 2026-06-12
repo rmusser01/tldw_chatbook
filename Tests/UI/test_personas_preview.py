@@ -123,6 +123,42 @@ async def test_seed_empty_greeting_clears_transcript():
         assert pane.transcript_text() == ""
 
 
+async def test_status_region_renders_below_transcript():
+    """The status line is its own region beneath the transcript, never above.
+
+    Regression guard: a provider/error status must not interleave above the
+    chronological greeting -> you -> character transcript. We assert DOM
+    ordering (transcript precedes status precedes input) and that, with both
+    a transcript and a status set, the greeting/user lines still read in
+    order while the status sits in its separate region.
+    """
+    app = PreviewApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasPreviewPane)
+        await pane.seed_greeting("Greetings, detective.")
+        pane.append_user("Who are you?")
+        pane.set_status("anthropic is not ready - configure in Settings")
+        await pilot.pause()
+
+        body = pilot.app.query_one("#personas-preview-body")
+        child_ids = [c.id for c in body.children]
+        transcript_pos = child_ids.index("personas-preview-transcript")
+        status_pos = child_ids.index("personas-preview-status")
+        input_pos = child_ids.index("personas-preview-input")
+        # Status must sit between the transcript and the input, not above it.
+        assert transcript_pos < status_pos < input_pos
+
+        # The transcript itself stays in chronological order.
+        assert _line_texts(pilot.app) == [
+            "character: Greetings, detective.",
+            "you: Who are you?",
+        ]
+        # The status lives in its own region, separate from the transcript.
+        assert "anthropic is not ready" in str(
+            pilot.app.query_one("#personas-preview-status", Static).renderable
+        )
+
+
 async def test_double_seed_same_tick_does_not_crash():
     app = PreviewApp()
     async with app.run_test() as pilot:
