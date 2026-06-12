@@ -33,6 +33,8 @@ from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_persistence_service import ChatPersistenceService
 from ...Chat.console_chat_controller import ConsoleChatController
 from ...Chat.console_chat_models import (
+    CONSOLE_GLOBAL_WORKSPACE_ID,
+    DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunStatus,
@@ -472,6 +474,7 @@ class ChatScreen(BaseAppScreen):
         self._last_console_action: ConsoleActionResult | None = None
         self._console_transcript_sync_timer: Any | None = None
         self._console_sync_in_progress = False
+        self._console_sync_requested = False
         self._last_native_transcript_refresh_key: tuple[int, tuple[Any, ...]] | None = None
         self._console_guidance_dismissed = False
         self.ui_state = UIState()
@@ -741,7 +744,7 @@ class ChatScreen(BaseAppScreen):
 
     def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
         """Return explicit workspace policy context for native Console sends."""
-        workspace_id = "global"
+        workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
         registry_service = getattr(self.app_instance, "workspace_registry_service", None)
         if registry_service is not None:
             try:
@@ -1033,8 +1036,11 @@ class ChatScreen(BaseAppScreen):
     def _console_initial_session_title_for_workspace(self, workspace_id: str | None) -> str:
         """Return the first Console tab title for the active workspace."""
         target_workspace_id = str(workspace_id or "").strip()
-        if not target_workspace_id or target_workspace_id in {"global", DEFAULT_WORKSPACE_ID}:
-            return "Chat 1"
+        if not target_workspace_id or target_workspace_id in {
+            CONSOLE_GLOBAL_WORKSPACE_ID,
+            DEFAULT_WORKSPACE_ID,
+        }:
+            return DEFAULT_CONSOLE_SESSION_TITLE
         return self._console_workspace_session_title(target_workspace_id)
 
     def _set_active_workspace_for_console_session(self, session_id: str) -> None:
@@ -1047,7 +1053,7 @@ class ChatScreen(BaseAppScreen):
         if target_session is None:
             return
         workspace_id = str(target_session.workspace_id or "").strip()
-        if not workspace_id or workspace_id == "global":
+        if not workspace_id or workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
             return
         registry_service = getattr(self.app_instance, "workspace_registry_service", None)
         if registry_service is None:
@@ -3056,6 +3062,7 @@ class ChatScreen(BaseAppScreen):
     async def _sync_native_console_chat_ui(self) -> None:
         """Refresh visible Console-native state after send/stop transitions."""
         if self._console_sync_in_progress:
+            self._console_sync_requested = True
             return
         self._console_sync_in_progress = True
         try:
@@ -3070,6 +3077,9 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_rail_visibility(self._current_console_rail_state())
         finally:
             self._console_sync_in_progress = False
+            if self._console_sync_requested:
+                self._console_sync_requested = False
+                self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
     async def _sync_console_native_session_tabs(self) -> None:
         """Refresh native Console session tabs from store state."""

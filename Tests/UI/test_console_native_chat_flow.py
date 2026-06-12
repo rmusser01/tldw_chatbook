@@ -853,6 +853,60 @@ async def test_console_workspace_switch_refreshes_visible_session_tabs():
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_switch_refresh_is_not_dropped_during_inflight_sync():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-change-workspace")
+        store = console._ensure_console_chat_store()
+        first_session = store.ensure_session()
+        assert first_session.workspace_id == "ws-a"
+
+        first_sync_blocked = asyncio.Event()
+        release_first_sync = asyncio.Event()
+        original_sync_tabs = console._sync_console_native_session_tabs
+        blocked_once = False
+
+        async def blocking_sync_tabs():
+            nonlocal blocked_once
+            await original_sync_tabs()
+            if blocked_once:
+                return
+            blocked_once = True
+            first_sync_blocked.set()
+            await release_first_sync.wait()
+
+        console._sync_console_native_session_tabs = blocking_sync_tabs
+        first_sync_task = asyncio.create_task(console._sync_native_console_chat_ui())
+        await first_sync_blocked.wait()
+
+        console.query_one("#console-change-workspace", Button).press()
+        modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
+        switch_button = next(
+            button
+            for button in modal_screen.query(Button)
+            if str(button.label) == "Workspace B"
+        )
+        switch_button.press()
+        await _wait_for_console_screen(host, console, pilot)
+
+        active_session = store.switch_session(store.active_session_id)
+        assert active_session.workspace_id == "ws-b"
+        release_first_sync.set()
+        await first_sync_task
+
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{active_session.id}")
+        assert "Workspace B Chat" in _visible_text(console)
+
+
+@pytest.mark.asyncio
 async def test_console_mount_uses_active_workspace_title_for_initial_session():
     app = _build_test_app()
     service = app.workspace_registry_service
