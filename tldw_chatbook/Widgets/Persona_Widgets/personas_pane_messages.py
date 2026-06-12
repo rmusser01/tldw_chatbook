@@ -26,7 +26,7 @@ class EditCharacterRequested(Message):
     """
 
     def __init__(self, character_id: str) -> None:
-    def __init__(self, character_id: str) -> None:
+        super().__init__()
         self.character_id = character_id
 
 
