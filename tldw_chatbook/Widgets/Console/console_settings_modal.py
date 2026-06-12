@@ -48,6 +48,14 @@ class ConsoleSettingsInput(Input):
         Binding("ctrl+a,super+a", "select_all", "Select all", show=False),
     ]
 
+    def on_focus(self) -> None:
+        """Select the current value after click focus settles."""
+        self.call_after_refresh(self.select_all)
+
+    def on_click(self) -> None:
+        """Keep click-to-replace reliable in textual-web."""
+        self.select_all()
+
 
 class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     """Edit a draft of the current Console session settings."""
