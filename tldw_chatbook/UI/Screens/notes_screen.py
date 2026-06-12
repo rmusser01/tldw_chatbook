@@ -134,8 +134,6 @@ class NotesScreen(BaseAppScreen):
 
     .notes-mode-chip.is-active {
         border: none;
-        background: $primary;
-        color: $background;
         text-style: bold underline;
     }
 
@@ -143,7 +141,6 @@ class NotesScreen(BaseAppScreen):
         height: 1fr;
         min-height: 20;
         padding: 1;
-        border: solid $surface-lighten-1;
     }
 
     .notes-workbench-pane {
@@ -151,7 +148,6 @@ class NotesScreen(BaseAppScreen):
         height: 100%;
         min-height: 20;
         padding: 1;
-        border: solid $surface-lighten-1;
     }
 
     #notes-navigator-pane {
@@ -171,7 +167,6 @@ class NotesScreen(BaseAppScreen):
         height: 1fr;
         min-height: 20;
         padding: 1;
-        border: solid $surface-lighten-1;
     }
 
     #notes-action-bar {

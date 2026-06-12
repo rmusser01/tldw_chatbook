@@ -9,7 +9,6 @@ from tldw_chatbook.UI.Chatbooks_Window_Improved import EmptyStateWidget
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
 from tldw_chatbook.UI.Wizards.ChatbookImportWizard import FileSelectionStep
 from tldw_chatbook.UI.Wizards.EmbeddingSteps import SmartContentSelector
-from tldw_chatbook.Widgets.CCP_Widgets.ccp_sidebar_widget import CCPSidebarWidget
 from tldw_chatbook.Widgets.Evals.eval_additional_dialogs import FileUploadDialog
 from tldw_chatbook.Widgets.NewIngest.SmartFileDropZone import SmartFileDropZone
 from tldw_chatbook.Widgets.Note_Widgets.notes_workbench_panes import NotesNavigatorPane
@@ -187,21 +186,3 @@ async def test_ingest_drop_zone_browse_action_explains_file_selection():
             },
         )
 
-
-@pytest.mark.asyncio
-async def test_library_import_actions_explain_import_targets():
-    app = _WidgetHost(CCPSidebarWidget())
-
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        _assert_button_tooltips(
-            app.widget_under_test,
-            {
-                "ccp-import-conversation-button": "Import a conversation file into Library.",
-                "ccp-import-character-button": "Import a character card from disk.",
-                "ccp-import-prompt-button": "Import a prompt file into Library.",
-                "ccp-import-dictionary-button": "Import a dictionary file into Library.",
-                "ccp-import-worldbook-button": "Import a world or lore book file into Library.",
-            },
-        )

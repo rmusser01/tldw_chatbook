@@ -79,8 +79,12 @@
     padding: 1;
 }
 
-/* Ensure VerticalScroll works properly */
-VerticalScroll {
+/* Ensure VerticalScroll works properly inside the evals dashboard.
+   This selector MUST stay scoped: a bare `VerticalScroll` rule applies
+   app-wide and (because stylesheet rules always outrank widget DEFAULT_CSS
+   in Textual, regardless of specificity) silently overrides every widget's
+   own `height: 1fr` sizing, pushing follow-on siblings off-screen. */
+.evals-main-container VerticalScroll {
     height: 100%;
 }
 
