@@ -372,6 +372,7 @@ def build_console_settings_readiness(
         )
     if (
         base_url
+        and not identity.uses_direct_llama_path
         and _is_url_based_provider(provider_key, provider_settings)
         and _endpoint_differs_for_provider(provider_key, base_url, provider_settings)
     ):
