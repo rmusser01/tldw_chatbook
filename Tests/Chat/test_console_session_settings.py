@@ -228,6 +228,14 @@ def test_provider_options_include_console_sendable_handlers_missing_from_model_r
     assert "mistralai" in option_values
 
 
+def test_provider_options_label_configured_unsupported_providers_as_wip() -> None:
+    options = build_console_provider_options({"local_onnx": ["manual-model"]})
+    options_by_value = {option.value: option for option in options}
+
+    assert options_by_value["local_onnx"].label == "local_onnx (WIP)"
+    assert options_by_value["local_ollama"].label == "local_ollama"
+
+
 def test_validation_rejects_out_of_range_temperature() -> None:
     settings = ConsoleSessionSettings(provider="llama_cpp", model="m", temperature=2.1)
 
