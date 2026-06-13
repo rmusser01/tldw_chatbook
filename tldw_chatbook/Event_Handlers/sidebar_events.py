@@ -28,16 +28,6 @@ async def handle_sidebar_toggle_button_pressed(app: 'TldwCli', event: Button.Pre
     elif button_id == "toggle-chat-right-sidebar":
         app.chat_right_sidebar_collapsed = not app.chat_right_sidebar_collapsed
         logging.debug("Character sidebar now %s", "collapsed" if app.chat_right_sidebar_collapsed else "expanded")
-    # --- Notes Sidebars ---
-    elif button_id == "toggle-notes-sidebar-left":
-        app.notes_sidebar_left_collapsed = not app.notes_sidebar_left_collapsed
-        logging.debug("Notes left sidebar now %s", "collapsed" if app.notes_sidebar_left_collapsed else "expanded")
-    elif button_id == "toggle-notes-sidebar-right":
-        app.notes_sidebar_right_collapsed = not app.notes_sidebar_right_collapsed
-        logging.debug("Notes right sidebar now %s", "collapsed" if app.notes_sidebar_right_collapsed else "expanded")
-    elif button_id == "toggle-notes-sidebar-right":
-        app.notes_sidebar_right_collapsed = not app.notes_sidebar_right_collapsed
-        logging.debug(f"Notes right sidebar collapsed state: {app.notes_sidebar_right_collapsed}")
     # --- Conversation Character Sidebars ---
     elif button_id == "toggle-conv-char-left-sidebar":
         app.conv_char_sidebar_left_collapsed = not app.conv_char_sidebar_left_collapsed

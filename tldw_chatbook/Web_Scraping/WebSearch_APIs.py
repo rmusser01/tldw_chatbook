@@ -53,7 +53,6 @@ from requests import RequestException
 from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 from functools import wraps
-import backoff
 
 # Handle optional lxml dependency
 try:

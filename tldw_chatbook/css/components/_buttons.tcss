@@ -10,23 +10,27 @@ Button {
     border: none;
 }
 
-/* Enhanced hover state with cursor indication */
+/* Shared hover state with readable, non-obscuring cues */
 Button:hover {
-    background: $primary-lighten-1;
+    background: $surface-lighten-1;
+    color: $text;
     text-style: bold;
 }
 
-/* Enhanced focus state with visible outline */
+/* Enhanced focus state with visible, non-obscuring cues */
 Button:focus {
-    background: $primary-darken-1;
-    outline: solid $accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 /* When both hovering AND focused */
 Button:hover:focus {
-    background: $primary-lighten-2;
-    text-style: bold;
-    outline: solid $accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
 }
 
 /* Disabled state */

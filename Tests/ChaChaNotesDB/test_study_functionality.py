@@ -183,7 +183,45 @@ class TestFlashcardOperations:
         }
         with pytest.raises(InputError, match="must have both front and back"):
             db_instance.create_flashcard(card_data)
-    
+
+    def test_create_flashcard_requires_active_deck(self, db_instance):
+        missing_deck_id = str(uuid.uuid4())
+        deleted_deck_id = db_instance.create_deck("Biology")
+        db_instance.delete_deck(deleted_deck_id, expected_version=1)
+
+        with pytest.raises(InputError, match="Deck .* not found"):
+            db_instance.create_flashcard(create_flashcard_data(missing_deck_id, "ATP", "Energy"))
+
+        with pytest.raises(InputError, match="Deck .* not found"):
+            db_instance.create_flashcard(create_flashcard_data(deleted_deck_id, "ADP", "Spent energy"))
+
+    def test_create_flashcard_recounts_active_cards_instead_of_incrementing_drift(self, db_instance):
+        deck_id = db_instance.create_deck("Biology")
+        first_card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "ATP", "Energy"))
+        second_card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "ADP", "Lower energy"))
+
+        with db_instance.transaction() as cursor:
+            cursor.execute(
+                "UPDATE flashcards SET is_deleted = 1 WHERE id = ?",
+                (second_card_id,),
+            )
+            cursor.execute(
+                "UPDATE decks SET card_count = 99 WHERE id = ?",
+                (deck_id,),
+            )
+
+        third_card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "NADH", "Electron carrier"))
+        deck = db_instance.get_deck(deck_id)
+        first_card = db_instance.get_flashcard(first_card_id)
+        second_card = db_instance.get_flashcard(second_card_id)
+        third_card = db_instance.get_flashcard(third_card_id)
+
+        assert deck is not None
+        assert deck["card_count"] == 2
+        assert first_card is not None
+        assert second_card is None
+        assert third_card is not None
+
     def test_get_flashcard(self, db_instance, sample_flashcard):
         """Test retrieving a flashcard by ID."""
         retrieved = db_instance.get_flashcard(sample_flashcard["id"])
@@ -249,6 +287,362 @@ class TestFlashcardOperations:
         # Test limit
         due_cards = db_instance.get_due_flashcards(limit=1)
         assert len(due_cards) <= 1
+
+    def test_get_deck_returns_created_deck_record(self, db_instance, sample_flashcard):
+        """Decks should be fetchable by ID for explicit deck selection flows."""
+        deck = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        assert deck is not None
+        assert deck["id"] == sample_flashcard["deck_id"]
+        assert deck["name"] == "Test Deck"
+        assert deck["card_count"] == 1
+
+    def test_update_deck_updates_metadata_and_version(self, db_instance, sample_flashcard):
+        updated = db_instance.update_deck(
+            sample_flashcard["deck_id"],
+            name="Updated Deck",
+            description="Updated description",
+            expected_version=1,
+        )
+        deck = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        assert updated is True
+        assert deck is not None
+        assert deck["name"] == "Updated Deck"
+        assert deck["description"] == "Updated description"
+        assert deck["version"] == 2
+        assert deck["card_count"] == 1
+
+    def test_update_deck_rejects_stale_version_without_mutation(self, db_instance, sample_flashcard):
+        with pytest.raises(ConflictError, match="Version mismatch updating deck"):
+            db_instance.update_deck(sample_flashcard["deck_id"], name="Stale", expected_version=0)
+
+        deck = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        assert deck is not None
+        assert deck["name"] == "Test Deck"
+        assert deck["version"] == 1
+
+    def test_update_deck_rejects_blank_name_without_mutation(self, db_instance, sample_flashcard):
+        with pytest.raises(InputError, match="Deck name cannot be blank"):
+            db_instance.update_deck(sample_flashcard["deck_id"], name="   ", expected_version=1)
+
+        deck = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        assert deck is not None
+        assert deck["name"] == "Test Deck"
+        assert deck["version"] == 1
+
+    def test_delete_flashcard_hides_card_and_recounts_deck(self, db_instance, sample_flashcard):
+        deck_before_delete = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        deleted = db_instance.delete_flashcard(sample_flashcard["id"], expected_version=1)
+        deck_after_delete = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        assert deck_before_delete is not None
+        assert deck_before_delete["card_count"] == 1
+        assert deleted is True
+        assert db_instance.get_flashcard(sample_flashcard["id"]) is None
+        assert deck_after_delete is not None
+        assert deck_after_delete["card_count"] == 0
+
+    def test_move_flashcard_changes_deck_and_recounts_both_decks(self, db_instance):
+        source = db_instance.create_deck("Biology")
+        target = db_instance.create_deck("Chemistry")
+        card_id = db_instance.create_flashcard(create_flashcard_data(source, "ATP", "Energy"))
+
+        moved = db_instance.move_flashcard(card_id, target, expected_version=1)
+        moved_card = db_instance.get_flashcard(card_id)
+        source_deck = db_instance.get_deck(source)
+        target_deck = db_instance.get_deck(target)
+
+        assert moved is True
+        assert moved_card is not None
+        assert moved_card["deck_id"] == target
+        assert source_deck is not None
+        assert source_deck["card_count"] == 0
+        assert target_deck is not None
+        assert target_deck["card_count"] == 1
+
+    def test_move_flashcard_rejects_missing_or_deleted_target_deck(self, db_instance):
+        source = db_instance.create_deck("Biology")
+        deleted_target = db_instance.create_deck("Chemistry")
+        card_id = db_instance.create_flashcard(create_flashcard_data(source, "ATP", "Energy"))
+        db_instance.delete_deck(deleted_target, expected_version=1)
+
+        with pytest.raises(InputError, match="Target deck .* not found"):
+            db_instance.move_flashcard(card_id, str(uuid.uuid4()), expected_version=1)
+
+        with pytest.raises(InputError, match="Target deck .* not found"):
+            db_instance.move_flashcard(card_id, deleted_target, expected_version=1)
+
+    def test_delete_flashcard_stale_version_raises_conflict_without_mutation(self, db_instance, sample_flashcard):
+        deck_before = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        with pytest.raises(ConflictError, match="Version mismatch deleting flashcard"):
+            db_instance.delete_flashcard(sample_flashcard["id"], expected_version=0)
+
+        card_after = db_instance.get_flashcard(sample_flashcard["id"])
+        deck_after = db_instance.get_deck(sample_flashcard["deck_id"])
+
+        assert deck_before is not None
+        assert card_after is not None
+        assert card_after["is_deleted"] == 0
+        assert deck_after is not None
+        assert deck_after["card_count"] == deck_before["card_count"] == 1
+
+    def test_move_flashcard_stale_version_raises_conflict_without_mutation(self, db_instance):
+        source = db_instance.create_deck("Biology")
+        target = db_instance.create_deck("Chemistry")
+        card_id = db_instance.create_flashcard(create_flashcard_data(source, "ATP", "Energy"))
+
+        with pytest.raises(ConflictError, match="Version mismatch moving flashcard"):
+            db_instance.move_flashcard(card_id, target, expected_version=0)
+
+        moved_card = db_instance.get_flashcard(card_id)
+        source_deck = db_instance.get_deck(source)
+        target_deck = db_instance.get_deck(target)
+
+        assert moved_card is not None
+        assert moved_card["deck_id"] == source
+        assert source_deck is not None
+        assert source_deck["card_count"] == 1
+        assert target_deck is not None
+        assert target_deck["card_count"] == 0
+
+    def test_delete_deck_tombstones_name_hides_children_and_allows_recreate(self, db_instance):
+        deck_id = db_instance.create_deck("Biology")
+        card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "ATP", "Energy"))
+
+        deleted = db_instance.delete_deck(deck_id, expected_version=1)
+        replacement_deck_id = db_instance.create_deck("Biology")
+
+        assert deleted is True
+        assert db_instance.get_deck(deck_id) is None
+        assert replacement_deck_id is not None
+        assert replacement_deck_id != deck_id
+        assert db_instance.get_flashcard(card_id) is None
+        assert db_instance.list_flashcards(deck_id=deck_id, limit=10, offset=0) == []
+        assert db_instance.get_due_flashcards(deck_id=deck_id, limit=10) == []
+
+    def test_delete_deck_stale_version_raises_conflict_without_mutation(self, db_instance):
+        deck_id = db_instance.create_deck("Biology")
+        card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "ATP", "Energy"))
+
+        with pytest.raises(ConflictError, match="Version mismatch deleting deck"):
+            db_instance.delete_deck(deck_id, expected_version=0)
+
+        deck = db_instance.get_deck(deck_id)
+        card = db_instance.get_flashcard(card_id)
+
+        assert deck is not None
+        assert deck["name"] == "Biology"
+        assert deck["card_count"] == 1
+        assert card is not None
+        assert card["deck_id"] == deck_id
+        assert card["is_deleted"] == 0
+
+    def test_delete_deck_renames_deleted_row_to_deterministic_tombstone(self, db_instance):
+        deck_id = db_instance.create_deck("Biology")
+        db_instance.create_flashcard(create_flashcard_data(deck_id, "ATP", "Energy"))
+
+        deleted = db_instance.delete_deck(deck_id, expected_version=1)
+
+        with db_instance.transaction() as cursor:
+            cursor.execute(
+                "SELECT id, name, is_deleted, card_count FROM decks WHERE id = ?",
+                (deck_id,),
+            )
+            deleted_row = cursor.fetchone()
+
+        assert deleted is True
+        assert deleted_row is not None
+        assert deleted_row["id"] == deck_id
+        assert deleted_row["name"] == f"__deleted_deck__:{deck_id}"
+        assert deleted_row["is_deleted"] == 1
+        assert deleted_row["card_count"] == 0
+
+    def test_deleted_deck_visibility_filters_active_child_cards(self, db_instance):
+        deck_id = db_instance.create_deck("Biology")
+        card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "ATP", "Energy"))
+
+        with db_instance.transaction() as cursor:
+            cursor.execute(
+                "UPDATE decks SET is_deleted = 1 WHERE id = ?",
+                (deck_id,),
+            )
+            cursor.execute(
+                "SELECT is_deleted FROM flashcards WHERE id = ?",
+                (card_id,),
+            )
+            card_row = cursor.fetchone()
+
+        list_results = db_instance.list_flashcards(deck_id=deck_id, limit=10, offset=0)
+        due_results = db_instance.get_due_flashcards(deck_id=deck_id, limit=10)
+        visible_card = db_instance.get_flashcard(card_id)
+
+        assert card_row is not None
+        assert card_row["is_deleted"] == 0
+        assert visible_card is not None
+        assert visible_card["id"] == card_id
+        assert list_results == []
+        assert due_results == []
+
+
+class TestQuizOperations:
+    """Tests for quiz CRUD and attempt flows."""
+
+    def test_create_quiz_and_get_quiz(self, db_instance):
+        quiz_id = db_instance.create_quiz(
+            name="Geography Review",
+            description="Capitals",
+            time_limit_seconds=300,
+            passing_score=70,
+        )
+
+        quiz = db_instance.get_quiz(quiz_id)
+
+        assert quiz is not None
+        assert quiz["id"] == quiz_id
+        assert quiz["name"] == "Geography Review"
+        assert quiz["total_questions"] == 0
+        assert quiz["time_limit_seconds"] == 300
+
+    def test_list_quizzes_blank_search_behaves_like_list(self, db_instance):
+        first_id = db_instance.create_quiz(name="Geography Review")
+        second_id = db_instance.create_quiz(name="History Review")
+
+        listed = db_instance.list_quizzes(q="", limit=10, offset=0)
+
+        listed_ids = {item["id"] for item in listed["items"]}
+        assert first_id in listed_ids
+        assert second_id in listed_ids
+        assert listed["count"] >= 2
+
+    def test_create_question_and_list_questions(self, db_instance):
+        quiz_id = db_instance.create_quiz(name="Geography Review")
+        question_id = db_instance.create_question(
+            quiz_id=quiz_id,
+            question_type="fill_blank",
+            question_text="The capital of France is ____.",
+            correct_answer="Paris",
+            explanation="Paris is the capital city.",
+            points=2,
+        )
+
+        question = db_instance.get_question(question_id)
+        questions = db_instance.list_questions(quiz_id, include_answers=True, limit=10, offset=0)
+
+        assert question is not None
+        assert question["id"] == question_id
+        assert question["correct_answer"] == "Paris"
+        assert questions["count"] == 1
+        assert questions["items"][0]["question_text"] == "The capital of France is ____."
+
+    def test_start_and_submit_quiz_attempt(self, db_instance):
+        quiz_id = db_instance.create_quiz(name="Geography Review")
+        question_id = db_instance.create_question(
+            quiz_id=quiz_id,
+            question_type="fill_blank",
+            question_text="The capital of France is ____.",
+            correct_answer="Paris",
+            explanation="Paris is the capital city.",
+            points=2,
+        )
+
+        started = db_instance.start_attempt(quiz_id)
+        submitted = db_instance.submit_attempt(
+            started["id"],
+            [{"question_id": question_id, "user_answer": "Paris", "time_spent_ms": 1200}],
+        )
+        listed = db_instance.list_attempts(quiz_id=quiz_id, limit=10, offset=0)
+        loaded = db_instance.get_attempt(started["id"], include_questions=True, include_answers=True)
+
+        assert started["completed_at"] is None
+        assert started["questions"][0]["question_text"] == "The capital of France is ____."
+        assert submitted["score"] == 2
+        assert submitted["answers"][0]["is_correct"] is True
+        assert listed["count"] == 1
+        assert loaded["id"] == started["id"]
+        assert loaded["questions"][0]["id"] == question_id
+
+    def test_delete_quiz_hides_quiz_and_questions_from_default_reads(self, db_instance):
+        quiz_id = db_instance.create_quiz(name="Geography Review")
+        question_id = db_instance.create_question(
+            quiz_id=quiz_id,
+            question_type="fill_blank",
+            question_text="The capital of France is ____.",
+            correct_answer="Paris",
+            explanation="Paris is the capital city.",
+            points=2,
+        )
+
+        deleted = db_instance.delete_quiz(quiz_id)
+        listed_quizzes = db_instance.list_quizzes(limit=10, offset=0)
+        listed_questions = db_instance.list_questions(quiz_id, include_answers=True, limit=10, offset=0)
+
+        assert deleted is True
+        assert db_instance.get_quiz(quiz_id) is None
+        assert db_instance.get_question(question_id) is None
+        assert quiz_id not in {item["id"] for item in listed_quizzes["items"]}
+        assert listed_questions["count"] == 0
+
+    def test_delete_question_recounts_quiz_and_removes_it_from_lists(self, db_instance):
+        quiz_id = db_instance.create_quiz(name="Geography Review")
+        first_question_id = db_instance.create_question(
+            quiz_id=quiz_id,
+            question_type="fill_blank",
+            question_text="The capital of France is ____.",
+            correct_answer="Paris",
+            explanation="Paris is the capital city.",
+            points=2,
+            order_index=0,
+        )
+        second_question_id = db_instance.create_question(
+            quiz_id=quiz_id,
+            question_type="fill_blank",
+            question_text="The capital of Spain is ____.",
+            correct_answer="Madrid",
+            explanation="Madrid is the capital city.",
+            points=2,
+            order_index=1,
+        )
+
+        deleted = db_instance.delete_question(first_question_id)
+        quiz = db_instance.get_quiz(quiz_id)
+        listed_questions = db_instance.list_questions(quiz_id, include_answers=True, limit=10, offset=0)
+
+        assert deleted is True
+        assert db_instance.get_question(first_question_id) is None
+        assert quiz is not None
+        assert quiz["total_questions"] == 1
+        assert [item["id"] for item in listed_questions["items"]] == [second_question_id]
+
+    def test_list_decks_returns_non_deleted_decks_with_paging(self, db_instance):
+        """Deck listing should power the flashcards deck selector without implicit defaults."""
+        first = db_instance.create_deck("Biology", "Cells")
+        second = db_instance.create_deck("Chemistry", "Atoms")
+
+        page = db_instance.list_decks(limit=1, offset=0)
+        next_page = db_instance.list_decks(limit=1, offset=1)
+
+        assert len(page) == 1
+        assert page[0]["id"] in {first, second}
+        assert len(next_page) == 1
+        assert next_page[0]["id"] != page[0]["id"]
+
+    def test_list_flashcards_filters_by_deck_and_treats_blank_query_as_list(self, db_instance):
+        """Blank search should not invoke FTS-only semantics for deck scoped lists."""
+        biology = db_instance.create_deck("Biology", "Cells")
+        chemistry = db_instance.create_deck("Chemistry", "Atoms")
+        biology_card = db_instance.create_flashcard(create_flashcard_data(biology, "ATP", "Energy", "biology"))
+        db_instance.create_flashcard(create_flashcard_data(chemistry, "H2O", "Water", "chemistry"))
+
+        blank_query_results = db_instance.list_flashcards(deck_id=biology, q="   ", limit=10, offset=0)
+        token_results = db_instance.list_flashcards(deck_id=biology, q="ATP", limit=10, offset=0)
+
+        assert [row["id"] for row in blank_query_results] == [biology_card]
+        assert [row["id"] for row in token_results] == [biology_card]
 
 
 class TestSpacedRepetition:
@@ -839,7 +1233,8 @@ class TestSchemaMigration:
             # Check that all tables exist
             tables = [
                 "learning_paths", "topics", "decks", "flashcards",
-                "review_history", "mindmaps", "mindmap_nodes", "study_sessions"
+                "review_history", "mindmaps", "mindmap_nodes", "study_sessions",
+                "quizzes", "quiz_questions", "quiz_attempts"
             ]
         
             for table in tables:
@@ -881,11 +1276,11 @@ class TestSchemaMigration:
                 assert result is not None, f"Trigger {trigger} should exist"
     
     def test_schema_version_updated(self, db_instance):
-        """Test that schema version is correctly updated to 11."""
+        """Test that schema version is correctly updated to the current code version."""
         with db_instance.transaction() as cursor:
             cursor.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name = 'rag_char_chat_schema'"
             )
             result = cursor.fetchone()
             assert result is not None
-            assert result["version"] == 11
+            assert result["version"] == CharactersRAGDB._CURRENT_SCHEMA_VERSION

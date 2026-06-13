@@ -135,17 +135,21 @@ class TreeViewStateMachine(RuleBasedStateMachine):
             )
             self.tree_view.nodes[path] = node
     
-    @rule(path=st.sampled_from(lambda self: list(self.all_paths) if self.all_paths else ['']))
-    def select_node(self, path):
+    @rule(data=st.data())
+    def select_node(self, data):
         """Select a random node."""
-        if path in self.all_paths:
-            self.tree_view.select_node(path, True)
+        if not self.all_paths:
+            return
+        path = data.draw(st.sampled_from(sorted(self.all_paths)))
+        self.tree_view.select_node(path, True)
     
-    @rule(path=st.sampled_from(lambda self: list(self.all_paths) if self.all_paths else ['']))
-    def deselect_node(self, path):
+    @rule(data=st.data())
+    def deselect_node(self, data):
         """Deselect a random node."""
-        if path in self.all_paths:
-            self.tree_view.select_node(path, False)
+        if not self.all_paths:
+            return
+        path = data.draw(st.sampled_from(sorted(self.all_paths)))
+        self.tree_view.select_node(path, False)
     
     @rule()
     def select_all(self):

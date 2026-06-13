@@ -8,6 +8,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional, List, Dict, Any, Tuple
 import asyncio
 from datetime import datetime
+from html import escape as html_escape
+from inspect import isawaitable
 from pathlib import Path
 import json
 
@@ -27,20 +29,40 @@ from rich.text import Text
 from loguru import logger
 
 # Local imports
+from ...destination_recovery import optional_dependency_recovery_state
 from .search_history_dropdown import SearchHistoryDropdown
 from .search_result import SearchResult
 from .saved_searches_panel import SavedSearchesPanel
+from .search_handoff import build_search_chat_handoff_payload
 from .constants import (
     DEFAULT_TOP_K, DEFAULT_TEMPERATURE, DEFAULT_PARENT_SIZE,
     MAX_CONCURRENT_SEARCHES, SEARCH_MODES, PARENT_STRATEGIES
 )
 
+from ....Chat.chat_handoff_messages import (
+    USE_IN_CHAT_UNAVAILABLE_RECOVERY,
+    build_handoff_policy_blocking_message,
+)
+from ....Chat.chat_handoff_models import ChatHandoffPayload
 from ....Utils.optional_deps import DEPENDENCIES_AVAILABLE
 from ....DB.search_history_db import SearchHistoryDB
+from ....Utils.input_validation import sanitize_string
 from ....Utils.paths import get_user_data_dir
 
 # Conditionally import web search functionality
 WEB_SEARCH_AVAILABLE = DEPENDENCIES_AVAILABLE.get('websearch', False)
+USE_IN_CONSOLE_UNAVAILABLE_RECOVERY = (
+    "Use in Console is unavailable because the Console live-work surface is not mounted. "
+    "Open Console from the navigation, then try again."
+)
+
+
+def _sanitize_console_text(value: Any, *, max_length: int = 1000) -> str:
+    """Return text safe for Rich/Textual status-row rendering."""
+    cleaned = sanitize_string(str(value or ""), max_length=max_length)
+    return escape(html_escape(cleaned, quote=False))
+
+
 if WEB_SEARCH_AVAILABLE:
     try:
         from ....Web_Scraping.WebSearch_APIs import search_web_bing, parse_bing_results
@@ -173,6 +195,30 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             "fastest_search": float('inf'),
             "slowest_search": 0.0
         }
+
+    def _search_empty_state_text(self, *, no_results: bool = False) -> str:
+        if no_results:
+            return (
+                "No results found.\n"
+                "Try Plain Search, switch Collection to All Collections, or use Ingest to add/index content.\n"
+                "When results appear, Use in Chat turns a selected result into Chat context."
+            )
+        return (
+            "Start with a query.\n"
+            "Plain Search scans indexed text quickly; contextual and hybrid RAG use collections for deeper retrieval.\n"
+            "Use All Collections to search broadly, or choose a collection to narrow scope.\n"
+            "Each result can be sent to Chat with Use in Chat, turning search evidence into Chat context."
+        )
+
+    async def _mount_search_empty_state(self, *, no_results: bool = False) -> None:
+        results_list = self.query_one("#results-list-enhanced")
+        await results_list.mount(
+            Static(
+                self._search_empty_state_text(no_results=no_results),
+                id="search-empty-state",
+                classes="search-empty-state",
+            )
+        )
         
     def compose(self) -> ComposeResult:
         """Create the UI layout"""
@@ -246,6 +292,29 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                         classes="numeric-input",
                                         disabled=True
                                     )
+
+                            # Keep the primary action in the first viewport; advanced
+                            # controls can extend below it without hiding Search.
+                            with Horizontal(classes="search-buttons-enhanced"):
+                                yield Button(
+                                    "🔍 Search",
+                                    id="search-button",
+                                    variant="primary",
+                                    classes="search-button-primary"
+                                )
+                                yield Button(
+                                    "🗑️ Clear",
+                                    id="clear-search-button",
+                                    variant="default",
+                                    classes="search-button-secondary"
+                                )
+                                yield Button(
+                                    "💾 Save Search",
+                                    id="save-search-button",
+                                    variant="default",
+                                    classes="search-button-secondary",
+                                    disabled=True
+                                )
                             
                             # Advanced options
                             with Collapsible(title="Advanced Options", collapsed=True, id="advanced-options"):
@@ -304,28 +373,6 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                         classes="web-search-checkbox"
                                     )
                         
-                        # Search buttons
-                        with Horizontal(classes="search-buttons-enhanced"):
-                            yield Button(
-                                "🔍 Search",
-                                id="search-button",
-                                variant="primary",
-                                classes="search-button-primary"
-                            )
-                            yield Button(
-                                "🗑️ Clear",
-                                id="clear-search-button",
-                                variant="default",
-                                classes="search-button-secondary"
-                            )
-                            yield Button(
-                                "💾 Save Search",
-                                id="save-search-button",
-                                variant="default",
-                                classes="search-button-secondary",
-                                disabled=True
-                            )
-                        
                         # Search status and progress
                         with Container(id="search-status-container", classes="search-status-container hidden"):
                             yield LoadingIndicator(id="search-loading")
@@ -343,7 +390,12 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                     yield Button("🔄 Refresh", id="refresh-results", classes="results-action-button")
                             
                             # Results list
-                            yield VerticalScroll(id="results-list-enhanced", classes="results-list-enhanced")
+                            with VerticalScroll(id="results-list-enhanced", classes="results-list-enhanced"):
+                                yield Static(
+                                    self._search_empty_state_text(),
+                                    id="search-empty-state",
+                                    classes="search-empty-state",
+                                )
                             
                             # Pagination
                             with Horizontal(id="pagination-enhanced", classes="pagination-enhanced hidden"):
@@ -436,19 +488,53 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
                                 yield DataTable(id="index-stats-table", classes="index-stats-table")
         
 
-    def on_mount(self) -> None:
+    def _missing_embeddings_recovery_state(self):
+        from ....Utils.optional_deps import get_optional_feature_info
+
+        feature = get_optional_feature_info("embeddings_rag")
+        return optional_dependency_recovery_state(
+            unavailable_what=feature.unavailable_what,
+            missing_dependencies=(feature.extra,),
+            install_targets=(
+                feature.source_install_command,
+                feature.package_install_command,
+            ),
+            stable_selector="search-rag-dependency-missing",
+            recovery_action=feature.recovery_action,
+            authority_owner=feature.owner,
+        )
+
+    async def on_mount(self) -> None:
         """Called when the widget is mounted"""
+        parent_on_mount = getattr(super(), "on_mount", None)
+        if callable(parent_on_mount):
+            result = parent_on_mount()
+            if isawaitable(result):
+                await result
+
         # Check if embeddings/RAG dependencies are available
         if not DEPENDENCIES_AVAILABLE.get('embeddings_rag', False):
             from ....Utils.widget_helpers import alert_embeddings_not_available
+            recovery_state = self._missing_embeddings_recovery_state()
             # Show alert after a short delay to ensure UI is ready
             self.set_timer(0.1, lambda: alert_embeddings_not_available(self))
-            # Disable search functionality
-            self.is_searching = True  # Prevent searches
             try:
+                results_list = self.query_one("#results-list-enhanced")
+                await results_list.remove_children()
+                await results_list.mount(
+                    Static(
+                        recovery_state.visible_copy,
+                        id=recovery_state.stable_selector,
+                        classes="search-empty-state search-recovery-state",
+                    )
+                )
                 search_input = self.query_one("#search-query-input", Input)
                 search_input.disabled = True
                 search_input.placeholder = "Embeddings not available - install dependencies"
+                search_input.tooltip = recovery_state.disabled_tooltip
+                search_button = self.query_one("#search-button", Button)
+                search_button.disabled = True
+                search_button.tooltip = recovery_state.disabled_tooltip
             except NoMatches:
                 pass
         
@@ -457,6 +543,145 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         self._setup_analytics()
         self._setup_collections_list()
         self._setup_index_stats()
+
+    def _authoritative_runtime_backend(self) -> str:
+        get_source = getattr(self.app_instance, "get_authoritative_runtime_source", None)
+        backend = get_source() if callable(get_source) else "local"
+        backend = str(backend or "local").strip().lower()
+        return backend if backend in {"local", "server"} else "local"
+
+    def _build_search_chat_handoff_payload(self, result: Dict[str, Any]):
+        return build_search_chat_handoff_payload(
+            dict(result),
+            runtime_backend=self._authoritative_runtime_backend(),
+        )
+
+    def _build_search_console_launch(self, result: Dict[str, Any]) -> dict[str, Any]:
+        handoff_payload = self._build_search_chat_handoff_payload(result)
+        metadata = dict(handoff_payload.metadata or {})
+        source_id = str(handoff_payload.source_id or "").strip()
+        content_ref = str(handoff_payload.content_ref or "").strip()
+        target_id = content_ref or (
+            f"{handoff_payload.source}:{source_id}" if source_id else handoff_payload.source
+        )
+        is_web = handoff_payload.source == "search-web"
+        launch_payload = {
+            "target_id": _sanitize_console_text(target_id),
+            "source_id": _sanitize_console_text(source_id),
+            "content_ref": _sanitize_console_text(content_ref),
+            "runtime_backend": handoff_payload.runtime_backend or self._authoritative_runtime_backend(),
+            "source": _sanitize_console_text(
+                str(result.get("source") or "unknown").strip() or "unknown",
+                max_length=120,
+            ),
+            "score": metadata.get("score"),
+            "display_summary": _sanitize_console_text(handoff_payload.display_summary),
+            "suggested_prompt": _sanitize_console_text(handoff_payload.suggested_prompt),
+        }
+        return {
+            "source": "Web Search" if is_web else "RAG",
+            "title": _sanitize_console_text(handoff_payload.title, max_length=500),
+            "payload": {
+                key: value
+                for key, value in launch_payload.items()
+                if value is not None and str(value).strip()
+            },
+            "status": "ready",
+            "recovery": (
+                "Use this web result as Console context, or return to Search/RAG to adjust the query."
+                if is_web
+                else "Use this retrieved RAG result as Console context, or return to Search/RAG to adjust the query."
+            ),
+            "action_label": "Ask from web result" if is_web else "Ask from RAG result",
+        }
+
+    @staticmethod
+    def _rag_handoff_runtime_action_id(payload: ChatHandoffPayload) -> str | None:
+        if payload.source != "search-rag":
+            return None
+        backend = str(payload.runtime_backend or "").strip().lower()
+        if backend != "server":
+            return None
+        return "rag.media_embeddings.search.server"
+
+    def _rag_handoff_policy_blocking_message(self, payload: ChatHandoffPayload) -> str:
+        action_id = self._rag_handoff_runtime_action_id(payload)
+        return build_handoff_policy_blocking_message(
+            self.app_instance,
+            action_id=action_id,
+            fallback_message="This RAG search action is blocked by runtime policy.",
+        )
+
+    @on(SearchResult.UseInChatRequested)
+    def handle_search_result_use_in_chat(self, event: SearchResult.UseInChatRequested) -> None:
+        event.stop()
+        payload = self._build_search_chat_handoff_payload(event.result)
+        policy_message = self._rag_handoff_policy_blocking_message(payload)
+        if policy_message:
+            self.app_instance.notify(policy_message, severity="warning")
+            return
+        open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not callable(open_chat):
+            self.app_instance.notify(USE_IN_CHAT_UNAVAILABLE_RECOVERY, severity="warning")
+            return
+        open_chat(payload)
+
+    @on(SearchResult.UseInConsoleRequested)
+    def handle_search_result_use_in_console(self, event: SearchResult.UseInConsoleRequested) -> None:
+        """Stage a selected Search/RAG result as Console live-work context.
+
+        Args:
+            event: Result-card event carrying the selected search result.
+        """
+        event.stop()
+        payload = self._build_search_chat_handoff_payload(event.result)
+        policy_message = self._rag_handoff_policy_blocking_message(payload)
+        if policy_message:
+            self.app_instance.notify(policy_message, severity="warning")
+            return
+        open_console = getattr(self.app_instance, "open_console_for_live_work", None)
+        if not callable(open_console):
+            self.app_instance.notify(USE_IN_CONSOLE_UNAVAILABLE_RECOVERY, severity="warning")
+            return
+        open_console(**self._build_search_console_launch(event.result))
+
+    @on(SavedSearchesPanel.LoadRequested)
+    def handle_saved_search_load_requested(self, event: SavedSearchesPanel.LoadRequested) -> None:
+        """Apply a selected saved search to the active Search/RAG controls."""
+        event.stop()
+        config = dict(event.config)
+
+        self.query_one("#search-query-input", Input).value = str(config.get("query") or "")
+        if "mode" in config:
+            self.query_one("#search-mode-select", Select).value = config["mode"]
+        if "collection" in config:
+            self.query_one("#collection-select", Select).value = config["collection"]
+        if "top_k" in config:
+            self.query_one("#top-k-input", Input).value = str(config["top_k"] if config["top_k"] is not None else "")
+        if "temperature" in config:
+            self.query_one("#temperature-input", Input).value = str(config["temperature"] if config["temperature"] is not None else "")
+
+        filters = config.get("filters") or config.get("sources") or {}
+        if filters:
+            self.query_one("#filter-media", Checkbox).value = bool(filters.get("media", True))
+            self.query_one("#filter-conversations", Checkbox).value = bool(filters.get("conversations", True))
+            self.query_one("#filter-notes", Checkbox).value = bool(filters.get("notes", True))
+
+        if "enable_parent_docs" in config:
+            parent_docs_enabled = bool(config["enable_parent_docs"])
+            self.enable_parent_docs = parent_docs_enabled
+            self.query_one("#parent-docs-checkbox", Checkbox).value = parent_docs_enabled
+        if "parent_strategy" in config:
+            self.query_one("#parent-strategy-select", Select).value = config["parent_strategy"]
+        if "parent_size" in config:
+            self.query_one("#parent-size-input", Input).value = str(config["parent_size"] if config["parent_size"] is not None else "")
+
+        self.last_search_config = config
+        self.query_one("#search-query-input", Input).focus()
+        self.app_instance.notify(
+            f"Loaded saved search '{event.name}' into Search.",
+            severity="information",
+        )
     
     # Setup methods implementation
     def _setup_history_table(self) -> None:
@@ -506,27 +731,32 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             table = self.query_one("#index-stats-table", DataTable)
             table.add_columns("Collection", "Documents", "Chunks", "Size", "Last Updated")
             self._refresh_index_stats()
+
+    def _load_available_collections(self) -> list[str]:
+        """Load available collection names without touching Textual widgets."""
+        return list(get_available_profiles())
+
+    async def _apply_available_collections(self, collections: list[str]) -> None:
+        """Apply loaded collection names to mounted Textual widgets."""
+        self.available_collections = list(collections)
+
+        collections_list = self.query_one("#collections-list", ListView)
+        await collections_list.clear()
+
+        for collection in self.available_collections:
+            await collections_list.append(ListItem(Static(collection)))
+
+        collection_select = self.query_one("#collection-select", Select)
+        collection_select.set_options(
+            [("All Collections", "all")] + [(c, c) for c in self.available_collections]
+        )
     
     @work(thread=True)
-    async def _refresh_collections_list(self) -> None:
+    def _refresh_collections_list(self) -> None:
         """Refresh the list of available collections"""
         try:
-            # Get available collections
-            self.available_collections = get_available_profiles()
-            
-            # Update UI
-            collections_list = self.query_one("#collections-list", ListView)
-            await collections_list.clear()
-            
-            for collection in self.available_collections:
-                item = ListItem(Static(collection))
-                await collections_list.append(item)
-                
-            # Update collection select
-            collection_select = self.query_one("#collection-select", Select)
-            collection_select.set_options(
-                [("all", "All Collections")] + [(c, c) for c in self.available_collections]
-            )
+            collections = self._load_available_collections()
+            self.app.call_from_thread(lambda: self.run_worker(self._apply_available_collections(collections), exclusive=True))
         except Exception as e:
             logger.error(f"Error refreshing collections: {e}")
     
@@ -613,7 +843,7 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
             return []
             
         try:
-            web_results = await search_web_bing(query)
+            web_results = await asyncio.to_thread(search_web_bing, query)
             parsed_results = parse_bing_results(web_results)
             
             # Format web results to match our structure
@@ -668,6 +898,10 @@ class SearchRAGWindow(SearchEventHandlersMixin, Container):
         start_idx = (self.current_page - 1) * self.results_per_page
         end_idx = start_idx + self.results_per_page
         page_results = self.search_results[start_idx:end_idx]
+        if not page_results:
+            await self._mount_search_empty_state(no_results=True)
+            self._update_pagination()
+            return
         
         # Display results
         for idx, result in enumerate(page_results):

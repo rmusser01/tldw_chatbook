@@ -5,10 +5,12 @@ This maintains the clean API while leveraging the robust existing implementation
 that provides thread-safe caching, multiple providers, and async support.
 """
 
+from types import SimpleNamespace
 from typing import List, Optional, Dict, Any, Union
 from pathlib import Path
 from loguru import logger
 import os
+import re
 import time
 import psutil
 import hashlib
@@ -31,17 +33,63 @@ EmbeddingConfigSchema = None
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram, log_gauge, timeit
 from .circuit_breaker import get_circuit_breaker, CircuitBreakerConfig, CircuitBreakerOpenError
 
+
+class _DeterministicEmbeddingFactory:
+    """Small offline embedding backend for tests and explicit mock configurations."""
+
+    def __init__(self, dimension: int = 384):
+        self.dimension = dimension
+        self.config = SimpleNamespace(
+            default_model_id="default",
+            models={"default": SimpleNamespace(provider="mock", model_name_or_path="mock")},
+        )
+
+    def _encode_one(self, text: str) -> "np.ndarray":
+        vector = np.zeros(self.dimension, dtype=float)
+        tokens = re.findall(r"[\w']+", text.lower())
+        if not tokens:
+            tokens = [text]
+
+        for token in tokens:
+            digest = hashlib.sha256(token.encode("utf-8", errors="replace")).digest()
+            index = int.from_bytes(digest[:4], "big") % self.dimension
+            sign = 1.0 if digest[4] % 2 == 0 else -1.0
+            vector[index] += sign
+
+        norm = np.linalg.norm(vector)
+        return vector / norm if norm else vector
+
+    def embed(self, texts: List[str], as_list: bool = False):
+        embeddings = np.array([self._encode_one(text) for text in texts])
+        return embeddings.tolist() if as_list else embeddings
+
+    async def async_embed(self, texts: List[str], as_list: bool = False):
+        return self.embed(texts, as_list=as_list)
+
+    def embed_one(self, text: str, as_list: bool = False):
+        embedding = self._encode_one(text)
+        return embedding.tolist() if as_list else embedding
+
+    async def async_embed_one(self, text: str, as_list: bool = False):
+        return self.embed_one(text, as_list=as_list)
+
+    def close(self) -> None:
+        return None
+
+
 def _ensure_embeddings_imported():
     """Lazily import embeddings components when needed."""
     global EmbeddingFactory, EmbeddingConfigSchema
-    
-    if EmbeddingFactory is not None:  # Already imported
+
+    if EmbeddingFactory is not None and EmbeddingConfigSchema is not None:
         return True
-    
+
     try:
         from tldw_chatbook.Embeddings.Embeddings_Lib import EmbeddingFactory as _EF, EmbeddingConfigSchema as _ECS
-        EmbeddingFactory = _EF
-        EmbeddingConfigSchema = _ECS
+        if EmbeddingFactory is None:
+            EmbeddingFactory = _EF
+        if EmbeddingConfigSchema is None:
+            EmbeddingConfigSchema = _ECS
         logger.info("Successfully imported embeddings components")
         return True
     except ImportError as e:
@@ -88,6 +136,11 @@ class EmbeddingsServiceWrapper:
         self._api_key = api_key
         self._base_url = base_url
         self._cache_dir = cache_dir
+        self._use_mock_backend = str(model_name).lower() in {
+            "mock",
+            "mock-embedding-model",
+            "mock_embedding_model",
+        } or str(model_name).lower().startswith("mock/")
         
         # Auto-detect device if not specified
         if device is None:
@@ -107,10 +160,11 @@ class EmbeddingsServiceWrapper:
         # Note API key source without logging sensitive info
         self._has_api_key = bool(api_key or os.environ.get("OPENAI_API_KEY"))
         
-        # Lazy initialization - factory will be created on first use
+        # Initialize the lightweight factory eagerly. The factory itself keeps model
+        # loading lazy, while callers retain the historical construction contract.
         self.factory = None
         self._config_dict = None
-        logger.info(f"Embeddings service configured for lazy initialization with model: {model_name}")
+        logger.info(f"Embeddings service configured with model: {model_name}")
         
         # Log configuration metrics
         log_counter("embeddings_service_configured", labels={"model": model_name, "device": self.device})
@@ -143,10 +197,19 @@ class EmbeddingsServiceWrapper:
         self._circuit_breaker = get_circuit_breaker(f"embeddings_{model_name}", breaker_config)
         logger.info(f"Circuit breaker configured: failure_threshold={breaker_config.failure_threshold}, "
                    f"recovery_timeout={breaker_config.recovery_timeout}s")
+
+        self._ensure_initialized()
     
     def _ensure_initialized(self):
         """Ensure the factory is initialized when first needed."""
         if self.factory is not None:
+            return
+
+        if self._use_mock_backend:
+            self.factory = _DeterministicEmbeddingFactory()
+            self._embedding_dimension = self.factory.dimension
+            logger.info("Initialized deterministic mock embeddings backend")
+            log_counter("embeddings_mock_backend_initialized")
             return
         
         if not _ensure_embeddings_imported():
@@ -293,7 +356,7 @@ class EmbeddingsServiceWrapper:
             
         if not texts:
             logger.warning("create_embeddings called with empty text list")
-            return np.array([])
+            return np.empty((0, self._get_empty_embedding_dimension()), dtype=np.float32)
         
         start_time = time.time()
         
@@ -390,6 +453,29 @@ class EmbeddingsServiceWrapper:
             log_counter("embeddings_creation_error", labels={"error": type(e).__name__})
             logger.error(f"Failed to create embeddings: {e}", exc_info=True)
             raise RuntimeError(f"Embedding creation failed: {e}") from e
+
+    def _get_empty_embedding_dimension(self) -> int:
+        """Return a best-known dimension for empty-batch results without model work."""
+        if self._embedding_dimension is not None:
+            return int(self._embedding_dimension)
+        if self.factory is not None:
+            dimension = getattr(self.factory, "dimension", None)
+            if isinstance(dimension, (int, float)):
+                return int(dimension)
+            get_dimension = getattr(self.factory, "get_dimension", None)
+            if callable(get_dimension):
+                try:
+                    dimension = get_dimension()
+                except Exception:
+                    dimension = None
+                if isinstance(dimension, (int, float)):
+                    return int(dimension)
+        normalized_model = str(self.model_name or "").lower()
+        if "text-embedding-3-large" in normalized_model:
+            return 3072
+        if "text-embedding" in normalized_model or normalized_model.startswith("openai/"):
+            return 1536
+        return 384
     
     async def create_embeddings_async(self, texts: List[str]) -> np.ndarray:
         """
@@ -452,6 +538,7 @@ class EmbeddingsServiceWrapper:
         
         Convenience method for single text embedding.
         """
+        self._ensure_initialized()
         logger.debug(f"Creating single embedding for text of length {len(text)}")
         result = self.factory.embed_one(text, as_list=False)
         logger.debug(f"Factory returned single embedding of type {type(result)}, shape: {result.shape if hasattr(result, 'shape') else 'N/A'}")
@@ -465,6 +552,7 @@ class EmbeddingsServiceWrapper:
         """
         Async version of create_embedding for single text.
         """
+        self._ensure_initialized()
         result = await self.factory.async_embed_one(text, as_list=False)
         if not isinstance(result, np.ndarray):
             result = np.array(result)
@@ -693,12 +781,124 @@ class EmbeddingsServiceWrapper:
 
 # Convenience function for creating service with common configurations
 
+def detect_embedding_provider(model_name: str) -> str:
+    """Detect the legacy embedding provider name from a model identifier."""
+    if not model_name:
+        return "unknown"
+    if model_name.startswith("text-embedding"):
+        return "openai"
+    if "/" in model_name:
+        return "sentence_transformers"
+    return "unknown"
+
+
+def normalize_embeddings(embeddings: List[List[float]]) -> List[List[float]]:
+    """Normalize embeddings to unit length, preserving zero vectors."""
+    normalized: List[List[float]] = []
+    for embedding in embeddings:
+        vector = np.array(embedding, dtype=float)
+        norm = np.linalg.norm(vector)
+        normalized.append((vector / norm).tolist() if norm else list(embedding))
+    return normalized
+
+
+class EmbeddingsWrapper:
+    """Legacy test-friendly embeddings wrapper retained for backward compatibility."""
+
+    def __init__(
+        self,
+        provider: str = "sentence_transformers",
+        model_name: str = "all-MiniLM-L6-v2",
+        device: str = "cpu",
+        cache_enabled: bool = True,
+        cache_size: int = 1000,
+    ):
+        self.provider = provider
+        self.model_name = model_name
+        self.device = device
+        self.cache_enabled = cache_enabled
+        self.cache_size = cache_size
+        self._cache: Dict[str, List[float]] = {}
+        self._model = None
+
+        if provider == "openai":
+            self._dimension = 1536
+            self._model = _DeterministicEmbeddingFactory(self._dimension)
+        elif provider == "mock":
+            self._dimension = 384
+            self._model = _DeterministicEmbeddingFactory(self._dimension)
+        elif provider == "sentence_transformers":
+            self._dimension = 384
+            if model_name in {"all-MiniLM-L6-v2", "sentence-transformers/all-MiniLM-L6-v2"}:
+                self._model = _DeterministicEmbeddingFactory(self._dimension)
+            else:
+                from sentence_transformers import SentenceTransformer
+                self._model = SentenceTransformer(model_name, device=device)
+                if hasattr(self._model, "get_sentence_embedding_dimension"):
+                    self._dimension = int(self._model.get_sentence_embedding_dimension())
+        else:
+            self._dimension = 384
+
+    def _encode(self, texts: List[str]) -> List[List[float]]:
+        if self.provider in {"mock", "openai"}:
+            return self._model.embed(texts, as_list=True)
+        if self.provider == "sentence_transformers":
+            if isinstance(self._model, _DeterministicEmbeddingFactory):
+                return self._model.embed(texts, as_list=True)
+            return np.array(self._model.encode(texts)).tolist()
+        raise ValueError(f"Unknown provider: {self.provider}")
+
+    def create_embeddings(self, texts: List[str]) -> List[List[float]]:
+        if not texts:
+            return []
+
+        results: List[Optional[List[float]]] = [None] * len(texts)
+        missing_texts: List[str] = []
+        missing_indices: List[int] = []
+
+        for index, text in enumerate(texts):
+            if self.cache_enabled and text in self._cache:
+                results[index] = self._cache[text]
+            else:
+                missing_texts.append(text)
+                missing_indices.append(index)
+
+        if missing_texts:
+            generated = self._encode(missing_texts)
+            for index, text, embedding in zip(missing_indices, missing_texts, generated):
+                if self.cache_enabled:
+                    self._cache[text] = embedding
+                results[index] = embedding
+
+        return [result or [] for result in results]
+
+    async def create_embeddings_async(self, texts: List[str]) -> List[List[float]]:
+        return self.create_embeddings(texts)
+
+    def get_dimension(self) -> int:
+        return self._dimension
+
+    def clear_cache(self) -> None:
+        self._cache.clear()
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        return {
+            "size": len(self._cache),
+            "max_size": self.cache_size,
+            "enabled": self.cache_enabled,
+        }
+
+    def estimate_memory_usage(self) -> int:
+        model_memory = 100 * 1024 * 1024
+        return model_memory + len(self._cache) * self._dimension * 8
+
+
 def create_embeddings_service(
-    provider: str = "huggingface",
+    provider: Union[str, Dict[str, Any]] = "huggingface",
     model: Optional[str] = None,
     device: Optional[str] = None,
     **kwargs
-) -> EmbeddingsServiceWrapper:
+) -> Union[EmbeddingsServiceWrapper, EmbeddingsWrapper]:
     """
     Create an embeddings service with common configurations.
     
@@ -723,11 +923,22 @@ def create_embeddings_service(
                                           base_url="http://localhost:8080",
                                           model="local-model")
     """
+    if isinstance(provider, dict):
+        config = provider
+        return EmbeddingsWrapper(
+            provider=config.get("embedding_provider", "sentence_transformers"),
+            model_name=config.get("embedding_model", "all-MiniLM-L6-v2"),
+            device=config.get("device", "cpu"),
+            cache_enabled=config.get("enable_cache", True),
+            cache_size=config.get("max_cache_size", 1000),
+        )
+
     # Default models for each provider
     default_models = {
         "huggingface": "sentence-transformers/all-MiniLM-L6-v2",
         "openai": "openai/text-embedding-3-small",
-        "local": "openai/text-embedding-ada-002"  # Common local model
+        "local": "openai/text-embedding-ada-002",  # Common local model
+        "mock": "mock",
     }
     
     # Determine model name

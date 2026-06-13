@@ -1,0 +1,963 @@
+"""UX audit smoke tests for top-level shell navigation."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
+from textual import on
+from textual.app import App, ComposeResult
+from textual.widgets import Button, Select, TextArea
+
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Event_Handlers.Chat_Events.chat_events import (
+    apply_current_handoff_context,
+    handle_chat_send_button_pressed,
+)
+from tldw_chatbook.runtime_policy.engine import PolicyEngine
+from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.UI.MediaWindow_v2 import MediaWindow
+from tldw_chatbook.UI.SearchWindow import SearchWindow
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
+from tldw_chatbook.UI.Screens.notes_scope_models import ScopeType, WorkspaceSubview
+from tldw_chatbook.UI.Screens.notes_screen import NotesScreen
+from tldw_chatbook.UI.Chatbooks_Window_Improved import ChatbooksWindowImproved
+from tldw_chatbook.UI.Screens.chatbooks_screen import ChatbooksScreen
+from tldw_chatbook.UI.Views.RAGSearch import search_rag_window
+from tldw_chatbook.UI.Views.RAGSearch.search_rag_window import SearchRAGWindow
+from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
+from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
+from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
+
+
+class ChatbooksShellSmokeApp(App[None]):
+    def compose(self) -> ComposeResult:
+        yield ChatbooksScreen(self)
+
+
+@pytest.mark.asyncio
+async def test_chatbooks_screen_keeps_shared_navigation_escape(monkeypatch):
+    async def no_refresh(self):
+        self.chatbooks = []
+
+    monkeypatch.setattr(ChatbooksWindowImproved, "_refresh_chatbooks", no_refresh)
+    app = ChatbooksShellSmokeApp()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+
+        assert app.screen.query_one(ChatbooksWindowImproved) is not None
+        assert app.screen.query_one("#nav-console") is not None
+        assert app.screen.query_one("#nav-artifacts") is not None
+
+
+class _HandoffSmokeHost:
+    def __init__(self, payload: ChatHandoffPayload) -> None:
+        self.pending_chat_handoff = payload
+        self.chat_enhanced_mode = False
+        self.notify = Mock()
+        self.current_chat_conversation_id = None
+        self.current_chat_is_ephemeral = True
+        self.current_chat_worker = None
+        self.current_ai_message_widget = None
+        self._current_chat_handoff_payload = None
+        self._current_chat_is_streaming = False
+
+    def set_current_chat_is_streaming(self, value: bool) -> None:
+        self._current_chat_is_streaming = value
+
+    def get_current_chat_is_streaming(self) -> bool:
+        return self._current_chat_is_streaming
+
+
+class HandoffFirstSendSmokeApp(App[None]):
+    def __init__(self, payload: ChatHandoffPayload) -> None:
+        super().__init__()
+        self.host = _HandoffSmokeHost(payload)
+        self.host.call_later = self.call_later
+        self.tab_container: ChatTabContainer | None = None
+
+    def compose(self) -> ComposeResult:
+        self.tab_container = ChatTabContainer(self.host)
+        yield self.tab_container
+
+    def on_mount(self) -> None:
+        self.host.query_one = self.query_one
+        self.host.query = self.query
+
+
+@pytest.mark.asyncio
+async def test_handoff_smoke_replays_chat_staging_and_first_send(monkeypatch):
+    payload = ChatHandoffPayload(
+        source="notes",
+        item_type="note",
+        title="Field Notes",
+        body="Observed confusing empty states.",
+        suggested_prompt="Summarize the usability issue.",
+    )
+    app = HandoffFirstSendSmokeApp(payload)
+    observed: dict[str, str | None] = {}
+
+    async def fake_send_handler(chat_app, event):
+        tab_container = app.tab_container
+        assert tab_container is not None
+        session = tab_container.sessions[tab_container.active_session_id]
+        payload = session.session_data.handoff_payload
+
+        chat_app._current_chat_handoff_payload = payload
+        observed["wrapped_prompt"] = apply_current_handoff_context(
+            chat_app,
+            "Summarize the usability issue.",
+        )
+        observed["active_handoff_title"] = chat_app._current_chat_handoff_payload.title
+
+        payload.status = "sent"
+        chat_app._current_chat_handoff_payload = None
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed",
+        fake_send_handler,
+    )
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.05)
+        tab_container = app.tab_container
+        assert tab_container is not None
+
+        screen = ChatScreen(app.host)
+        screen.chat_window = SimpleNamespace(_tab_container=tab_container)
+        await screen._consume_pending_chat_handoff()
+        await pilot.pause(0.05)
+
+        handoff_tab_id = tab_container.active_session_id
+        assert handoff_tab_id is not None
+        session = tab_container.sessions[handoff_tab_id]
+        assert app.host.pending_chat_handoff is None
+        assert session.session_data.conversation_id is None
+        assert session.session_data.is_ephemeral is True
+        assert session.session_data.handoff_payload.title == "Field Notes"
+        assert session.query_one(ChatHandoffCard).payload.status == "staged"
+        assert (
+            session.query_one(f"#chat-input-{handoff_tab_id}", TextArea).text
+            == "Summarize the usability issue."
+        )
+
+        session.query_one(f"#send-stop-chat-{handoff_tab_id}", Button).press()
+        await pilot.pause(0.05)
+
+        assert observed["active_handoff_title"] == "Field Notes"
+        assert "[Staged context]" in observed["wrapped_prompt"]
+        assert "Observed confusing empty states." in observed["wrapped_prompt"]
+        assert "[User prompt]\nSummarize the usability issue." in observed["wrapped_prompt"]
+        assert session.session_data.handoff_payload.status == "sent"
+        assert app.host._current_chat_handoff_payload is None
+
+
+@pytest.mark.asyncio
+async def test_tabbed_chat_send_reads_session_specific_input_and_log():
+    chat_container = SimpleNamespace(
+        is_mounted=True,
+        mount=AsyncMock(),
+        children=[],
+        query=Mock(return_value=[]),
+    )
+    selectors_seen: list[str] = []
+
+    def fake_widget(**attrs):
+        return SimpleNamespace(**attrs)
+
+    widgets = {
+        "#chat-input-tab-a": fake_widget(text="Hello from a tab", focus=Mock()),
+        "#chat-log-tab-a": chat_container,
+        "#chat-api-provider": fake_widget(value=Select.BLANK),
+        "#chat-api-model": fake_widget(value=Select.BLANK),
+        "#chat-system-prompt": fake_widget(text=""),
+        "#chat-temperature": fake_widget(value="0.7"),
+        "#chat-top-p": fake_widget(value="0.95"),
+        "#chat-min-p": fake_widget(value="0.05"),
+        "#chat-top-k": fake_widget(value="50"),
+        "#chat-llm-max-tokens": fake_widget(value="1024"),
+        "#chat-llm-seed": fake_widget(value=""),
+        "#chat-llm-stop": fake_widget(value=""),
+        "#chat-llm-response-format": fake_widget(value=Select.BLANK),
+        "#chat-llm-n": fake_widget(value="1"),
+        "#chat-llm-user-identifier": fake_widget(value=""),
+        "#chat-llm-logprobs": fake_widget(value=False),
+        "#chat-llm-top-logprobs": fake_widget(value="0"),
+        "#chat-llm-logit-bias": fake_widget(text="{}"),
+        "#chat-llm-presence-penalty": fake_widget(value="0.0"),
+        "#chat-llm-frequency-penalty": fake_widget(value="0.0"),
+        "#chat-llm-tools": fake_widget(text="[]"),
+        "#chat-llm-tool-choice": fake_widget(value="auto"),
+        "#chat-llm-fixed-tokens-kobold": fake_widget(value=False),
+        "#chat-strip-thinking-tags-checkbox": fake_widget(value=True),
+        "#chat-streaming-enabled-checkbox": fake_widget(value=False),
+    }
+
+    class FakeScreen:
+        def query_one(self, selector, _widget_type=None):
+            selectors_seen.append(selector)
+            if selector not in widgets:
+                raise AssertionError(f"Unexpected selector: {selector}")
+            return widgets[selector]
+
+    app = SimpleNamespace(
+        screen=FakeScreen(),
+        current_chat_worker=None,
+        _current_chat_tab_id="tab-a",
+        app_config={"api_settings": {}},
+        current_chat_active_character_data=None,
+        current_chat_conversation_id=None,
+        chachanotes_db=None,
+        API_IMPORTS_SUCCESSFUL=True,
+    )
+
+    await handle_chat_send_button_pressed(app, SimpleNamespace(button=SimpleNamespace(id="send-stop-chat-tab-a")))
+
+    assert selectors_seen[:2] == ["#chat-input-tab-a", "#chat-log-tab-a"]
+    assert "#chat-input" not in selectors_seen
+    assert "#chat-log" not in selectors_seen
+    chat_container.mount.assert_awaited_once()
+
+
+def _empty_notes_service() -> Mock:
+    service = Mock()
+    service.list_notes.return_value = []
+    return service
+
+
+def _assert_single_handoff_payload(open_chat_with_handoff: Mock) -> ChatHandoffPayload:
+    open_chat_with_handoff.assert_called_once()
+    return open_chat_with_handoff.call_args.args[0]
+
+
+class NotesSmokeApp(App[None]):
+    def __init__(self, runtime_state: RuntimeSourceState | None = None) -> None:
+        super().__init__()
+        app_instance = SimpleNamespace(
+            notes_service=_empty_notes_service(),
+            notes_user_id="default_user",
+            notes_scope_service=None,
+            server_notes_workspace_service=None,
+            notify=Mock(),
+            open_chat_with_handoff=Mock(),
+            open_study_screen=Mock(),
+            open_notes_workspace=Mock(),
+            call_from_thread=Mock(),
+            loguru_logger=Mock(),
+            current_selected_note_id=None,
+            current_selected_note_version=None,
+            current_selected_note_title="",
+            current_selected_note_content="",
+        )
+        if runtime_state is not None:
+            app_instance.runtime_policy = SimpleNamespace(state=runtime_state)
+            app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+        self.app_instance = app_instance
+        self.screen_under_test = NotesScreen(app_instance)
+
+    def on_mount(self) -> None:
+        self.push_screen(self.screen_under_test)
+
+
+@pytest.mark.asyncio
+async def test_invalid_notes_and_workspace_handoffs_do_not_stage_chat_in_smoke():
+    app = NotesSmokeApp()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_under_test
+
+        note_button = screen.query_one("#notes-use-in-chat-button", Button)
+        assert note_button.disabled is True
+        assert "Select a note" in str(note_button.tooltip)
+
+        note_button.press()
+        await pilot.pause(0.05)
+
+        app.app_instance.open_chat_with_handoff.assert_not_called()
+
+        screen._set_state(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.SOURCES,
+            selected_workspace_id="workspace-1",
+            selected_workspace_source_id=None,
+            selected_workspace_artifact_id=None,
+        )
+        await pilot.pause(0.05)
+
+        workspace_button = screen.query_one("#workspace-use-in-chat-button", Button)
+        source_button = screen.query_one("#workspace-source-use-in-chat-button", Button)
+        artifact_button = screen.query_one("#workspace-artifact-use-in-chat-button", Button)
+
+        assert workspace_button.disabled is False
+        assert source_button.disabled is True
+        assert "Select a workspace source" in str(source_button.tooltip)
+        assert artifact_button.disabled is True
+        assert "Select a workspace artifact" in str(artifact_button.tooltip)
+
+        source_button.press()
+        artifact_button.press()
+        await pilot.pause(0.05)
+
+        app.app_instance.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_contract_blocked_workspace_handoff_explains_recovery_without_staging():
+    checked_at = datetime.now(timezone.utc)
+    app = NotesSmokeApp(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="srv-primary",
+            server_configured=True,
+            server_reachability="reachable",
+            server_reachability_checked_at=checked_at,
+            server_auth_state="auth_required",
+            server_auth_checked_at=checked_at,
+        )
+    )
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_under_test
+
+        screen._set_state(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.DETAILS,
+            selected_workspace_id="workspace-1",
+        )
+        await pilot.pause(0.05)
+
+        workspace_button = screen.query_one("#workspace-use-in-chat-button", Button)
+
+        assert workspace_button.disabled is True
+        tooltip = str(workspace_button.tooltip)
+        assert "notes.workspace.detail.server requires server authentication" in tooltip
+        assert "source authority: runtime_policy/server" in tooltip.lower()
+        assert "ux interop: active source server" in tooltip.lower()
+        assert "server auth auth_required" in tooltip.lower()
+        assert "Sign in" in tooltip
+
+        workspace_button.press()
+        await pilot.pause(0.05)
+
+        app.app_instance.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_contract_blocked_local_note_handoff_explains_recovery_without_staging():
+    app = NotesSmokeApp(
+        RuntimeSourceState(
+            active_source="server",
+            active_server_id="srv-primary",
+            server_configured=True,
+            server_reachability="reachable",
+            server_auth_state="authenticated",
+        )
+    )
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_under_test
+
+        screen._set_state(
+            scope_type=ScopeType.LOCAL_NOTE,
+            selected_note_id=1,
+            selected_note_title="Local Note",
+            selected_note_content="Body",
+        )
+        await pilot.pause(0.05)
+
+        note_button = screen.query_one("#notes-use-in-chat-button", Button)
+
+        assert note_button.disabled is True
+        tooltip = str(note_button.tooltip)
+        assert "notes.detail.local requires local mode" in tooltip
+        assert "source authority: runtime_policy/local" in tooltip.lower()
+        assert "ux interop: active source server" in tooltip.lower()
+        assert "switch source to local" in tooltip.lower()
+
+        note_button.press()
+        await pilot.pause(0.05)
+
+        app.app_instance.open_chat_with_handoff.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_valid_notes_and_workspace_handoffs_stage_app_payloads_in_smoke():
+    app = NotesSmokeApp()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen_under_test
+
+        screen._set_state(
+            scope_type=ScopeType.LOCAL_NOTE,
+            selected_note_id=7,
+            selected_note_version=2,
+            selected_note_title="Draft Note",
+            selected_note_content="Saved body",
+        )
+        screen.query_one("#notes-editor-area", TextArea).text = "Visible draft body"
+        await pilot.pause(0.05)
+
+        note_button = screen.query_one("#notes-use-in-chat-button", Button)
+        assert note_button.disabled is False
+
+        note_button.press()
+        await pilot.pause(0.05)
+
+        note_payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
+        assert note_payload.source == "notes"
+        assert note_payload.source_id == "7"
+        assert note_payload.title == "Draft Note"
+        assert note_payload.body == "Visible draft body"
+
+        app.app_instance.open_chat_with_handoff.reset_mock()
+        screen._workspace_context_payload = {
+            "workspace": {"id": "workspace-1", "name": "Research"},
+            "notes": [
+                {
+                    "id": "note-1",
+                    "title": "Workspace Note",
+                    "content": "Workspace note body",
+                    "version": 5,
+                }
+            ],
+            "sources": [
+                {
+                    "id": "source-1",
+                    "title": "Transcript",
+                    "source_type": "video",
+                    "url": "https://example.com/transcript",
+                }
+            ],
+            "artifacts": [
+                {
+                    "id": "artifact-1",
+                    "title": "Quiz Outline",
+                    "content": "Artifact body",
+                    "version": 3,
+                }
+            ],
+        }
+        screen._set_state(
+            scope_type=ScopeType.WORKSPACE,
+            workspace_subview=WorkspaceSubview.DETAILS,
+            selected_workspace_id="workspace-1",
+            selected_workspace_note_id="note-1",
+            selected_workspace_source_id="source-1",
+            selected_workspace_artifact_id="artifact-1",
+        )
+        await pilot.pause(0.05)
+
+        workspace_button = screen.query_one("#workspace-use-in-chat-button", Button)
+        assert workspace_button.disabled is False
+
+        workspace_button.press()
+        await pilot.pause(0.05)
+
+        workspace_payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
+        assert workspace_payload.source == "workspace"
+        assert workspace_payload.item_type == "workspace"
+        assert workspace_payload.source_id == "workspace-1"
+        assert workspace_payload.title == "Research"
+
+        app.app_instance.open_chat_with_handoff.reset_mock()
+        screen._set_state(workspace_subview=WorkspaceSubview.NOTES)
+        screen.query_one("#notes-editor-area", TextArea).text = "Visible workspace note body"
+        await pilot.pause(0.05)
+
+        workspace_note_button = screen.query_one("#notes-use-in-chat-button", Button)
+        assert workspace_note_button.disabled is False
+
+        workspace_note_button.press()
+        await pilot.pause(0.05)
+
+        workspace_note_payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
+        assert workspace_note_payload.source == "workspace"
+        assert workspace_note_payload.item_type == "workspace-note"
+        assert workspace_note_payload.source_id == "note-1"
+        assert workspace_note_payload.body == "Visible workspace note body"
+
+        app.app_instance.open_chat_with_handoff.reset_mock()
+        screen._set_state(workspace_subview=WorkspaceSubview.SOURCES)
+        await pilot.pause(0.05)
+
+        source_button = screen.query_one("#workspace-source-use-in-chat-button", Button)
+        artifact_button = screen.query_one("#workspace-artifact-use-in-chat-button", Button)
+        assert source_button.disabled is False
+        assert artifact_button.disabled is False
+
+        source_button.press()
+        await pilot.pause(0.05)
+
+        source_payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
+        assert source_payload.source == "workspace"
+        assert source_payload.item_type == "workspace-source"
+        assert source_payload.workspace_id == "workspace-1"
+        assert source_payload.source_id == "source-1"
+        assert source_payload.title == "Transcript"
+        assert source_payload.body == "Transcript\nvideo\nhttps://example.com/transcript"
+
+        app.app_instance.open_chat_with_handoff.reset_mock()
+        artifact_button.press()
+        await pilot.pause(0.05)
+
+        artifact_payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
+        assert artifact_payload.source == "workspace"
+        assert artifact_payload.item_type == "workspace-artifact"
+        assert artifact_payload.workspace_id == "workspace-1"
+        assert artifact_payload.source_id == "artifact-1"
+        assert artifact_payload.body == "Artifact body"
+
+
+class InvalidMediaSelectionSmokeApp(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.use_in_chat_requests = 0
+        self.panel = MediaViewerPanel(SimpleNamespace(notify=Mock()))
+
+    def compose(self) -> ComposeResult:
+        yield self.panel
+
+    @on(MediaViewerPanel.UseInChatRequested)
+    def handle_media_use_in_chat(self, event: MediaViewerPanel.UseInChatRequested) -> None:
+        self.use_in_chat_requests += 1
+
+
+@pytest.mark.asyncio
+async def test_invalid_media_handoff_selection_does_not_post_request_in_smoke():
+    app = InvalidMediaSelectionSmokeApp()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+
+        button = app.panel.query_one("#media-use-in-chat-button", Button)
+        assert button.disabled is True
+        assert "Select a media item before using it in Chat" in str(button.tooltip)
+
+        button.press()
+        await pilot.pause(0.05)
+
+        assert app.use_in_chat_requests == 0
+        assert app.panel._build_use_in_chat_event() is None
+
+
+class ValidMediaWindowHandoffSmokeApp(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.app_instance = SimpleNamespace(
+            _media_types_for_ui=[],
+            media_runtime_state=MediaRuntimeState(runtime_backend="local"),
+            media_reading_scope_service=SimpleNamespace(
+                search_media=AsyncMock(return_value={"items": [], "total": 0}),
+            ),
+            notify=Mock(),
+            open_chat_with_handoff=Mock(),
+            media_db=None,
+        )
+        self.window = MediaWindow(self.app_instance)
+
+    def compose(self) -> ComposeResult:
+        yield self.window
+
+
+@pytest.mark.asyncio
+async def test_valid_media_handoff_replays_from_mounted_window_to_app_seam():
+    app = ValidMediaWindowHandoffSmokeApp()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        app.window.viewer_panel.load_media(
+            {
+                "id": "media-1",
+                "title": "Lecture",
+                "content": "Transcript body",
+                "media_type": "video",
+            }
+        )
+        await pilot.pause(0.05)
+
+        button = app.window.viewer_panel.query_one("#media-use-in-chat-button", Button)
+        assert button.disabled is False
+
+        button.press()
+        await pilot.pause(0.05)
+
+        payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
+        assert payload.source == "media"
+        assert payload.source_id == "media-1"
+        assert payload.title == "Lecture"
+        assert payload.body == "Transcript body"
+
+
+@pytest.mark.asyncio
+async def test_contract_blocked_media_handoff_explains_recovery_without_staging():
+    app = ValidMediaWindowHandoffSmokeApp()
+    app.app_instance.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+    app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        app.window.viewer_panel.load_media(
+            {
+                "id": "media-1",
+                "backend": "server",
+                "title": "Server Lecture",
+                "content": "Transcript body",
+                "media_type": "video",
+            }
+        )
+        await pilot.pause(0.05)
+
+        button = app.window.viewer_panel.query_one("#media-use-in-chat-button", Button)
+        assert button.disabled is False
+
+        button.press()
+        await pilot.pause(0.05)
+
+        app.app_instance.open_chat_with_handoff.assert_not_called()
+        message = app.app_instance.notify.call_args.args[0]
+        assert "media.items.detail.server requires server mode" in message
+        assert "source authority: runtime_policy/server" in message.lower()
+        assert "ux interop: active source local" in message.lower()
+        assert "switch source to server" in message.lower()
+
+
+class SearchRAGHandoffSmokeApp(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.app_instance = SimpleNamespace(
+            notify=Mock(),
+            api_endpoint="test-endpoint",
+            get_authoritative_runtime_source=Mock(return_value="server"),
+            open_chat_with_handoff=Mock(),
+            open_console_for_live_work=Mock(),
+        )
+        self.window = SearchRAGWindow(self.app_instance)
+
+    def compose(self) -> ComposeResult:
+        yield self.window
+
+
+@pytest.mark.asyncio
+async def test_valid_rag_search_handoff_replays_from_mounted_window_to_app_seam(tmp_path):
+    with (
+        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+    ):
+        app = SearchRAGHandoffSmokeApp()
+
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause(0.1)
+            app.window.search_results = [
+                {
+                    "title": "Retrieved Chunk",
+                    "content": "Evidence body",
+                    "source": "notes",
+                    "score": 0.91,
+                    "metadata": {"document_id": "doc-1"},
+                }
+            ]
+            app.window.total_results = 1
+            await app.window._display_results()
+            await pilot.pause(0.05)
+
+            button = app.window.query_one("#use-in-chat-0", Button)
+            button.press()
+            await pilot.pause(0.05)
+
+            payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
+            assert payload.source == "search-rag"
+            assert payload.item_type == "rag-result"
+            assert payload.runtime_backend == "server"
+            assert payload.title == "Retrieved Chunk"
+            assert payload.body == "Evidence body"
+
+
+@pytest.mark.asyncio
+async def test_valid_rag_search_console_launch_replays_from_mounted_window_to_app_seam(tmp_path):
+    with (
+        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+    ):
+        app = SearchRAGHandoffSmokeApp()
+
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause(0.1)
+            app.window.search_results = [
+                {
+                    "title": "Retrieved Chunk",
+                    "content": "Evidence body",
+                    "source": "notes",
+                    "score": 0.91,
+                    "metadata": {"document_id": "doc-1", "chunk_id": "chunk-7"},
+                }
+            ]
+            app.window.total_results = 1
+            await app.window._display_results()
+            await pilot.pause(0.05)
+
+            button = app.window.query_one("#use-in-console-0", Button)
+            button.press()
+            await pilot.pause(0.05)
+
+            app.app_instance.open_chat_with_handoff.assert_not_called()
+            app.app_instance.open_console_for_live_work.assert_called_once_with(
+                source="RAG",
+                title="Retrieved Chunk",
+                payload={
+                    "target_id": "search-rag:doc-1",
+                    "source_id": "doc-1",
+                    "content_ref": "search-rag:doc-1",
+                    "runtime_backend": "server",
+                    "source": "notes",
+                    "score": 0.91,
+                    "display_summary": "Evidence body",
+                    "suggested_prompt": "Use this retrieved result as context and answer or reason from it carefully.",
+                },
+                status="ready",
+                recovery="Use this retrieved RAG result as Console context, or return to Search/RAG to adjust the query.",
+                action_label="Ask from RAG result",
+            )
+
+
+@pytest.mark.asyncio
+async def test_rag_search_console_launch_escapes_result_markup_before_staging(tmp_path):
+    with (
+        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+    ):
+        app = SearchRAGHandoffSmokeApp()
+
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause(0.1)
+            app.window.search_results = [
+                {
+                    "title": "[red]Retrieved[/red] <script>\x00",
+                    "content": "[bold]Evidence[/bold] <script>alert(1)</script>\x00",
+                    "source": "notes",
+                    "score": 0.91,
+                    "metadata": {"document_id": "doc-[red]-<script>"},
+                }
+            ]
+            app.window.total_results = 1
+            await app.window._display_results()
+            await pilot.pause(0.05)
+
+            app.window.query_one("#use-in-console-0", Button).press()
+            await pilot.pause(0.05)
+
+            app.app_instance.open_console_for_live_work.assert_called_once()
+            call_kwargs = app.app_instance.open_console_for_live_work.call_args.kwargs
+            assert call_kwargs["title"] == r"\[red]Retrieved\[/red] &lt;script&gt;"
+            assert call_kwargs["payload"]["target_id"] == r"search-rag:doc-\[red]-&lt;script&gt;"
+            assert call_kwargs["payload"]["source"] == "notes"
+            assert call_kwargs["payload"]["display_summary"] == (
+                r"\[bold]Evidence\[/bold] &lt;script&gt;alert(1)&lt;/script&gt;"
+            )
+
+
+@pytest.mark.asyncio
+async def test_contract_blocked_rag_search_handoff_explains_recovery_without_staging(tmp_path):
+    with (
+        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+    ):
+        app = SearchRAGHandoffSmokeApp()
+        app.app_instance.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+        app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause(0.1)
+            app.window.search_results = [
+                {
+                    "title": "Server Chunk",
+                    "content": "Evidence body",
+                    "source": "notes",
+                    "score": 0.91,
+                    "metadata": {"document_id": "doc-1"},
+                }
+            ]
+            app.window.total_results = 1
+            await app.window._display_results()
+            await pilot.pause(0.05)
+
+            button = app.window.query_one("#use-in-chat-0", Button)
+            button.press()
+            await pilot.pause(0.05)
+
+            app.app_instance.open_chat_with_handoff.assert_not_called()
+            message = app.app_instance.notify.call_args.args[0]
+            assert "rag.media_embeddings.search.server requires server mode" in message
+            assert "source authority: runtime_policy/server" in message.lower()
+            assert "ux interop: active source local" in message.lower()
+            assert "switch source to server" in message.lower()
+
+
+@pytest.mark.asyncio
+async def test_contract_blocked_rag_search_console_launch_explains_recovery_without_staging(tmp_path):
+    with (
+        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+    ):
+        app = SearchRAGHandoffSmokeApp()
+        app.app_instance.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+        app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause(0.1)
+            app.window.search_results = [
+                {
+                    "title": "Server Chunk",
+                    "content": "Evidence body",
+                    "source": "notes",
+                    "score": 0.91,
+                    "metadata": {"document_id": "doc-1"},
+                }
+            ]
+            app.window.total_results = 1
+            await app.window._display_results()
+            await pilot.pause(0.05)
+
+            button = app.window.query_one("#use-in-console-0", Button)
+            button.press()
+            await pilot.pause(0.05)
+
+            app.app_instance.open_console_for_live_work.assert_not_called()
+            app.app_instance.open_chat_with_handoff.assert_not_called()
+            message = app.app_instance.notify.call_args.args[0]
+            assert "rag.media_embeddings.search.server requires server mode" in message
+            assert "source authority: runtime_policy/server" in message.lower()
+            assert "ux interop: active source local" in message.lower()
+            assert "switch source to server" in message.lower()
+
+
+class WebSearchResultHandoffSmokeApp(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.app_instance = SimpleNamespace(
+            notify=Mock(),
+            api_endpoint="test-endpoint",
+            search_active_sub_tab=None,
+            get_authoritative_runtime_source=Mock(return_value="local"),
+            open_chat_with_handoff=Mock(),
+        )
+        self.window = SearchWindow(self.app_instance)
+
+    def compose(self) -> ComposeResult:
+        yield self.window
+
+
+@pytest.mark.asyncio
+async def test_valid_web_search_handoff_replays_from_mounted_window_to_app_seam(monkeypatch):
+    monkeypatch.setattr("tldw_chatbook.UI.SearchWindow.WEB_SEARCH_AVAILABLE", True)
+    app = WebSearchResultHandoffSmokeApp()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        app.window.web_search_results = [
+            {
+                "title": "Article",
+                "content": "Snippet body",
+                "source": "web",
+                "metadata": {"url": "https://example.com", "displayUrl": "example.com"},
+            }
+        ]
+        await app.window._render_web_search_result_cards()
+        await pilot.pause(0.05)
+
+        button = app.window.query_one("#use-in-chat-0", Button)
+        button.press()
+        await pilot.pause(0.05)
+
+        payload = _assert_single_handoff_payload(app.app_instance.open_chat_with_handoff)
+        assert payload.source == "search-web"
+        assert payload.item_type == "web-result"
+        assert payload.metadata["url"] == "https://example.com"
+        assert payload.body == "Snippet body"
+
+
+@pytest.mark.asyncio
+async def test_contract_blocked_web_search_handoff_explains_recovery_without_staging(monkeypatch, tmp_path):
+    with (
+        patch.dict(search_rag_window.DEPENDENCIES_AVAILABLE, {"embeddings_rag": True}, clear=False),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.search_rag_window.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+        patch(
+            "tldw_chatbook.UI.Views.RAGSearch.saved_searches_panel.get_user_data_dir",
+            return_value=tmp_path,
+        ),
+    ):
+        monkeypatch.setattr("tldw_chatbook.UI.SearchWindow.WEB_SEARCH_AVAILABLE", True)
+        app = WebSearchResultHandoffSmokeApp()
+        app.app_instance.get_authoritative_runtime_source = Mock(return_value="server")
+        app.app_instance.runtime_policy = SimpleNamespace(state=RuntimeSourceState(active_source="local"))
+        app.app_instance.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause(0.1)
+            app.window.web_search_results = [
+                {
+                    "title": "Article",
+                    "content": "Snippet body",
+                    "source": "web",
+                    "metadata": {"url": "https://example.com", "displayUrl": "example.com"},
+                }
+            ]
+            await app.window._render_web_search_result_cards()
+            await pilot.pause(0.05)
+
+            button = app.window.query_one("#use-in-chat-0", Button)
+            button.press()
+            await pilot.pause(0.05)
+
+            app.app_instance.open_chat_with_handoff.assert_not_called()
+            message = app.app_instance.notify.call_args.args[0]
+            assert "research.search.providers.launch.server requires server mode" in message
+            assert "source authority: runtime_policy/server" in message.lower()
+            assert "ux interop: active source local" in message.lower()
+            assert "switch source to server" in message.lower()

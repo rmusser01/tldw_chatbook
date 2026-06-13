@@ -17,17 +17,17 @@
 
 /* Sidebar header with improved visibility */
 .sidebar-header {
-    height: 4;
-    padding: 1;
-    background: $primary 20%;
-    border-bottom: thick $primary;
+    height: 3;
+    padding: 0 1;
+    background: $surface;
+    border-bottom: solid $surface-lighten-1;
     align: center middle;
 }
 
 .sidebar-title {
     text-style: bold;
     color: $text;
-    text-align: center;
+    text-align: left;
 }
 
 /* Preset bar for quick configuration */
@@ -49,26 +49,35 @@
 }
 
 .preset-button.active {
-    background: $primary 30%;
-    border: tall $primary;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: tall $ds-focus-accent;
+    text-style: bold underline;
 }
 
 .preset-button:hover {
-    background: $primary 15%;
+    background: $surface-lighten-1;
+    color: $text;
+}
+
+.preset-button.active:hover {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: tall $ds-focus-accent;
+    text-style: bold underline;
 }
 
 /* Search container with better visibility */
 .search-container {
-    height: 4;
-    padding: 1;
-    background: $surface 10%;
-    border-bottom: solid $surface-lighten-1;
+    height: 3;
+    padding: 0 1;
+    background: transparent;
+    border-bottom: none;
 }
 
 .search-input {
     width: 100%;
-    border: round $accent;
+    border: round $surface-lighten-1;
     background: $background;
 }
 
@@ -135,24 +144,23 @@
 
 /* Enhanced setting groups with clear visual hierarchy */
 .setting-group {
-    margin: 1 0;
+    margin: 2 0;
     padding: 1;
-    /* border-radius: 2; - not supported in TCSS, use border: round instead */
 }
 
 .setting-group-essential {
-    border-left: thick $success;
-    background: $success 15%;
+    border-left: solid $success;
+    background: transparent;
 }
 
 .setting-group-common {
-    border-left: thick $primary;
-    background: $primary 15%;
+    border-left: solid $primary;
+    background: transparent;
 }
 
 .setting-group-advanced {
-    border-left: thick $warning;
-    background: $warning 15%;
+    border-left: solid $warning;
+    background: transparent;
 }
 
 /* Priority Indicators */
@@ -207,12 +215,12 @@
 /* Generic .sidebar (used by #chat-left-sidebar and potentially others) */
 .sidebar {
     dock: left;
-    width: 35%; /* Set to 35% of screen width */
-    min-width: 25; /* Minimum width to prevent it becoming unusable */
-    max-width: 100; /* Maximum width (optional) */
+    width: 25%; /* Reduced from 35% for better chat area space */
+    min-width: 35; /* Reduced from 45 */
+    max-width: 80; /* Maximum width (optional) */
     background: $boost;
-    padding: 1 2;
-    border-right: thick $background-darken-1;
+    padding: 0 1;
+    border-right: solid $surface;
     height: 100%;
     overflow-y: auto;
     overflow-x: hidden;
@@ -252,7 +260,7 @@
 }
 
 /* Common sidebar elements */
-.sidebar-title { text-style: bold underline; margin-bottom: 1; width: 100%; text-align: center; }
+.sidebar-title { text-style: bold; margin-bottom: 1; width: 100%; text-align: left; }
 
 /* Sidebar header with resize controls */
 .sidebar-header-with-resize {
@@ -280,19 +288,17 @@
 }
 
 .sidebar-resize-button:hover {
-    background: $primary-lighten-1;
+    background: $surface-lighten-1;
     color: $text;
     text-style: bold;
-}
-
-.sidebar-resize-button:focus {
-    background: $primary-lighten-2;
-    color: $text;
-    text-style: bold;
-    border: tall $primary-lighten-2;
 }
 .sidebar-label { margin-top: 1; text-style: bold; }
-.sidebar-input { width: 100%; margin-bottom: 1; }
+.sidebar-input {
+    width: 100%;
+    margin-bottom: 1;
+    border: solid $primary-lighten-2;
+    border-bottom: solid $primary-lighten-2;
+}
 .sidebar-textarea { 
     width: 100%; 
     height: 5;  /* Default height for text areas */
@@ -349,7 +355,8 @@
 .sidebar Select { 
     width: 100%; 
     margin-bottom: 1; 
-    border: round $primary-lighten-2;
+    border: solid $primary-lighten-2;
+    border-bottom: solid $primary-lighten-2;
 }
 
 .prompt-display-textarea {
@@ -427,8 +434,8 @@
 }
 
 .sidebar-section-collapsible:focus-within {
-    border: round $accent;
-    background: $surface-lighten-1;
+    border: round $ds-focus-accent;
+    background: $ds-focus-bg;
 }
 
 /* Section loading state */
@@ -441,27 +448,9 @@
     opacity: 50%;
 }
 
-/* Keyboard navigation indicators */
-.sidebar *:focus {
-    outline: solid $accent;
-}
-
 /* Search mode indicator */
 .sidebar.search-active {
     border: solid $warning;
-}
-
-/* Focus states for accessibility */
-.sidebar Button:focus {
-    outline: solid $accent;
-}
-
-.sidebar Select:focus {
-    outline: solid $accent;
-}
-
-.sidebar Input:focus {
-    outline: solid $accent;
 }
 
 /* ----------------------------------------
@@ -480,17 +469,14 @@
     margin-bottom: 0;
     text-style: bold;
     color: $text-muted;
+    text-align: left;
 }
 
 .setting-input {
     width: 100%;
     margin-bottom: 1;
-    border: round $primary-lighten-1;
-}
-
-.setting-input:focus {
-    border: round $accent;
-    background: $background 10%;
+    border: solid $primary-lighten-1;
+    border-bottom: solid $primary-lighten-1;
 }
 
 /* Modified settings indicator */
@@ -557,11 +543,12 @@
 
 /* TabbedContent customization */
 TabbedContent {
-    height: 100%;
+    height: auto;
 }
 
 TabbedContent > TabPane {
     padding: 0;
+    height: auto;
 }
 
 TabbedContent Tabs {
@@ -573,9 +560,16 @@ TabbedContent Tab {
     padding: 0 1;
 }
 
-TabbedContent Tab.active {
-    background: $primary 20%;
-    text-style: bold;
+TabbedContent Tab.-active {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+/* Hide the tab underline indicator */
+TabbedContent Underline {
+    height: 0;
+    display: none;
 }
 
 /* Search results styling */
@@ -591,8 +585,9 @@ TabbedContent Tab.active {
 }
 
 .search-result-item:hover {
-    background: $primary 10%;
-    border: round $primary;
+    background: $surface-lighten-1;
+    color: $text;
+    border: round $surface-lighten-2;
 }
 
 /* Highlight matched text in search */
@@ -623,7 +618,8 @@ TabbedContent Tab.active {
 }
 
 .reset-button:hover {
-    background: $warning 30%;
+    background: $surface-lighten-1;
+    color: $text;
 }
 
 /* Note: Textual doesn't support @media queries for responsive design

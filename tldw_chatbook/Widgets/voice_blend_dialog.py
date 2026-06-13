@@ -30,17 +30,18 @@ class VoiceBlendEntry(Container):
         with Horizontal(classes="voice-blend-entry"):
             yield Select(
                 options=[
-                    ("af_bella", "Bella (American Female)"),
-                    ("af_nicole", "Nicole (American Female)"),
-                    ("af_sarah", "Sarah (American Female)"),
-                    ("af_sky", "Sky (American Female)"),
-                    ("am_adam", "Adam (American Male)"),
-                    ("am_michael", "Michael (American Male)"),
-                    ("bf_emma", "Emma (British Female)"),
-                    ("bf_isabella", "Isabella (British Female)"),
-                    ("bm_george", "George (British Male)"),
-                    ("bm_lewis", "Lewis (British Male)"),
+                    ("Bella (American Female)", "af_bella"),
+                    ("Nicole (American Female)", "af_nicole"),
+                    ("Sarah (American Female)", "af_sarah"),
+                    ("Sky (American Female)", "af_sky"),
+                    ("Adam (American Male)", "am_adam"),
+                    ("Michael (American Male)", "am_michael"),
+                    ("Emma (British Female)", "bf_emma"),
+                    ("Isabella (British Female)", "bf_isabella"),
+                    ("George (British Male)", "bm_george"),
+                    ("Lewis (British Male)", "bm_lewis"),
                 ],
+                value=self.initial_voice or "af_bella",
                 id=f"voice-select-{self.index}",
                 allow_blank=False
             )
@@ -177,17 +178,17 @@ class VoiceBlendDialog(ModalScreen[Optional[Dict[str, Any]]]):
                 yield Button("Save", id="save-btn", variant="primary")
                 yield Button("Cancel", id="cancel-btn", variant="default")
     
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Initialize with existing data if editing"""
         if self.blend_data and "voices" in self.blend_data:
             # Add existing voice entries
             for voice, weight in self.blend_data["voices"]:
-                self.add_voice_entry(voice, weight)
+                await self.add_voice_entry(voice, weight)
         else:
             # Start with one empty entry
-            self.add_voice_entry()
+            await self.add_voice_entry()
     
-    def add_voice_entry(self, voice: str = "", weight: float = 1.0) -> None:
+    async def add_voice_entry(self, voice: str = "", weight: float = 1.0) -> None:
         """Add a new voice entry"""
         # Validate that the voice is in our known list
         known_voices = [
@@ -208,18 +209,18 @@ class VoiceBlendDialog(ModalScreen[Optional[Dict[str, Any]]]):
         
         # Mount the entry
         voice_list = self.query_one("#voice-entries-list", Vertical)
-        voice_list.mount(entry)
+        await voice_list.mount(entry)
     
-    def on_voice_blend_entry_removed(self, message: VoiceBlendEntry.Removed) -> None:
+    async def on_voice_blend_entry_removed(self, message: VoiceBlendEntry.Removed) -> None:
         """Handle voice entry removal"""
         if len(self.voice_entries) > 1:  # Keep at least one entry
             self.voice_entries.remove(message.entry)
-            message.entry.remove()
+            await message.entry.remove()
     
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses"""
         if event.button.id == "add-voice-btn":
-            self.add_voice_entry()
+            await self.add_voice_entry()
         elif event.button.id == "save-btn":
             self.save_blend()
         elif event.button.id == "cancel-btn":

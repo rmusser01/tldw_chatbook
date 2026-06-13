@@ -419,14 +419,9 @@ class FileExtractor:
                 else:
                     filename = f"extracted_{len(files)+1}{ext}"
             
-            # Clean up content based on file type
-            if lang in ['csv', 'tsv']:
-                # For CSV/TSV, strip each line but preserve internal structure
-                lines = content.split('\n')
-                cleaned_lines = [line.strip() for line in lines if line.strip()]
-                content = '\n'.join(cleaned_lines)
-            else:
-                content = content.rstrip('\n')  # Remove trailing newline from code block
+            # Remove the synthetic newline before the closing fence without
+            # stripping file-significant whitespace from the extracted body.
+            content = content.rstrip('\n')
             
             files.append(ExtractedFile(
                 filename=filename,

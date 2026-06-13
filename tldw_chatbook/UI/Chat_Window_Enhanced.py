@@ -17,10 +17,14 @@ from textual.css.query import NoMatches
 #
 # Local Imports
 from ..Widgets.enhanced_settings_sidebar import EnhancedSettingsSidebar
+from ..Widgets.compact_model_bar import CompactModelBar
+from ..Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 # Right sidebar removed - functionality moved to settings_sidebar
 from ..Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, Filters
+from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import ChatShellBar
 from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ..Widgets.voice_input_widget import VoiceInputWidget, VoiceInputMessage
+from ..Chat.provider_readiness import get_provider_readiness
 from ..config import get_cli_setting
 from ..Constants import TAB_CHAT
 from ..Utils.Emoji_Handling import get_char, EMOJI_SIDEBAR_TOGGLE, FALLBACK_SIDEBAR_TOGGLE, EMOJI_SEND, FALLBACK_SEND, \
@@ -82,19 +86,31 @@ class ChatWindowEnhanced(Container):
     _chat_input: Optional[TextArea] = None
     _send_button: Optional[Button] = None
     _attachment_indicator: Optional[Static] = None
+    _file_path_input: Optional[Input] = None
     _tab_container: Optional['ChatTabContainer'] = None
+    _task_cards: Optional[ChatTaskCards] = None
     
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+    def __init__(
+        self,
+        app_instance: 'TldwCli',
+        *,
+        show_shell_compact_controls: bool = True,
+        **kwargs: Any,
+    ):
         """Initialize the chat window with modular handlers.
         
         Args:
             app_instance: Reference to the main application instance
+            show_shell_compact_controls: Whether the embedded shell bar should
+                render its compact provider/model controls.
             **kwargs: Additional keyword arguments for Container
         """
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.show_shell_compact_controls = show_shell_compact_controls
         # Track the sidebar state locally as well
         self._sidebar_collapsed = False
+        self._suppress_attachment_watch = False
         
         # Initialize modular handlers
         self.input_handler = ChatInputHandler(self)
@@ -121,7 +137,7 @@ class ChatWindowEnhanced(Container):
         self._cache_widget_references()
         
         # Initialize local sidebar state from app state
-        self._sidebar_collapsed = self.app_instance.chat_sidebar_collapsed
+        self._sidebar_collapsed = getattr(self.app_instance, "chat_sidebar_collapsed", False)
         logger.info(f"Initialized sidebar state: collapsed={self._sidebar_collapsed}")
         
         # Configure widget visibility based on settings
@@ -137,6 +153,14 @@ class ChatWindowEnhanced(Container):
             logger.info(f"Set initial sidebar display to {sidebar.display}")
         except Exception as e:
             logger.debug(f"Could not set initial sidebar state: {e}")
+
+        # Show empty state and hide chat log initially (no messages yet)
+        try:
+            chat_log = self.query_one("#chat-log")
+            chat_log.display = False
+        except NoMatches:
+            pass
+        self.refresh_first_run_orientation()
     
     # Message Handlers using Textual's Message System
     
@@ -202,12 +226,26 @@ class ChatWindowEnhanced(Container):
             self._attachment_indicator = self.query_one("#image-attachment-indicator", Static)
         except NoMatches:
             self._attachment_indicator = None
+
+        try:
+            self._file_path_input = self.query_one("#image-file-path-input", Input)
+        except NoMatches:
+            self._file_path_input = None
+
+        try:
+            self._shell_bar = self.query_one("#chat-shell-bar", ChatShellBar)
+        except NoMatches:
+            self._shell_bar = None
         
         if get_cli_setting("chat_defaults", "enable_tabs", False):
             try:
                 self._tab_container = self.query_one(ChatTabContainer)
             except NoMatches:
                 self._tab_container = None
+        try:
+            self._task_cards = self.query_one(ChatTaskCards)
+        except NoMatches:
+            self._task_cards = None
     
     async def _configure_widget_visibility(self) -> None:
         """Configure visibility of optional widgets based on settings."""
@@ -256,7 +294,23 @@ class ChatWindowEnhanced(Container):
         Returns:
             The attachment indicator widget or None if not found
         """
+        if self._attachment_indicator is None:
+            try:
+                self._attachment_indicator = self.query_one("#image-attachment-indicator")
+            except NoMatches:
+                self._attachment_indicator = None
         return self._attachment_indicator
+
+    def get_shell_bar(self) -> Optional[ChatShellBar]:
+        """Get the mounted combined chat shell bar if it exists."""
+        if self._shell_bar is not None:
+            return self._shell_bar
+
+        try:
+            self._shell_bar = self.query_one("#chat-shell-bar", ChatShellBar)
+        except NoMatches:
+            self._shell_bar = None
+        return self._shell_bar
     
     def _get_tab_container(self) -> Optional['ChatTabContainer']:
         """Get the cached tab container if tabs are enabled.
@@ -277,17 +331,131 @@ class ChatWindowEnhanced(Container):
         except NoMatches:
             return None
 
+    def _get_task_cards(self) -> Optional[ChatTaskCards]:
+        """Get the inline task surface widget."""
+        return self._task_cards
+
+    def sync_task_resume_state(self, task_state) -> None:
+        """Sync the inline task surface from screen state."""
+        task_cards = self._get_task_cards()
+        if task_cards is not None:
+            task_cards.sync_state(task_state)
+
+    def hide_empty_state(self) -> None:
+        """Hide the empty state widget when messages are present."""
+        try:
+            empty_state = self.query_one("#chat-empty-state", Static)
+            empty_state.add_class("hidden")
+        except NoMatches:
+            pass
+        try:
+            chat_log = self.query_one("#chat-log")
+            chat_log.display = True
+        except NoMatches:
+            pass
+
+    def show_empty_state(self) -> None:
+        """Show the empty state widget when no messages are present."""
+        try:
+            empty_state = self.query_one("#chat-empty-state", Static)
+            empty_state.remove_class("hidden")
+        except NoMatches:
+            pass
+        try:
+            chat_log = self.query_one("#chat-log")
+            chat_log.display = False
+        except NoMatches:
+            pass
+
+    def _selected_provider_for_orientation(self) -> Optional[str]:
+        """Return the current provider selector value, falling back to config."""
+        try:
+            provider_select = self.query_one("#chat-api-provider", Select)
+            if provider_select.value != Select.BLANK:
+                return str(provider_select.value)
+        except NoMatches:
+            pass
+
+        defaults = self.app_instance.app_config.get("chat_defaults", {})
+        if isinstance(defaults, dict):
+            provider = defaults.get("provider")
+            if provider:
+                return str(provider)
+        return None
+
+    def build_first_run_orientation_text(self, provider: Optional[str] = None) -> str:
+        """Build compact first-run guidance for the empty Console state."""
+        selected_provider = provider or self._selected_provider_for_orientation()
+        readiness = get_provider_readiness(selected_provider, self.app_instance.app_config)
+
+        return (
+            "Console is the agentic control surface for programming, research, and workspace tasks.\n"
+            f"Provider readiness: {readiness.user_message}\n"
+            "Context: Notes, Media, Search/RAG, Workspaces, Study flashcards/quizzes, "
+            "personas, and Chatbooks. Ctrl+P opens commands."
+        )
+
+    def refresh_first_run_orientation(self, provider: Optional[str] = None) -> None:
+        """Refresh the first-run empty-state guidance if it is mounted."""
+        try:
+            empty_state = self.query_one("#chat-empty-state", Static)
+            empty_state.update(self.build_first_run_orientation_text(provider))
+        except NoMatches:
+            pass
+
+    def _has_sendable_content(self) -> bool:
+        """Return True when pressing Send can produce a visible chat action."""
+        if not self.is_send_button:
+            return False
+
+        chat_input = self._get_chat_input()
+        if chat_input is not None:
+            text_value = getattr(chat_input, "text", None)
+            if text_value is None:
+                text_value = getattr(chat_input, "value", "")
+            if str(text_value).strip():
+                return True
+
+        chat_log = self._get_chat_log()
+        if chat_log is None:
+            return False
+
+        try:
+            from ..Widgets.Chat_Widgets.chat_message import ChatMessage
+            from ..Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
+
+            all_messages = []
+            for widget_type in (ChatMessage, ChatMessageEnhanced):
+                try:
+                    all_messages.extend(list(chat_log.query(widget_type)))
+                except Exception:
+                    pass
+
+            if not all_messages:
+                return False
+
+            all_messages.sort(
+                key=lambda msg: getattr(msg, "_mount_time", 0)
+            )
+            last_message = all_messages[-1]
+            return bool(last_message.has_class("-user"))
+        except Exception:
+            return False
+
     # Event Handlers using @on decorators for cleaner code
-    
+
     @on(Button.Pressed, "#send-stop-chat")
     async def handle_send_stop_button_press(self, event: Button.Pressed) -> None:
         """Handle send/stop button press.
-        
+
         Args:
             event: The button press event
         """
         event.stop()  # Prevent bubbling
+        should_hide_empty_state = self._has_sendable_content()
         await self.handle_send_stop_button(self.app_instance, event)
+        if should_hide_empty_state:
+            self.hide_empty_state()
     
     @on(Button.Pressed, "#attach-image")
     async def handle_attach_image_press(self, event: Button.Pressed) -> None:
@@ -330,22 +498,25 @@ class ChatWindowEnhanced(Container):
         logger.info(f"Sidebar toggle button pressed: {button_id}")
         
         if button_id == "toggle-chat-left-sidebar":
-            # Toggle our local state
-            self._sidebar_collapsed = not self._sidebar_collapsed
-            logger.info(f"Toggled sidebar state to: collapsed={self._sidebar_collapsed}")
-            
-            # Update the app state
-            self.app_instance.chat_sidebar_collapsed = self._sidebar_collapsed
-            
-            # Update the sidebar visibility immediately
-            # When collapsed=True, display should be False (hidden)
-            # When collapsed=False, display should be True (visible)
-            try:
-                sidebar = self.query_one("#chat-left-sidebar")
-                sidebar.display = not self._sidebar_collapsed  # If collapsed, hide; if not collapsed, show
-                logger.info(f"Left sidebar display set to {sidebar.display} (collapsed={self._sidebar_collapsed})")
-            except Exception as e:
-                logger.error(f"Failed to update left sidebar: {e}")
+            self._toggle_chat_left_sidebar()
+
+    def _toggle_chat_left_sidebar(self) -> None:
+        """Toggle the chat left sidebar and keep app state in sync."""
+        self._sidebar_collapsed = not self._sidebar_collapsed
+        logger.info(f"Toggled sidebar state to: collapsed={self._sidebar_collapsed}")
+
+        self.app_instance.chat_sidebar_collapsed = self._sidebar_collapsed
+
+        try:
+            sidebar = self.query_one("#chat-left-sidebar")
+            sidebar.display = not self._sidebar_collapsed
+            logger.info(f"Left sidebar display set to {sidebar.display} (collapsed={self._sidebar_collapsed})")
+        except Exception as e:
+            logger.error(f"Failed to update left sidebar: {e}")
+
+    def handle_shell_sidebar_toggle_requested(self) -> None:
+        """Host callback used by the combined shell bar to toggle the sidebar."""
+        self._toggle_chat_left_sidebar()
     
     # Legacy button handler for buttons not yet migrated to @on decorators
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -368,7 +539,9 @@ class ChatWindowEnhanced(Container):
             "send-stop-chat",
             "attach-image",
             "chat-mic",
-            "clear-image"
+            "clear-image",
+            "toggle-chat-left-sidebar",
+            "toggle-chat-right-sidebar",
         }
         if button_id in decorator_handled_buttons:
             # Already handled by @on decorator, skip
@@ -525,21 +698,15 @@ class ChatWindowEnhanced(Container):
         """
         await self.attachment_handler.process_file_attachment(file_path)
     
-    @work(exclusive=True, thread=True)
     async def handle_image_path_submitted(self, event):
         """Handle image path submission from file input field.
         
         This method is for backward compatibility with tests that expect
-        the old file input field behavior. Uses proper thread safety.
+        the old file input field behavior.
         
         Args:
             event: The event containing the file path
         """
-        worker = get_current_worker()
-        
-        if worker.is_cancelled:
-            return
-        
         from ..Event_Handlers.Chat_Events.chat_image_events import ChatImageHandler
         from ..Utils.path_validation import is_safe_path
         from pathlib import Path
@@ -549,15 +716,10 @@ class ChatWindowEnhanced(Container):
             file_path = event.value
             if not file_path:
                 return
-            
-            # Check for cancellation before validation
-            if worker.is_cancelled:
-                return
-            
+
             # Validate the file path is safe
             if not is_safe_path(file_path, os.path.expanduser("~")):
-                self.call_from_thread(
-                    self.app_instance.notify,
+                self.app_instance.notify(
                     "Error: File path is outside allowed directory",
                     severity="error"
                 )
@@ -567,65 +729,60 @@ class ChatWindowEnhanced(Container):
             
             # Validate file exists
             if not path.exists():
-                self.call_from_thread(
-                    self.app_instance.notify,
+                self.app_instance.notify(
                     f"Error attaching image: Image file not found: {file_path}",
                     severity="error"
                 )
                 return
-            
-            # Check for cancellation before processing
-            if worker.is_cancelled:
-                return
-            
+
             # Process the image
             try:
                 image_data, mime_type = await ChatImageHandler.process_image_file(str(path))
-                
-                # Check for cancellation before updating UI
-                if worker.is_cancelled:
-                    return
-                
+
                 # Store the pending image using thread-safe method
                 image_dict = {
                     'data': image_data,
                     'mime_type': mime_type,
                     'path': str(path)
                 }
-                
-                self.call_from_thread(self._store_pending_image, image_dict)
+
+                self._suppress_attachment_watch = True
+                try:
+                    self._store_pending_image(image_dict)
+                finally:
+                    self._suppress_attachment_watch = False
+                self._update_attachment_ui()
                 
                 # Hide file input if it exists
                 if hasattr(event, 'input') and event.input:
-                    self.call_from_thread(
-                        lambda: setattr(event.input.styles, 'display', 'none')
-                    )
+                    if hasattr(event.input, "add_class"):
+                        event.input.add_class("hidden")
+                    try:
+                        event.input.styles.display = "none"
+                    except Exception:
+                        pass
                 
                 # Notify user
-                self.call_from_thread(
-                    self.app_instance.notify,
+                self.app_instance.notify(
                     f"Image attached: {path.name}"
                 )
                 
             except (IOError, OSError) as e:
                 logger.error(f"Error reading image file: {e}")
-                self.call_from_thread(
-                    self.app_instance.notify,
-                    f"Cannot read image: {e}",
+                self.app_instance.notify(
+                    f"Error reading image: {e}",
                     severity="error"
                 )
             except ValueError as e:
                 logger.error(f"Invalid image data: {e}")
-                self.call_from_thread(
-                    self.app_instance.notify,
+                self.app_instance.notify(
                     "Invalid image format",
                     severity="error"
                 )
                 
         except ValueError as e:
             logger.error(f"Invalid image path: {e}")
-            self.call_from_thread(
-                self.app_instance.notify,
+            self.app_instance.notify(
                 "Invalid file path",
                 severity="error"
             )
@@ -669,9 +826,18 @@ class ChatWindowEnhanced(Container):
 
         # Main Chat Content Area
         with Container(id="chat-main-content"):
+            # Combined shell bar - context labels plus compact controls above chat.
+            yield ChatShellBar(
+                app_instance=self.app_instance,
+                on_sidebar_toggle_requested=self.handle_shell_sidebar_toggle_requested,
+                show_compact_controls=self.show_shell_compact_controls,
+                id="chat-shell-bar",
+            )
+            yield ChatTaskCards(id="chat-task-surface")
+
             # Check if tabs are enabled
             enable_tabs = get_cli_setting("chat_defaults", "enable_tabs", False)
-            
+
             if enable_tabs:
                 logger.info("Chat tabs are enabled - using ChatTabContainer in enhanced mode")
                 # Use the tab container for multiple sessions
@@ -679,7 +845,11 @@ class ChatWindowEnhanced(Container):
                 tab_container.enhanced_mode = True  # Flag for enhanced features
                 yield tab_container
             else:
-                # Legacy single-session mode
+                # Legacy single-session mode - empty state + chat log
+                yield Static(
+                    self.build_first_run_orientation_text(),
+                    id="chat-empty-state",
+                )
                 yield VerticalScroll(id="chat-log")
                 
                 # Image attachment indicator (always present, controlled via CSS)
@@ -690,28 +860,32 @@ class ChatWindowEnhanced(Container):
                 
                 # Input area with all buttons (visibility controlled in on_mount)
                 with Horizontal(id="chat-input-area"):
-                    yield TextArea(id="chat-input", classes="chat-input")
-                    
+                    yield TextArea(
+                        id="chat-input",
+                        classes="chat-input",
+                    )
+
                     # Microphone button (visibility controlled via CSS/on_mount)
                     yield Button(
-                        get_char("🎤", "⚫"),
+                        "Voice",
                         id="mic-button",
                         classes="mic-button",
                         tooltip="Voice input (Ctrl+M)"
                     )
-                    
+
                     # Send/Stop button (label updated via reactive watcher)
                     yield Button(
-                        get_char(EMOJI_SEND, FALLBACK_SEND),  # Default to send
+                        "Send",
                         id="send-stop-chat",
                         classes="send-button",
-                        tooltip="Send message"  # Default tooltip
+                        variant="primary",
+                        tooltip="Send message"
                     )
-                    
+
                     # Attach button (visibility controlled via CSS/on_mount)
                     yield Button(
-                        "📎", 
-                        id="attach-image", 
+                        "Attach",
+                        id="attach-image",
                         classes="action-button attach-button",
                         tooltip="Attach file"
                     )
@@ -736,19 +910,11 @@ class ChatWindowEnhanced(Container):
     
     def _clear_attachment_state(self) -> None:
         """Clear all attachment state."""
-        self.pending_image = None
-        self.pending_attachment = None
-        self._update_attachment_ui()
+        self.attachment_handler.clear_attachment_state()
     
     def _update_attachment_ui(self) -> None:
         """Update attachment indicator UI based on current state."""
-        if self._attachment_indicator:
-            if self.pending_image:
-                from pathlib import Path
-                path = Path(self.pending_image.get('path', ''))
-                self._attachment_indicator.update(f"📎 {path.name}")
-            else:
-                self._attachment_indicator.update("")
+        self.attachment_handler.update_attachment_ui()
     
     async def toggle_attach_button_visibility(self, show: bool) -> None:
         """Toggle the visibility of the attach file button.
@@ -817,8 +983,7 @@ class ChatWindowEnhanced(Container):
         
         Triggers the reactive watcher to update the button UI.
         """
-        # Trigger reactive watcher by reassigning
-        self.is_send_button = self.is_send_button
+        self.input_handler.update_button_state()
     
     def watch_is_send_button(self, is_send: bool) -> None:
         """React to button state changes.
@@ -857,6 +1022,8 @@ class ChatWindowEnhanced(Container):
         Args:
             image_data: The new pending image data
         """
+        if getattr(self, "_suppress_attachment_watch", False):
+            return
         self._update_attachment_ui()
     
     def validate_pending_image(self, image_data: Any) -> Optional[Dict[str, Any]]:
@@ -881,11 +1048,7 @@ class ChatWindowEnhanced(Container):
             app_instance: The app instance
             event: The button press event
         """
-        if self.is_send_button:
-            await self.input_handler.handle_enhanced_send_button(event)
-        else:
-            from ..Event_Handlers.Chat_Events import chat_events
-            await chat_events.handle_stop_chat_generation_pressed(app_instance, event)
+        await self.input_handler.handle_send_stop_button(event)
     
     async def handle_mic_button(self, app_instance, event: Button.Pressed) -> None:
         """Handle microphone button click.

@@ -711,8 +711,8 @@ class InMemoryVectorStore:
         
         # Handle embeddings based on numpy availability
         if NUMPY_AVAILABLE:
-            if not isinstance(embeddings, np.ndarray):
-                embeddings = np.array(embeddings)
+            if not isinstance(embeddings, np.ndarray) or embeddings.dtype != np.float32:
+                embeddings = np.asarray(embeddings, dtype=np.float32)
                 
             # Validate and store embedding dimension
             if self._embedding_dim is None and embeddings.shape[1] > 0:
@@ -853,11 +853,68 @@ class InMemoryVectorStore:
                 
         raise ValueError(f"Unknown distance metric: {self.distance_metric}")
     
-    def search(self, 
-               query_embedding: Union[np.ndarray, List[float]], 
-               top_k: int = 10) -> List[SearchResult]:
-        """Search using the specified distance metric."""
-        if not self.embeddings:
+    def search(
+        self,
+        query_embedding_or_collection: Optional[Union[str, np.ndarray, List[float]]] = None,
+        query_embedding_or_top_k: Optional[Union[np.ndarray, List[float], int]] = None,
+        top_k: int = 10,
+        **kwargs
+    ) -> List[SearchResult]:
+        """Search using the specified distance metric.
+
+        Supports both the current API, ``search(query_embedding, top_k=10)``,
+        and the collection-compatible API used by older callers,
+        ``search(collection_name, query_embedding, top_k=10)``.
+        """
+        if "n_results" in kwargs:
+            top_k = int(kwargs.pop("n_results"))
+        if query_embedding_or_collection is None and "query_embedding" in kwargs:
+            query_embedding_or_collection = kwargs.pop("query_embedding")
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs.keys()))
+            raise TypeError(f"Unexpected search keyword argument(s): {unexpected}")
+        if query_embedding_or_collection is None:
+            raise TypeError("query_embedding is required")
+
+        collection_name: Optional[str] = None
+        if isinstance(query_embedding_or_collection, str):
+            collection_name = query_embedding_or_collection
+            query_embedding = query_embedding_or_top_k
+            if query_embedding is None or isinstance(query_embedding, int):
+                raise TypeError("query_embedding is required when searching a named collection")
+        else:
+            query_embedding = query_embedding_or_collection
+            if isinstance(query_embedding_or_top_k, int):
+                top_k = query_embedding_or_top_k
+
+        if collection_name is not None:
+            collection = self._collections.get(collection_name)
+            if not collection or not collection["embeddings"]:
+                return []
+            ids = collection["ids"]
+            embeddings = collection["embeddings"]
+            documents = collection["documents"]
+            metadata = collection["metadata"]
+            self._collection_access_time[collection_name] = time.time()
+        else:
+            if not self.embeddings:
+                return []
+            ids = self.ids
+            embeddings = self.embeddings
+            documents = self.documents
+            metadata = self.metadata
+        
+        if (
+            isinstance(query_embedding, list)
+            and len(query_embedding) == 1
+            and isinstance(query_embedding[0], (list, tuple))
+        ):
+            query_embedding = query_embedding[0]
+        
+        if NUMPY_AVAILABLE and isinstance(query_embedding, np.ndarray) and query_embedding.ndim == 2 and query_embedding.shape[0] == 1:
+            query_embedding = query_embedding[0]
+        
+        if not embeddings:
             return []
         
         # Handle query embedding conversion based on numpy availability
@@ -871,7 +928,7 @@ class InMemoryVectorStore:
         
         # Compute similarities
         similarities = []
-        for i, emb in enumerate(self.embeddings):
+        for i, emb in enumerate(embeddings):
             similarity = self._compute_similarity(query_embedding, emb)
             similarities.append((i, similarity))
         
@@ -883,10 +940,11 @@ class InMemoryVectorStore:
         results = []
         for idx, score in top_results:
             # Update access order for LRU
-            id_val = self.ids[idx]
-            if id_val in self._access_order:
-                self._access_order.remove(id_val)
-            self._access_order.append(id_val)
+            id_val = ids[idx]
+            if collection_name is None:
+                if id_val in self._access_order:
+                    self._access_order.remove(id_val)
+                self._access_order.append(id_val)
             
             # Normalize score to [0, 1] range for consistency
             if self.distance_metric == "cosine":
@@ -898,10 +956,10 @@ class InMemoryVectorStore:
                 normalized_score = max(0, min(1, score))  # Clamp to [0, 1]
             
             results.append(SearchResult(
-                id=self.ids[idx],
+                id=ids[idx],
                 score=normalized_score,
-                document=self.documents[idx],
-                metadata=self.metadata[idx]
+                document=documents[idx],
+                metadata=metadata[idx]
             ))
         
         self._search_count += 1
@@ -951,17 +1009,22 @@ class InMemoryVectorStore:
         
         return results_with_citations
     
-    def delete_collection(self, name: str) -> None:
+    def delete_collection(self, name: str) -> bool:
         """Delete a specific collection."""
+        deleted = False
         if name in self._collections:
             del self._collections[name]
             if name in self._collection_access_time:
                 del self._collection_access_time[name]
             logger.info(f"Deleted collection: {name}")
+            deleted = True
         
         # If it's the current collection, also clear main storage
         if name == self._current_collection or name == "default":
             self.clear()
+            deleted = True
+        
+        return deleted
     
     def clear(self) -> None:
         """Clear all data."""
@@ -1042,8 +1105,8 @@ class InMemoryVectorStore:
         self._current_collection = collection_name
         
         # Convert embeddings to numpy array if needed and numpy is available
-        if NUMPY_AVAILABLE and isinstance(embeddings, list):
-            embeddings = np.array(embeddings)
+        if NUMPY_AVAILABLE:
+            embeddings = np.asarray(embeddings, dtype=np.float32)
         
         # Initialize collection if it doesn't exist
         if collection_name not in self._collections:
@@ -1087,7 +1150,7 @@ class InMemoryVectorStore:
         
         # Now add the new items
         collection["ids"].extend(ids)
-        collection["embeddings"].extend(embeddings.tolist() if isinstance(embeddings, np.ndarray) else embeddings)
+        collection["embeddings"].extend(list(embeddings) if isinstance(embeddings, np.ndarray) else embeddings)
         collection["documents"].extend(documents)
         collection["metadata"].extend(metadatas)
         
@@ -1095,11 +1158,7 @@ class InMemoryVectorStore:
     
     def list_collections(self) -> List[str]:
         """List all collection names."""
-        # Always include default collection if we have data
-        collections = set(self._collections.keys())
-        if self.ids:
-            collections.add("default")
-        return list(collections)
+        return list(self._collections.keys())
     
     def close(self) -> None:
         """Close the store and clean up resources."""

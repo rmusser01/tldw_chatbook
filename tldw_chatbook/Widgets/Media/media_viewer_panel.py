@@ -25,6 +25,38 @@ if TYPE_CHECKING:
     from ...app import TldwCli
 
 
+MEDIA_USE_IN_CHAT_DISABLED_TOOLTIP = "Select a media item before using it in Chat."
+MEDIA_USE_IN_CHAT_ENABLED_TOOLTIP = "Use the selected media item in Chat."
+READ_IT_LATER_DISABLED_TOOLTIP = "Read-it-later is unavailable for this media item."
+READ_IT_LATER_SAVE_TOOLTIP = "Save this item for later reading."
+READ_IT_LATER_REMOVE_TOOLTIP = "Remove this item from Read-it-later."
+ANALYSIS_SAVE_DISABLED_TOOLTIP = "Generate an analysis before saving it."
+ANALYSIS_SAVE_ENABLED_TOOLTIP = "Save this generated analysis."
+ANALYSIS_SAVE_EXISTING_TOOLTIP = "This analysis is already saved. Use Overwrite to update it."
+ANALYSIS_SAVE_NOTE_DISABLED_TOOLTIP = "Generate an analysis before saving it as a note."
+ANALYSIS_SAVE_NOTE_ENABLED_TOOLTIP = "Save this analysis as a note."
+ANALYSIS_EDIT_DISABLED_TOOLTIP = "Generate or select an analysis before editing it."
+ANALYSIS_EDIT_ENABLED_TOOLTIP = "Edit this analysis."
+ANALYSIS_EDIT_CANCEL_TOOLTIP = "Cancel editing this analysis."
+ANALYSIS_OVERWRITE_DISABLED_TOOLTIP = "Save an analysis before overwriting it."
+ANALYSIS_OVERWRITE_ENABLED_TOOLTIP = "Overwrite the saved analysis with the edited text."
+ANALYSIS_DELETE_DISABLED_TOOLTIP = "Select a saved analysis version before deleting it."
+ANALYSIS_DELETE_ENABLED_TOOLTIP = "Delete this saved analysis version."
+ANALYSIS_DELETE_EDITING_TOOLTIP = "Cancel editing before deleting an analysis."
+ANALYSIS_SAVE_EDITING_TOOLTIP = "Finish or cancel editing before saving."
+ANALYSIS_SAVE_NOTE_EDITING_TOOLTIP = "Finish or cancel editing before saving as a note."
+ANALYSIS_NAV_EMPTY_TOOLTIP = "No saved analysis versions to navigate."
+ANALYSIS_NAV_PREVIOUS_ENABLED_TOOLTIP = "Show the previous analysis version."
+ANALYSIS_NAV_PREVIOUS_DISABLED_TOOLTIP = "Already viewing the first analysis version."
+ANALYSIS_NAV_NEXT_ENABLED_TOOLTIP = "Show the next analysis version."
+ANALYSIS_NAV_NEXT_DISABLED_TOOLTIP = "Already viewing the last analysis version."
+READING_HIGHLIGHT_ADD_TOOLTIP = "Add a reading highlight to this media item."
+READING_HIGHLIGHT_UPDATE_DISABLED_TOOLTIP = "Select a reading highlight before updating it."
+READING_HIGHLIGHT_UPDATE_ENABLED_TOOLTIP = "Update this reading highlight."
+READING_HIGHLIGHT_DELETE_DISABLED_TOOLTIP = "Select a reading highlight before deleting it."
+READING_HIGHLIGHT_DELETE_ENABLED_TOOLTIP = "Delete this reading highlight."
+
+
 class ContentSearchEvent(Message):
     """Event fired when searching within content."""
     
@@ -39,6 +71,13 @@ class MediaViewerPanel(Container):
     
     Provides comprehensive viewing and editing capabilities for media items.
     """
+
+    class UseInChatRequested(Message):
+        """Request staging the loaded media item into Chat."""
+
+        def __init__(self, media_data: Dict[str, Any]) -> None:
+            super().__init__()
+            self.media_data = dict(media_data)
     
     DEFAULT_CSS = """
     MediaViewerPanel {
@@ -479,7 +518,59 @@ class MediaViewerPanel(Container):
                         with Collapsible(title="Actions", collapsed=True):
                             with Horizontal(classes="metadata-buttons"):
                                 yield Button("Edit", id="edit-button", variant="primary")
+                                yield Button(
+                                    "Use in Chat",
+                                    id="media-use-in-chat-button",
+                                    variant="primary",
+                                    disabled=True,
+                                    tooltip=MEDIA_USE_IN_CHAT_DISABLED_TOOLTIP,
+                                )
+                                yield Button(
+                                    "Save for Later",
+                                    id="read-it-later-button",
+                                    variant="default",
+                                    classes="hidden",
+                                    disabled=True,
+                                    tooltip=READ_IT_LATER_DISABLED_TOOLTIP,
+                                )
                                 yield Button("Delete", id="delete-button", variant="error")
+
+                        with Collapsible(title="Reading Highlights", collapsed=True, id="reading-highlights-editor"):
+                            yield Static("No reading highlights loaded.", id="reading-highlights-status")
+                            yield Select(
+                                [],
+                                prompt="Select highlight",
+                                allow_blank=True,
+                                id="reading-highlight-select",
+                                disabled=True,
+                            )
+                            yield Label("Quote:", classes="edit-label")
+                            yield TextArea("", id="reading-highlight-quote")
+                            yield Label("Note:", classes="edit-label")
+                            yield TextArea("", id="reading-highlight-note")
+                            yield Label("Color:", classes="edit-label")
+                            yield Input("yellow", id="reading-highlight-color")
+                            with Horizontal(classes="edit-actions"):
+                                yield Button(
+                                    "Add Highlight",
+                                    id="add-reading-highlight-btn",
+                                    variant="success",
+                                    tooltip=READING_HIGHLIGHT_ADD_TOOLTIP,
+                                )
+                                yield Button(
+                                    "Update Highlight",
+                                    id="update-reading-highlight-btn",
+                                    variant="primary",
+                                    disabled=True,
+                                    tooltip=READING_HIGHLIGHT_UPDATE_DISABLED_TOOLTIP,
+                                )
+                                yield Button(
+                                    "Delete Highlight",
+                                    id="delete-reading-highlight-btn",
+                                    variant="error",
+                                    disabled=True,
+                                    tooltip=READING_HIGHLIGHT_DELETE_DISABLED_TOOLTIP,
+                                )
                     
                     # Edit mode (hidden by default)
                     with Container(id="metadata-edit", classes="edit-section hidden"):
@@ -619,9 +710,19 @@ class MediaViewerPanel(Container):
                     
                     # Analysis navigation (for multiple analyses)
                     with Horizontal(classes="analysis-navigation"):
-                        yield Button("◀", id="prev-analysis-btn", disabled=True)
+                        yield Button(
+                            "◀",
+                            id="prev-analysis-btn",
+                            disabled=True,
+                            tooltip=ANALYSIS_NAV_EMPTY_TOOLTIP,
+                        )
                         yield Static("Analysis 0/0", id="analysis-indicator")
-                        yield Button("▶", id="next-analysis-btn", disabled=True)
+                        yield Button(
+                            "▶",
+                            id="next-analysis-btn",
+                            disabled=True,
+                            tooltip=ANALYSIS_NAV_EMPTY_TOOLTIP,
+                        )
                     
                     # Analysis date info
                     yield Static("", id="analysis-date-info")
@@ -633,18 +734,50 @@ class MediaViewerPanel(Container):
                     
                     # Analysis action buttons
                     with Horizontal(classes="analysis-actions"):
-                        yield Button("Save", id="save-analysis-btn", variant="success", disabled=True)
-                        yield Button("Save as Note", id="save-as-note-btn", variant="success", disabled=True)
-                        yield Button("Edit", id="edit-analysis-btn", variant="primary", disabled=True)
-                        yield Button("Overwrite", id="overwrite-analysis-btn", variant="warning", disabled=True)
-                        yield Button("Delete", id="delete-analysis-btn", variant="error", disabled=True)
+                        yield Button(
+                            "Save",
+                            id="save-analysis-btn",
+                            variant="success",
+                            disabled=True,
+                            tooltip=ANALYSIS_SAVE_DISABLED_TOOLTIP,
+                        )
+                        yield Button(
+                            "Save as Note",
+                            id="save-as-note-btn",
+                            variant="success",
+                            disabled=True,
+                            tooltip=ANALYSIS_SAVE_NOTE_DISABLED_TOOLTIP,
+                        )
+                        yield Button(
+                            "Edit",
+                            id="edit-analysis-btn",
+                            variant="primary",
+                            disabled=True,
+                            tooltip=ANALYSIS_EDIT_DISABLED_TOOLTIP,
+                        )
+                        yield Button(
+                            "Overwrite",
+                            id="overwrite-analysis-btn",
+                            variant="warning",
+                            disabled=True,
+                            tooltip=ANALYSIS_OVERWRITE_DISABLED_TOOLTIP,
+                        )
+                        yield Button(
+                            "Delete",
+                            id="delete-analysis-btn",
+                            variant="error",
+                            disabled=True,
+                            tooltip=ANALYSIS_DELETE_DISABLED_TOOLTIP,
+                        )
                     
                     # Add some padding at the bottom to ensure scrolling works
                     yield Static("", classes="bottom-spacer")
     
     def watch_media_data(self, media_data: Optional[Dict[str, Any]]) -> None:
         """Update display when media data changes."""
+        self._update_use_in_chat_button()
         if media_data:
+            self._update_read_it_later_button()
             self.update_metadata_display()
             self.update_content_display()
             self.update_analysis_display()
@@ -712,6 +845,38 @@ class MediaViewerPanel(Container):
             # Status
             if self.media_data.get('is_deleted'):
                 lines.append("[red][bold]Status:[/bold] DELETED[/red]")
+
+            if self.media_data.get("backing_media_id") not in (None, ""):
+                progress = self.media_data.get("reading_progress") or {}
+                current_page = progress.get("current_page")
+                total_pages = progress.get("total_pages")
+                percent_complete = progress.get("percent_complete")
+
+                if current_page is not None or total_pages is not None:
+                    progress_text = f"{current_page or 0} / {total_pages or '?'}"
+                    if percent_complete is not None:
+                        progress_text = f"{progress_text} ({float(percent_complete):.1f}%)"
+                    lines.append(f"[bold]Reading Progress:[/bold] {progress_text}")
+
+            highlights = self.media_data.get("reading_highlights") or []
+            if isinstance(highlights, list) and highlights:
+                lines.append(f"[bold]Highlights: {len(highlights)}[/bold]")
+                for highlight in highlights[:3]:
+                    if not isinstance(highlight, dict):
+                        continue
+                    quote = str(highlight.get("quote") or "").strip()
+                    if len(quote) > 80:
+                        quote = f"{quote[:77]}..."
+                    note = str(highlight.get("note") or "").strip()
+                    color = str(highlight.get("color") or "").strip()
+                    summary = f"- {quote}" if quote else "- Highlight"
+                    if color:
+                        summary = f"{summary} ({color})"
+                    if note:
+                        summary = f"{summary}: {note}"
+                    lines.append(summary)
+                if len(highlights) > 3:
+                    lines.append(f"- ... and {len(highlights) - 3} more")
             
             display.update("\n".join(lines))
         except Exception as e:
@@ -778,6 +943,11 @@ class MediaViewerPanel(Container):
     def clear_display(self) -> None:
         """Clear all displays when no item is selected."""
         try:
+            self.media_data = None
+            self.all_analyses = []
+            self.current_analysis = None
+            self.current_analysis_index = 0
+            self.has_existing_analysis = False
             self.query_one("#metadata-display", Static).update("*No item selected*")
             self.query_one("#content-display", Markdown).update("*No item selected*")
             self.query_one("#analysis-display", Markdown).update("*No item selected*")
@@ -787,8 +957,49 @@ class MediaViewerPanel(Container):
             # Clear search input
             search_input = self.query_one("#content-search-input", Input)
             search_input.value = ""
-        except:
+            self._update_read_it_later_button()
+            self._update_use_in_chat_button()
+        except Exception:
             pass
+
+    def _update_use_in_chat_button(self) -> None:
+        """Enable the Chat handoff action when a media item is loaded."""
+        try:
+            button = self.query_one("#media-use-in-chat-button", Button)
+        except Exception:
+            return
+        button.disabled = not bool(self.media_data)
+        button.tooltip = (
+            MEDIA_USE_IN_CHAT_ENABLED_TOOLTIP
+            if self.media_data
+            else MEDIA_USE_IN_CHAT_DISABLED_TOOLTIP
+        )
+
+    def _build_use_in_chat_event(self) -> Optional[UseInChatRequested]:
+        if not self.media_data:
+            return None
+        return self.UseInChatRequested(dict(self.media_data))
+
+    def _update_read_it_later_button(self) -> None:
+        """Sync the save/remove affordance with the currently loaded record."""
+        try:
+            button = self.query_one("#read-it-later-button", Button)
+        except Exception:
+            return
+
+        media_data = self.media_data or {}
+        supports_toggle = bool(media_data.get("supports_read_it_later"))
+        is_saved = bool(media_data.get("is_read_it_later"))
+
+        button.disabled = not supports_toggle
+        if supports_toggle:
+            button.remove_class("hidden")
+            button.label = "Remove from Read-it-later" if is_saved else "Save for Later"
+            button.tooltip = READ_IT_LATER_REMOVE_TOOLTIP if is_saved else READ_IT_LATER_SAVE_TOOLTIP
+        else:
+            button.add_class("hidden")
+            button.label = "Save for Later"
+            button.tooltip = READ_IT_LATER_DISABLED_TOOLTIP
     
     def _format_content_for_reading(self, content: str) -> str:
         """Format content for better readability."""
@@ -832,6 +1043,14 @@ class MediaViewerPanel(Container):
         
         return ''.join(result)
     
+    @on(Button.Pressed, "#media-use-in-chat-button")
+    def handle_use_in_chat_button(self, event: Button.Pressed) -> None:
+        """Handle Use in Chat button press."""
+        event.stop()
+        handoff_event = self._build_use_in_chat_event()
+        if handoff_event is not None:
+            self.post_message(handoff_event)
+
     @on(Button.Pressed, "#edit-button")
     def handle_edit_button(self) -> None:
         """Handle edit button press."""
@@ -862,7 +1081,9 @@ class MediaViewerPanel(Container):
                 author=author,
                 url=url,
                 keywords=keyword_list,
-                type_slug=""  # Will be set by MediaWindow
+                type_slug="",  # Will be set by MediaWindow
+                record_id=self.media_data.get("id"),
+                backing_media_id=self.media_data.get("backing_media_id"),
             ))
             
             # Exit edit mode
@@ -883,8 +1104,26 @@ class MediaViewerPanel(Container):
             self.post_message(MediaDeleteConfirmationEvent(
                 media_id=self.media_data['id'],
                 media_title=self.media_data.get('title', 'Untitled'),
-                type_slug=""  # Will be set by MediaWindow
+                type_slug="",  # Will be set by MediaWindow
+                record_id=self.media_data.get("id"),
+                backing_media_id=self.media_data.get("backing_media_id"),
             ))
+
+    @on(Button.Pressed, "#read-it-later-button")
+    def handle_read_it_later_button(self) -> None:
+        """Toggle the current record's read-it-later state."""
+        if not self.media_data or not self.media_data.get("supports_read_it_later"):
+            return
+
+        from ...Event_Handlers.media_events import MediaReadItLaterToggleEvent
+
+        self.post_message(
+            MediaReadItLaterToggleEvent(
+                media_id=self.media_data.get("source_id", self.media_data.get("id")),
+                record_id=self.media_data.get("id"),
+                save_for_later=not bool(self.media_data.get("is_read_it_later")),
+            )
+        )
     
     @on(Input.Changed, "#content-search-input")
     def handle_content_search(self, event: Input.Changed) -> None:
@@ -988,6 +1227,7 @@ class MediaViewerPanel(Container):
         self.media_data = media_data
         self.edit_mode = False
         self.clear_search()
+        self._update_read_it_later_button()
         # Clear search input when loading new media
         try:
             search_input = self.query_one("#content-search-input", Input)
@@ -999,53 +1239,31 @@ class MediaViewerPanel(Container):
             self.populate_providers()
         except Exception as e:
             logger.debug(f"Could not populate providers: {e}")
-        
-        # Load all analyses for this media item
-        self.load_all_analyses()
-    
-    def load_all_analyses(self) -> None:
-        """Load all analyses (document versions) for the current media item."""
-        if not self.media_data or not self.app_instance.media_db:
+
+        self.load_analysis_versions([])
+
+    def load_analysis_versions(self, analyses: List[Dict[str, Any]]) -> None:
+        """Load analysis versions supplied by the active scope service."""
+        if not self.media_data:
             self.all_analyses = []
             self.current_analysis_index = 0
+            self.current_analysis = None
+            self.has_existing_analysis = False
             self._update_analysis_navigation()
             return
-        
+
         try:
-            media_id = self.media_data.get('id')
-            if not media_id:
-                return
-            
-            # Get all document versions with analysis content
-            all_versions = self.app_instance.media_db.get_all_document_versions(
-                media_id=media_id,
-                include_content=False,  # We don't need content, just analysis
-                include_deleted=False
-            )
-            
-            logger.debug(f"Found {len(all_versions)} total versions for media_id={media_id}")
-            
-            # Filter to only versions that have analysis content
-            self.all_analyses = [v for v in all_versions if v.get('analysis_content')]
-            
-            logger.info(f"Found {len(self.all_analyses)} analyses with content out of {len(all_versions)} total versions")
-            
-            # Sort by version number (newest first)
+            self.all_analyses = [dict(version) for version in analyses if version.get("analysis_content")]
             self.all_analyses.sort(key=lambda x: x.get('version_number', 0), reverse=True)
-            
-            # Set current index to 0 (most recent) if we have analyses
+
             if self.all_analyses:
                 self.current_analysis_index = 0
                 self.has_existing_analysis = True
-                # Display the current analysis
                 self._display_analysis_at_index(0)
             else:
                 self.current_analysis_index = 0
                 self.has_existing_analysis = False
-                # If no analyses in versions but media has analysis, use it
                 if self.media_data.get('analysis'):
-                    logger.info("No document versions with analysis, but media has analysis field")
-                    # Create a pseudo-version for the existing analysis
                     self.all_analyses = [{
                         'version_number': 0,
                         'analysis_content': self.media_data['analysis'],
@@ -1054,6 +1272,14 @@ class MediaViewerPanel(Container):
                     }]
                     self.has_existing_analysis = True
                     self._display_analysis_at_index(0)
+                else:
+                    self.current_analysis = None
+                    self._update_analysis_button_states()
+                    try:
+                        self.query_one("#analysis-display", Markdown).update("*No analysis available for this media item.*")
+                        self.query_one("#analysis-date-info", Static).update("")
+                    except Exception:
+                        pass
             
             self._update_analysis_navigation()
             
@@ -1061,7 +1287,14 @@ class MediaViewerPanel(Container):
             logger.error(f"Error loading all analyses: {e}", exc_info=True)
             self.all_analyses = []
             self.current_analysis_index = 0
+            self.current_analysis = None
+            self.has_existing_analysis = False
+            self._update_analysis_button_states()
             self._update_analysis_navigation()
+
+    def load_all_analyses(self) -> None:
+        """Compatibility wrapper for callers that have not switched to scope-owned loading."""
+        self.load_analysis_versions([])
     
     def _display_analysis_at_index(self, index: int) -> None:
         """Display the analysis at the given index."""
@@ -1124,11 +1357,23 @@ class MediaViewerPanel(Container):
             if total_analyses == 0:
                 prev_btn.disabled = True
                 next_btn.disabled = True
+                prev_btn.tooltip = ANALYSIS_NAV_EMPTY_TOOLTIP
+                next_btn.tooltip = ANALYSIS_NAV_EMPTY_TOOLTIP
                 indicator.update("No analyses")
             else:
                 # Update navigation buttons
                 prev_btn.disabled = self.current_analysis_index == 0
                 next_btn.disabled = self.current_analysis_index >= total_analyses - 1
+                prev_btn.tooltip = (
+                    ANALYSIS_NAV_PREVIOUS_DISABLED_TOOLTIP
+                    if prev_btn.disabled
+                    else ANALYSIS_NAV_PREVIOUS_ENABLED_TOOLTIP
+                )
+                next_btn.tooltip = (
+                    ANALYSIS_NAV_NEXT_DISABLED_TOOLTIP
+                    if next_btn.disabled
+                    else ANALYSIS_NAV_NEXT_ENABLED_TOOLTIP
+                )
                 
                 # Update indicator (1-based for display)
                 current_display = self.current_analysis_index + 1
@@ -1324,16 +1569,34 @@ class MediaViewerPanel(Container):
             
             if self.analysis_edit_mode:
                 save_btn.disabled = True
+                save_btn.tooltip = ANALYSIS_SAVE_EDITING_TOOLTIP
                 save_as_note_btn.disabled = True
+                save_as_note_btn.tooltip = ANALYSIS_SAVE_NOTE_EDITING_TOOLTIP
                 edit_btn.label = "Cancel Edit"
+                edit_btn.tooltip = ANALYSIS_EDIT_CANCEL_TOOLTIP
                 overwrite_btn.disabled = False
+                overwrite_btn.tooltip = ANALYSIS_OVERWRITE_ENABLED_TOOLTIP
                 delete_btn.disabled = True
+                delete_btn.tooltip = ANALYSIS_DELETE_EDITING_TOOLTIP
             else:
                 save_btn.disabled = not self.current_analysis or self.has_existing_analysis
+                if not self.current_analysis:
+                    save_btn.tooltip = ANALYSIS_SAVE_DISABLED_TOOLTIP
+                elif self.has_existing_analysis:
+                    save_btn.tooltip = ANALYSIS_SAVE_EXISTING_TOOLTIP
+                else:
+                    save_btn.tooltip = ANALYSIS_SAVE_ENABLED_TOOLTIP
                 save_as_note_btn.disabled = not self.current_analysis
+                save_as_note_btn.tooltip = (
+                    ANALYSIS_SAVE_NOTE_ENABLED_TOOLTIP if self.current_analysis else ANALYSIS_SAVE_NOTE_DISABLED_TOOLTIP
+                )
                 edit_btn.label = "Edit"
                 edit_btn.disabled = not self.current_analysis
+                edit_btn.tooltip = ANALYSIS_EDIT_ENABLED_TOOLTIP if self.current_analysis else ANALYSIS_EDIT_DISABLED_TOOLTIP
                 overwrite_btn.disabled = not self.has_existing_analysis
+                overwrite_btn.tooltip = (
+                    ANALYSIS_OVERWRITE_ENABLED_TOOLTIP if self.has_existing_analysis else ANALYSIS_OVERWRITE_DISABLED_TOOLTIP
+                )
                 # Delete button enabled only when there's a saved analysis with UUID
                 # Check if current analysis has a UUID (not a legacy analysis)
                 has_deletable_analysis = False
@@ -1344,6 +1607,9 @@ class MediaViewerPanel(Container):
                         has_deletable_analysis = (current_analysis.get('uuid') is not None or 
                                                   current_analysis.get('version_number') == 'unsaved')
                 delete_btn.disabled = not has_deletable_analysis
+                delete_btn.tooltip = (
+                    ANALYSIS_DELETE_ENABLED_TOOLTIP if has_deletable_analysis else ANALYSIS_DELETE_DISABLED_TOOLTIP
+                )
                 
         except Exception:
             pass
@@ -1470,7 +1736,9 @@ class MediaViewerPanel(Container):
                 top_p=top_p,
                 min_p=min_p,
                 max_tokens=max_tokens,
-                type_slug=""  # Will be set by MediaWindow
+                type_slug="",  # Will be set by MediaWindow
+                record_id=self.media_data.get("id"),
+                backing_media_id=self.media_data.get("backing_media_id"),
             ))
             
             logger.debug("MediaAnalysisRequestEvent posted successfully")
@@ -1522,7 +1790,8 @@ class MediaViewerPanel(Container):
         self.post_message(MediaAnalysisSaveEvent(
             media_id=self.media_data['id'],
             analysis_content=self.current_analysis,
-            type_slug=""  # Will be set by MediaWindow
+            type_slug="",  # Will be set by MediaWindow
+            record_id=self.media_data.get("id"),
         ))
     
     @on(Button.Pressed, "#save-as-note-btn")
@@ -1535,7 +1804,8 @@ class MediaViewerPanel(Container):
         self.post_message(MediaAnalysisSaveAsNoteEvent(
             media_id=self.media_data['id'],
             media_title=self.media_data.get('title', 'Untitled Media'),
-            analysis_content=self.current_analysis
+            analysis_content=self.current_analysis,
+            record_id=self.media_data.get("id"),
         ))
     
     @on(Button.Pressed, "#edit-analysis-btn")
@@ -1600,7 +1870,8 @@ class MediaViewerPanel(Container):
         self.post_message(MediaAnalysisOverwriteEvent(
             media_id=self.media_data['id'],
             analysis_content=analysis_content,
-            type_slug=""  # Will be set by MediaWindow
+            type_slug="",  # Will be set by MediaWindow
+            record_id=self.media_data.get("id"),
         ))
         
         # Exit edit mode if active
@@ -1708,7 +1979,9 @@ class MediaViewerPanel(Container):
                 self.post_message(MediaAnalysisDeleteEvent(
                     media_id=self.media_data['id'],
                     version_uuid=analysis_uuid,
-                    type_slug=""  # Will be set by MediaWindow
+                    type_slug="",  # Will be set by MediaWindow
+                    record_id=self.media_data.get("id"),
+                    version_number=analysis_version,
                 ))
             else:
                 # For unsaved analyses or legacy analyses without UUID

@@ -23,7 +23,8 @@
     height: 100%;
     background: $panel;
     color: $text;
-    border: none;
+    border: solid $border;
+    border-bottom: solid $border;
     padding: 0 1;
     margin: 0;        /* No margin needed - centering handled by container */
 }
@@ -36,8 +37,10 @@
 
 /* Select widget focus state */
 #tab-dropdown-select:focus {
-    border: solid $accent;
-    background: $panel-lighten-1;
+    border: solid $ds-input-focus-border;
+    border-bottom: solid $ds-input-focus-accent;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
 }
 
 /* Dropdown overlay container */
@@ -61,15 +64,15 @@
 
 /* Option hover state */
 #tab-dropdown-select SelectOverlay Option:hover {
-    background: $accent;
+    background: $surface-lighten-1;
     color: $text;
 }
 
 /* Currently selected option (when dropdown is open) */
 #tab-dropdown-select SelectOverlay Option.-selected {
-    background: $accent-darken-1;
-    color: $text;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Disabled state (if needed in future) */

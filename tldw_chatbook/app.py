@@ -45,7 +45,7 @@ from textual.worker import Worker
 from textual.binding import Binding
 from textual.message import Message
 from textual.timer import Timer
-from textual.css.query import QueryError
+from textual.css.query import NoMatches, QueryError
 from textual.command import Hit, Hits, Provider
 from functools import partial
 from pathlib import Path
@@ -64,17 +64,59 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events import handl
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from .Widgets.AppFooterStatus import AppFooterStatus
 from .config import (
+    get_library_collections_db_path,
     get_media_db_path,
+    get_notifications_db_path,
     get_prompts_db_path,
+    get_notifications_db_path,
+    get_research_db_path,
+    get_subscriptions_db_path,
+    get_user_data_dir,
+    get_workspaces_db_path,
+    get_writing_db_path,
 )
 from .Logging_Config import configure_application_logging
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
-    TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
-    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS
+from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
+    TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, TAB_LIBRARY, TAB_ARTIFACTS, TAB_PERSONAS, TAB_WATCHLISTS_COLLECTIONS, \
+    TAB_SCHEDULES, TAB_WORKFLOWS, TAB_MCP, TAB_ACP, TAB_SKILLS, TAB_SETTINGS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
+    LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
+    get_tab_display_label
+from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.console_live_work import (
+    ConsoleLiveWorkLaunch,
+    resolve_console_live_work_primary_action,
+)
+from tldw_chatbook.Chat.chat_loop_scope_service import ServerChatLoopScopeService
+from tldw_chatbook.Chat.server_chat_conversation_service import ServerChatConversationService
+from tldw_chatbook.Chat.server_chat_loop_service import ServerChatLoopService
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.config import CLI_APP_CLIENT_ID
+from tldw_chatbook.Chat import (
+    ChatConversationScopeService,
+    ChatConversationService,
+    ServerChatConversationService,
+)
+from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
+from tldw_chatbook.Library import LocalLibraryCollectionsService
+from tldw_chatbook.Home.active_work_adapter import (
+    HomeControlAction,
+    HomeControlResult,
+    HomeControlResultStatus,
+    LocalNotificationHomeActiveWorkAdapter,
+    UnavailableHomeActiveWorkAdapter,
+)
 from tldw_chatbook.Logging_Config import RichLogHandler
-from tldw_chatbook.Prompt_Management import Prompts_Interop as prompts_interop
+from tldw_chatbook.Prompt_Management import (
+    LocalPromptService,
+    PromptChatbookScopeService,
+    Prompts_Interop as prompts_interop,
+    ServerPromptService,
+)
 from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN, supports_emoji
 from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
 from tldw_chatbook.Utils.ui_helpers import UIHelpers
@@ -100,6 +142,7 @@ from .Event_Handlers import (
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
     search_events, subscription_events,
 )
+from .Event_Handlers.tab_initializers.notes_tab_initializer import NotesTabInitializer
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks, \
     chat_events_dictionaries
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
@@ -110,11 +153,40 @@ from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler, STTSPlaygroundGenerateEvent, STTSSettingsSaveEvent, STTSAudioBookGenerateEvent
 )
 from .Notes.Notes_Library import NotesInteropService
+from .Notes.notes_scope_service import NotesScopeService
+from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
+from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
+from .Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
+from .Character_Chat.local_character_persona_service import LocalCharacterPersonaService
+from .Character_Chat.local_chat_dictionary_service import LocalChatDictionaryService
+from .Character_Chat.server_chat_dictionary_service import ServerChatDictionaryService
+from .Character_Chat.server_character_persona_service import ServerCharacterPersonaService
+from .RAG_Admin.local_rag_admin_service import LocalRAGAdminService
+from .RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
+from .RAG_Admin.server_rag_admin_service import ServerRAGAdminService
+from .Study_Interop import (
+    LocalQuizService,
+    LocalStudyService,
+    QuizScopeService,
+    ServerQuizService,
+    ServerStudyService,
+    StudyScopeService,
+)
+from .Writing_Interop import (
+    LocalWritingService,
+    ServerWritingService,
+    WritingScopeService,
+)
+from .Research_Interop import (
+    LocalResearchService,
+    ResearchScopeService,
+    ServerResearchService,
+)
+from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
+from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from .DB.ChaChaNotes_DB import CharactersRAGDBError, ConflictError
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
-from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_left import NotesSidebarLeft
-from tldw_chatbook.Widgets.Note_Widgets.notes_sidebar_right import NotesSidebarRight
 from .Widgets.titlebar import TitleBar
 from .Widgets.splash_screen import SplashScreen
 from .LLM_Calls.LLM_API_Calls import (
@@ -128,26 +200,11 @@ from .LLM_Calls.LLM_API_Calls_Local import (
     chat_with_ollama, chat_with_custom_openai, chat_with_custom_openai_2, chat_with_local_llm
 )
 from tldw_chatbook.config import get_chachanotes_db_path, settings, get_chachanotes_db_lazy
-from .UI.Chat_Window import ChatWindow
-from .UI.Chat_Window_Enhanced import ChatWindowEnhanced
-from .UI.Conv_Char_Window import CCPWindow
-from .UI.Logs_Window import LogsWindow
-from .UI.Stats_Window import StatsWindow
-from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
 from .UI.Navigation.main_navigation import NavigateToScreen
-from .UI.Screens.chat_screen import ChatScreen
-from .UI.Screens.media_ingest_screen import MediaIngestScreen
-from .UI.Screens.coding_screen import CodingScreen
-from .UI.Screens.conversation_screen import ConversationScreen
-from .UI.Screens.media_screen import MediaScreen
-from .UI.Screens.notes_screen import NotesScreen
-from .UI.Screens.search_screen import SearchScreen
-from .UI.Screens.evals_screen import EvalsScreen
-from .UI.Screens.tools_settings_screen import ToolsSettingsScreen
-from .UI.Screens.llm_screen import LLMScreen
-from .UI.Screens.customize_screen import CustomizeScreen
-from .UI.Screens.logs_screen import LogsScreen
-from .UI.Screens.stats_screen import StatsScreen
+from .UI.Navigation.screen_registry import resolve_screen_target
+from .UI.Screens.notes_scope_models import WorkspaceSubview
+from .UI.Screens.media_runtime_state import MediaRuntimeState
+from .UI.Screens.study_scope_models import StudyScopeContext
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
 # The legacy per-view navigation (ingest-nav-*/ingest-view-*) is not used anymore.
 # Keep these as empty to avoid wiring legacy handlers.
@@ -157,36 +214,144 @@ INGEST_VIEW_IDS: list[str] = []
 from .UI.Tools_Settings_Window import ToolsSettingsWindow
 from .UI.LLM_Management_Window import LLMManagementWindow
 from .UI.Customize_Window import CustomizeWindow
-# Using pragmatic V2 Evals window
-from .UI.Evals.evals_window_v3 import EvalsWindowV3 as EvalsWindow
-from .UI.Coding_Window import CodingWindow
-from .UI.STTS_Window import STTSWindow
-from .UI.Study_Window import StudyWindow
-from .UI.Chatbooks_Window import ChatbooksWindow
 from .UI.Tab_Bar import TabBar
 from .UI.Tab_Links import TabLinks
 from .UI.Tab_Dropdown import TabDropdown
-from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
-from .UI.SearchWindow import SearchWindow
-from .UI.SearchWindow import ( # Import new constants from SearchWindow.py
-    SEARCH_VIEW_RAG_QA,
-    SEARCH_NAV_RAG_QA,
-    SEARCH_NAV_RAG_CHAT,
-    SEARCH_NAV_RAG_MANAGEMENT,
-    SEARCH_NAV_WEB_SEARCH,
-    SEARCH_NAV_EMBEDDINGS_CREATE,
-    SEARCH_NAV_EMBEDDINGS_MANAGE
+from tldw_chatbook.Chat_Grammars_Interop import (
+    ChatGrammarsScopeService,
+    LocalChatGrammarsService,
+    ServerChatGrammarsService,
 )
+from tldw_chatbook.Claims_Interop import ClaimsScopeService, ServerClaimsService
+from tldw_chatbook.Companion_Interop import CompanionScopeService, ServerCompanionService
+from tldw_chatbook.Collections_Interop import CollectionsFeedsScopeService, ServerCollectionsFeedsService
+from tldw_chatbook.External_Connectors_Interop import ConnectorsScopeService, ServerConnectorsService
+from tldw_chatbook.Feedback_Interop import FeedbackScopeService, LocalFeedbackService, ServerFeedbackService
+from tldw_chatbook.Kanban_Interop import KanbanScopeService, LocalKanbanService, ServerKanbanService
+from tldw_chatbook.LLM_Provider_Catalog import (
+    LLMProviderCatalogScopeService,
+    LocalLLMProviderCatalogService,
+    ServerLLMProviderCatalogService,
+)
+from tldw_chatbook.Media import (
+    LocalMediaReadingService,
+    MediaReadingScopeService,
+    ServerMediaReadingService,
+)
+from tldw_chatbook.Meetings_Interop import MeetingsScopeService, ServerMeetingsService
+from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+from tldw_chatbook.MCP.local_store import LocalMCPStore
+from tldw_chatbook.MCP.server_target_store import ConfiguredServerTargetStore
+from tldw_chatbook.MCP.server_unified_service import ServerUnifiedMCPService
+from tldw_chatbook.MCP.unified_context_store import UnifiedMCPContextStore
+from tldw_chatbook.MCP.unified_control_plane_service import UnifiedMCPControlPlaneService
+from tldw_chatbook.Notifications import (
+    ClientNotificationsDB,
+    ClientNotificationsService,
+    EventStateRepository,
+    NotificationsScopeService,
+    NotificationDispatchService,
+    ServerNotificationsService,
+)
+from tldw_chatbook.Outputs_Interop import OutputsScopeService, ServerOutputsService
+from tldw_chatbook.Personalization_Interop import (
+    PersonalizationScopeService,
+    ServerPersonalizationService,
+)
+from tldw_chatbook.Prompt_Management.prompt_scope_service import build_prompt_scope_service
+from tldw_chatbook.Prompt_Studio_Interop import PromptStudioScopeService, ServerPromptStudioService
+from tldw_chatbook.Research_Interop import (
+    LocalResearchSearchService,
+    LocalResearchService,
+    ResearchSearchScopeService,
+    ResearchScopeService,
+    ServerResearchSearchService,
+    ServerResearchService,
+)
+from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
+from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
+from tldw_chatbook.Skills_Interop import LocalSkillsService, ServerSkillsService, SkillsScopeService
+from tldw_chatbook.Sync_Interop import (
+    LocalFirstSyncService,
+    ManualSyncControlService,
+    ServerSyncService,
+    SyncScopeService,
+    SyncStateRepository,
+)
+from tldw_chatbook.Text2SQL_Interop import ServerText2SQLService, Text2SQLScopeService
+from tldw_chatbook.Tools_Interop import ServerToolsService, ToolsScopeService
+from tldw_chatbook.MCP_Governance_Interop import MCPGovernanceScopeService, ServerMCPGovernanceService
+from tldw_chatbook.User_Governance_Interop import ServerUserGovernanceService, UserGovernanceScopeService
+from tldw_chatbook.Web_Clipper_Interop import ServerWebClipperService, WebClipperScopeService
+from tldw_chatbook.Web_Scraping_Interop import ServerWebScrapingService, WebScrapingScopeService
+from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+from tldw_chatbook.Writing_Interop import LocalWritingService, ServerWritingService, WritingScopeService
+from tldw_chatbook.Subscriptions import (
+    LocalWatchlistsService,
+    ServerWatchlistsService,
+    WatchlistScopeService,
+)
+from tldw_chatbook.Translation_Interop import ServerTranslationService, TranslationScopeService
+from tldw_chatbook.Voice_Assistant_Interop import ServerVoiceAssistantService, VoiceAssistantScopeService
+from tldw_chatbook.Evaluations_Interop import (
+    EvaluationScopeService,
+    LocalEvaluationsService,
+    ServerEvaluationsService,
+)
+from tldw_chatbook.runtime_policy.bootstrap import (
+    add_runtime_policy_snapshot,
+    build_runtime_api_client,
+    load_runtime_policy_for_app,
+    reconcile_saved_screen_state,
+    set_authoritative_runtime_source,
+)
+from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
+from tldw_chatbook.runtime_policy.server_context import RuntimeServerContextProvider
+from tldw_chatbook.runtime_policy.server_credentials import (
+    CredentialStoreUnavailable,
+    UnavailableServerCredentialStore,
+    build_default_server_credential_store,
+)
+from tldw_chatbook.runtime_policy.server_event_scope import event_principal_id_from_active_context
+from tldw_chatbook.runtime_policy.server_parity_state import (
+    ServerParityStateRepositories,
+    build_server_parity_state_repositories,
+)
+from tldw_chatbook.runtime_policy.engine import PolicyEngine
+from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState
+from tldw_chatbook.state import AppState
+from tldw_chatbook.tldw_api import MCPUnifiedClient
+from tldw_chatbook.Auth_Account_Interop import AuthAccountScopeService, ServerAuthAccountService
+from tldw_chatbook.Audio_Services_Interop import (
+    AudioServicesScopeService,
+    LocalAudioServicesService,
+    ServerAudioServicesService,
+)
+from .Evals.eval_orchestrator import EvaluationOrchestrator
 API_IMPORTS_SUCCESSFUL = True
 
-# Try to import SubscriptionWindow if dependencies are available
-SubscriptionWindow = None
-try:
-    from .UI.SubscriptionWindow import SubscriptionWindow
-    SUBSCRIPTIONS_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Subscriptions feature unavailable: {e}")
-    SUBSCRIPTIONS_AVAILABLE = False
+SEARCH_VIEW_RAG_QA = "search-view-rag-qa"
+SEARCH_NAV_RAG_QA = "search-nav-rag-qa"
+SEARCH_NAV_RAG_CHAT = "search-nav-rag-chat"
+SEARCH_NAV_RAG_MANAGEMENT = "search-nav-rag-management"
+SEARCH_NAV_WEB_SEARCH = "search-nav-web-search"
+SEARCH_NAV_EMBEDDINGS_CREATE = "search-nav-embeddings-create"
+SEARCH_NAV_EMBEDDINGS_MANAGE = "search-nav-embeddings-manage"
+
+CACHEABLE_SCREEN_ROUTES = {
+    TAB_CHAT,
+    TAB_LIBRARY,
+    TAB_NOTES,
+    TAB_MEDIA,
+    TAB_SEARCH,
+    TAB_SETTINGS,
+}
+
+DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
+DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
+DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
 #
 #######################################################################################################################
 #
@@ -301,34 +466,131 @@ class ThemeProvider(Provider):
             self.app.notify(f"Failed to apply theme: {e}", severity="error")
 
 
+def _navigate_via_screen(app: App, route: str, success_message: str) -> None:
+    """Navigate through the screen router so palette commands work in shell mode."""
+    app.post_message(NavigateToScreen(route))
+    app.notify(success_message, severity="information")
+
+
 class TabNavigationProvider(Provider):
     """Provider for tab navigation commands."""
+
+    TAB_HELP_TEXT = {
+        TAB_HOME: "Open Home for notifications, status, and next-best actions",
+        TAB_CHAT: "Open Console for live agent work, approvals, tools, and RAG",
+        TAB_LIBRARY: "Open Library for source material, imports, notes, media, conversations, and Search/RAG",
+        TAB_ARTIFACTS: "Open Artifacts for generated outputs, reports, datasets, and Chatbooks",
+        TAB_PERSONAS: "Open Personas for characters, prompts, dictionaries, and behavior profiles",
+        TAB_WATCHLISTS_COLLECTIONS: "Open Watchlists for monitored sources, runs, alerts, and recovery",
+        TAB_SCHEDULES: "Open Schedules for run timing, triggers, pauses, retries, and recovery",
+        TAB_WORKFLOWS: "Open Workflows for reusable procedures, dry-runs, and outputs",
+        TAB_MCP: "Open MCP for servers, tools, permissions, auth, and audit",
+        TAB_ACP: "Open ACP for agents, sessions, runtimes, diffs, and terminals",
+        TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
+        TAB_SETTINGS: "Open global preferences, appearance, accounts, storage, and app behavior",
+        TAB_CCP: "Switch to Personas for characters, personas, prompts, dictionaries, and world books",
+        TAB_NOTES: "Switch to notes management",
+        TAB_MEDIA: "Switch to media library",
+        TAB_SEARCH: "Switch to search and RAG",
+        TAB_INGEST: "Switch to content ingestion",
+        TAB_EVALS: "Switch to evaluation tools",
+        TAB_LLM: "Switch to model and provider management",
+        TAB_STTS: "Switch to speech-to-text and text-to-speech tools",
+        TAB_STUDY: "Switch to flashcards and quizzes",
+        TAB_WRITING: "Switch to writing tools",
+        TAB_RESEARCH: "Switch to research workflows",
+        TAB_SUBSCRIPTIONS: "Switch to subscriptions and watchlists",
+        TAB_CHATBOOKS: "Switch to portable Chatbook context packs",
+        TAB_TOOLS_SETTINGS: "Open MCP for legacy tools and settings",
+        TAB_LOGS: "Switch to application logs",
+        TAB_CODING: "Switch to coding assistant",
+        TAB_STATS: "Switch to statistics view",
+        TAB_CUSTOMIZE: "Switch to appearance customization",
+    }
+
+    NAVIGATION_TABS = (
+        TAB_HOME,
+        TAB_CHAT,
+        TAB_LIBRARY,
+        TAB_ARTIFACTS,
+        TAB_PERSONAS,
+        TAB_WATCHLISTS_COLLECTIONS,
+        TAB_SCHEDULES,
+        TAB_WORKFLOWS,
+        TAB_MCP,
+        TAB_ACP,
+        TAB_SKILLS,
+        TAB_SETTINGS,
+    )
+
+    POPULAR_TABS = (
+        TAB_HOME,
+        TAB_CHAT,
+        TAB_LIBRARY,
+        TAB_ARTIFACTS,
+        TAB_MCP,
+        TAB_SETTINGS,
+    )
     
     def __init__(self, screen, *args, **kwargs):
         """Initialize the TabNavigationProvider with required screen parameter."""
         super().__init__(screen, *args, **kwargs)
+
+    @classmethod
+    def navigation_tab_ids(cls) -> tuple[str, ...]:
+        return cls.NAVIGATION_TABS
+
+    @classmethod
+    def command_palette_tab_ids(cls) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(cls.NAVIGATION_TABS + tuple(ALL_TABS)))
+
+    @staticmethod
+    def route_for_tab(tab_id: str) -> str:
+        route_aliases = {
+            "llm": TAB_LLM,
+            TAB_TOOLS_SETTINGS: TAB_MCP,
+            TAB_MCP: TAB_MCP,
+            TAB_SETTINGS: TAB_SETTINGS,
+        }
+        return route_aliases.get(tab_id, tab_id)
+
+    @classmethod
+    def _shell_destination_for_tab(cls, tab_id: str):
+        from .UI.Navigation.shell_destinations import get_shell_destination, resolve_shell_route
+
+        resolved = resolve_shell_route(cls.route_for_tab(tab_id))
+        try:
+            return get_shell_destination(resolved.destination_id)
+        except KeyError:
+            return None
+
+    @classmethod
+    def _shell_command_label(cls, tab_id: str, visible_label: str) -> str:
+        destination = cls._shell_destination_for_tab(tab_id)
+        if destination is None or destination.accessible_label == visible_label:
+            return visible_label
+        return f"{visible_label} ({destination.accessible_label})"
+
+    @classmethod
+    def _shell_help_text(cls, tab_id: str) -> str | None:
+        destination = cls._shell_destination_for_tab(tab_id)
+        if destination is None:
+            return None
+        return f"Open {destination.accessible_label} for {destination.purpose}"
+
+    def _tab_command(self, tab_id: str) -> tuple[str, str, str]:
+        label = get_tab_display_label(tab_id)
+        command_label = self._shell_command_label(tab_id, label)
+        help_text = self._shell_help_text(tab_id) or self.TAB_HELP_TEXT.get(tab_id, f"Switch to {label}")
+        return f"Tab Navigation: Switch to {command_label}", tab_id, help_text
     
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
         
-        tab_commands = [
-            ("Tab Navigation: Switch to Chat", TAB_CHAT, "Switch to the main chat interface"),
-            ("Tab Navigation: Switch to Character Chat", TAB_CCP, "Switch to character and conversation management"),
-            ("Tab Navigation: Switch to Notes", TAB_NOTES, "Switch to notes management"),
-            ("Tab Navigation: Switch to Media", TAB_MEDIA, "Switch to media library"),
-            ("Tab Navigation: Switch to Search", TAB_SEARCH, "Switch to search interface"),
-            ("Tab Navigation: Switch to Ingest", TAB_INGEST, "Switch to content ingestion"),
-            ("Tab Navigation: Switch to Tools & Settings", TAB_TOOLS_SETTINGS, "Switch to settings and configuration"),
-            ("Tab Navigation: Switch to Customize", TAB_CUSTOMIZE, "Switch to appearance customization"),
-            ("Tab Navigation: Switch to LLM Management", TAB_LLM, "Switch to LLM provider management"),
-            ("Tab Navigation: Switch to Logs", TAB_LOGS, "Switch to application logs"),
-            ("Tab Navigation: Switch to Stats", TAB_STATS, "Switch to statistics view"),
-            ("Tab Navigation: Switch to Evaluations", TAB_EVALS, "Switch to evaluation tools"),
-            ("Tab Navigation: Switch to Coding", TAB_CODING, "Switch to coding assistant"),
-        ]
+        tab_commands = [self._tab_command(tab_id) for tab_id in self.command_palette_tab_ids()]
         
         for command_text, tab_id, help_text in tab_commands:
-            score = matcher.match(command_text)
+            score = max(matcher.match(command_text), matcher.match(help_text))
             if score > 0:
                 yield Hit(
                     score,
@@ -338,14 +600,7 @@ class TabNavigationProvider(Provider):
                 )
     
     async def discover(self) -> Hits:
-        popular_tabs = [
-            ("Tab Navigation: Switch to Chat", TAB_CHAT, "Switch to the main chat interface"),
-            ("Tab Navigation: Switch to Character Chat", TAB_CCP, "Switch to character and conversation management"),
-            ("Tab Navigation: Switch to Notes", TAB_NOTES, "Switch to notes management"),
-            ("Tab Navigation: Switch to Search", TAB_SEARCH, "Switch to search interface"),
-            ("Tab Navigation: Switch to Tools & Settings", TAB_TOOLS_SETTINGS, "Switch to settings and configuration"),
-            ("Tab Navigation: Switch to Customize", TAB_CUSTOMIZE, "Switch to appearance customization"),
-        ]
+        popular_tabs = [self._tab_command(tab_id) for tab_id in self.POPULAR_TABS]
         
         for command_text, tab_id, help_text in popular_tabs:
             yield Hit(
@@ -358,8 +613,9 @@ class TabNavigationProvider(Provider):
     def switch_tab(self, tab_id: str) -> None:
         """Switch to the specified tab."""
         try:
-            self.app.current_tab = tab_id
-            self.app.notify(f"Switched to {tab_id.replace('_', ' ').title()} tab", severity="information")
+            route = self.route_for_tab(tab_id)
+            self.app.post_message(NavigateToScreen(route))
+            self.app.notify(f"Switched to {get_tab_display_label(tab_id)}", severity="information")
         except Exception as e:
             self.app.notify(f"Failed to switch tab: {e}", severity="error")
 
@@ -484,20 +740,15 @@ class QuickActionsProvider(Provider):
         """Execute the specified quick action."""
         try:
             if action_id == "new_chat":
-                self.app.current_tab = TAB_CHAT
-                self.app.notify("Switched to Chat tab for new conversation", severity="information")
+                _navigate_via_screen(self.app, TAB_CHAT, "Opened Console for a new conversation")
             elif action_id == "new_character":
-                self.app.current_tab = TAB_CCP
-                self.app.notify("Switched to Character Chat tab", severity="information")
+                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas for character setup")
             elif action_id == "new_note":
-                self.app.current_tab = TAB_NOTES
-                self.app.notify("Switched to Notes tab for new note", severity="information")
+                _navigate_via_screen(self.app, TAB_NOTES, "Opened Notes for a new note")
             elif action_id == "search_all":
-                self.app.current_tab = TAB_SEARCH
-                self.app.notify("Switched to Search tab", severity="information")
+                _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG")
             elif action_id == "import_media":
-                self.app.current_tab = TAB_INGEST
-                self.app.notify("Switched to Ingest tab for media import", severity="information")
+                _navigate_via_screen(self.app, TAB_INGEST, "Opened Import/Export for media import")
             else:
                 self.app.notify(f"Quick action '{action_id}' initiated", severity="information")
         except Exception as e:
@@ -556,8 +807,7 @@ class SettingsProvider(Provider):
         """Handle settings commands."""
         try:
             if setting_id == "open_settings":
-                self.app.current_tab = TAB_TOOLS_SETTINGS
-                self.app.notify("Opened Tools & Settings tab", severity="information")
+                _navigate_via_screen(self.app, TAB_SETTINGS, "Opened Settings")
             elif setting_id == "open_config":
                 from .config import DEFAULT_CONFIG_PATH
                 self.app.notify(f"Config file location: {DEFAULT_CONFIG_PATH}", severity="information")
@@ -626,14 +876,11 @@ class CharacterProvider(Provider):
         """Handle character management actions."""
         try:
             if action_id == "open_character_tab":
-                self.app.current_tab = TAB_CCP
-                self.app.notify("Opened Character Chat tab", severity="information")
+                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas")
             elif action_id == "new_character":
-                self.app.current_tab = TAB_CCP
-                self.app.notify("Navigate to Character Chat to create new character", severity="information")
+                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas to create a character")
             elif action_id == "list_characters":
-                self.app.current_tab = TAB_CCP
-                self.app.notify("Showing all characters in Character Chat tab", severity="information")
+                _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas to list characters")
             else:
                 self.app.notify(f"Character action '{action_id}' requested", severity="information")
         except Exception as e:
@@ -691,14 +938,11 @@ class MediaProvider(Provider):
         """Handle media management actions."""
         try:
             if action_id == "open_media":
-                self.app.current_tab = TAB_MEDIA
-                self.app.notify("Opened Media Library tab", severity="information")
+                _navigate_via_screen(self.app, TAB_MEDIA, "Opened Media Library")
             elif action_id == "import_new":
-                self.app.current_tab = TAB_INGEST
-                self.app.notify("Opened Ingest tab for media import", severity="information")
+                _navigate_via_screen(self.app, TAB_INGEST, "Opened Import/Export for media import")
             elif action_id == "search_transcripts":
-                self.app.current_tab = TAB_SEARCH
-                self.app.notify("Opened Search tab for transcript search", severity="information")
+                _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG for transcript search")
             else:
                 self.app.notify(f"Media action '{action_id}' requested", severity="information")
         except Exception as e:
@@ -755,8 +999,7 @@ class DeveloperProvider(Provider):
         """Handle developer/debug actions."""
         try:
             if action_id == "open_logs":
-                self.app.current_tab = TAB_LOGS
-                self.app.notify("Opened Logs tab", severity="information")
+                _navigate_via_screen(self.app, TAB_LOGS, "Opened Logs")
             elif action_id == "app_info":
                 self.app.notify("tldw_chatbook - TUI for LLM interactions", severity="information")
             elif action_id == "show_keys":
@@ -918,6 +1161,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     chat_api_provider_value: reactive[Optional[str]] = reactive(_default_chat_provider)
     # Renamed character_api_provider_value to ccp_api_provider_value for clarity with TAB_CCP
     ccp_api_provider_value: reactive[Optional[str]] = reactive(_default_ccp_provider)
+
+    def query_one(self, selector, expect_type=None):
+        """Resolve legacy app-level queries against the active pushed screen when needed."""
+        try:
+            return super().query_one(selector, expect_type)
+        except NoMatches:
+            try:
+                active_screen = self.screen
+            except Exception:
+                raise
+            return active_screen.query_one(selector, expect_type)
+
     # RAG expansion provider reactive
     rag_expansion_provider_value: reactive[Optional[str]] = reactive(_default_chat_provider)
 
@@ -936,8 +1191,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # Load saved width from config, default to 25% if not set
     _saved_width = settings.get("chat_defaults", {}).get("right_sidebar_width", 25)
     chat_right_sidebar_width: reactive[int] = reactive(_saved_width)  # Width percentage for right sidebar
-    notes_sidebar_left_collapsed: reactive[bool] = reactive(False)
-    notes_sidebar_right_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_left_collapsed: reactive[bool] = reactive(False)
     conv_char_sidebar_right_collapsed: reactive[bool] = reactive(False)
     evals_sidebar_collapsed: reactive[bool] = reactive(False) # Added for Evals tab
@@ -1090,6 +1343,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Tab switching optimization
         self._initialized_tabs = set()  # Track which tabs have been initialized
+        self._screen_cache: dict[str, Any] = {}
         
         # Reduce logging in production
         if not os.environ.get("TLDW_DEBUG"):
@@ -1108,15 +1362,32 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         phase_start = time.perf_counter()
         self.MediaDatabase = MediaDatabase
         self.app_config = load_settings()
+        self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(self.app_config)
+        self.acp_runtime_session_state = self.acp_runtime_process_manager.session_state()
+        self.app_state = AppState()
+        self.runtime_policy = load_runtime_policy_for_app(self)
+        self.service_policy_enforcer = ServicePolicyEnforcer.from_runtime_policy_context(
+            self.runtime_policy
+        )
+        self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
+        self.pending_chat_handoff: Optional[ChatHandoffPayload] = None
+        self.pending_console_launch: Optional[ConsoleLiveWorkLaunch | Dict[str, Any]] = None
+        self.pending_study_scope_context: Optional[StudyScopeContext] = None
+        self.pending_study_initial_section: Optional[str] = None
+        self.pending_notes_workspace_context: Optional[Dict[str, Any]] = None
+        self.home_active_work_adapter = UnavailableHomeActiveWorkAdapter(
+            runtime_policy=self.runtime_policy,
+        )
         self.loguru_logger = loguru_logger
         self.loguru_logger.info(f"Loaded app_config - strip_thinking_tags: {self.app_config.get('chat_defaults', {}).get('strip_thinking_tags', 'NOT SET')}") # Make loguru_logger an instance variable for handlers
+        self.client_id = CLI_APP_CLIENT_ID
         self.prompts_client_id = "tldw_tui_client_v1" # Store client ID for prompts service
         self.db_status_manager = DBStatusManager(self)  # Initialize database status manager
+        self._wire_server_context_provider()
         self._startup_phases["basic_init"] = time.perf_counter() - phase_start
         log_histogram("app_startup_phase_duration_seconds", self._startup_phases["basic_init"], 
                      labels={"phase": "basic_init"}, 
                      documentation="Duration of startup phase in seconds")
-        
 
         # Phase 2: Attribute initialization
         phase_start = time.perf_counter()
@@ -1195,9 +1466,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Initial Tab ---
         initial_tab_from_config = get_cli_setting("general", "default_tab", TAB_CHAT)
-        self._initial_tab_value = initial_tab_from_config if initial_tab_from_config in ALL_TABS else TAB_CHAT
-        if self._initial_tab_value != initial_tab_from_config: # Log if fallback occurred
-            logging.warning(f"Default tab '{initial_tab_from_config}' from config not valid. Falling back to '{self._initial_tab_value}'.")
+        self._initial_tab_value = self._normalize_initial_tab_from_config(initial_tab_from_config)
         logging.info(f"App __init__: Determined initial tab value: {self._initial_tab_value}")
         # current_tab reactive will be set in on_mount after UI is composed
 
@@ -1212,16 +1481,41 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if not hasattr(self, '_media_types_for_ui'):
             self._media_types_for_ui = ["Error: Media DB not loaded"]
 
+        initial_media_runtime_backend = self._resolve_initial_media_runtime_backend()
+        self.media_runtime_state = MediaRuntimeState(runtime_backend=initial_media_runtime_backend)
+        self.local_media_reading_service = LocalMediaReadingService(self.media_db, app_config=self.app_config)
+        self.server_media_reading_service = ServerMediaReadingService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.media_reading_scope_service = MediaReadingScopeService(
+            local_service=self.local_media_reading_service,
+            server_service=self.server_media_reading_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self._wire_library_collections_services()
+        self._wire_workspace_registry_services()
+        self._wire_prompt_chatbook_services()
+        self._wire_watchlists_and_notifications_services()
+        self._wire_writing_services()
+
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: {self._media_types_for_ui}")
         self.loguru_logger.debug(f"ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: {type(self._media_types_for_ui)}")
+
+        self._tts_handler = None
+        self._stts_handler = None
+        self._tts_initialization_task: asyncio.Task | None = None
+        self._stts_initialization_task: asyncio.Task | None = None
+        self._deferred_startup_tasks: set[asyncio.Task] = set()
+
+        self._ui_ready = False  # Track if UI is fully composed
+        self._shutting_down = False  # Track if app is shutting down
 
         # --- Setup Default view for CCP tab ---
         # Initialize self.ccp_active_view based on initial tab or default state if needed
         if self._initial_tab_value == TAB_CCP:
             self.ccp_active_view = "conversation_details_view"  # Default view for CCP tab
         # else: it will default to "conversation_details_view" anyway
-        self._ui_ready = False  # Track if UI is fully composed
-        self._shutting_down = False  # Track if app is shutting down
 
         # --- Assign DB instances for event handlers ---
         if self.prompts_service_initialized:
@@ -1235,6 +1529,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         else:
             self.prompts_db = None # Ensure it's None if service failed
             logging.warning("Prompts service not initialized, self.prompts_db set to None.")
+        self.prompt_scope_service = build_prompt_scope_service(
+            prompt_db=self.prompts_db,
+            app_config=self.app_config,
+            policy_enforcer=self.service_policy_enforcer,
+            client_provider=self.server_context_provider,
+        )
 
         if self.notes_service and hasattr(self.notes_service, 'db') and self.notes_service.db:
             self.chachanotes_db = self.notes_service.db # ChaChaNotesDB is used by NotesInteropService
@@ -1247,6 +1547,46 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             else:
                 logging.error("ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.")
                 self.chachanotes_db = None # Explicitly set to None
+
+        self._wire_chat_conversation_services()
+
+        self.server_notes_workspace_service = ServerNotesWorkspaceService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.notes_scope_service = NotesScopeService(
+            local_notes_service=self.notes_service,
+            server_service=self.server_notes_workspace_service,
+            policy_enforcer=self.service_policy_enforcer,
+            sync_scope_service=getattr(self, "sync_scope_service", None),
+        )
+        try:
+            self.server_rag_admin_service = ServerRAGAdminService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_rag_admin_service = ServerRAGAdminService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.local_rag_admin_service = LocalRAGAdminService(
+            self.media_db,
+            app_config=self.app_config,
+            media_service=self.local_media_reading_service,
+        )
+        self.rag_admin_scope_service = RAGAdminScopeService(
+            local_service=self.local_rag_admin_service,
+            server_service=self.server_rag_admin_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self._wire_evaluation_services()
+        self._wire_study_services()
+        self._wire_writing_services()
+        self._wire_research_services()
+        self._wire_character_persona_services()
+        self._wire_chat_conversation_services()
+        self._notes_tab_initializer = NotesTabInitializer(self)
 
         # --- Create the master handler map ---
         # This one-time setup makes the dispatcher clean and fast.
@@ -1272,6 +1612,1185 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Final memory check
         log_resource_usage()
+
+    def _wire_server_context_provider(self) -> None:
+        self.unified_mcp_target_store = ConfiguredServerTargetStore(
+            get_user_data_dir() / "mcp_server_targets.json",
+        )
+        self.unified_mcp_target_store.upsert_legacy_config_target(self.app_config)
+        try:
+            self.server_credential_store = build_default_server_credential_store()
+        except CredentialStoreUnavailable as exc:
+            self.server_credential_store = UnavailableServerCredentialStore(str(exc))
+        self.server_context_provider = RuntimeServerContextProvider(
+            runtime_context=self.runtime_policy,
+            target_store=self.unified_mcp_target_store,
+            credential_store=self.server_credential_store,
+            app_config=self.app_config,
+        )
+
+    def open_study_screen(
+        self,
+        scope_context: Optional[StudyScopeContext] = None,
+        *,
+        initial_section: Optional[str] = None,
+    ) -> None:
+        self.pending_study_scope_context = scope_context
+        self.pending_study_initial_section = initial_section
+        self.post_message(NavigateToScreen(TAB_STUDY))
+
+    def open_notes_workspace(
+        self,
+        workspace_id: str,
+        subview: WorkspaceSubview = WorkspaceSubview.DETAILS,
+    ) -> None:
+        self.invalidate_screen_cache()
+        self.pending_notes_workspace_context = {
+            "workspace_id": workspace_id,
+            "subview": subview,
+        }
+        self.post_message(NavigateToScreen(TAB_NOTES))
+
+    def open_chat_with_handoff(self, payload: ChatHandoffPayload) -> None:
+        if not get_cli_setting("chat_defaults", "enable_tabs", True):
+            self.notify(
+                "Use in Chat requires chat tabs to be enabled.",
+                severity="warning",
+            )
+            return
+
+        self.pending_chat_handoff = payload
+        self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def open_console_for_live_work(
+        self,
+        *,
+        source: str,
+        title: str,
+        payload: dict | None = None,
+        status: str | None = None,
+        recovery: str | None = None,
+        action_label: str | None = None,
+    ) -> None:
+        """Open Console for live work launched from another destination."""
+        self.pending_console_launch = ConsoleLiveWorkLaunch.from_values(
+            source=source,
+            title=title,
+            payload=payload,
+            status=status,
+            recovery=recovery,
+            action_label=action_label,
+        )
+        self.post_message(NavigateToScreen(TAB_CHAT))
+
+    def get_acp_runtime_session_state(self) -> ACPRuntimeSessionState:
+        """Return current ACP runtime/session state for ACP and Console surfaces."""
+        explicit_state = getattr(self, "acp_runtime_session_state", None)
+        normalized_state = ACPRuntimeSessionState.from_any(explicit_state)
+        if normalized_state.runtime_configured:
+            return normalized_state
+        manager = getattr(self, "acp_runtime_process_manager", None)
+        snapshot = getattr(manager, "snapshot", None)
+        if callable(snapshot):
+            return ACPRuntimeSessionState.from_any(snapshot())
+        return normalized_state
+
+    def open_console_live_work_primary_action(self, launch: Any) -> bool:
+        """Follow through on a supported Console live-work status-card action."""
+        normalized_launch = ConsoleLiveWorkLaunch.from_pending(launch)
+        if normalized_launch is None:
+            self.notify("Console action is unavailable for this live-work item.", severity="warning")
+            return False
+
+        action = resolve_console_live_work_primary_action(normalized_launch)
+        if action is None:
+            self.notify("Console action is unavailable for this live-work item.", severity="warning")
+            return False
+
+        if action.target_route == TAB_SUBSCRIPTIONS:
+            self._stage_subscription_watchlist_run_context(action.target_id)
+            self.post_message(NavigateToScreen(TAB_SUBSCRIPTIONS))
+            return True
+
+        if action.target_route == TAB_ARTIFACTS:
+            self.pending_artifacts_chatbook_target_id = action.target_id
+            self.post_message(NavigateToScreen(TAB_ARTIFACTS))
+            return True
+
+        if action.target_route == TAB_ACP:
+            self.pending_acp_session_target_id = action.target_id
+            self.post_message(NavigateToScreen(TAB_ACP))
+            return True
+
+        self.notify("Console action route is not available yet.", severity="warning")
+        return False
+
+    def _handle_home_control_action(
+        self,
+        action: HomeControlAction,
+        *,
+        target_id: str | None = None,
+        target_route: str | None = None,
+    ) -> HomeControlResult:
+        adapter = getattr(self, "home_active_work_adapter", UnavailableHomeActiveWorkAdapter())
+        if target_id is None and target_route is None:
+            result = adapter.handle_control(action)
+        else:
+            result = adapter.handle_control(
+                action,
+                target_id=target_id,
+                target_route=target_route,
+            )
+        self.notify(result.message, severity=result.severity)
+        return result
+
+    def prepare_home_primary_action(self, action: Any) -> None:
+        """Stage route-specific context before Home primary-action navigation."""
+        if getattr(action, "action_id", None) == "review_notifications":
+            self.pending_subscription_initial_tab = "notifications"
+        elif (
+            getattr(action, "action_id", None) == "review_failed_work"
+            and getattr(action, "target_route", None) == "subscriptions"
+        ):
+            self.pending_subscription_initial_tab = "watchlist-runs"
+
+    def approve_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+        """Approve the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.APPROVE, target_id=target_id)
+
+    def reject_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+        """Reject the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.REJECT, target_id=target_id)
+
+    def pause_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+        """Pause the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.PAUSE, target_id=target_id)
+
+    def resume_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+        """Resume the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.RESUME, target_id=target_id)
+
+    def retry_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
+        """Retry the active Home item through the configured adapter."""
+        return self._handle_home_control_action(HomeControlAction.RETRY, target_id=target_id)
+
+    def open_active_home_item_details(
+        self,
+        *,
+        target_id: str | None = None,
+        target_route: str = TAB_CHAT,
+    ) -> HomeControlResult:
+        """Open active Home item details through the configured adapter."""
+        result = self._handle_home_control_action(
+            HomeControlAction.OPEN_DETAILS,
+            target_id=target_id,
+            target_route=target_route,
+        )
+        if result.status is HomeControlResultStatus.HANDLED and result.target_route:
+            if result.target_route == "subscriptions":
+                self._stage_subscription_watchlist_run_context(result.target_id or target_id)
+            self.post_message(NavigateToScreen(result.target_route))
+        return result
+
+    def _stage_subscription_watchlist_run_context(self, target_id: str | None) -> None:
+        if target_id and ":watchlist_run:" in str(target_id):
+            self.pending_subscription_initial_tab = "watchlist-runs"
+            self.pending_subscription_watchlist_run_id = str(target_id)
+
+    def open_active_home_item_in_console(
+        self,
+        *,
+        target_id: str | None = None,
+        target_route: str = TAB_CHAT,
+    ) -> HomeControlResult:
+        """Open active Home item in Console only when the adapter supplies launch context."""
+        result = self._handle_home_control_action(
+            HomeControlAction.OPEN_IN_CONSOLE,
+            target_id=target_id,
+            target_route=target_route,
+        )
+        if result.status is HomeControlResultStatus.HANDLED and result.console_launch is not None:
+            launch_kwargs = {
+                "source": result.console_launch.source,
+                "title": result.console_launch.title,
+                "payload": dict(result.console_launch.payload or {}),
+            }
+            if result.console_launch.status is not None:
+                launch_kwargs["status"] = result.console_launch.status
+            if result.console_launch.recovery is not None:
+                launch_kwargs["recovery"] = result.console_launch.recovery
+            if result.console_launch.action_label is not None:
+                launch_kwargs["action_label"] = result.console_launch.action_label
+            self.open_console_for_live_work(**launch_kwargs)
+        return result
+
+    def _wire_character_persona_services(self) -> None:
+        self.server_character_persona_service = ServerCharacterPersonaService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.local_character_persona_service = LocalCharacterPersonaService(
+            self.chachanotes_db,
+            persona_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
+        )
+        self.character_persona_scope_service = CharacterPersonaScopeService(
+            local_service=self.local_character_persona_service,
+            server_service=self.server_character_persona_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.server_chat_dictionary_service = ServerChatDictionaryService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.local_chat_dictionary_service = LocalChatDictionaryService(
+            self.chachanotes_db,
+            history_store_path=get_user_data_dir() / "tldw_chatbook_chat_dictionary_history.json",
+        )
+        self.chat_dictionary_scope_service = ChatDictionaryScopeService(
+            local_service=self.local_chat_dictionary_service,
+            server_service=self.server_chat_dictionary_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_chat_conversation_services(self) -> None:
+        self.local_chat_conversation_service = (
+            ChatConversationService(
+                self.chachanotes_db,
+                rag_context_store_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
+            )
+            if getattr(self, "chachanotes_db", None) is not None
+            else None
+        )
+        self.server_chat_conversation_service = ServerChatConversationService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.chat_conversation_scope_service = ChatConversationScopeService(
+            local_service=self.local_chat_conversation_service,
+            server_service=self.server_chat_conversation_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_writing_services(self) -> None:
+        try:
+            self.local_writing_service = LocalWritingService(get_writing_db_path())
+        except Exception:
+            logger.warning("Local writing service unavailable during app wiring", exc_info=True)
+            self.local_writing_service = None
+        try:
+            self.server_writing_service = ServerWritingService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_writing_service = ServerWritingService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.writing_scope_service = WritingScopeService(
+            local_service=self.local_writing_service,
+            server_service=self.server_writing_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_library_collections_services(self) -> None:
+        try:
+            self.local_library_collections_db = LibraryCollectionsDB(
+                get_library_collections_db_path(),
+                CLI_APP_CLIENT_ID,
+            )
+            self.local_library_collections_service = LocalLibraryCollectionsService(
+                self.local_library_collections_db,
+            )
+            self.library_collections_service = self.local_library_collections_service
+        except Exception:
+            logger.warning(
+                "Local Library Collections service unavailable during app wiring",
+                exc_info=True,
+            )
+            self.local_library_collections_db = None
+            self.local_library_collections_service = None
+            self.library_collections_service = None
+
+    def _wire_workspace_registry_services(self) -> None:
+        try:
+            self.local_workspace_db = WorkspaceDB(
+                get_workspaces_db_path(),
+                CLI_APP_CLIENT_ID,
+            )
+            self.workspace_registry_service = LocalWorkspaceRegistryService(
+                self.local_workspace_db,
+            )
+            self.workspace_registry_service.ensure_default_workspace()
+        except Exception:
+            logger.warning(
+                "Local workspace registry service unavailable during app wiring",
+                exc_info=True,
+            )
+            self.local_workspace_db = None
+            self.workspace_registry_service = None
+
+    def _build_chatbook_db_paths(self) -> dict[str, str]:
+        return {
+            "ChaChaNotes": str(get_chachanotes_db_path()),
+            "Media": str(get_media_db_path()),
+            "Prompts": str(get_prompts_db_path()),
+        }
+
+    def _wire_prompt_chatbook_services(self) -> None:
+        self.local_prompt_service = LocalPromptService(prompts_interop)
+        self.server_prompt_service = ServerPromptService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+        self.local_chatbook_service = LocalChatbookService(self._build_chatbook_db_paths())
+        self.server_chatbook_service = ServerChatbookService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+        self.prompt_chatbook_scope_service = PromptChatbookScopeService(
+            local_prompt_service=self.local_prompt_service,
+            server_prompt_service=self.server_prompt_service,
+            local_chatbook_service=self.local_chatbook_service,
+            server_chatbook_service=self.server_chatbook_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_evaluation_services(self) -> None:
+        self.local_evaluation_service = None
+        try:
+            self.evaluation_orchestrator = EvaluationOrchestrator(client_id="tldw_cli_app")
+            self.local_evaluation_service = LocalEvaluationsService(self.evaluation_orchestrator.db)
+        except Exception:
+            logger.warning("Local evaluation service unavailable during app wiring", exc_info=True)
+            self.evaluation_orchestrator = None
+
+        try:
+            self.server_evaluation_service = ServerEvaluationsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_evaluation_service = ServerEvaluationsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+
+        has_local = self.local_evaluation_service is not None
+        has_server = (
+            getattr(self.server_evaluation_service, "client", None) is not None
+            or getattr(self.server_evaluation_service, "client_provider", None) is not None
+        )
+        if not has_local and not has_server:
+            self.evaluation_scope_service = None
+            return
+
+        self.evaluation_scope_service = EvaluationScopeService(
+            local_service=self.local_evaluation_service,
+            server_service=self.server_evaluation_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_study_services(self) -> None:
+        self.local_study_service = (
+            LocalStudyService(
+                self.chachanotes_db,
+                notification_dispatch_service=self.notification_dispatch_service,
+                notification_app=self,
+            )
+            if self.chachanotes_db is not None
+            else None
+        )
+        self.local_quiz_service = (
+            LocalQuizService(
+                self.chachanotes_db,
+                notification_dispatch_service=self.notification_dispatch_service,
+                notification_app=self,
+            )
+            if self.chachanotes_db is not None
+            else None
+        )
+        try:
+            self.server_study_service = ServerStudyService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_study_service = ServerStudyService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        try:
+            self.server_quiz_service = ServerQuizService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_quiz_service = ServerQuizService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.study_scope_service = StudyScopeService(
+            local_service=self.local_study_service,
+            server_service=self.server_study_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.study_quiz_scope_service = QuizScopeService(
+            local_service=self.local_quiz_service,
+            server_service=self.server_quiz_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_research_services(self) -> None:
+        """Initialize source-aware research services if the broad parity wiring has not already done so."""
+        if hasattr(self, "research_scope_service") and hasattr(self, "research_search_scope_service"):
+            return
+
+        try:
+            self.local_research_service = LocalResearchService(
+                get_research_db_path(),
+                notification_dispatcher=self.notification_dispatch_service,
+                notification_app=self,
+            )
+        except Exception:
+            logger.warning("Local research service unavailable during app wiring", exc_info=True)
+            self.local_research_service = None
+        try:
+            self.server_research_service = ServerResearchService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_research_service = ServerResearchService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.research_scope_service = ResearchScopeService(
+            local_service=self.local_research_service,
+            server_service=self.server_research_service,
+            policy_enforcer=self.service_policy_enforcer,
+            sync_scope_service=getattr(self, "sync_scope_service", None),
+        )
+        self.local_research_search_service = LocalResearchSearchService(
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_research_search_service = ServerResearchSearchService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_research_search_service = ServerResearchSearchService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.research_search_scope_service = ResearchSearchScopeService(
+            local_service=self.local_research_search_service,
+            server_service=self.server_research_search_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+    def _wire_watchlists_and_notifications_services(self) -> None:
+        """Initialize source-aware watchlists and local notification services."""
+        self.local_watchlists_service = LocalWatchlistsService(
+            db_factory=lambda: SubscriptionsDB(get_subscriptions_db_path(), CLI_APP_CLIENT_ID)
+        )
+        try:
+            self.server_watchlists_service = ServerWatchlistsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_watchlists_service = ServerWatchlistsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        try:
+            self.server_notifications_service = ServerNotificationsService.from_server_context_provider(
+                self.server_context_provider,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_notifications_service = ServerNotificationsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        try:
+            self.client_notifications_db = ClientNotificationsDB(
+                get_notifications_db_path(),
+                CLI_APP_CLIENT_ID,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to initialize client notifications DB; using in-memory store: {}",
+                exc,
+                exc_info=True,
+            )
+            self.client_notifications_db = ClientNotificationsDB(
+                ":memory:",
+                CLI_APP_CLIENT_ID,
+            )
+        self._wire_server_parity_state_repositories()
+        self.client_notifications_service = ClientNotificationsService(
+            store=self.client_notifications_db,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.notification_dispatch_service = NotificationDispatchService(
+            store=self.client_notifications_db,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.notifications_scope_service = NotificationsScopeService(
+            local_service=self.client_notifications_service,
+            server_service=self.server_notifications_service,
+            policy_enforcer=self.service_policy_enforcer,
+            event_state_repository=self.event_state_repository,
+            server_event_scope_provider=self._server_notification_event_scope,
+        )
+        self.home_active_work_adapter = LocalNotificationHomeActiveWorkAdapter(
+            notification_service=self.client_notifications_service,
+            watchlist_service=self.local_watchlists_service,
+            chatbook_service=self.local_chatbook_service,
+            server_event_service=self.notifications_scope_service,
+            runtime_policy=self.runtime_policy,
+        )
+        try:
+            self.server_claims_service = ServerClaimsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_claims_service = ServerClaimsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.claims_scope_service = ClaimsScopeService(
+            server_service=self.server_claims_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+
+        try:
+            self.server_meetings_service = ServerMeetingsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_meetings_service = ServerMeetingsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.meetings_scope_service = MeetingsScopeService(
+            server_service=self.server_meetings_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.server_prompt_studio_service = ServerPromptStudioService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.prompt_studio_scope_service = PromptStudioScopeService(
+            server_service=self.server_prompt_studio_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_kanban_service = ServerKanbanService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_kanban_service = ServerKanbanService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.local_kanban_service = LocalKanbanService(
+            db_path=get_user_data_dir() / "tldw_chatbook_kanban.db",
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.kanban_scope_service = KanbanScopeService(
+            local_service=self.local_kanban_service,
+            server_service=self.server_kanban_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_translation_service = ServerTranslationService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_translation_service = ServerTranslationService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.translation_scope_service = TranslationScopeService(
+            server_service=self.server_translation_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_voice_assistant_service = ServerVoiceAssistantService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_voice_assistant_service = ServerVoiceAssistantService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.voice_assistant_scope_service = VoiceAssistantScopeService(
+            server_service=self.server_voice_assistant_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_companion_service = ServerCompanionService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_companion_service = ServerCompanionService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.companion_scope_service = CompanionScopeService(
+            server_service=self.server_companion_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_personalization_service = ServerPersonalizationService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_personalization_service = ServerPersonalizationService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.personalization_scope_service = PersonalizationScopeService(
+            server_service=self.server_personalization_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_outputs_service = ServerOutputsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_outputs_service = ServerOutputsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.outputs_scope_service = OutputsScopeService(
+            local_service=None,
+            server_service=self.server_outputs_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.local_research_service = LocalResearchService(
+                get_research_db_path(),
+                notification_dispatcher=self.notification_dispatch_service,
+                notification_app=self,
+            )
+        except Exception:
+            logger.warning("Local research service unavailable during app wiring", exc_info=True)
+            self.local_research_service = None
+        try:
+            self.server_research_service = ServerResearchService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_research_service = ServerResearchService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.research_scope_service = ResearchScopeService(
+            local_service=self.local_research_service,
+            server_service=self.server_research_service,
+            policy_enforcer=self.service_policy_enforcer,
+            sync_scope_service=getattr(self, "sync_scope_service", None),
+        )
+        self.local_research_search_service = LocalResearchSearchService(
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_research_search_service = ServerResearchSearchService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_research_search_service = ServerResearchSearchService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.research_search_scope_service = ResearchSearchScopeService(
+            local_service=self.local_research_search_service,
+            server_service=self.server_research_search_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.local_chat_grammars_service = LocalChatGrammarsService(
+            store_path=get_user_data_dir() / "tldw_chatbook_chat_grammars.json",
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_chat_grammars_service = ServerChatGrammarsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_chat_grammars_service = ServerChatGrammarsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.chat_grammars_scope_service = ChatGrammarsScopeService(
+            local_service=self.local_chat_grammars_service,
+            server_service=self.server_chat_grammars_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.local_feedback_service = LocalFeedbackService(
+            store_path=get_user_data_dir() / "tldw_chatbook_feedback.json",
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_feedback_service = ServerFeedbackService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_feedback_service = ServerFeedbackService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.feedback_scope_service = FeedbackScopeService(
+            local_service=self.local_feedback_service,
+            server_service=self.server_feedback_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_collections_feeds_service = ServerCollectionsFeedsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_collections_feeds_service = ServerCollectionsFeedsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.collections_feeds_scope_service = CollectionsFeedsScopeService(
+            local_service=self.local_watchlists_service,
+            server_service=self.server_collections_feeds_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_connectors_service = ServerConnectorsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_connectors_service = ServerConnectorsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.connectors_scope_service = ConnectorsScopeService(
+            server_service=self.server_connectors_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_skills_service = ServerSkillsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_skills_service = ServerSkillsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.local_skills_service = LocalSkillsService(
+            store_dir=get_user_data_dir() / "skills",
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.skills_scope_service = SkillsScopeService(
+            local_service=self.local_skills_service,
+            server_service=self.server_skills_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_tools_service = ServerToolsService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_tools_service = ServerToolsService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.tools_scope_service = ToolsScopeService(
+            server_service=self.server_tools_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_mcp_governance_service = ServerMCPGovernanceService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_mcp_governance_service = ServerMCPGovernanceService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.mcp_governance_scope_service = MCPGovernanceScopeService(
+            server_service=self.server_mcp_governance_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.local_mcp_store = LocalMCPStore(
+            get_user_data_dir() / "local_mcp_store.json",
+        )
+        self.local_mcp_control_service = LocalMCPControlService(
+            store=self.local_mcp_store,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.unified_mcp_context_store = UnifiedMCPContextStore(
+            get_user_data_dir() / "unified_mcp_context.json",
+        )
+
+        def _build_unified_mcp_client_for_target(target: Any) -> MCPUnifiedClient:
+            if getattr(target, "auth_reference", None) == "legacy:tldw_api":
+                root_client = build_runtime_api_client(
+                    app_config=self.app_config,
+                    endpoint_url=target.base_url,
+                    auth_method=target.auth_mode,
+                )
+            else:
+                root_client = build_runtime_api_client(
+                    endpoint_url=target.base_url,
+                    auth_token=target.auth_reference,
+                    auth_method=target.auth_mode,
+                )
+            return MCPUnifiedClient(root_client)
+
+        self.server_unified_mcp_service = ServerUnifiedMCPService(
+            client_factory=_build_unified_mcp_client_for_target,
+            policy_enforcer=self.service_policy_enforcer,
+            target_store=self.unified_mcp_target_store,
+        )
+        self.unified_mcp_service = UnifiedMCPControlPlaneService(
+            target_store=self.unified_mcp_target_store,
+            context_store=self.unified_mcp_context_store,
+            local_service=self.local_mcp_control_service,
+            server_service=self.server_unified_mcp_service,
+        )
+        try:
+            self.server_text2sql_service = ServerText2SQLService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_text2sql_service = ServerText2SQLService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.text2sql_scope_service = Text2SQLScopeService(
+            server_service=self.server_text2sql_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_sync_service = ServerSyncService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+                state_repository=self.sync_state_repository,
+            )
+        except ValueError:
+            self.server_sync_service = ServerSyncService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+                state_repository=self.sync_state_repository,
+            )
+        self.sync_scope_service = SyncScopeService(
+            server_service=self.server_sync_service,
+            policy_enforcer=self.service_policy_enforcer,
+            state_repository=self.sync_state_repository,
+        )
+        self.sync_v2_dataset_keys: dict[str, bytes] = {}
+        self.local_first_sync_service = LocalFirstSyncService(
+            server_service=self.server_sync_service,
+            state_repository=self.sync_state_repository,
+            local_store=getattr(self, "sync_v2_local_store", None),
+            dataset_keys=self.sync_v2_dataset_keys,
+        )
+        self.manual_sync_control_service = ManualSyncControlService(
+            state_repository=self.sync_state_repository,
+            local_first_sync_service=self.local_first_sync_service,
+            dataset_keys=self.sync_v2_dataset_keys,
+        )
+        for domain_scope_service in (
+            getattr(self, "chat_conversation_scope_service", None),
+            getattr(self, "media_reading_scope_service", None),
+            getattr(self, "notes_scope_service", None),
+            getattr(self, "research_scope_service", None),
+        ):
+            if domain_scope_service is not None:
+                domain_scope_service.sync_scope_service = self.sync_scope_service
+        self.server_runtime_service = ServerRuntimeService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.server_runtime_scope_service = ServerRuntimeScopeService(
+            server_service=self.server_runtime_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.active_server_capability_service = ActiveServerCapabilityService(
+            runtime_context=self.runtime_policy,
+            server_runtime_scope_service=self.server_runtime_scope_service,
+            target_store=self.unified_mcp_target_store,
+        )
+        self.local_llm_provider_catalog_service = LocalLLMProviderCatalogService(
+            provider_catalog_loader=lambda: dict(getattr(self, "providers_models", {}) or {}),
+            local_provider_names=set(LOCAL_PROVIDERS),
+            default_provider=get_cli_setting("chat_defaults", "provider", None),
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_llm_provider_catalog_service = ServerLLMProviderCatalogService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_llm_provider_catalog_service = ServerLLMProviderCatalogService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.llm_provider_catalog_scope_service = LLMProviderCatalogScopeService(
+            local_service=self.local_llm_provider_catalog_service,
+            server_service=self.server_llm_provider_catalog_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.local_audio_services_service = LocalAudioServicesService(
+            tts_provider_loader=lambda: {"chatbook_tts": {"available": True, "source": "local"}},
+            stt_provider_loader=lambda: {"chatbook_stt": {"available": True, "source": "local"}},
+            voice_catalog_loader=lambda: {},
+            history_store_path=get_user_data_dir() / "tldw_chatbook_audio_history.json",
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_audio_services_service = ServerAudioServicesService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_audio_services_service = ServerAudioServicesService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.audio_services_scope_service = AudioServicesScopeService(
+            local_service=self.local_audio_services_service,
+            server_service=self.server_audio_services_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.server_auth_account_service = ServerAuthAccountService.from_server_context_provider(
+            self.server_context_provider,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.auth_account_scope_service = AuthAccountScopeService(
+            server_service=self.server_auth_account_service,
+            policy_enforcer=self.service_policy_enforcer,
+            server_context_provider=self.server_context_provider,
+        )
+        try:
+            self.server_user_governance_service = ServerUserGovernanceService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_user_governance_service = ServerUserGovernanceService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.user_governance_scope_service = UserGovernanceScopeService(
+            server_service=self.server_user_governance_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_sharing_service = ServerSharingService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_sharing_service = ServerSharingService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.sharing_scope_service = SharingScopeService(
+            server_service=self.server_sharing_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_web_clipper_service = ServerWebClipperService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_web_clipper_service = ServerWebClipperService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.web_clipper_scope_service = WebClipperScopeService(
+            server_service=self.server_web_clipper_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        try:
+            self.server_web_scraping_service = ServerWebScrapingService.from_config(
+                self.app_config,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        except ValueError:
+            self.server_web_scraping_service = ServerWebScrapingService(
+                client=None,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+        self.web_scraping_scope_service = WebScrapingScopeService(
+            server_service=self.server_web_scraping_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.watchlist_scope_service = WatchlistScopeService(
+            local_service=self.local_watchlists_service,
+            server_service=self.server_watchlists_service,
+            policy_enforcer=self.service_policy_enforcer,
+        )
+        self.local_media_reading_service.notification_dispatcher = self.notification_dispatch_service
+        self.local_media_reading_service.notification_app = self
+        self.local_watchlists_service.notification_dispatcher = self.notification_dispatch_service
+        self.local_watchlists_service.notification_app = self
+
+    def _wire_server_parity_state_repositories(self) -> None:
+        try:
+            self.server_parity_state = build_server_parity_state_repositories(
+                data_dir=get_user_data_dir(),
+                client_id=CLI_APP_CLIENT_ID,
+                local_notifications_db=self.client_notifications_db,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to initialize server parity state repositories; using in-memory stores: {}",
+                exc,
+                exc_info=True,
+            )
+            self.server_parity_state = ServerParityStateRepositories(
+                local_notifications_db=self.client_notifications_db,
+                event_state_repository=EventStateRepository(":memory:", CLI_APP_CLIENT_ID),
+                sync_state_repository=SyncStateRepository(":memory:", CLI_APP_CLIENT_ID),
+            )
+        self.event_state_repository = self.server_parity_state.event_state_repository
+        self.sync_state_repository = self.server_parity_state.sync_state_repository
+
+    def _resolve_initial_media_runtime_backend(self) -> str:
+        """Default media backend to local when no valid runtime value is available."""
+        for candidate in (
+            getattr(self, "current_runtime_backend", None),
+            getattr(self, "runtime_backend", None),
+        ):
+            normalized = str(candidate or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
+        return "local"
+
+    def get_authoritative_runtime_source(self) -> str:
+        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+        if isinstance(runtime_state, RuntimeSourceState):
+            normalized = str(runtime_state.active_source or "").strip().lower()
+            if normalized in {"local", "server"}:
+                return normalized
+        return self._resolve_initial_media_runtime_backend()
+
+    def _server_notification_event_scope(self) -> dict[str, str | None]:
+        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+        active_server_id = getattr(runtime_state, "active_server_id", None)
+        authenticated_principal_id = None
+        server_context_provider = getattr(self, "server_context_provider", None)
+        get_active_context = getattr(server_context_provider, "get_active_context", None)
+        if callable(get_active_context):
+            try:
+                authenticated_principal_id = event_principal_id_from_active_context(get_active_context())
+            except Exception:
+                authenticated_principal_id = None
+        return {
+            "server_profile_id": str(active_server_id) if active_server_id else None,
+            "authenticated_principal_id": authenticated_principal_id,
+            "stream_instance_id": "global",
+        }
+
+    def require_ui_action_allowed(
+        self,
+        *,
+        action_id: str,
+        scope_type: str | None = None,
+        runtime_state_override: RuntimeSourceState | None = None,
+    ) -> PolicyDecision:
+        _ = scope_type
+        state = runtime_state_override if isinstance(runtime_state_override, RuntimeSourceState) else None
+        if state is None:
+            policy_enforcer = getattr(self, "service_policy_enforcer", None)
+            if policy_enforcer is not None and hasattr(policy_enforcer, "current_state"):
+                state = policy_enforcer.current_state()
+        if not isinstance(state, RuntimeSourceState):
+            runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+            if isinstance(runtime_state, RuntimeSourceState):
+                state = runtime_state
+
+        if not isinstance(state, RuntimeSourceState):
+            decision = PolicyDecision(
+                allowed=False,
+                reason_code="authority_denied",
+                user_message="Runtime policy state is unavailable.",
+                effective_source="unknown",
+                authority_owner="unknown",
+            )
+            notifier = getattr(self, "notify", None)
+            if callable(notifier):
+                notifier(decision.user_message, severity="warning")
+            return decision
+
+        engine = getattr(self, "ui_policy_engine", None)
+        if engine is None:
+            engine = PolicyEngine(CAPABILITY_REGISTRY)
+            self.ui_policy_engine = engine
+
+        decision = engine.evaluate(
+            action_id=action_id,
+            state=state,
+        )
+        if not decision.allowed:
+            notifier = getattr(self, "notify", None)
+            if callable(notifier):
+                notifier(decision.user_message, severity="warning")
+        return decision
+
+    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+        normalized_backend = str(runtime_backend or "").strip().lower()
+        if normalized_backend in {"local", "server"}:
+            if getattr(self, "runtime_policy", None) is not None:
+                previous_server_id = getattr(self.runtime_policy.state, "active_server_id", None)
+                updated_state = set_authoritative_runtime_source(self, normalized_backend)
+                server_context_provider = getattr(self, "server_context_provider", None)
+                invalidate_for_server_switch = getattr(
+                    server_context_provider,
+                    "invalidate_for_server_switch",
+                    None,
+                )
+                if callable(invalidate_for_server_switch):
+                    invalidate_for_server_switch(previous_server_id, updated_state.active_server_id)
+                self.invalidate_screen_cache()
+            else:
+                self.current_runtime_backend = normalized_backend
+                self.runtime_backend = normalized_backend
+                self.invalidate_screen_cache()
+
+        resolved_backend = normalized_backend
+        runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
+        if runtime_state is not None:
+            resolved_backend = str(runtime_state.active_source or normalized_backend).strip().lower()
+        elif resolved_backend not in {"local", "server"}:
+            resolved_backend = str(getattr(self, "current_runtime_backend", "local") or "local").strip().lower()
+        active_screen = getattr(self, "screen", None)
+        callback = getattr(active_screen, "handle_runtime_backend_changed", None)
+        if callable(callback):
+            await callback(resolved_backend)
 
 
     def _init_notes_service(self, user_name_for_notes: str) -> None:
@@ -1454,13 +2973,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                                                                    reactive_attr="conv_char_sidebar_left_collapsed"),
                 "toggle-conv-char-right-sidebar": functools.partial(_handle_sidebar_toggle,
                                                                     reactive_attr="conv_char_sidebar_right_collapsed"),
-            },
-            TAB_NOTES: {
-                **notes_events.NOTES_BUTTON_HANDLERS,
-                "toggle-notes-sidebar-left": functools.partial(_handle_sidebar_toggle,
-                                                               reactive_attr="notes_sidebar_left_collapsed"),
-                "toggle-notes-sidebar-right": functools.partial(_handle_sidebar_toggle,
-                                                                reactive_attr="notes_sidebar_right_collapsed"),
             },
             TAB_MEDIA: {
                 **media_events.MEDIA_BUTTON_HANDLERS,
@@ -1652,19 +3164,95 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Screen-based navigation is used exclusively - no tab-based UI components needed
         return widgets
-    
+
+    def _resolve_screen_navigation_target(self, target: str):
+        """Normalize navigation aliases to a routed screen id and canonical current_tab value."""
+        return resolve_screen_target(target)
+
+    def invalidate_screen_cache(self, routes: set[str] | None = None) -> None:
+        """Clear cached destination screens after context changes."""
+        cache = getattr(self, "_screen_cache", None)
+        if not cache:
+            return
+        if routes is None:
+            cache.clear()
+            logger.debug("Cleared all cached destination screens")
+            return
+        for route in routes:
+            cache.pop(route, None)
+        logger.debug(f"Cleared cached destination screens: {sorted(routes)}")
+
+    def _get_or_create_navigation_screen(self, screen_name: str, screen_class: type):
+        """Return a cached screen for allowlisted routes, otherwise build a fresh screen."""
+        if screen_name not in CACHEABLE_SCREEN_ROUTES:
+            return screen_class(self)
+
+        cache = getattr(self, "_screen_cache", None)
+        if cache is None:
+            cache = self._screen_cache = {}
+
+        cached_screen = cache.get(screen_name)
+        if cached_screen is not None:
+            try:
+                if cached_screen is self.screen:
+                    return screen_class(self)
+            except Exception:
+                pass
+            return cached_screen
+
+        new_screen = screen_class(self)
+        cache[screen_name] = new_screen
+        return new_screen
+
+    def _valid_startup_route_ids(self) -> set[str]:
+        """Return route ids allowed in startup config during the shell migration."""
+        from .UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
+
+        shell_routes = {
+            destination.primary_route
+            for destination in SHELL_DESTINATION_ORDER
+        } | {
+            destination.destination_id
+            for destination in SHELL_DESTINATION_ORDER
+        }
+        legacy_aliases = {"conversation", "llm", "subscription", "subscriptions", "tools_settings"}
+        return set(ALL_TABS) | shell_routes | legacy_aliases
+
+    def _normalize_initial_tab_from_config(self, configured_route: str | None) -> str:
+        """Validate configured startup route without discarding new shell routes."""
+        candidate = configured_route or TAB_CHAT
+        if candidate in self._valid_startup_route_ids():
+            return candidate
+
+        logging.warning(
+            "Default tab '%s' from config not valid. Falling back to '%s'.",
+            candidate,
+            TAB_CHAT,
+        )
+        return TAB_CHAT
+
+    def _resolve_initial_shell_route(self) -> str:
+        """Choose the startup route while keeping first-run orientation explicit."""
+        if self.app_config.get("_first_run", False):
+            return TAB_HOME
+        return getattr(self, "_initial_tab_value", TAB_CHAT)
+        
 
     @on(NavigateToScreen)
     async def handle_screen_navigation(self, message: NavigateToScreen) -> None:
         """Handle navigation to a different screen using switch_screen for better performance."""
-        screen_name = message.screen_name
-        logger.info(f"Navigating to screen: {screen_name}")
+        requested_screen = message.screen_name
+        screen_name, current_tab_value, screen_class = self._resolve_screen_navigation_target(requested_screen)
+        logger.info(f"Navigating to screen: {requested_screen}")
+        previous_tab = self.current_tab
         
         # Save state of current screen before switching
         current_screen = self.screen
         if current_screen and hasattr(current_screen, 'save_state'):
             try:
                 state = current_screen.save_state()
+                if isinstance(state, dict):
+                    state = add_runtime_policy_snapshot(state, self.runtime_policy.state)
                 # Store state in a dictionary keyed by screen name
                 if not hasattr(self, '_screen_states'):
                     self._screen_states = {}
@@ -1674,59 +3262,47 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             except Exception as e:
                 logger.error(f"Error saving screen state: {e}")
         
-        # Import the new screens
-        from .UI.Screens.stts_screen import STTSScreen
-        from .UI.Screens.study_screen import StudyScreen
-        from .UI.Screens.chatbooks_screen import ChatbooksScreen
-        from .UI.Screens.subscription_screen import SubscriptionScreen
-        
-        # Complete map of all screen names to screen classes
-        screen_map = {
-            'chat': ChatScreen,
-            'ingest': MediaIngestScreen,  # Using the rebuilt window through the screen wrapper
-            'coding': CodingScreen,
-            'conversation': ConversationScreen,
-            'ccp': ConversationScreen,  # Alias for Conv/Char
-            'media': MediaScreen,
-            'notes': NotesScreen,
-            'search': SearchScreen,
-            'evals': EvalsScreen,
-            'tools_settings': ToolsSettingsScreen,
-            'llm': LLMScreen,
-            'customize': CustomizeScreen,
-            'logs': LogsScreen,
-            'stats': StatsScreen,
-            'stts': STTSScreen,  # Speech-to-Text/Text-to-Speech
-            'study': StudyScreen,  # Study features
-            'chatbooks': ChatbooksScreen,  # Chatbooks management
-            'subscription': SubscriptionScreen,  # Subscription management
-            'subscriptions': SubscriptionScreen,  # Alias for consistency
-        }
-        
-        screen_class = screen_map.get(screen_name)
         if screen_class:
-            # Create a fresh screen instance (per Textual best practices)
-            new_screen = screen_class(self)
+            if previous_tab == TAB_NOTES and previous_tab != current_tab_value:
+                await self._notes_tab_initializer.on_tab_hidden()
+
+            new_screen = self._get_or_create_navigation_screen(screen_name, screen_class)
             
             # Restore state if available
             if hasattr(self, '_screen_states') and screen_name in self._screen_states:
                 if hasattr(new_screen, 'restore_state'):
                     try:
-                        new_screen.restore_state(self._screen_states[screen_name])
-                        logger.debug(f"Restored state for screen: {screen_name}")
+                        restored_state = reconcile_saved_screen_state(
+                            self._screen_states[screen_name],
+                            self.runtime_policy.state,
+                        )
+                        if restored_state is None:
+                            self._screen_states.pop(screen_name, None)
+                            logger.info(f"Dropped saved state for screen due to runtime policy mismatch: {screen_name}")
+                        else:
+                            new_screen.restore_state(restored_state)
+                            logger.debug(f"Restored state for screen: {screen_name}")
                     except Exception as e:
                         logger.error(f"Error restoring screen state: {e}")
+
+            navigation_context = getattr(message, "screen_context", {}) or {}
+            if navigation_context and hasattr(new_screen, "apply_navigation_context"):
+                try:
+                    result = new_screen.apply_navigation_context(navigation_context)
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception as e:
+                    logger.error(f"Error applying navigation context for {screen_name}: {e}")
             
             # Use switch_screen to replace the current screen
             await self.switch_screen(new_screen)
             
-            # Update current_tab to track the active screen
-            # The watcher will skip processing due to _use_screen_navigation flag
-            self.current_tab = screen_name
-            
+            # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
+            self.current_tab = current_tab_value
+
             logger.info(f"Successfully switched to {screen_name} screen")
         else:
-            logger.error(f"Unknown screen requested: {screen_name}")
+            logger.error(f"Unknown screen requested: {requested_screen}")
     
     @on(ChatMessage.Action)
     async def handle_chat_message_action(self, event: ChatMessage.Action) -> None:
@@ -1762,8 +3338,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     async def handle_tts_request_event(self, event: TTSRequestEvent) -> None:
         """Handle TTS generation request."""
         self.loguru_logger.info(f"TTS request received for text: '{event.text[:50]}...'")
-        if self._tts_handler:
-            await self._tts_handler.handle_tts_request(event)
+        handler = await self._ensure_tts_handler()
+        if handler:
+            await handler.handle_tts_request(event)
         else:
             self.loguru_logger.error("TTS handler not initialized")
             await self.post_message(
@@ -1867,15 +3444,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback control."""
-        if self._tts_handler:
-            await self._tts_handler.handle_tts_playback(event)
+        handler = await self._ensure_tts_handler()
+        if handler:
+            await handler.handle_tts_playback(event)
     
     @on(STTSPlaygroundGenerateEvent)
     async def handle_stts_playground_generate_event(self, event: STTSPlaygroundGenerateEvent) -> None:
         """Handle S/TT/S playground generation request."""
         self.loguru_logger.info(f"S/TT/S generation request: provider={event.provider}, model={event.model}")
-        if self._stts_handler:
-            await self._stts_handler.handle_playground_generate(event)
+        handler = await self._ensure_stts_handler()
+        if handler:
+            await handler.handle_playground_generate(event)
         else:
             self.loguru_logger.error("S/TT/S handler not initialized")
             self.notify("S/TT/S service not available", severity="error")
@@ -1883,14 +3462,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     @on(STTSSettingsSaveEvent)
     async def handle_stts_settings_save_event(self, event: STTSSettingsSaveEvent) -> None:
         """Handle S/TT/S settings save."""
-        if self._stts_handler:
-            await self._stts_handler.handle_settings_save(event)
+        handler = await self._ensure_stts_handler()
+        if handler:
+            await handler.handle_settings_save(event)
     
     @on(STTSAudioBookGenerateEvent)
     async def handle_stts_audiobook_generate_event(self, event: STTSAudioBookGenerateEvent) -> None:
         """Handle audiobook generation request."""
-        if self._stts_handler:
-            await self._stts_handler.handle_audiobook_generate(event)
+        handler = await self._ensure_stts_handler()
+        if handler:
+            await handler.handle_audiobook_generate(event)
 
     def switch_ccp_center_view(self, view_name: str) -> None:
         """Switch the center pane view in the CCP tab."""
@@ -1917,7 +3498,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     # --- Watcher for CCP Active View ---
     def watch_ccp_active_view(self, old_view: Optional[str], new_view: str) -> None:
         loguru_logger.debug(f"CCP active view changing from '{old_view}' to: '{new_view}'")
-        if not self._ui_ready:
+        if not getattr(self, "_ui_ready", False):
             loguru_logger.debug("watch_ccp_active_view: UI not ready, returning.")
             return
         try:
@@ -2252,12 +3833,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.current_prompt_id = None  # Reset reactives
 
     async def refresh_notes_tab_after_ingest(self) -> None:
-        """Called after notes are ingested from the Ingest tab to refresh the Notes tab."""
-        self.loguru_logger.info("Refreshing Notes tab data after ingestion.")
-        if hasattr(notes_handlers, 'load_and_display_notes_handler'):
-            await notes_handlers.load_and_display_notes_handler(self)
-        else:
-            self.loguru_logger.error("notes_handlers.load_and_display_notes_handler not found for refresh.")
+        """Refresh the Notes screen after notes are ingested from the Ingest tab."""
+        self.loguru_logger.info("Refreshing Notes data after ingestion.")
+        from .UI.Screens.notes_screen import NotesScreen
+
+        if isinstance(self.screen, NotesScreen):
+            await self.screen.refresh_current_scope()
 
     # ##################################################
     # --- Watcher for Search Tab Active Sub-View ---
@@ -2676,9 +4257,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # Only schedule post-mount setup if splash screen is not active
         if not self.splash_screen_active:
-            # Schedule setup to run after initial rendering
-            self.call_after_refresh(self._post_mount_setup)
-            self.call_after_refresh(self.hide_inactive_windows)
+            # Schedule setup to run after initial rendering.
+            asyncio.create_task(self._run_no_splash_post_mount_setup())
 
         # Theme registration
         theme_start = time.perf_counter()
@@ -2737,8 +4317,39 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
     async def _set_initial_tab(self) -> None:  # New method for deferred tab setting
         self.loguru_logger.info("Setting initial tab via call_later.")
-        self.current_tab = self._initial_tab_value
+        self.current_tab = self._resolve_initial_shell_route()
         self.loguru_logger.info(f"Initial tab set to: {self.current_tab}")
+
+    async def _push_initial_screen(self) -> None:
+        """Push the configured initial screen for screen-based navigation startup."""
+        if getattr(self, "_initial_screen_pushed", False):
+            return
+
+        initial_tab = self._resolve_initial_shell_route()
+        resolved_screen_name, resolved_tab, screen_class = self._resolve_screen_navigation_target(initial_tab)
+        if screen_class is None:
+            resolved_screen_name = TAB_CHAT
+            resolved_tab = TAB_CHAT
+            _, _, screen_class = self._resolve_screen_navigation_target(TAB_CHAT)
+            if screen_class is None:
+                raise RuntimeError("Unable to resolve default chat screen")
+
+        await self.push_screen(screen_class(self))
+        self.current_tab = resolved_tab
+        self._initial_screen_pushed = True
+        logger.info(
+            f"Screen navigation: Pushed initial {screen_class.__name__}"
+            f" (target={resolved_screen_name})"
+        )
+
+    async def _run_no_splash_post_mount_setup(self) -> None:
+        """Run screen startup and post-mount setup when the splash screen is disabled."""
+        try:
+            await self._push_initial_screen()
+            await self._post_mount_setup()
+            self.hide_inactive_windows()
+        except Exception as e:
+            logger.error(f"No-splash post-mount setup failed: {e}", exc_info=True)
 
     async def _post_mount_setup(self) -> None:
         """Operations to perform after the main UI is expected to be fully mounted."""
@@ -2783,38 +4394,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                      labels={"phase": "widget_binding"}, 
                      documentation="Duration of post-mount phase in seconds")
 
-        # Initialize TTS service
-        phase_start = time.perf_counter()
-        try:
-            self.loguru_logger.info("Initializing TTS service...")
-            # Create TTS event handler instance
-            self._tts_handler = TTSEventHandler()
-            self._tts_handler.app = self  # Set app reference for posting messages
-            await self._tts_handler.initialize_tts()
-            self.loguru_logger.info("TTS service initialized successfully")
-        except Exception as e:
-            self.loguru_logger.error(f"Failed to initialize TTS service: {e}")
-            self._tts_handler = None
-        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
-                     labels={"phase": "tts_init"}, 
-                     documentation="Duration of post-mount phase in seconds")
-        
-        # Initialize S/TT/S service
-        phase_start = time.perf_counter()
-        try:
-            self.loguru_logger.info("Initializing S/TT/S service...")
-            # Create S/TT/S event handler instance
-            self._stts_handler = STTSEventHandler(app=self)
-            await self._stts_handler.initialize_stts()
-            # Copy some methods to app instance for convenience
-            self.play_current_audio = self._stts_handler.play_current_audio
-            self.export_current_audio = self._stts_handler.export_current_audio
-            self.loguru_logger.info("S/TT/S service initialized successfully")
-        except Exception as e:
-            self.loguru_logger.error(f"Failed to initialize S/TT/S service: {e}")
-            self._stts_handler = None
-        log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
-                     labels={"phase": "stts_init"}, 
+        # TTS/STTS services are initialized after readiness or on first use.
+        log_histogram("app_post_mount_phase_duration_seconds", 0.0,
+                     labels={"phase": "audio_services_deferred"},
                      documentation="Duration of post-mount phase in seconds")
 
         # Set initial tab now that other bindings might be ready
@@ -2824,7 +4406,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # These also might rely on the main tab windows being fully composed.
         phase_start = time.perf_counter()
         # Only populate widgets for the initial tab to avoid errors with placeholders
-        initial_tab = self._initial_tab_value
+        initial_tab = self._resolve_initial_shell_route()
         if initial_tab == TAB_CHAT:
             # IMPORTANT: Do not populate character filter select here to avoid database connection conflicts
             # The populate_chat_conversation_character_filter_select creates a new DB instance that can
@@ -2862,33 +4444,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         # For now, let's assume watch_current_tab will handle it.
         # if self._initial_tab_value == TAB_CCP: # Check against the initial value
         #    self.call_later(ccp_handlers.perform_ccp_conversation_search, self)
-        self.current_tab = self._initial_tab_value
+        self.current_tab = self._resolve_initial_shell_route()
         self.loguru_logger.info(f"Initial tab set to: {self.current_tab}")
 
-        # --- DB Size Indicator Setup ---
-        try:
-            # Query for the AppFooterStatus widget instance
-            self._db_size_status_widget = self.query_one(AppFooterStatus)
-            # Or use ID: self._db_size_status_widget = self.query_one("#app-footer-status", AppFooterStatus)
-            self.loguru_logger.info("AppFooterStatus widget instance acquired.")
-
-            await self.db_status_manager.update_db_sizes()  # Initial population
-            self.db_status_manager.start_periodic_updates(120)  # Update every 2 minutes
-            self.loguru_logger.info("DB size update timer started for AppFooterStatus (interval: 2 minutes).")
-            
-            # Start token count updates
-            # Initial update after a short delay to ensure UI is ready
-            # Initial update after a short delay
-            self.set_timer(0.5, self.update_token_count_display)
-            # REDUCED FREQUENCY: Update token count less frequently to improve performance
-            # Changed from 3 seconds to 10 seconds - tokens don't change that often
-            self._token_count_update_timer = self.set_interval(10, lambda: self.call_after_refresh(self.update_token_count_display))
-            self.loguru_logger.info("Token count update timer started (10s interval).")
-        except QueryError:
-            self.loguru_logger.error("Failed to find AppFooterStatus widget for DB size display.")
-        except Exception as e_db_size:
-            self.loguru_logger.error(f"Error setting up DB size indicator with AppFooterStatus: {e_db_size}", exc_info=True)
-        # --- End DB Size Indicator Setup ---
+        # Footer status population is scheduled after readiness so DB-size
+        # polling cannot hold the first interactive frame.
 
         # Initialize chat settings sidebar mode
         try:
@@ -2948,8 +4508,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Final memory usage
             log_resource_usage()
             
-        # Schedule media cleanup if enabled
-        self.schedule_media_cleanup()
+        self._schedule_deferred_startup_work()
 
 
     async def update_db_sizes(self) -> None:
@@ -2959,6 +4518,177 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     async def update_token_count_display(self) -> None:
         """Updates the token count in the footer when on Chat tab."""
         await self.db_status_manager.update_token_count_display()
+
+    def _create_deferred_startup_task(
+        self,
+        coroutine,
+        *,
+        name: str,
+    ) -> asyncio.Task:
+        """Schedule nonessential startup work without blocking UI readiness."""
+
+        task = asyncio.create_task(coroutine, name=name)
+        self._deferred_startup_tasks.add(task)
+
+        def on_done(completed: asyncio.Task) -> None:
+            self._deferred_startup_tasks.discard(completed)
+            if completed.cancelled():
+                self.loguru_logger.debug(f"Deferred startup task cancelled: {name}")
+                return
+            try:
+                completed.result()
+            except Exception as exc:
+                self.loguru_logger.error(
+                    f"Deferred startup task failed: {name}: {exc}",
+                    exc_info=True,
+                )
+
+        task.add_done_callback(on_done)
+        return task
+
+    def _schedule_deferred_startup_work(self) -> None:
+        """Start nonessential services after the first interactive UI frame."""
+
+        self.set_timer(
+            DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
+            self._schedule_footer_status_updates,
+        )
+        self.set_timer(
+            DEFERRED_AUDIO_SERVICE_DELAY_SECONDS,
+            self._start_deferred_audio_service_initialization,
+        )
+        self.schedule_media_cleanup()
+
+    def _schedule_footer_status_updates(self) -> None:
+        """Wire footer DB/token status updates after UI readiness."""
+
+        try:
+            self._db_size_status_widget = self.query_one(AppFooterStatus)
+            self.loguru_logger.info("AppFooterStatus widget instance acquired.")
+
+            self.set_timer(
+                DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
+                self.update_db_sizes,
+            )
+            self.db_status_manager.start_periodic_updates(120)
+            self.loguru_logger.info("DB size update timer started for AppFooterStatus (interval: 2 minutes).")
+
+            self.set_timer(0.5, self.update_token_count_display)
+            self._token_count_update_timer = self.set_interval(
+                10,
+                lambda: self.call_after_refresh(self.update_token_count_display),
+            )
+            self.loguru_logger.info("Token count update timer started (10s interval).")
+        except QueryError:
+            self.loguru_logger.error("Failed to find AppFooterStatus widget for DB size display.")
+        except Exception as e_db_size:
+            self.loguru_logger.error(
+                f"Error setting up DB size indicator with AppFooterStatus: {e_db_size}",
+                exc_info=True,
+            )
+
+    def _start_deferred_audio_service_initialization(self) -> None:
+        """Kick off TTS/STTS initialization after startup readiness."""
+
+        self._schedule_tts_initialization()
+        self._schedule_stts_initialization()
+
+    def _schedule_tts_initialization(self) -> None:
+        if self._tts_handler is not None:
+            return
+        if self._tts_initialization_task and not self._tts_initialization_task.done():
+            return
+        self._tts_initialization_task = self._create_deferred_startup_task(
+            self._initialize_tts_service(),
+            name="deferred_tts_initialization",
+        )
+
+    def _schedule_stts_initialization(self) -> None:
+        if self._stts_handler is not None:
+            return
+        if self._stts_initialization_task and not self._stts_initialization_task.done():
+            return
+        self._stts_initialization_task = self._create_deferred_startup_task(
+            self._initialize_stts_service(),
+            name="deferred_stts_initialization",
+        )
+
+    async def _initialize_tts_service(self):
+        """Initialize the TTS handler outside the startup critical path."""
+
+        phase_start = time.perf_counter()
+        try:
+            self.loguru_logger.info("Initializing TTS service...")
+            handler = TTSEventHandler()
+            handler.app = self
+            await handler.initialize_tts()
+            self._tts_handler = handler
+            self.loguru_logger.info("TTS service initialized successfully")
+        except Exception as e:
+            self.loguru_logger.error(f"Failed to initialize TTS service: {e}")
+            self._tts_handler = None
+        finally:
+            log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
+                         labels={"phase": "tts_init_deferred"},
+                         documentation="Duration of post-mount phase in seconds")
+        return self._tts_handler
+
+    async def _initialize_stts_service(self):
+        """Initialize the S/TT/S handler outside the startup critical path."""
+
+        phase_start = time.perf_counter()
+        try:
+            self.loguru_logger.info("Initializing S/TT/S service...")
+            handler = STTSEventHandler(app=self)
+            await handler.initialize_stts()
+            self._stts_handler = handler
+            self.loguru_logger.info("S/TT/S service initialized successfully")
+        except Exception as e:
+            self.loguru_logger.error(f"Failed to initialize S/TT/S service: {e}")
+            self._stts_handler = None
+        finally:
+            log_histogram("app_post_mount_phase_duration_seconds", time.perf_counter() - phase_start,
+                         labels={"phase": "stts_init_deferred"},
+                         documentation="Duration of post-mount phase in seconds")
+        return self._stts_handler
+
+    async def _ensure_tts_handler(self):
+        """Return an initialized TTS handler, initializing on first use if needed."""
+
+        if self._tts_handler is not None:
+            return self._tts_handler
+        if self._tts_initialization_task and not self._tts_initialization_task.done():
+            await self._tts_initialization_task
+            return self._tts_handler
+        return await self._initialize_tts_service()
+
+    async def _ensure_stts_handler(self):
+        """Return an initialized S/TT/S handler, initializing on first use if needed."""
+
+        if self._stts_handler is not None:
+            return self._stts_handler
+        if self._stts_initialization_task and not self._stts_initialization_task.done():
+            await self._stts_initialization_task
+            return self._stts_handler
+        return await self._initialize_stts_service()
+
+    async def play_current_audio(self) -> None:
+        """Play the current S/TT/S audio after lazy service initialization."""
+
+        handler = await self._ensure_stts_handler()
+        if handler is None:
+            self.notify("S/TT/S service not available", severity="error")
+            return
+        await handler.play_current_audio()
+
+    async def export_current_audio(self, target_path: Path) -> None:
+        """Export the current S/TT/S audio after lazy service initialization."""
+
+        handler = await self._ensure_stts_handler()
+        if handler is None:
+            self.notify("S/TT/S service not available", severity="error")
+            return
+        await handler.export_current_audio(target_path)
 
 
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
@@ -2988,6 +4718,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.loguru_logger.info("DB size update timer stopped.")
         # --- End Stop DB Size Update Timer ---
 
+    async def _close_server_context_provider_cached_client(self) -> None:
+        server_context_provider = getattr(self, "server_context_provider", None)
+        close_cached_client = getattr(server_context_provider, "close_cached_client", None)
+        if callable(close_cached_client):
+            await close_cached_client()
+
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
         import asyncio
@@ -2996,6 +4732,15 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Stop all background services and threads
         try:
+            deferred_tasks = [
+                task for task in getattr(self, "_deferred_startup_tasks", set())
+                if not task.done()
+            ]
+            for task in deferred_tasks:
+                task.cancel()
+            if deferred_tasks:
+                await asyncio.gather(*deferred_tasks, return_exceptions=True)
+
             # Stop audio player if it exists
             if hasattr(self, 'audio_player'):
                 try:
@@ -3081,6 +4826,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             if hasattr(self, '_media_cleanup_timer') and self._media_cleanup_timer:
                 self._media_cleanup_timer.stop()
                 self.loguru_logger.info("Media cleanup timer stopped")
+
+            try:
+                await self._close_server_context_provider_cached_client()
+                self.loguru_logger.info("Server context provider cached client closed")
+            except Exception as e:
+                self.loguru_logger.error(f"Error closing server context provider cached client: {e}")
                 
         except Exception as e:
             self.loguru_logger.error(f"Error during service cleanup: {e}")
@@ -3231,6 +4982,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Hide Old Tab ---
         if old_tab and old_tab != new_tab:
+            if old_tab == TAB_NOTES:
+                self.call_after_refresh(self._notes_tab_initializer.on_tab_hidden)
+
             # Update navigation UI to remove active state from old tab
             use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
             use_links = get_cli_setting("general", "use_link_navigation", True)
@@ -3250,18 +5004,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
                     except QueryError:
                         pass
-            # NotesScreen now handles its own auto-save cleanup in on_unmount()
-                
-                # Perform one final auto-save if auto-save is enabled and there are unsaved changes
-                if (hasattr(self, 'notes_auto_save_enabled') and self.notes_auto_save_enabled and
-                    hasattr(self, 'notes_unsaved_changes') and self.notes_unsaved_changes and 
-                    self.current_selected_note_id):
-                    loguru_logger.debug("Performing final auto-save before leaving Notes tab")
-                    # Import here to avoid circular imports
-                    from tldw_chatbook.Event_Handlers.notes_events import _perform_auto_save
-                    # Schedule the auto-save as a background task
-                    self.run_worker(_perform_auto_save(self), name="notes_final_autosave")
-            
+            # NotesScreen owns its own auto-save lifecycle (on_unmount).
             try: self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
             except QueryError: logging.warning(f"Watcher: Could not find old button #tab-{old_tab}")
             try: self.query_one(f"#{old_tab}-window").display = False
@@ -3384,11 +5127,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Call immediately after refresh
             self.call_after_refresh(populate_ccp_widgets)
         elif new_tab == TAB_NOTES:
-            # NotesScreen handles its own data loading in on_mount()
-            pass
+            self.call_after_refresh(self._notes_tab_initializer.on_tab_shown)
         elif new_tab == TAB_MEDIA:
             def activate_media_initial_view():
                 try:
+                    from .UI.MediaWindow_v2 import MediaWindow as MediaWindow_v2
+
                     media_window = self.query_one(MediaWindow_v2)
                     media_window.activate_initial_view()
                 except QueryError:
@@ -3514,31 +5258,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Sidebar might not be created yet
             pass
 
-    def watch_notes_sidebar_left_collapsed(self, collapsed: bool) -> None:
-        """Hide or show the notes left sidebar."""
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        try:
-            sidebar = self.query_one("#notes-sidebar-left", NotesSidebarLeft)
-            sidebar.display = not collapsed
-            # Optional: adjust layout of notes-main-content if needed
-        except QueryError:
-            logging.error("Notes left sidebar widget (#notes-sidebar-left) not found.")
 
-    def watch_notes_sidebar_right_collapsed(self, collapsed: bool) -> None:
-        """Hide or show the notes right sidebar."""
-        if not hasattr(self, "app") or not self.app:  # Check if app is ready
-            return
-        if not self._ui_ready:
-            return
-        try:
-            sidebar = self.query_one("#notes-sidebar-right", NotesSidebarRight)
-            sidebar.display = not collapsed
-            # Optional: adjust layout of notes-main-content if needed
-        except QueryError:
-            logging.error("Notes right sidebar widget (#notes-sidebar-right) not found.")
     
     def watch_notes_unsaved_changes(self, has_unsaved: bool) -> None:
         """Update the unsaved changes indicator."""
@@ -3661,6 +5381,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _initialize_video_models(self) -> None:
         """Initialize models for the video ingestion window."""
         try:
+            from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
+
             ingest_window = self.query_one("#ingest-window", MediaIngestWindow)
             # New ingest window doesn't need model initialization
             self.log.debug("New ingest window loaded")
@@ -3670,6 +5392,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _initialize_audio_models(self) -> None:
         """Initialize models for the audio ingestion window."""
         try:
+            from .UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt as MediaIngestWindow
+
             ingest_window = self.query_one("#ingest-window", MediaIngestWindow)
             # New ingest window doesn't need model initialization
             self.log.debug("New ingest window loaded")
@@ -3677,78 +5401,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.log.debug(f"Could not initialize audio models: {e}")
 
     async def save_current_note(self) -> bool:
-        """Saves the currently selected note's title and content to the database."""
-        if not self.notes_service or not self.current_selected_note_id or self.current_selected_note_version is None:
-            logging.warning("No note selected or service unavailable. Cannot save.")
-            # Optionally: self.notify("No note selected to save.", severity="warning")
-            return False
+        """Save the currently selected note via the active Notes screen."""
+        from .UI.Screens.notes_screen import NotesScreen
 
-        try:
-            editor = self.query_one("#notes-editor-area", TextArea)
-            title_input = self.query_one("#notes-title-input", Input)
-            current_content = editor.text
-            current_title = title_input.value
-
-            # Check if title or content actually changed to avoid unnecessary saves.
-            # This requires storing the original loaded title/content if not already done by reactives.
-            # For now, we save unconditionally if a note is selected.
-            # A more advanced check could compare with self.current_selected_note_title and self.current_selected_note_content
-
-            logging.info(
-                f"Attempting to save note ID: {self.current_selected_note_id}, Version: {self.current_selected_note_version}")
-            success = self.notes_service.update_note(
-                user_id=self.notes_user_id,
-                note_id=self.current_selected_note_id,
-                update_data={'title': current_title, 'content': current_content},
-                expected_version=self.current_selected_note_version
-            )
-            if success:
-                logging.info(f"Note {self.current_selected_note_id} saved successfully.")
-                # Update version and potentially title/content reactive vars if update_note returns new state
-                # For now, we re-fetch to get the new version.
-                updated_note_details = self.notes_service.get_note_by_id(
-                    user_id=self.notes_user_id,
-                    note_id=self.current_selected_note_id
-                )
-                if updated_note_details:
-                    self.current_selected_note_version = updated_note_details.get('version')
-                    self.current_selected_note_title = updated_note_details.get('title')  # Update reactive
-                    # self.current_selected_note_content = updated_note_details.get('content') # Update reactive
-
-                    # Refresh the list in the left sidebar to reflect title changes and update item version
-                    await notes_handlers.load_and_display_notes_handler(self)
-                    # self.notify("Note saved!", severity="information") # If notifications are setup
-                else:
-                    # Note might have been deleted by another client after our successful update, though unlikely.
-                    logging.warning(f"Note {self.current_selected_note_id} not found after presumably successful save.")
-                    # self.notify("Note saved, but failed to refresh details.", severity="warning")
-
-                return True
-            else:
-                # This path should ideally not be reached if update_note raises exceptions on failure.
-                logging.warning(
-                    f"notes_service.update_note for {self.current_selected_note_id} returned False without raising error.")
-                # self.notify("Failed to save note (unknown reason).", severity="error")
-                return False
-
-        except ConflictError as e:
-            logging.error(f"Conflict saving note {self.current_selected_note_id}: {e}", exc_info=True)
-            # self.notify(f"Save conflict: {e}. Please reload the note.", severity="error")
-            # Optionally, offer to reload the note or overwrite. For now, just log.
-            # await self.handle_save_conflict() # A new method to manage this
-            return False
-        except CharactersRAGDBError as e:
-            logging.error(f"Database error saving note {self.current_selected_note_id}: {e}", exc_info=True)
-            # self.notify("Error saving note to database.", severity="error")
-            return False
-        except QueryError as e:
-            logging.error(f"UI component not found while saving note: {e}", exc_info=True)
-            # self.notify("UI error while saving note.", severity="error")
-            return False
-        except Exception as e:
-            logging.error(f"Unexpected error saving note {self.current_selected_note_id}: {e}", exc_info=True)
-            # self.notify("Unexpected error saving note.", severity="error")
-            return False
+        if isinstance(self.screen, NotesScreen):
+            return await self.screen._save_current_note()
+        logging.warning("save_current_note called outside the Notes screen; nothing to save.")
+        return False
 
 
     #######################################################################
@@ -4474,12 +6133,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Handles changes in Select widgets if specific actions are needed beyond watchers."""
         select_id = event.select.id
         current_active_tab = self.current_tab
-        self.loguru_logger.info(f"Select changed: {select_id} = {event.value}, current tab = {current_active_tab}")
-
-        if select_id == "conv-char-character-select" and current_active_tab == TAB_CCP:
-            await ccp_handlers.handle_ccp_character_select_changed(self, event.value)
-
-        current_active_tab = self.current_tab
+        self.loguru_logger.debug(f"Select changed: {select_id} = {event.value}, current tab = {current_active_tab}")
 
         if select_id == "conv-char-character-select" and current_active_tab == TAB_CCP:
             await ccp_handlers.handle_ccp_character_select_changed(self, event.value)
@@ -4502,18 +6156,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.debug(f"chat-api-provider change event (handled in ChatScreen): {event.value}")
             
             # Update token counter when provider changes
-            try:
-                from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
-                await update_chat_token_counter(self)
-            except Exception as e:
-                self.loguru_logger.debug(f"Could not update token counter on provider change: {e}")
+            if self._ui_ready:
+                try:
+                    from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
+                    await update_chat_token_counter(self)
+                except Exception as e:
+                    self.loguru_logger.debug(f"Could not update token counter on provider change: {e}")
         elif select_id == "chat-api-model" and current_active_tab == TAB_CHAT:
             # Update token counter when model changes
-            try:
-                from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
-                await update_chat_token_counter(self)
-            except Exception as e:
-                self.loguru_logger.debug(f"Could not update token counter on model change: {e}")
+            if self._ui_ready:
+                try:
+                    from .Event_Handlers.Chat_Events.chat_token_events import update_chat_token_counter
+                    await update_chat_token_counter(self)
+                except Exception as e:
+                    self.loguru_logger.debug(f"Could not update token counter on model change: {e}")
         elif select_id == "chat-conversation-search-character-filter-select" and current_active_tab == TAB_CHAT:
             self.loguru_logger.debug("Character filter changed in chat tab, triggering conversation search")
             await chat_handlers.perform_chat_conversation_search(self)
@@ -4588,80 +6244,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await self._splash_screen_widget.remove()
             self._splash_screen_widget = None
         
-        # Always use screen-based navigation
-            # Determine initial screen based on _initial_tab_value
-            initial_tab = getattr(self, '_initial_tab_value', 'chat')
-            
-            # Import the new screens
-            from .UI.Screens.stts_screen import STTSScreen
-            from .UI.Screens.study_screen import StudyScreen
-            from .UI.Screens.chatbooks_screen import ChatbooksScreen
-            from .UI.Screens.subscription_screen import SubscriptionScreen
-            
-            # Map tab IDs to screen classes
-            screen_map = {
-                'chat': ChatScreen,
-                'ingest': MediaIngestScreen,
-                'coding': CodingScreen,
-                'ccp': ConversationScreen,
-                'media': MediaScreen,
-                'notes': NotesScreen,
-                'search': SearchScreen,
-                'evals': EvalsScreen,
-                'tools_settings': ToolsSettingsScreen,
-                'llm': LLMScreen,
-                'customize': CustomizeScreen,
-                'logs': LogsScreen,
-                'stats': StatsScreen,
-                'stts': STTSScreen,
-                'study': StudyScreen,
-                'chatbooks': ChatbooksScreen,
-                'subscriptions': SubscriptionScreen,
-            }
-            
-            # Get the appropriate screen class
-            screen_class = screen_map.get(initial_tab, ChatScreen)
-            
-            # Push the initial screen (must use push for first screen after splash)
-            await self.push_screen(screen_class(self))
-            logger.info(f"Screen navigation: Pushed initial {screen_class.__name__} after splash")
-            
-            # For screen navigation, set up a buffered logging handler
-            # that will store logs until the LogsWindow is ready
-            self._setup_buffered_logging()
-            return
-        
-        # Check if main UI widgets already exist (avoid duplicate IDs)
+        # Mount the shared app chrome before pushing the first screen so
+        # persistent navigation is available after splash startup too.
         existing_ids = {widget.id for widget in self.screen._nodes if widget.id}
-        
-        # Create and mount the main UI components after splash screen is closed
         main_ui_widgets = self._create_main_ui_widgets()
-        
-        # Only mount widgets that don't already exist
         widgets_to_mount = []
         for widget in main_ui_widgets:
             if widget.id not in existing_ids:
                 widgets_to_mount.append(widget)
             else:
                 logger.debug(f"Skipping duplicate widget with ID: {widget.id}")
-        
+
         if widgets_to_mount:
             await self.mount(*widgets_to_mount)
-        
-        # Now that the main UI is mounted, set up logging if it was deferred
-        if not self._rich_log_handler:
-            self.loguru_logger.debug("Setting up logging after splash screen closed")
-            logging_start = time.perf_counter()
-            self._setup_logging()
-            if self._rich_log_handler:
-                self.loguru_logger.debug("Starting RichLogHandler processor task...")
-                self._rich_log_handler.start_processor(self)
-            log_histogram("app_splash_deferred_logging_duration_seconds", time.perf_counter() - logging_start,
-                         documentation="Time to set up logging after splash screen")
-        
-        # Now schedule post-mount setup and hide inactive windows
+
+        # Push the initial screen after the shared navigation is mounted.
+        await self._push_initial_screen()
+
+        # Screen navigation uses buffered logging until the Logs screen is ready.
+        self._setup_buffered_logging()
+
+        # Finish deferred startup work once the mounted screen has rendered.
         self.call_after_refresh(self._post_mount_setup)
-        self.call_after_refresh(self.hide_inactive_windows)
     
 
     @on(Checkbox.Changed, "#chat-strip-thinking-tags-checkbox")
@@ -5025,8 +6629,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
             # Run cleanup on startup if configured
             if cleanup_on_startup:
-                self.loguru_logger.info("Running media cleanup on startup")
-                self.call_later(self.perform_media_cleanup)
+                self.loguru_logger.info(
+                    "Scheduling media cleanup after startup idle delay"
+                )
+                self._media_cleanup_startup_timer = self.set_timer(
+                    DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS,
+                    self.perform_media_cleanup,
+                )
             
             # Schedule periodic cleanup
             cleanup_interval_seconds = cleanup_interval_hours * 3600
@@ -5149,28 +6758,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             loguru_logger.debug("Cancelled auto-save timer during app quit")
         
         # Perform final save if on Notes tab with unsaved changes (respect auto-save setting)
-        if (self.current_tab == TAB_NOTES and 
-            hasattr(self, 'notes_unsaved_changes') and 
-            self.notes_unsaved_changes and 
-            self.current_selected_note_id):
-            # Check if we should save based on auto-save setting
-            should_save = hasattr(self, 'notes_auto_save_enabled') and self.notes_auto_save_enabled
-            if should_save:
-                loguru_logger.debug("Performing final auto-save during app quit")
-            else:
-                loguru_logger.debug("Skipping final save during app quit (auto-save disabled)")
-            
-            if should_save:
-                try:
-                    # Import here to avoid circular imports
-                    from tldw_chatbook.Event_Handlers.notes_events import save_current_note_handler
-                    # Run synchronously since we're quitting
-                    import asyncio
-                    loop = asyncio.new_event_loop()
-                    loop.run_until_complete(save_current_note_handler(self))
-                    loop.close()
-                except Exception as e:
-                    loguru_logger.error(f"Error performing final save during quit: {e}")
+        # NotesScreen owns note autosave; no legacy quit-save path remains.
         
         # Try to save caches but don't let it block quitting
         try:

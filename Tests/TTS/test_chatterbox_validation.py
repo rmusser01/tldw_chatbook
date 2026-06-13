@@ -213,7 +213,7 @@ class TestChatterboxValidation:
         backend.target_db = -20.0
         
         # Create audio with known RMS
-        audio_tensor = torch.ones(1000) * 0.1  # Low amplitude
+        audio_tensor = torch.ones(1000) * 0.05  # Below the -20 dB target
         
         # Apply normalization
         normalized = backend.normalize_audio(audio_tensor, -20.0)

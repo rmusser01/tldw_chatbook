@@ -86,8 +86,10 @@
 }
 
 /* Highlight matches in search results */
-ConfigSearchResult ListItem.--highlight {
-    background: $accent 30%;
+ConfigSearchResult.--highlight {
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
 }
 
 /* Ensure the config editor has proper spacing when search is shown */
@@ -99,11 +101,17 @@ ConfigSearchResult ListItem.--highlight {
 /* Highlight effect for found UI elements */
 .search-highlight {
     background: $warning 30%;
-    border: thick $warning;
+    border: solid $warning;
+    border-bottom: solid $warning;
 }
 
-Input.search-highlight:focus {
-    border: thick $warning;
+Input.search-highlight:focus,
+TextArea.search-highlight:focus {
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    border: solid $ds-input-focus-border;
+    border-bottom: solid $ds-input-focus-accent;
+    outline: none;
 }
 
 Select.search-highlight {
@@ -115,5 +123,6 @@ Checkbox.search-highlight {
 }
 
 TextArea.search-highlight {
-    border: thick $warning;
+    border: solid $warning;
+    border-bottom: solid $warning;
 }

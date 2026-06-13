@@ -294,9 +294,15 @@ class TestDictationServiceProperties:
                 if enable_punctuation and text and text[-1] not in '.!?':
                     assert result.endswith('.')
                 
-                # Should capitalize first letter
+                # Should capitalize first letter when the character has an uppercase form.
                 if enable_punctuation and text:
-                    assert result[0].isupper() or not result[0].isalpha()
+                    upper_first = text[0].upper()
+                    if (
+                        len(upper_first) == 1
+                        and upper_first.isupper()
+                        and upper_first.lower() == text[0].lower()
+                    ):
+                        assert result[0].isupper()
                 
                 # Original text should be preserved (minus casing/punctuation)
                 assert text.lower().rstrip('.!?') in result.lower()
@@ -326,7 +332,7 @@ class TestDictationServiceProperties:
         # Properties
         assert result.duration >= 0
         assert len(result.segments) == num_segments
-        assert result.word_count == len(transcript.split()) if transcript else 0
+        assert result.word_count == (len(transcript.split()) if transcript else 0)
         
         if audio_data:
             assert len(result.audio_data) == audio_size
@@ -436,8 +442,6 @@ class TestSystemIntegrationProperties:
     )
     def test_audio_pipeline_properties(self, num_chunks, chunk_sizes):
         """Test audio pipeline maintains data integrity."""
-        assume(len(chunk_sizes) >= num_chunks)
-        
         with patch('tldw_chatbook.Audio.recording_service.PYAUDIO_AVAILABLE', True):
             with patch('tldw_chatbook.Audio.dictation_service.TranscriptionService'):
                 recording_service = AudioRecordingService()
@@ -471,9 +475,10 @@ class TestSystemIntegrationProperties:
                 
                 errors_encountered = 0
                 successful_ops = 0
+                target_errors = min(num_operations - 1, round(error_rate * num_operations))
                 
                 for i in range(num_operations):
-                    if np.random.random() < error_rate:
+                    if i < target_errors:
                         # Simulate error
                         try:
                             service._notify_error(Exception("Test error"))
@@ -492,4 +497,4 @@ class TestSystemIntegrationProperties:
                 # Error rate should roughly match
                 if num_operations > 20:
                     actual_error_rate = errors_encountered / num_operations
-                    assert abs(actual_error_rate - error_rate) < 0.2
+                    assert abs(actual_error_rate - error_rate) <= 1.0 / num_operations

@@ -14,7 +14,10 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from tldw_chatbook.Local_Ingestion.transcription_service import TranscriptionService
+from tldw_chatbook.Local_Ingestion.transcription_service import (
+    FASTER_WHISPER_AVAILABLE,
+    TranscriptionService,
+)
 
 
 class TestDiarizationIntegration(unittest.TestCase):
@@ -103,6 +106,9 @@ class TestDiarizationIntegration(unittest.TestCase):
     
     def test_transcription_without_diarization(self):
         """Test that transcription works normally when diarization is disabled."""
+        if not FASTER_WHISPER_AVAILABLE:
+            self.skipTest("faster-whisper dependency not available")
+
         # Create test audio
         audio_path = self.create_test_audio(duration_seconds=2.0)
         

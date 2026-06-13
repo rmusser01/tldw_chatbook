@@ -11,6 +11,8 @@ from textual.widgets._markdown import Markdown
 
 from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle, EvidenceReference
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_streaming_events
 from tldw_chatbook.Constants import TAB_CHAT
@@ -75,35 +77,45 @@ class StreamingTestApp(App):
 
 class TestChatStreamingWithTextual:
     """Test chat streaming functionality using Textual's testing framework."""
+
+    @staticmethod
+    def _legacy_chat_window_setting(section, key, default=None):
+        if section == "chat_defaults" and key == "enable_tabs":
+            return False
+        return default
     
     @pytest_asyncio.fixture
     async def streaming_app(self):
         """Create a test app with streaming setup."""
         app = StreamingTestApp()
         
-        async with app.run_test() as pilot:
-            # Wait for app to fully mount
-            await pilot.pause(0.1)
-            
-            # Mount the AI message widget in the chat log
-            chat_window = pilot.app.query_one("#chat-window", ChatWindowEnhanced)
-            chat_log = chat_window.query_one("#chat-log", VerticalScroll)
-            
-            # Create and mount an AI message widget
-            ai_widget = ChatMessageEnhanced(
-                message="Initial.",
-                role="AI",
-                message_id="test_msg_123"
-            )
-            await chat_log.mount(ai_widget)
-            app.current_ai_widget = ai_widget
-            
-            # Mark streaming as started
-            ai_widget._streaming_started = True
-            
-            await pilot.pause(0.1)
-            
-            yield pilot, app
+        with patch(
+            "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting",
+            side_effect=self._legacy_chat_window_setting,
+        ):
+            async with app.run_test() as pilot:
+                # Wait for app to fully mount
+                await pilot.pause(0.1)
+
+                # Mount the AI message widget in the chat log
+                chat_window = pilot.app.query_one("#chat-window", ChatWindowEnhanced)
+                chat_log = chat_window.query_one("#chat-log", VerticalScroll)
+
+                # Create and mount an AI message widget
+                ai_widget = ChatMessageEnhanced(
+                    message="Initial.",
+                    role="AI",
+                    message_id="test_msg_123"
+                )
+                await chat_log.mount(ai_widget)
+                app.current_ai_widget = ai_widget
+
+                # Mark streaming as started
+                ai_widget._streaming_started = True
+
+                await pilot.pause(0.1)
+
+                yield pilot, app
     
     @pytest.mark.asyncio
     async def test_handle_streaming_chunk_appends_text(self, streaming_app):
@@ -164,6 +176,50 @@ class TestChatStreamingWithTextual:
             # For non-ephemeral chats, verify database was called
             if not app.current_chat_is_ephemeral:
                 mock_ccl.add_message_to_conversation.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_stream_done_attaches_answer_citation_validation(self, streaming_app):
+        """A streamed answer validates citation labels against staged evidence."""
+        pilot, app = streaming_app
+        ai_widget = app.get_current_ai_message_widget()
+        evidence_bundle = EvidenceBundle(
+            bundle_id="library-rag:incident",
+            query="Why did the incident happen?",
+            references=(
+                EvidenceReference(
+                    evidence_id="S1",
+                    source_id="note-1",
+                    source_type="note",
+                    title="Incident Review",
+                    snippet="Expired credential caused the incident.",
+                    authority_label="Source authority: local",
+                ),
+            ),
+        )
+        app._current_chat_handoff_payload = ChatHandoffPayload(
+            source="search-rag",
+            item_type="rag-result",
+            title="Incident Review",
+            body="Retrieved content",
+            metadata={"evidence_bundle": evidence_bundle.to_payload()},
+        ).to_dict()
+
+        with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events.ccl') as mock_ccl:
+            mock_ccl.add_message_to_conversation.return_value = "new_msg_id"
+            app.chachanotes_db.get_message_by_id.return_value = {
+                'id': 'new_msg_id',
+                'version': 0,
+            }
+
+            await chat_streaming_events.handle_stream_done.__get__(app)(
+                StreamDone(full_text="The credential expired [S1].", error=None)
+            )
+
+        await pilot.pause(0.1)
+
+        assert ai_widget.citation_validation.status == "validated"
+        assert ai_widget.citation_refs[0].evidence_id == "S1"
+        assert app._current_chat_answer_citation_validation["status"] == "validated"
     
     @pytest.mark.asyncio
     async def test_streaming_state_management(self, streaming_app):
@@ -239,9 +295,13 @@ class TestStreamingEdgeCases:
         """Create a minimal test app."""
         app = StreamingTestApp()
         
-        async with app.run_test() as pilot:
-            await pilot.pause(0.1)
-            yield pilot, app
+        with patch(
+            "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting",
+            side_effect=TestChatStreamingWithTextual._legacy_chat_window_setting,
+        ):
+            async with app.run_test() as pilot:
+                await pilot.pause(0.1)
+                yield pilot, app
     
     async def test_streaming_without_widget(self, minimal_app):
         """Test streaming when no AI widget exists."""

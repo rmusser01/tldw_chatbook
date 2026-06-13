@@ -552,13 +552,9 @@ class TestEvaluationSystemIntegration:
             model_id=model_id
         )
         
-        with patch('tldw_chatbook.Chat.Chat_Functions.chat_api_call') as MockLLM:
-            mock_llm = Mock()
-            # Simulate LLM error
-            mock_llm.generate = AsyncMock(side_effect=Exception("API Error"))
-            # Mock chat_api_call to return expected responses
-            MockLLM.return_value = mock_llm
-            
+        with patch('tldw_chatbook.Evals.eval_runner.chat_api_call', new_callable=AsyncMock) as mock_chat_api_call:
+            mock_chat_api_call.side_effect = Exception("API Error")
+
             from tldw_chatbook.Evals.eval_runner import BaseEvalRunner
             
             class ErrorTestRunner(BaseEvalRunner):
@@ -718,7 +714,7 @@ class TestUIIntegration:
         
         # Check metrics progression
         accuracies = [u["metrics"]["accuracy"] for u in progress_updates]
-        assert accuracies == [0.8, 0.84, 0.88, 0.92, 0.96]
+        assert accuracies == pytest.approx([0.8, 0.84, 0.88, 0.92, 0.96])
 
 
 if __name__ == "__main__":

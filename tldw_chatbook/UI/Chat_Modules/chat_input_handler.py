@@ -36,6 +36,27 @@ class ChatInputHandler:
         self.chat_window = chat_window
         self.app_instance = chat_window.app_instance
         self._last_send_stop_click = 0
+
+    def _is_streaming(self) -> bool:
+        """Return the current streaming state, failing closed for non-boolean mocks."""
+        try:
+            is_streaming = self.app_instance.get_current_chat_is_streaming()
+            if isinstance(is_streaming, bool):
+                return is_streaming
+        except Exception:
+            pass
+
+        fallback = getattr(self.app_instance, "is_streaming", False)
+        return fallback if isinstance(fallback, bool) else False
+
+    def _worker_is_running(self) -> bool:
+        """Return True only when the current worker explicitly reports a running boolean."""
+        worker = getattr(self.app_instance, "current_chat_worker", None)
+        if worker is None:
+            return False
+
+        is_running = getattr(worker, "is_running", False)
+        return is_running if isinstance(is_running, bool) else False
     
     async def handle_send_stop_button(self, event):
         """Unified handler for Send/Stop button with debouncing and error recovery.
@@ -63,14 +84,11 @@ class ChatInputHandler:
         
         try:
             # Check current state and route to appropriate handler
-            if self.app_instance.get_current_chat_is_streaming() or (
-                hasattr(self.app_instance, 'current_chat_worker') and 
-                self.app_instance.current_chat_worker and 
-                self.app_instance.current_chat_worker.is_running
-            ):
+            is_streaming = self._is_streaming()
+            if is_streaming or self._worker_is_running():
                 # Stop operation
                 logger.info("Send/Stop button pressed - stopping generation", 
-                          extra={"action": "stop", "is_streaming": self.app_instance.get_current_chat_is_streaming()})
+                          extra={"action": "stop", "is_streaming": is_streaming})
                 await chat_events.handle_stop_chat_generation_pressed(self.app_instance, event)
             else:
                 # Send operation - use enhanced handler that includes image
@@ -115,7 +133,7 @@ class ChatInputHandler:
         """Update the send/stop button state based on streaming status."""
         try:
             # Determine current state
-            is_streaming = self.app_instance.get_current_chat_is_streaming()
+            is_streaming = self._is_streaming()
             should_be_send = not is_streaming
             
             # Update reactive property if state changed

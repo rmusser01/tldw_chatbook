@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from loguru import logger
 
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+
 logger = logger.bind(module="ChatScreenState")
 
 
@@ -19,11 +21,16 @@ class MessageData:
     message_id: str
     role: str  # 'user', 'assistant', 'system'
     content: str
-    timestamp: datetime
+    timestamp: Optional[datetime]
     attachments: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     is_streaming: bool = False
     is_edited: bool = False
+    parent_message_id: Optional[str] = None
+    variant_of: Optional[str] = None
+    variant_number: Optional[int] = None
+    is_selected_variant: bool = False
+    total_variants: Optional[int] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -36,6 +43,11 @@ class MessageData:
             'metadata': self.metadata,
             'is_streaming': self.is_streaming,
             'is_edited': self.is_edited,
+            'parent_message_id': self.parent_message_id,
+            'variant_of': self.variant_of,
+            'variant_number': self.variant_number,
+            'is_selected_variant': self.is_selected_variant,
+            'total_variants': self.total_variants,
         }
     
     @classmethod
@@ -49,11 +61,16 @@ class MessageData:
             message_id=data.get('message_id', ''),
             role=data.get('role', 'user'),
             content=data.get('content', ''),
-            timestamp=timestamp or datetime.now(),
+            timestamp=timestamp,
             attachments=data.get('attachments', []),
             metadata=data.get('metadata', {}),
             is_streaming=data.get('is_streaming', False),
             is_edited=data.get('is_edited', False),
+            parent_message_id=data.get('parent_message_id'),
+            variant_of=data.get('variant_of'),
+            variant_number=data.get('variant_number'),
+            is_selected_variant=data.get('is_selected_variant', False),
+            total_variants=data.get('total_variants'),
         )
 
 
@@ -63,8 +80,17 @@ class TabState:
     tab_id: str
     title: str
     conversation_id: Optional[str] = None
+    runtime_backend: str = "local"
+    discovery_owner: str = "general_chat"
+    discovery_entity_id: Optional[str] = None
     character_id: Optional[int] = None
     character_name: Optional[str] = None
+    assistant_kind: Optional[str] = None
+    assistant_id: Optional[str] = None
+    persona_memory_mode: Optional[str] = None
+    scope_type: Optional[str] = None
+    workspace_id: Optional[str] = None
+    handoff_payload: Optional[ChatHandoffPayload] = None
     
     # Input state
     input_text: str = ""
@@ -97,8 +123,17 @@ class TabState:
             'tab_id': self.tab_id,
             'title': self.title,
             'conversation_id': self.conversation_id,
+            'runtime_backend': self.runtime_backend,
+            'discovery_owner': self.discovery_owner,
+            'discovery_entity_id': self.discovery_entity_id,
             'character_id': self.character_id,
             'character_name': self.character_name,
+            'assistant_kind': self.assistant_kind,
+            'assistant_id': self.assistant_id,
+            'persona_memory_mode': self.persona_memory_mode,
+            'scope_type': self.scope_type,
+            'workspace_id': self.workspace_id,
+            'handoff_payload': self.handoff_payload.to_dict() if self.handoff_payload else None,
             'input_text': self.input_text,
             'cursor_position': self.cursor_position,
             'scroll_position': self.scroll_position,
@@ -124,15 +159,26 @@ class TabState:
         last_activity = data.get('last_activity')
         if last_activity and isinstance(last_activity, str):
             last_activity = datetime.fromisoformat(last_activity)
-        
+
         messages = [MessageData.from_dict(msg) for msg in data.get('messages', [])]
+        scope_type = data.get('scope_type') or 'global'
+        workspace_id = data.get('workspace_id') if scope_type == 'workspace' else None
         
         return cls(
             tab_id=data.get('tab_id', ''),
             title=data.get('title', 'New Chat'),
             conversation_id=data.get('conversation_id'),
+            runtime_backend=data.get('runtime_backend', 'local'),
+            discovery_owner=data.get('discovery_owner', 'general_chat'),
+            discovery_entity_id=data.get('discovery_entity_id'),
             character_id=data.get('character_id'),
             character_name=data.get('character_name'),
+            assistant_kind=data.get('assistant_kind'),
+            assistant_id=data.get('assistant_id'),
+            persona_memory_mode=data.get('persona_memory_mode'),
+            scope_type=scope_type,
+            workspace_id=workspace_id,
+            handoff_payload=ChatHandoffPayload.from_dict(data.get('handoff_payload')),
             input_text=data.get('input_text', ''),
             cursor_position=data.get('cursor_position', 0),
             scroll_position=data.get('scroll_position', 0),
@@ -146,6 +192,56 @@ class TabState:
             system_prompt_override=data.get('system_prompt_override'),
             temperature_override=data.get('temperature_override'),
             max_tokens_override=data.get('max_tokens_override'),
+        )
+
+
+@dataclass
+class TaskResumeState:
+    """Serializable summary of the current agentic task state."""
+
+    summary: str = ""
+    last_step: str = ""
+    pending_approval: Optional[Dict[str, Any]] = None
+    diff_summary: str = ""
+    next_action: str = ""
+
+    def has_resume_content(self) -> bool:
+        """Return True when the resume panel should be visible."""
+        return any(
+            (
+                self.summary.strip(),
+                self.last_step.strip(),
+                self.diff_summary.strip(),
+                self.next_action.strip(),
+            )
+        )
+
+    def has_pending_approval(self) -> bool:
+        """Return True when an approval prompt should be shown."""
+        return bool(self.pending_approval)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            'summary': self.summary,
+            'last_step': self.last_step,
+            'pending_approval': self.pending_approval,
+            'diff_summary': self.diff_summary,
+            'next_action': self.next_action,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> 'TaskResumeState':
+        """Create from dictionary."""
+        if not data:
+            return cls()
+
+        return cls(
+            summary=data.get('summary', ''),
+            last_step=data.get('last_step', ''),
+            pending_approval=data.get('pending_approval'),
+            diff_summary=data.get('diff_summary', ''),
+            next_action=data.get('next_action', ''),
         )
 
 
@@ -180,6 +276,7 @@ class ChatScreenState:
     show_timestamps: bool = True
     show_avatars: bool = True
     compact_mode: bool = False
+    task_resume_state: TaskResumeState = field(default_factory=TaskResumeState)
     
     # Metadata
     last_saved: Optional[datetime] = None
@@ -277,6 +374,7 @@ class ChatScreenState:
             'show_timestamps': self.show_timestamps,
             'show_avatars': self.show_avatars,
             'compact_mode': self.compact_mode,
+            'task_resume_state': self.task_resume_state.to_dict(),
             'last_saved': self.last_saved.isoformat() if self.last_saved else None,
             'version': self.version,
         }
@@ -303,6 +401,7 @@ class ChatScreenState:
             show_timestamps=data.get('show_timestamps', True),
             show_avatars=data.get('show_avatars', True),
             compact_mode=data.get('compact_mode', False),
+            task_resume_state=TaskResumeState.from_dict(data.get('task_resume_state')),
             last_saved=last_saved,
             version=data.get('version', '1.0'),
         )

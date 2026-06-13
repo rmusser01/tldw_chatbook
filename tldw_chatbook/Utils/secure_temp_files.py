@@ -284,7 +284,11 @@ class SecureTempFileManager:
     
     def __del__(self):
         """Cleanup on destruction."""
-        self.cleanup_all()
+        try:
+            self.cleanup_all()
+        except Exception:
+            # Destructors may run after logging/metrics modules have already shut down.
+            pass
 
 
 # Global temp file manager instance

@@ -181,10 +181,11 @@ async def test_enhanced_rag_service():
     
     logger.info("\n=== Testing Enhanced RAG Service ===")
     
-    # Create service with enhanced profile for parent retrieval
-    # Use a small embedding model for testing
+    # Create service with enhanced profile for parent retrieval.
+    # Use the deterministic mock backend so this test stays offline and
+    # isolated from EmbeddingFactory patches in the wider suite.
     config = RAGConfig()
-    config.embedding.model = "sentence-transformers/all-MiniLM-L6-v2"  # Small, fast model
+    config.embedding.model = "mock"
     config.vector_store.type = "in_memory"
     
     service = create_rag_service(
@@ -319,7 +320,7 @@ async def test_v2_full_features():
     
     # Create service with full profile
     config = RAGConfig()
-    config.embedding.model = "sentence-transformers/all-MiniLM-L6-v2"
+    config.embedding.model = "mock"
     config.vector_store.type = "in_memory"
     
     service = create_rag_service(
@@ -360,7 +361,7 @@ async def test_v2_full_features():
         logger.info(f"Found {len(results)} results")
         for i, result in enumerate(results[:2]):
             logger.info(f"  Result {i+1}: Score={result.score:.3f}")
-            logger.info(f"    Preview: {result.content[:100]}...")
+            logger.info(f"    Preview: {result.document[:100]}...")
 
 
 @pytest.mark.asyncio
@@ -371,7 +372,7 @@ async def test_profile_switching():
     logger.info("\n=== Testing Profile Switching ===")
     
     config = RAGConfig()
-    config.embedding.model = "sentence-transformers/all-MiniLM-L6-v2"
+    config.embedding.model = "mock"
     config.vector_store.type = "in_memory"
     
     profiles = ["bm25_only", "vector_only", "hybrid_basic", "hybrid_enhanced", "hybrid_full"]

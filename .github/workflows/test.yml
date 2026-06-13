@@ -9,6 +9,8 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
   
 env:
   PYTEST_TIMEOUT: 300
@@ -131,7 +133,8 @@ jobs:
   ui-tests:
     name: UI Tests
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 45
+
     steps:
     - uses: actions/checkout@v4
     
@@ -151,23 +154,40 @@ jobs:
         pip install textual-dev
     
     - name: Run UI tests
+      # Run the full Tests/UI directory, not just the 47 ui-marked tests —
+      # the unmarked ~2000 tests previously ran nowhere and rotted silently
+      # (repaired in PRs #508/#510; suite is green as of those merges).
       run: |
-        pytest -m ui \
+        pytest Tests/UI \
+          --timeout=180 \
           --json-report \
           --json-report-file=ui-test-results.json \
           -v
-    
+
+    - name: Run ui-marked tests outside Tests/UI
+      # A couple dozen ui-marked tests live in other Tests/ directories;
+      # keep collecting them so the directory switch above loses nothing.
+      run: |
+        pytest Tests -m ui --ignore=Tests/UI \
+          --timeout=180 \
+          --json-report \
+          --json-report-file=ui-marked-test-results.json \
+          -v
+
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: ui-test-results
-        path: ui-test-results.json
+        path: |
+          ui-test-results.json
+          ui-marked-test-results.json
   
   all-tests:
-    name: All Tests (No Markers)
+    name: Full Test Suite (Manual)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 60
     
     steps:
     - uses: actions/checkout@v4
@@ -213,7 +233,6 @@ jobs:
           htmlcov/
     
     - name: Upload coverage to Codecov
-      if: github.event_name == 'pull_request'
       uses: codecov/codecov-action@v4
       with:
         file: ./coverage-all.xml
@@ -248,13 +267,14 @@ jobs:
     
     - name: Comment PR with results
       if: github.event_name == 'pull_request'
+      continue-on-error: true
       uses: actions/github-script@v7
       with:
         script: |
           const fs = require('fs');
           const summary = fs.readFileSync('test-summary.md', 'utf8');
           
-          github.rest.issues.createComment({
+          await github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
             repo: context.repo.repo,

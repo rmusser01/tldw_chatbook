@@ -69,11 +69,11 @@ class EmbeddingTemplateSelectorDialog(ModalScreen):
     """Modal dialog for selecting embedding configuration templates."""
     
     BINDINGS = [("escape", "cancel", "Cancel")]
+    selected_category: reactive[TemplateCategory] = reactive(TemplateCategory.QUICK_START)
     
     def __init__(self, template_manager: Optional[EmbeddingTemplateManager] = None):
         super().__init__()
         self.template_manager = template_manager or EmbeddingTemplateManager()
-        self.selected_category: reactive[TemplateCategory] = reactive(TemplateCategory.QUICK_START)
         
     def compose(self) -> ComposeResult:
         """Compose the template selector dialog."""
@@ -159,11 +159,11 @@ class EmbeddingTemplateQuickSelect(Widget):
     """Quick template selector widget for embedding forms."""
     
     DEFAULT_CLASSES = "embedding-template-quick-select"
+    current_template: reactive[Optional[str]] = reactive(None)
     
     def __init__(self, template_manager: Optional[EmbeddingTemplateManager] = None, **kwargs):
         super().__init__(**kwargs)
         self.template_manager = template_manager or EmbeddingTemplateManager()
-        self.current_template: reactive[Optional[str]] = reactive(None)
         
     def compose(self) -> ComposeResult:
         """Compose the quick select widget."""

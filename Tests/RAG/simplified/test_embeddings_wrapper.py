@@ -509,22 +509,23 @@ class TestEmbeddingsCaching:
         assert embeddings[0] == embeddings[1] == embeddings[3]
         assert embeddings[2] != embeddings[0]
     
-    def test_cache_performance(self, performance_timer):
-        """Test performance improvement with caching."""
+    def test_cache_performance(self):
+        """Test repeated cached calls avoid regenerating embeddings."""
         wrapper = EmbeddingsWrapper(provider="mock", cache_enabled=True)
+        embed_spy = MagicMock(wraps=wrapper._model.embed)
+        wrapper._model.embed = embed_spy
         
         texts = ["Text"] * 1000  # Same text repeated
         
         # First call - cache miss
-        with performance_timer.measure("first_call") as timer1:
-            embeddings1 = wrapper.create_embeddings(texts)
+        embeddings1 = wrapper.create_embeddings(texts)
         
         # Second call - cache hit
-        with performance_timer.measure("second_call") as timer2:
-            embeddings2 = wrapper.create_embeddings(texts)
+        embeddings2 = wrapper.create_embeddings(texts)
         
-        # Cached call should be much faster
-        assert timer2.elapsed < timer1.elapsed * 0.1  # At least 10x faster
+        # Cache hits should not invoke the provider again; timing ratios are CI-flaky.
+        assert embed_spy.call_count == 1
+        assert wrapper.get_cache_stats()["size"] == 1
         assert embeddings1 == embeddings2
 
 

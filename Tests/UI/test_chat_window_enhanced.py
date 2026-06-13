@@ -10,6 +10,14 @@ from textual.app import App
 from textual.widgets import Input, Button, TextArea, Static, ListView, Switch
 from textual.containers import Container, Horizontal, VerticalScroll
 
+from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen_state import ChatScreenState, TabState
+from tldw_chatbook.Widgets.Chat_Widgets.chat_shell_bar import ChatShellBar
+from tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
+from tldw_chatbook.Widgets.enhanced_settings_sidebar import EnhancedSettingsSidebar
+
 
 @pytest.fixture
 def mock_app():
@@ -82,19 +90,55 @@ class TestChatWindowFileAttachmentUI:
         mock_chat_window.attachment_indicator.update("3 files attached")
     
     @pytest.mark.asyncio
-    async def test_file_picker_dialog_integration(self, mock_app, mock_chat_window):
-        """Test file picker dialog integration."""
-        # Mock file picker dialog
-        with patch('tldw_chatbook.Widgets.enhanced_file_picker.EnhancedFilePickerDialog') as MockPicker:
-            mock_dialog = Mock()
-            mock_dialog.show = AsyncMock()
-            MockPicker.return_value = mock_dialog
-            
-            # Simulate attach button click
-            await mock_chat_window.on_button_pressed(Mock(button=mock_chat_window.attach_button))
-            
-            # Verify dialog was shown
-            mock_dialog.show.assert_called_once()
+    async def test_attach_image_press_handler_delegates_to_attachment_handler(self, mock_app, mock_chat_window):
+        """Test the attach-image press handler delegates to the attachment handler."""
+        mock_chat_window.attachment_handler = Mock()
+        mock_chat_window.attachment_handler.handle_attach_image_button = AsyncMock()
+
+        event = Mock()
+        event.stop = Mock()
+        event.button = Mock(id="attach-image")
+
+        await ChatWindowEnhanced.handle_attach_image_press(mock_chat_window, event)
+
+        event.stop.assert_called_once()
+        mock_chat_window.attachment_handler.handle_attach_image_button.assert_awaited_once_with(event)
+
+    @pytest.mark.asyncio
+    async def test_send_press_keeps_empty_state_visible_when_no_sendable_content(self):
+        """Empty state should remain visible when send is pressed with nothing to send."""
+        mock_chat_window = Mock()
+        mock_chat_window.is_send_button = True
+        mock_chat_window._has_sendable_content = Mock(return_value=False)
+        mock_chat_window.hide_empty_state = Mock()
+        mock_chat_window.handle_send_stop_button = AsyncMock(return_value=None)
+
+        event = Mock()
+        event.stop = Mock()
+
+        await ChatWindowEnhanced.handle_send_stop_button_press(mock_chat_window, event)
+
+        event.stop.assert_called_once()
+        mock_chat_window.handle_send_stop_button.assert_awaited_once_with(mock_chat_window.app_instance, event)
+        mock_chat_window.hide_empty_state.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_press_hides_empty_state_when_sendable_content_exists(self):
+        """Empty state should hide only when a real send can proceed."""
+        mock_chat_window = Mock()
+        mock_chat_window.is_send_button = True
+        mock_chat_window._has_sendable_content = Mock(return_value=True)
+        mock_chat_window.hide_empty_state = Mock()
+        mock_chat_window.handle_send_stop_button = AsyncMock(return_value=None)
+
+        event = Mock()
+        event.stop = Mock()
+
+        await ChatWindowEnhanced.handle_send_stop_button_press(mock_chat_window, event)
+
+        event.stop.assert_called_once()
+        mock_chat_window.handle_send_stop_button.assert_awaited_once_with(mock_chat_window.app_instance, event)
+        mock_chat_window.hide_empty_state.assert_called_once()
     
     def test_attachment_preview_panel(self, mock_app, mock_chat_window):
         """Test attachment preview panel displays attached files."""
@@ -146,20 +190,32 @@ class TestChatWindowRAGUI:
         rag_panel.collapsed = True
         assert rag_panel.collapsed is True
     
-    def test_rag_preset_selection(self, mock_app, mock_chat_window):
-        """Test RAG preset selection updates UI."""
-        rag_preset_select = Mock()
-        
-        # Test preset changes
-        presets = ["none", "light", "full", "custom"]
-        for preset in presets:
-            rag_preset_select.value = preset
-            assert rag_preset_select.value == preset
-            
-            # Verify UI updates based on preset
-            if preset == "custom":
-                # Custom preset should show advanced options
-                assert mock_chat_window.sidebar.query_one("#chat-advanced-rag").collapsed is False
+    def test_rag_preset_selection(self):
+        """Test the current preset seam updates RAG-related settings."""
+        sidebar = EnhancedSettingsSidebar(id_prefix="chat", config={})
+        sidebar._set_setting_value = Mock()
+        sidebar._update_preset_buttons = Mock()
+
+        sidebar._apply_preset("research")
+
+        assert sidebar.active_preset == "research"
+        sidebar._set_setting_value.assert_has_calls([
+            call("temperature", 0.3),
+            call("streaming", True),
+            call("rag_enable", True),
+            call("rag_preset", "high_accuracy"),
+            call("max_tokens", 4096),
+        ])
+        sidebar._update_preset_buttons.assert_called_once()
+
+        sidebar._set_setting_value.reset_mock()
+        sidebar._update_preset_buttons.reset_mock()
+
+        sidebar._apply_preset("custom")
+
+        assert sidebar.active_preset == "custom"
+        sidebar._set_setting_value.assert_not_called()
+        sidebar._update_preset_buttons.assert_called_once()
     
     def test_rag_search_scope_checkboxes(self, mock_app, mock_chat_window):
         """Test RAG search scope checkboxes."""
@@ -306,6 +362,234 @@ class TestChatWindowTabIntegration:
         
         # Verify contexts are separate
         assert mock_app.chat_attached_files["tab1"] != mock_app.chat_attached_files["tab2"]
+
+
+class _ShellBarMountTestApp(App):
+    def __init__(self, *, enable_tabs: bool) -> None:
+        super().__init__()
+        self.app_config = {
+            "chat_defaults": {
+                "enable_tabs": enable_tabs,
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "temperature": 0.3,
+            },
+            "chat.voice": {"show_mic_button": True},
+            "chat.images": {"show_attach_button": True},
+        }
+        self.chat_sidebar_collapsed = False
+        self.chat_right_sidebar_collapsed = False
+        self.current_chat_is_ephemeral = False
+
+    def compose(self):
+        yield ChatWindowEnhanced(self, id="chat-window")
+
+
+class _ChatScreenShellSyncTestApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.app_config = {
+            "chat_defaults": {
+                "enable_tabs": True,
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+                "temperature": 0.3,
+            },
+            "chat.voice": {"show_mic_button": True},
+            "chat.images": {"show_attach_button": True},
+        }
+        self.chat_sidebar_collapsed = False
+        self.chat_right_sidebar_collapsed = False
+        self.current_chat_is_ephemeral = False
+        self.chat_attached_files = {}
+        self.notify = Mock()
+        self.loguru_logger = Mock()
+        self.run_worker = Mock()
+        self.bell = Mock()
+        self.screen_under_test = ChatScreen(self)
+
+    async def on_mount(self) -> None:
+        await self.push_screen(self.screen_under_test)
+
+
+class TestChatWindowShellBarMounting:
+    @pytest.mark.asyncio
+    async def test_shell_bar_mounted_above_single_session_content(self):
+        app = _ShellBarMountTestApp(enable_tabs=False)
+
+        with patch("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", return_value=False), patch(
+            "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+            return_value={"openai": ["gpt-4o-mini"]},
+        ), patch(
+            "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",
+            return_value={"openai": ["gpt-4o-mini"]},
+        ):
+            async with app.run_test(size=(120, 40)):
+                chat_window = app.query_one(ChatWindowEnhanced)
+                main_content = chat_window.query_one("#chat-main-content", Container)
+                shell_bar = chat_window.get_shell_bar()
+                task_surface = main_content.query_one("#chat-task-surface", Container)
+                chat_log = main_content.query_one("#chat-log", VerticalScroll)
+                children = list(main_content.children)
+
+                assert shell_bar is main_content.query_one("#chat-shell-bar", ChatShellBar)
+                assert children[0].id == "chat-shell-bar"
+                assert children.index(task_surface) < children.index(chat_log)
+
+    @pytest.mark.asyncio
+    async def test_shell_bar_mounted_above_tabbed_content(self):
+        app = _ShellBarMountTestApp(enable_tabs=True)
+
+        with patch("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", return_value=True), patch(
+            "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+            return_value={"openai": ["gpt-4o-mini"]},
+        ), patch(
+            "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",
+            return_value={"openai": ["gpt-4o-mini"]},
+        ):
+            async with app.run_test(size=(120, 40)):
+                chat_window = app.query_one(ChatWindowEnhanced)
+                main_content = chat_window.query_one("#chat-main-content", Container)
+                task_surface = main_content.query_one("#chat-task-surface", Container)
+                tab_container = main_content.query_one(ChatTabContainer)
+                shell_bar = chat_window.get_shell_bar()
+                children = list(main_content.children)
+
+                assert shell_bar is main_content.query_one("#chat-shell-bar", ChatShellBar)
+                assert children[0].id == "chat-shell-bar"
+                assert children.index(task_surface) < children.index(tab_container)
+
+    @pytest.mark.asyncio
+    async def test_chat_screen_uses_native_console_tabs_without_legacy_tab_container(self):
+        app = _ChatScreenShellSyncTestApp()
+
+        with patch.object(ChatScreen, "_load_sidebar_state", lambda self: None), patch.object(
+            ChatScreen,
+            "_restore_collapsible_states",
+            lambda self: None,
+        ), patch.object(ChatScreen, "_run_diagnostic", lambda self: None), patch(
+            "tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting",
+            return_value=True,
+        ), patch(
+            "tldw_chatbook.Widgets.Chat_Widgets.chat_tab_container.get_cli_setting",
+            return_value=10,
+        ), patch(
+            "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+            return_value={"openai": ["gpt-4o-mini"]},
+        ), patch(
+            "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",
+            return_value={"openai": ["gpt-4o-mini"]},
+        ):
+            async with app.run_test(size=(200, 40)) as pilot:
+                await pilot.pause()
+
+                screen = pilot.app.screen
+                assert len(screen.query("#console-chat-tabs")) == 0
+                assert len(screen.query(ChatTabContainer)) == 0
+
+                await pilot.click("#console-new-chat-tab")
+                await pilot.pause(0.2)
+
+                tab_strip = screen.query_one("#console-native-tab-strip")
+                native_tabs = [
+                    child
+                    for child in tab_strip.children
+                    if child.id and child.id.startswith("console-session-tab-")
+                ]
+                active_tabs = [
+                    child for child in native_tabs if child.has_class("console-session-tab-active")
+                ]
+
+                assert len(screen.query(ChatWindowEnhanced)) == 0
+                assert [tab.label.plain for tab in native_tabs] == ["Chat 1", "Chat 2"]
+                assert len(active_tabs) == 1
+                assert active_tabs[0].label.plain == "Chat 2"
+
+
+class TestChatScreenConversationParity:
+    """Test focused chat screen parity save/restore behavior."""
+
+    def test_save_tab_sessions_preserves_assistant_scope_contract(self, mock_app):
+        """Saving tab sessions preserves assistant identity and scope metadata."""
+        screen = ChatScreen(mock_app)
+        screen.chat_state = ChatScreenState()
+
+        session = Mock()
+        session.session_data = ChatSessionData(
+            tab_id="tab-1",
+            title="Persona Session",
+            conversation_id="conv-1",
+            character_id=7,
+            character_name="Navigator",
+            assistant_kind="persona",
+            assistant_id="planner",
+            persona_memory_mode="workspace",
+            scope_type="workspace",
+            workspace_id="workspace-123",
+            is_ephemeral=False,
+        )
+        session.query_one = Mock(side_effect=Exception("no widget"))
+
+        tab_container = Mock()
+        tab_container.sessions = {"tab-1": session}
+        tab_container.active_session_id = "tab-1"
+
+        screen._save_tab_sessions(tab_container)
+
+        saved_tab = screen.chat_state.get_tab_by_id("tab-1")
+        assert saved_tab is not None
+        assert saved_tab.assistant_kind == "persona"
+        assert saved_tab.assistant_id == "planner"
+        assert saved_tab.persona_memory_mode == "workspace"
+        assert saved_tab.scope_type == "workspace"
+        assert saved_tab.workspace_id == "workspace-123"
+
+    @pytest.mark.asyncio
+    async def test_restore_tab_sessions_preserves_assistant_scope_contract(self, mock_app):
+        """Restoring tab sessions reapplies assistant identity and scope metadata to live sessions."""
+        screen = ChatScreen(mock_app)
+        screen.chat_state = ChatScreenState(
+            tabs=[
+                TabState(
+                    tab_id="saved-tab",
+                    title="",
+                    conversation_id="conv-2",
+                    character_id=11,
+                    character_name="Scout",
+                    assistant_kind="character",
+                    assistant_id="char-11",
+                    persona_memory_mode="read_only",
+                    scope_type="workspace",
+                    workspace_id="workspace-999",
+                    is_ephemeral=False,
+                    has_unsaved_changes=True,
+                )
+            ],
+            active_tab_id="saved-tab",
+            tab_order=["saved-tab"],
+        )
+
+        restored_session = Mock()
+        restored_session.session_data = ChatSessionData(tab_id="restored-tab", title="placeholder")
+
+        async def fake_create_new_tab(title=None, session_data=None):
+            tab_container.sessions["restored-tab"] = restored_session
+            if session_data is not None:
+                restored_session.session_data = session_data
+            return "restored-tab"
+
+        tab_container = Mock()
+        tab_container.sessions = {}
+        tab_container.create_new_tab = AsyncMock(side_effect=fake_create_new_tab)
+
+        await screen._restore_tab_sessions(tab_container)
+
+        assert restored_session.session_data.assistant_kind == "character"
+        assert restored_session.session_data.assistant_id == "char-11"
+        assert restored_session.session_data.persona_memory_mode == "read_only"
+        assert restored_session.session_data.scope_type == "workspace"
+        assert restored_session.session_data.workspace_id == "workspace-999"
+        assert restored_session.session_data.title == "Chat with Scout"
 
 
 class TestChatWindowStreamingUI:

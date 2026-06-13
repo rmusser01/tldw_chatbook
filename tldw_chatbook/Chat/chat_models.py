@@ -5,6 +5,8 @@
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 from textual.worker import Worker
+
+from .chat_handoff_models import ChatHandoffPayload
 #
 #######################################################################################################################
 #
@@ -30,10 +32,23 @@ class ChatSessionData:
     
     # Whether this is an ephemeral (unsaved) chat
     is_ephemeral: bool = True
-    
+
+    # Runtime/discovery contract
+    runtime_backend: str = "local"
+    discovery_owner: str = "general_chat"
+    discovery_entity_id: Optional[str] = None
+
     # Character assignment for this chat
     character_id: Optional[int] = None
     character_name: Optional[str] = None
+
+    # Assistant identity and scope
+    assistant_kind: Optional[str] = None
+    assistant_id: Optional[str] = None
+    persona_memory_mode: Optional[str] = None
+    scope_type: Optional[str] = None
+    workspace_id: Optional[str] = None
+    handoff_payload: Optional[ChatHandoffPayload] = None
     
     # Streaming/worker state
     is_streaming: bool = False
@@ -64,8 +79,17 @@ class ChatSessionData:
             'title': self.title,
             'conversation_id': self.conversation_id,
             'is_ephemeral': self.is_ephemeral,
+            'runtime_backend': self.runtime_backend,
+            'discovery_owner': self.discovery_owner,
+            'discovery_entity_id': self.discovery_entity_id,
             'character_id': self.character_id,
             'character_name': self.character_name,
+            'assistant_kind': self.assistant_kind,
+            'assistant_id': self.assistant_id,
+            'persona_memory_mode': self.persona_memory_mode,
+            'scope_type': self.scope_type,
+            'workspace_id': self.workspace_id,
+            'handoff_payload': self.handoff_payload.to_dict() if self.handoff_payload else None,
             'notes_content': self.notes_content,
             'message_count': self.message_count,
             'system_prompt_override': self.system_prompt_override,
@@ -78,13 +102,25 @@ class ChatSessionData:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ChatSessionData':
         """Create session data from dictionary."""
+        scope_type = data.get('scope_type') or 'global'
+        workspace_id = data.get('workspace_id') if scope_type == 'workspace' else None
+
         return cls(
             tab_id=data['tab_id'],
             title=data.get('title', 'New Chat'),
             conversation_id=data.get('conversation_id'),
             is_ephemeral=data.get('is_ephemeral', True),
+            runtime_backend=data.get('runtime_backend', 'local'),
+            discovery_owner=data.get('discovery_owner', 'general_chat'),
+            discovery_entity_id=data.get('discovery_entity_id'),
             character_id=data.get('character_id'),
             character_name=data.get('character_name'),
+            assistant_kind=data.get('assistant_kind'),
+            assistant_id=data.get('assistant_id'),
+            persona_memory_mode=data.get('persona_memory_mode'),
+            scope_type=scope_type,
+            workspace_id=workspace_id,
+            handoff_payload=ChatHandoffPayload.from_dict(data.get('handoff_payload')),
             notes_content=data.get('notes_content', ''),
             message_count=data.get('message_count', 0),
             system_prompt_override=data.get('system_prompt_override'),

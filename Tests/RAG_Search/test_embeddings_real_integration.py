@@ -25,6 +25,12 @@ from tldw_chatbook.RAG_Search.simplified import circuit_breaker
 # Test marker for integration tests
 pytestmark = pytest.mark.integration
 
+RUN_REAL_EMBEDDINGS = os.environ.get("TLDW_RUN_REAL_EMBEDDINGS", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 @pytest.fixture(autouse=True)
 def reset_circuit_breakers():
@@ -37,8 +43,8 @@ def reset_circuit_breakers():
 
 # Skip tests if required dependencies are not available
 requires_sentence_transformers = pytest.mark.skipif(
-    not DEPENDENCIES_AVAILABLE.get('sentence_transformers', False),
-    reason="sentence-transformers not installed"
+    not DEPENDENCIES_AVAILABLE.get('sentence_transformers', False) or not RUN_REAL_EMBEDDINGS,
+    reason="sentence-transformers not installed or TLDW_RUN_REAL_EMBEDDINGS is not enabled"
 )
 requires_chromadb = pytest.mark.skipif(
     not DEPENDENCIES_AVAILABLE.get('chromadb', False),

@@ -4,7 +4,7 @@ This widget provides a comprehensive form for editing prompts,
 following Textual best practices with focused components.
 """
 
-from typing import TYPE_CHECKING, Optional, Dict, Any, List
+from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
 from loguru import logger
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
@@ -14,8 +14,6 @@ from textual import on
 from textual.message import Message
 from textual.validation import Length
 
-if TYPE_CHECKING:
-    from ...UI.Screens.ccp_screen import CCPScreen, CCPScreenState
 
 logger = logger.bind(module="CCPPromptEditorWidget")
 
@@ -36,7 +34,7 @@ class PromptSaveRequested(PromptEditorMessage):
 
 class PromptDeleteRequested(PromptEditorMessage):
     """User requested to delete the prompt."""
-    def __init__(self, prompt_id: int) -> None:
+    def __init__(self, prompt_id: Union[int, str]) -> None:
         super().__init__()
         self.prompt_id = prompt_id
 
@@ -323,7 +321,8 @@ class CCPPromptEditorWidget(Container):
     """
     
     # Reactive state reference (will be linked to parent screen's state)
-    state: reactive[Optional['CCPScreenState']] = reactive(None)
+    # Legacy CCPScreenState holder retained for compatibility (screen retired).
+    state: reactive[Optional[Any]] = reactive(None)
     
     # Current prompt data being edited
     prompt_data: reactive[Dict[str, Any]] = reactive({})
@@ -350,7 +349,7 @@ class CCPPromptEditorWidget(Container):
         ("custom", "Custom"),
     ]
     
-    def __init__(self, parent_screen: Optional['CCPScreen'] = None, **kwargs):
+    def __init__(self, parent_screen: Optional[Any] = None, **kwargs):
         """Initialize the prompt editor widget.
         
         Args:
@@ -470,6 +469,33 @@ class CCPPromptEditorWidget(Container):
                             value="text"
                         )
                         yield Button("Add Variable", id="add-variable-btn", classes="add-variable-btn")
+
+                # Server-backed prompt lifecycle controls. Local mode reports explicit unavailable state.
+                with Container(classes="prompt-section"):
+                    yield Static("Usage & Versions", classes="section-title")
+                    yield Static("Usage: -", id="ccp-editor-prompt-usage-display", classes="field-label")
+                    with Container(classes="add-variable-container"):
+                        yield Input(
+                            placeholder="Version #",
+                            id="ccp-editor-prompt-version-input",
+                            classes="add-variable-input"
+                        )
+                        yield Button(
+                            "Record Usage",
+                            id="ccp-editor-prompt-record-usage-button",
+                            classes="add-variable-btn"
+                        )
+                        yield Button(
+                            "List Versions",
+                            id="ccp-editor-prompt-list-versions-button",
+                            classes="add-variable-btn"
+                        )
+                        yield Button(
+                            "Restore",
+                            id="ccp-editor-prompt-restore-version-button",
+                            classes="add-variable-btn"
+                        )
+                    yield Static("", id="ccp-editor-prompt-version-status", classes="field-label")
                 
                 # Test Section
                 with Container(classes="prompt-section test-section"):

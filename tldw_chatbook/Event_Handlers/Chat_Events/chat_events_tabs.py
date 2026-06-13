@@ -9,6 +9,7 @@ from loguru import logger
 from textual.widgets import Button
 #
 # Local Imports
+from ...Chat.chat_conversation_service import derive_conversation_title
 from ...Chat.chat_models import ChatSessionData
 from ...Chat.tabs import TabContext
 from ...Chat.tabs.tab_state_manager import get_tab_state_manager
@@ -21,6 +22,21 @@ if TYPE_CHECKING:
 #######################################################################################################################
 #
 # Functions:
+
+
+def _derive_session_title(session_data: ChatSessionData) -> str:
+    assistant_name = None
+    if session_data.assistant_kind == "character":
+        assistant_name = session_data.character_name
+    elif session_data.assistant_kind == "persona" and session_data.assistant_id:
+        assistant_name = f"Persona {session_data.assistant_id}"
+
+    return derive_conversation_title(
+        assistant_kind=session_data.assistant_kind,
+        assistant_name=assistant_name,
+        fallback_title=session_data.title,
+        character_id=session_data.character_id,
+    )
 
 def get_active_session_data(app: 'TldwCli') -> Optional[ChatSessionData]:
     """
@@ -44,6 +60,27 @@ def get_active_session_data(app: 'TldwCli') -> Optional[ChatSessionData]:
     
     return None
 
+
+async def _sync_session_state(state_manager, session_data: ChatSessionData, **updates) -> None:
+    """Create or update the shared tab state without logging missing-state errors."""
+    existing_state = await state_manager.get_tab_state(session_data.tab_id)
+    if existing_state is None:
+        await state_manager.create_tab_state(session_data.tab_id, **updates)
+    else:
+        await state_manager.update_tab_state(session_data.tab_id, **updates)
+
+
+def _chat_send_started(app: 'TldwCli', starting_worker: object, starting_streaming: bool) -> bool:
+    """Return True only after the wrapped send path dispatches generation work."""
+    current_worker = getattr(app, "current_chat_worker", None)
+    if current_worker is not None and current_worker is not starting_worker:
+        return True
+    try:
+        current_streaming = bool(app.get_current_chat_is_streaming())
+    except Exception:
+        current_streaming = bool(getattr(app, "current_chat_is_streaming", False))
+    return current_streaming and not starting_streaming
+
 # Note: get_widget_id_for_session and get_tab_specific_widget_ids functions removed
 # These are now handled by the TabContext class
 
@@ -62,15 +99,20 @@ async def handle_chat_send_button_pressed_with_tabs(app: 'TldwCli', event: Butto
         app.notify("No active chat session", severity="error")
         return
     
-    # Create tab context
-    tab_context = TabContext(app, session_data)
-    
-    # Get state manager
-    state_manager = get_tab_state_manager()
-    
     # Store original query methods
     original_query_one = app.query_one
     original_query = app.query
+
+    # Create tab context
+    tab_context = TabContext(
+        app,
+        session_data,
+        query_one=original_query_one,
+        query=original_query,
+    )
+    
+    # Get state manager
+    state_manager = get_tab_state_manager()
     
     # Replace with tab-aware versions
     app.query_one = tab_context.query_one
@@ -81,6 +123,8 @@ async def handle_chat_send_button_pressed_with_tabs(app: 'TldwCli', event: Butto
         async with state_manager.tab_context(session_data.tab_id):
             # Update session-specific state before calling handler
             if session_data:
+                app._current_chat_tab_id = session_data.tab_id
+
                 # Update current conversation ID to match this session
                 app.current_chat_conversation_id = session_data.conversation_id
                 app.current_chat_is_ephemeral = session_data.is_ephemeral
@@ -91,15 +135,28 @@ async def handle_chat_send_button_pressed_with_tabs(app: 'TldwCli', event: Butto
                 app.set_current_chat_is_streaming(session_data.is_streaming)
                 
                 # Update state in state manager
-                await state_manager.update_tab_state(
-                    session_data.tab_id,
+                await _sync_session_state(
+                    state_manager,
+                    session_data,
                     conversation_id=session_data.conversation_id,
                     is_ephemeral=session_data.is_ephemeral,
                     is_streaming=session_data.is_streaming
                 )
-            
+
+            active_handoff = session_data.handoff_payload if session_data else None
+            if active_handoff is not None and getattr(active_handoff, "status", "staged") != "sent":
+                app._current_chat_handoff_payload = active_handoff
+            else:
+                app._current_chat_handoff_payload = None
+
             # Call the original handler
+            starting_worker = getattr(app, "current_chat_worker", None)
+            try:
+                starting_streaming = bool(app.get_current_chat_is_streaming())
+            except Exception:
+                starting_streaming = bool(getattr(app, "current_chat_is_streaming", False))
             await chat_events.handle_chat_send_button_pressed(app, event)
+            send_started = _chat_send_started(app, starting_worker, starting_streaming)
             
             # Update session data after handler completes
             if session_data:
@@ -109,8 +166,12 @@ async def handle_chat_send_button_pressed_with_tabs(app: 'TldwCli', event: Butto
                 
                 # Mark unsaved changes if message was sent
                 session_data.has_unsaved_changes = True
+
+                if send_started and session_data.handoff_payload and session_data.handoff_payload.status != "sent":
+                    session_data.handoff_payload.status = "sent"
             
     finally:
+        app._current_chat_handoff_payload = None
         # Restore original query methods
         app.query_one = original_query_one
         app.query = original_query
@@ -128,6 +189,7 @@ async def handle_stop_chat_generation_pressed_with_tabs(app: 'TldwCli', event: B
         return
     
     # Update app state to match this session before stopping
+    app._current_chat_tab_id = session_data.tab_id
     if session_data.current_worker:
         app.current_chat_worker = session_data.current_worker
     
@@ -151,13 +213,18 @@ async def handle_respond_for_me_button_pressed_with_tabs(app: 'TldwCli', event: 
         app.notify("No active chat session", severity="error")
         return
     
-    # Create tab context
-    tab_context = TabContext(app, session_data)
-    state_manager = get_tab_state_manager()
-    
     # Store original query methods
     original_query_one = app.query_one
     original_query = app.query
+
+    # Create tab context
+    tab_context = TabContext(
+        app,
+        session_data,
+        query_one=original_query_one,
+        query=original_query,
+    )
+    state_manager = get_tab_state_manager()
     
     # Replace with tab-aware versions
     app.query_one = tab_context.query_one
@@ -168,12 +235,14 @@ async def handle_respond_for_me_button_pressed_with_tabs(app: 'TldwCli', event: 
         async with state_manager.tab_context(session_data.tab_id):
             # Update app state for this session
             if session_data:
+                app._current_chat_tab_id = session_data.tab_id
                 app.current_chat_conversation_id = session_data.conversation_id
                 app.current_chat_is_ephemeral = session_data.is_ephemeral
                 
                 # Update state in state manager
-                await state_manager.update_tab_state(
-                    session_data.tab_id,
+                await _sync_session_state(
+                    state_manager,
+                    session_data,
                     conversation_id=session_data.conversation_id,
                     is_ephemeral=session_data.is_ephemeral
                 )
@@ -201,6 +270,7 @@ async def handle_chat_conversation_search_changed_with_tabs(app: 'TldwCli', even
     
     # Update app state for this session
     if session_data:
+        app._current_chat_tab_id = session_data.tab_id
         app.current_chat_conversation_id = session_data.conversation_id
         app.current_chat_is_ephemeral = session_data.is_ephemeral
     
@@ -222,13 +292,18 @@ async def display_conversation_in_chat_tab_ui_with_tabs(app: 'TldwCli', conversa
         app.notify("No active chat session", severity="error")
         return
     
-    # Create tab context - note we use the global widget IDs for conversation metadata
-    tab_context = TabContext(app, session_data)
-    state_manager = get_tab_state_manager()
-    
     # Store original query methods
     original_query_one = app.query_one
     original_query = app.query
+
+    # Create tab context - note we use the global widget IDs for conversation metadata
+    tab_context = TabContext(
+        app,
+        session_data,
+        query_one=original_query_one,
+        query=original_query,
+    )
+    state_manager = get_tab_state_manager()
     
     # Replace with tab-aware versions
     app.query_one = tab_context.query_one
@@ -238,6 +313,7 @@ async def display_conversation_in_chat_tab_ui_with_tabs(app: 'TldwCli', conversa
         # Update state manager with current tab context
         async with state_manager.tab_context(session_data.tab_id):
             # Update session data before calling handler
+            app._current_chat_tab_id = session_data.tab_id
             session_data.conversation_id = conversation_id
             session_data.is_ephemeral = False
             session_data.has_unsaved_changes = False  # Loading a conversation clears unsaved state
@@ -247,8 +323,9 @@ async def display_conversation_in_chat_tab_ui_with_tabs(app: 'TldwCli', conversa
             app.current_chat_is_ephemeral = False
             
             # Update state in state manager
-            await state_manager.update_tab_state(
-                session_data.tab_id,
+            await _sync_session_state(
+                state_manager,
+                session_data,
                 conversation_id=conversation_id,
                 is_ephemeral=False,
                 has_unsaved_changes=False
@@ -259,13 +336,16 @@ async def display_conversation_in_chat_tab_ui_with_tabs(app: 'TldwCli', conversa
             
             # Update session title based on loaded conversation
             try:
-                conv_title_input = app.query_one("#chat-conversation-title-input")
+                conv_title_input = original_query_one("#chat-conversation-title-input")
                 if conv_title_input and conv_title_input.value:
                     session_data.title = conv_title_input.value
-                    # If we have access to the tab container, update the tab label
-                    chat_window = app.query_one("#chat-window")
-                    if hasattr(chat_window, 'tab_container') and chat_window.tab_container:
-                        chat_window.tab_container.update_tab_title(session_data.tab_id, session_data.title)
+                else:
+                    session_data.title = _derive_session_title(session_data)
+
+                # If we have access to the tab container, update the tab label
+                chat_window = original_query_one("#chat-window")
+                if hasattr(chat_window, 'tab_container') and chat_window.tab_container:
+                    chat_window.tab_container.update_tab_title(session_data.tab_id, session_data.title)
             except Exception as e:
                 logger.debug(f"Could not update tab title: {e}")
         

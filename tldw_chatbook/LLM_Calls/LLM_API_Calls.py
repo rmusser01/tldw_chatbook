@@ -108,6 +108,170 @@ def _parse_data_url_for_multimodal(data_url: str) -> Optional[Tuple[str, str]]:
     return None
 
 
+_ANTHROPIC_THINKING_BUDGETS_BY_EFFORT = {
+    "low": 2048,
+    "medium": 4096,
+    "high": 8192,
+    "xhigh": 16384,
+    "max": 32768,
+}
+_ANTHROPIC_ADAPTIVE_THINKING_MODEL_MARKERS = (
+    "opus-4-8",
+    "opus-4.8",
+    "opus-4-7",
+    "opus-4.7",
+    "sonnet-4-6",
+    "sonnet-4.6",
+)
+
+
+def _is_present_setting(value: object) -> bool:
+    return value is not None and str(value).strip() != ""
+
+
+def _openai_use_responses_api(
+    reasoning_effort: object,
+    reasoning_summary: object,
+    verbosity: object,
+) -> bool:
+    return any(
+        _is_present_setting(value)
+        for value in (reasoning_effort, reasoning_summary, verbosity)
+    )
+
+
+def _extract_openai_responses_text(response_data: Dict[str, Any]) -> str:
+    output_text = response_data.get("output_text")
+    if isinstance(output_text, str) and output_text:
+        return output_text
+    text_parts: list[str] = []
+    for item in response_data.get("output", []) or []:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for part in item.get("content", []) or []:
+            if isinstance(part, dict) and part.get("type") == "output_text":
+                text_parts.append(str(part.get("text") or ""))
+    return "\n".join(part for part in text_parts if part).strip()
+
+
+def _normalize_openai_responses_payload(
+    response_data: Dict[str, Any],
+    *,
+    model: str,
+) -> Dict[str, Any]:
+    """Normalize Responses API output to the chat-completions shape used by Console."""
+    return {
+        "id": response_data.get("id", f"resp-openai-{time.time_ns()}"),
+        "object": "chat.completion",
+        "created": int(response_data.get("created_at") or time.time()),
+        "model": response_data.get("model", model),
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": _extract_openai_responses_text(response_data),
+                },
+                "finish_reason": "stop"
+                if response_data.get("status") in {None, "completed"}
+                else response_data.get("status"),
+            }
+        ],
+        "usage": response_data.get("usage"),
+    }
+
+
+def _responses_stream_to_chat_sse(response, *, model: str):
+    completion_id = f"chatcmpl-openai-responses-{time.time_ns()}"
+    created_ts = int(time.time())
+    try:
+        for raw_line in response.iter_lines(decode_unicode=True):
+            line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else str(raw_line)
+            line = line.strip()
+            if not line or not line.startswith("data:"):
+                continue
+            payload_text = line.removeprefix("data:").strip()
+            try:
+                event = json.loads(payload_text)
+            except json.JSONDecodeError:
+                continue
+            event_type = event.get("type")
+            if event_type == "response.output_text.delta":
+                chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": model,
+                    "choices": [
+                        {"index": 0, "delta": {"content": event.get("delta", "")}},
+                    ],
+                }
+                yield f"data: {json.dumps(chunk)}\n\n"
+            elif event_type == "response.completed":
+                chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                }
+                yield f"data: {json.dumps(chunk)}\n\n"
+            elif event_type == "error":
+                yield f"data: {payload_text}\n\n"
+    except requests.exceptions.RequestException as exc:
+        logger.error("OpenAI Responses: stream connection error: %s", exc, exc_info=True)
+        yield (
+            "data: "
+            + json.dumps({"error": {"message": f"Stream connection error: {exc}"}})
+            + "\n\n"
+        )
+    finally:
+        yield "data: [DONE]\n\n"
+        if response:
+            response.close()
+
+
+def _anthropic_uses_adaptive_thinking(model: object) -> bool:
+    model_name = str(model or "").lower()
+    return any(marker in model_name for marker in _ANTHROPIC_ADAPTIVE_THINKING_MODEL_MARKERS)
+
+
+def _anthropic_thinking_config(
+    *,
+    model: object,
+    thinking_effort: object,
+    thinking_budget_tokens: object,
+    max_tokens: int,
+) -> tuple[dict[str, object] | None, int]:
+    effort = str(thinking_effort or "").strip().lower()
+    if effort == "off":
+        return None, max_tokens
+    budget = _safe_cast(thinking_budget_tokens, int)
+    if _anthropic_uses_adaptive_thinking(model):
+        if effort:
+            return {"type": "adaptive", "effort": effort}, max_tokens
+        if budget is not None:
+            logger.warning(
+                "Anthropic: ignoring fixed thinking budget for adaptive-thinking model %s",
+                model,
+            )
+        return None, max_tokens
+    if budget is None and effort:
+        budget = _ANTHROPIC_THINKING_BUDGETS_BY_EFFORT.get(effort)
+    if budget is None:
+        return None, max_tokens
+    final_budget = max(1024, int(budget))
+    final_max_tokens = max_tokens
+    if final_budget >= final_max_tokens:
+        final_max_tokens = final_budget + 1024
+        logger.warning(
+            "Anthropic: increased max_tokens to %s so thinking budget %s has output room.",
+            final_max_tokens,
+            final_budget,
+        )
+    return {"type": "enabled", "budget_tokens": final_budget}, final_max_tokens
+
+
 def get_openai_embeddings(input_data: str, model: str) -> List[float]:
     """
     Get embeddings for the input text from OpenAI API.
@@ -187,6 +351,9 @@ def chat_with_openai(
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         user: Optional[str] = None, # This is the 'user_identifier' mapped
+        reasoning_effort: Optional[str] = None,
+        reasoning_summary: Optional[str] = None,
+        verbosity: Optional[str] = None,
         custom_prompt_arg: Optional[str] = None # Legacy
 ):
     """
@@ -213,6 +380,9 @@ def chat_with_openai(
         tools: A list of tools the model may call.
         tool_choice: Controls which (if any) function is called by the model.
         user: A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse.
+        reasoning_effort: Responses API reasoning effort for supported models.
+        reasoning_summary: Responses API reasoning summary detail for supported models.
+        verbosity: Responses API text verbosity for GPT-5-style models.
         custom_prompt_arg: Legacy, largely ignored.
     """
     loaded_config_data = load_settings()
@@ -249,17 +419,27 @@ def chat_with_openai(
         api_messages.append({"role": "system", "content": system_message})
     api_messages.extend(input_data)
 
+    use_responses_api = _openai_use_responses_api(
+        reasoning_effort,
+        reasoning_summary,
+        verbosity,
+    )
     payload = {
         "model": final_model,
-        "messages": api_messages,
         "stream": final_streaming,
     }
+    if use_responses_api:
+        payload["input"] = api_messages
+    else:
+        payload["messages"] = api_messages
     # Add optional parameters if they have a value
     if final_temp is not None:
         payload["temperature"] = final_temp
     if final_top_p is not None:
         payload["top_p"] = final_top_p # OpenAI uses top_p
-    if final_max_tokens is not None:
+    if final_max_tokens is not None and use_responses_api:
+        payload["max_output_tokens"] = final_max_tokens
+    elif final_max_tokens is not None:
         payload["max_tokens"] = final_max_tokens
     if frequency_penalty is not None:
         payload["frequency_penalty"] = frequency_penalty
@@ -276,15 +456,28 @@ def chat_with_openai(
     if presence_penalty is not None:
         payload["presence_penalty"] = presence_penalty
     if response_format is not None:
-        payload["response_format"] = response_format
+        if use_responses_api:
+            payload.setdefault("text", {})["format"] = response_format
+        else:
+            payload["response_format"] = response_format
     if seed is not None:
         payload["seed"] = seed
     if stop is not None:
         payload["stop"] = stop
     if tools is not None:
         payload["tools"] = tools
-    if tools is not None:
-        payload["tools"] = tools
+    if use_responses_api:
+        reasoning_options = {}
+        if _is_present_setting(reasoning_effort):
+            reasoning_options["effort"] = str(reasoning_effort).strip().lower()
+        if _is_present_setting(reasoning_summary):
+            summary_value = str(reasoning_summary).strip().lower()
+            if summary_value != "none":
+                reasoning_options["summary"] = summary_value
+        if reasoning_options:
+            payload["reasoning"] = reasoning_options
+        if _is_present_setting(verbosity):
+            payload.setdefault("text", {})["verbosity"] = str(verbosity).strip().lower()
 
     # Then conditionally add tool_choice:
     if payload.get("tools") and tool_choice is not None:
@@ -299,7 +492,8 @@ def chat_with_openai(
     }
     logger.debug(f"OpenAI Request Payload (excluding messages): {{k: v for k, v in payload.items() if k != 'messages'}}")
 
-    api_url = openai_config.get('api_base_url', 'https://api.openai.com/v1').rstrip('/') + '/chat/completions'
+    api_path = "/responses" if use_responses_api else "/chat/completions"
+    api_url = openai_config.get('api_base_url', 'https://api.openai.com/v1').rstrip('/') + api_path
     
     start_time = time.time()
     log_counter("openai_api_request", labels={"model": final_model, "streaming": str(final_streaming)})
@@ -307,35 +501,41 @@ def chat_with_openai(
     try:
         if final_streaming:
             logger.debug("OpenAI: Posting request (streaming)")
-            with requests.Session() as session:
-                response = session.post(api_url, headers=headers, json=payload, stream=True, timeout=180)
-                response.raise_for_status()
-
-                def stream_generator():
-                    try:
-                        for line in response.iter_lines(decode_unicode=True):
-                            if line and line.strip():
-                                # Pass through OpenAI's SSE lines directly.
-                                # Ensure they end with \n\n if not already.
-                                # OpenAI's SSE usually includes double newlines.
-                                yield line if line.endswith("\n") else line + "\n"
-                    except requests.exceptions.ChunkedEncodingError as e_chunk:
-                        logger.error(f"OpenAI: ChunkedEncodingError during stream: {e_chunk}", exc_info=True)
-                        error_content = json.dumps({"error": {"message": f"Stream connection error: {str(e_chunk)}",
-                                                              "type": "openai_stream_error"}})
-                        yield f"data: {error_content}\n\n" # Yield as SSE error
-                    except Exception as e_stream:
-                        logger.error(f"OpenAI: Error during stream iteration: {e_stream}", exc_info=True)
-                        error_content = json.dumps({"error": {"message": f"Stream iteration error: {str(e_stream)}",
-                                                              "type": "openai_stream_error"}})
-                        yield f"data: {error_content}\n\n" # Yield as SSE error
-                    finally:
-                        # Ensure DONE is sent for the endpoint wrapper's logic
+            def stream_generator():
+                session_context = requests.Session()
+                session = session_context.__enter__()
+                response = None
+                try:
+                    response = session.post(api_url, headers=headers, json=payload, stream=True, timeout=180)
+                    response.raise_for_status()
+                    if use_responses_api:
+                        yield from _responses_stream_to_chat_sse(response, model=final_model)
+                        return
+                    for line in response.iter_lines(decode_unicode=True):
+                        if line and line.strip():
+                            # Pass through OpenAI's SSE lines directly.
+                            # Ensure they end with \n\n if not already.
+                            # OpenAI's SSE usually includes double newlines.
+                            yield line if line.endswith("\n") else line + "\n"
+                except requests.exceptions.RequestException as e_request:
+                    logger.error(f"OpenAI: RequestException during stream: {e_request}", exc_info=True)
+                    error_content = json.dumps({"error": {"message": f"Stream connection error: {str(e_request)}",
+                                                          "type": "openai_stream_error"}})
+                    yield f"data: {error_content}\n\n" # Yield as SSE error
+                except Exception as e_stream:
+                    logger.error(f"OpenAI: Error during stream iteration: {e_stream}", exc_info=True)
+                    error_content = json.dumps({"error": {"message": f"Stream iteration error: {str(e_stream)}",
+                                                          "type": "openai_stream_error"}})
+                    yield f"data: {error_content}\n\n" # Yield as SSE error
+                finally:
+                    # Ensure DONE is sent for the endpoint wrapper's logic
+                    if not use_responses_api:
                         yield "data: [DONE]\n\n"
-                        if response:
-                            response.close()
+                    if response:
+                        response.close()
+                    session_context.__exit__(None, None, None)
 
-                return stream_generator()
+            return stream_generator()
 
         else:  # Non-streaming
             logger.debug("OpenAI: Posting request (non-streaming)")
@@ -376,6 +576,8 @@ def chat_with_openai(
                 log_histogram("openai_api_total_tokens", usage.get("total_tokens", 0), labels={"model": final_model})
             
             logger.debug("OpenAI: Non-streaming request successful.")
+            if use_responses_api:
+                return _normalize_openai_responses_payload(response_data, model=final_model)
             return response_data
 
     except requests.exceptions.HTTPError as e:
@@ -446,6 +648,8 @@ def chat_with_anthropic(
         max_tokens: Optional[int] = None,   # New: Anthropic uses 'max_tokens'
         stop_sequences: Optional[List[str]] = None, # New: Mapped from 'stop'
         tools: Optional[List[Dict[str, Any]]] = None, # New: Anthropic tool format
+        thinking_effort: Optional[str] = None,
+        thinking_budget_tokens: Optional[int] = None,
         # Anthropic doesn't typically use seed, response_format (for JSON object mode directly), n, user identifier, logit_bias,
         # presence_penalty, frequency_penalty, logprobs, top_logprobs in the same way as OpenAI.
         # tool_choice is usually implicit with tools or controlled differently.
@@ -472,7 +676,12 @@ def chat_with_anthropic(
     # Use the passed max_tokens if available, else config, else a default
     default_max_tokens = int(anthropic_config.get('max_tokens_to_sample', anthropic_config.get('max_tokens', 4096)))
     current_max_tokens = max_tokens if max_tokens is not None else default_max_tokens
-
+    thinking_config, current_max_tokens = _anthropic_thinking_config(
+        model=current_model,
+        thinking_effort=thinking_effort,
+        thinking_budget_tokens=thinking_budget_tokens,
+        max_tokens=current_max_tokens,
+    )
 
     anthropic_messages = []
     for msg in input_data:
@@ -519,11 +728,17 @@ def chat_with_anthropic(
         "stream": current_streaming,
     }
     if system_prompt is not None: data["system"] = system_prompt # Anthropic uses 'system' at the top level
-    if current_temp is not None: data["temperature"] = current_temp
-    if current_top_p is not None: data["top_p"] = current_top_p
-    if current_top_k is not None: data["top_k"] = current_top_k
+    if thinking_config is None:
+        if current_temp is not None: data["temperature"] = current_temp
+        if current_top_p is not None: data["top_p"] = current_top_p
+        if current_top_k is not None: data["top_k"] = current_top_k
+    elif any(value is not None for value in (current_temp, current_top_p, current_top_k)):
+        logger.warning(
+            "Anthropic: omitting temperature/top_p/top_k because thinking is enabled."
+        )
     if stop_sequences is not None: data["stop_sequences"] = stop_sequences
     if tools is not None: data["tools"] = tools # Assuming 'tools' is already in Anthropic's required format
+    if thinking_config is not None: data["thinking"] = thinking_config
 
     api_url = anthropic_config.get('api_base_url', 'https://api.anthropic.com/v1').rstrip('/') + '/messages'
     logger.debug(f"Anthropic Request Payload (excluding messages): {{k: v for k, v in data.items() if k != 'messages'}}")

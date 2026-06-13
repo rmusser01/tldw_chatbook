@@ -6,6 +6,7 @@ from typing import Optional, Callable
 #
 # 3rd-Party Imports
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical, Horizontal, Container
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static
@@ -20,7 +21,14 @@ class ConfirmationDialog(ModalScreen):
     
     This dialog displays a message and provides confirm/cancel options.
     """
-    
+
+    # Escape mirrors the Cancel button so keyboard users can dismiss the
+    # dialog without reaching for the mouse. Dismissing is always the safe
+    # (non-destructive) outcome: confirm stays click/enter-on-button only.
+    BINDINGS = [
+        Binding("escape", "cancel_dialog", "Cancel", show=False),
+    ]
+
     # CSS for styling
     DEFAULT_CSS = """
     ConfirmationDialog {
@@ -125,10 +133,14 @@ class ConfirmationDialog(ModalScreen):
                 await self.confirm_callback()
             self.dismiss(True)
         elif event.button.id == "cancel-button":
-            self.result = False
-            if self.cancel_callback:
-                await self.cancel_callback()
-            self.dismiss(False)
+            await self.action_cancel_dialog()
+
+    async def action_cancel_dialog(self) -> None:
+        """Cancel the dialog (Escape and the Cancel button share this path)."""
+        self.result = False
+        if self.cancel_callback:
+            await self.cancel_callback()
+        self.dismiss(False)
 
 
 class UnsavedChangesDialog(ConfirmationDialog):

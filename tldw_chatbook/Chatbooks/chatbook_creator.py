@@ -10,7 +10,11 @@ Handles the creation and packaging of chatbooks from database content.
 
 import json
 import shutil
+import tempfile
 import zipfile
+import hashlib
+import html
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Set, Tuple
@@ -21,14 +25,24 @@ from .chatbook_models import (
     ContentItem, ContentType, ChatbookVersion, Relationship
 )
 from .error_handler import ChatbookErrorHandler, ChatbookErrorType, safe_chatbook_operation
+from ..Chat.chat_conversation_service import ChatConversationService
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
 from ..DB.RAG_Indexing_DB import RAGIndexingDB
 from ..DB.Evals_DB import EvalsDB
 from ..DB.Subscriptions_DB import SubscriptionsDB
+from ..Utils.input_validation import sanitize_string
+from ..Utils.path_validation import validate_filename
 from ..Utils.text import sanitize_filename
 from ..Utils.paths import get_user_data_dir
+
+
+CITATION_MESSAGE_EXPORT_KEYS = ("citation_validation", "evidence_bundle", "citations")
+MAX_CITATION_REPORT_SNIPPET_CHARS = 1000
+MAX_CITATION_REPORT_MESSAGES = 100
+MAX_CITATION_REPORT_REFERENCES_PER_MESSAGE = 50
+MAX_CITATION_REPORT_TOTAL_REFERENCES = 200
 
 
 class ChatbookCreator:
@@ -47,7 +61,16 @@ class ChatbookCreator:
         user_data_dir = get_user_data_dir()
         self.temp_dir = user_data_dir / "temp" / "chatbooks"
         logger.info(f"ChatbookCreator.__init__: Creating temp directory at {self.temp_dir}")
-        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.temp_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            fallback_root = Path(tempfile.gettempdir()) / "tldw_chatbook" / "chatbooks"
+            logger.warning(
+                f"ChatbookCreator.__init__: Failed to create configured temp directory "
+                f"{self.temp_dir}: {exc}. Falling back to {fallback_root}"
+            )
+            self.temp_dir = fallback_root
+            self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.missing_dependencies: Set[int] = set()
         self.auto_included_characters: Set[int] = set()
         self._selected_characters: Set[str] = set()  # Track explicitly selected characters
@@ -102,8 +125,7 @@ class ChatbookCreator:
             
             # Create temporary working directory
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            work_dir = self.temp_dir / f"chatbook_{timestamp}"
-            work_dir.mkdir(parents=True, exist_ok=True)
+            work_dir = Path(tempfile.mkdtemp(prefix=f"chatbook_{timestamp}_", dir=self.temp_dir))
             logger.info(f"ChatbookCreator.create_chatbook: Working directory created at {work_dir}")
             
             # Initialize manifest
@@ -188,7 +210,8 @@ class ChatbookCreator:
             manifest.total_notes = len(content.notes)
             manifest.total_characters = len(content.characters)
             manifest.total_media_items = len(content.media_items)
-            logger.info(f"ChatbookCreator.create_chatbook: Final stats - conversations={manifest.total_conversations}, notes={manifest.total_notes}, characters={manifest.total_characters}, media={manifest.total_media_items}")
+            manifest.total_prompts = len(content.prompts)
+            logger.info(f"ChatbookCreator.create_chatbook: Final stats - conversations={manifest.total_conversations}, notes={manifest.total_notes}, characters={manifest.total_characters}, media={manifest.total_media_items}, prompts={manifest.total_prompts}")
             
             # Write manifest
             manifest_path = work_dir / "manifest.json"
@@ -235,7 +258,7 @@ class ChatbookCreator:
             return True, message, dependency_info
             
         except Exception as e:
-            logger.error(f"ChatbookCreator.create_chatbook: Error - {e}", exc_info=True)
+            logger.opt(exception=True).error("ChatbookCreator.create_chatbook: Error creating chatbook")
             dependency_info = {
                 "missing_dependencies": list(self.missing_dependencies),
                 "auto_included": list(self.auto_included_characters)
@@ -258,6 +281,10 @@ class ChatbookCreator:
             return
             
         db = CharactersRAGDB(db_path, "chatbook_creator")
+        conversation_service = ChatConversationService(
+            db,
+            rag_context_store_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
+        )
         conv_dir = work_dir / "content" / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"ChatbookCreator._collect_conversations: Created conversations directory at {conv_dir}")
@@ -271,8 +298,10 @@ class ChatbookCreator:
                     logger.warning(f"ChatbookCreator._collect_conversations: Conversation {conv_id} not found")
                     continue
                 
-                # Get all messages
-                messages = db.get_messages_for_conversation(conv_id)
+                # Get DB messages and merge any sidecar RAG/citation context.
+                db_messages = db.get_messages_for_conversation(conv_id)
+                context_messages = conversation_service.get_messages_with_context(conv_id)
+                messages = self._merge_message_context(db_messages, context_messages)
                 logger.debug(f"ChatbookCreator._collect_conversations: Found {len(messages) if messages else 0} messages for conversation {conv_id}")
                 
                 # Create conversation data
@@ -285,25 +314,51 @@ class ChatbookCreator:
                 if hasattr(last_modified, 'isoformat'):
                     last_modified = last_modified.isoformat()
                     
+                exported_messages = []
+                citation_messages = []
+                for msg in messages:
+                    timestamp = msg.get('timestamp') or msg.get('created_at') or datetime.now().isoformat()
+                    if hasattr(timestamp, 'isoformat'):
+                        timestamp = timestamp.isoformat()
+                    message_id = msg.get('id')
+                    message_data = {
+                        "id": message_id,
+                        "role": msg.get('role') or msg.get('sender'),
+                        "content": msg['message'] if 'message' in msg else msg.get('content', ''),
+                        "timestamp": timestamp,
+                    }
+                    citation_payload = self._message_citation_export_payload(msg)
+                    if citation_payload:
+                        message_data.update(citation_payload)
+                        citation_messages.append(message_data)
+                    exported_messages.append(message_data)
+
+                title = conv.get('title', conv.get('conversation_name', 'Untitled'))
+                citation_metadata: dict[str, Any] = {}
+                if citation_messages:
+                    citation_report_path, citation_report_metadata = self._write_conversation_citation_report(
+                        conv_dir,
+                        str(conv_id),
+                        title,
+                        citation_messages,
+                    )
+                    citation_metadata = self._conversation_citation_export_metadata(
+                        citation_messages,
+                        citation_report_path,
+                    )
+                    citation_metadata.update(citation_report_metadata)
+
                 conv_data = {
                     "id": conv['id'],
-                    "name": conv.get('title', conv.get('conversation_name', 'Untitled')),
+                    "name": title,
                     "created_at": created_at,
                     "updated_at": last_modified,
                     "character_id": conv.get('character_id'),
-                    "messages": [
-                        {
-                            "id": msg['id'],
-                            "role": msg['sender'],
-                            "content": msg['message'] if 'message' in msg else msg.get('content', ''),
-                            "timestamp": msg['timestamp'] if isinstance(msg['timestamp'], str) else msg['timestamp'].isoformat()
-                        }
-                        for msg in messages
-                    ]
+                    "messages": exported_messages
                 }
                 
                 # Write conversation file
-                conv_file = conv_dir / f"conversation_{conv_id}.json"
+                conv_file = self._conversation_export_path(conv_dir, str(conv_id), ".json")
                 with open(conv_file, 'w', encoding='utf-8') as f:
                     json.dump(conv_data, f, indent=2, ensure_ascii=False)
                 
@@ -314,10 +369,11 @@ class ChatbookCreator:
                 manifest.content_items.append(ContentItem(
                     id=conv_id,
                     type=ContentType.CONVERSATION,
-                    title=conv.get('title', conv.get('conversation_name', 'Untitled')),
+                    title=title,
                     created_at=datetime.fromisoformat(conv_data['created_at']),
                     updated_at=datetime.fromisoformat(conv_data['updated_at']),
-                    file_path=f"content/conversations/conversation_{conv_id}.json"
+                    metadata=citation_metadata,
+                    file_path=f"content/conversations/{conv_file.name}"
                 ))
                 
                 # Track character dependency if present
@@ -326,6 +382,243 @@ class ChatbookCreator:
                     
             except Exception as e:
                 logger.error(f"Error collecting conversation {conv_id}: {e}")
+
+    @staticmethod
+    def _merge_message_context(
+        db_messages: list[Mapping[str, Any]],
+        context_messages: list[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        context_by_id = {str(message.get("id")): message for message in context_messages}
+        merged_messages: list[dict[str, Any]] = []
+        for message in db_messages:
+            merged = dict(message)
+            context = context_by_id.get(str(message.get("id")))
+            if context:
+                if context.get("rag_context") is not None:
+                    merged["rag_context"] = context.get("rag_context")
+                if context.get("citations") is not None:
+                    merged["citations"] = context.get("citations")
+            merged_messages.append(merged)
+        return merged_messages
+
+    @staticmethod
+    def _message_citation_export_payload(message: Mapping[str, Any]) -> dict[str, Any]:
+        """Return JSON-safe citation/evidence payloads attached to an exported message."""
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), Mapping) else {}
+        rag_context = message.get("rag_context") if isinstance(message.get("rag_context"), Mapping) else {}
+        payload: dict[str, Any] = {}
+        for key in CITATION_MESSAGE_EXPORT_KEYS:
+            value = message.get(key)
+            if value is None:
+                value = metadata.get(key)
+            if value is None:
+                value = rag_context.get(key)
+            if not ChatbookCreator._has_exportable_citation_value(value):
+                continue
+            payload[key] = ChatbookCreator._json_safe_payload(value)
+        return payload
+
+    @staticmethod
+    def _conversation_export_path(conv_dir: Path, conv_id: str, suffix: str) -> Path:
+        filename = f"conversation_{ChatbookCreator._safe_conversation_file_id(conv_id)}{suffix}"
+        validate_filename(filename)
+        return conv_dir / filename
+
+    @staticmethod
+    def _safe_conversation_file_id(conv_id: str) -> str:
+        candidate = sanitize_filename(str(conv_id)).strip().strip(".")
+        if candidate:
+            filename = f"conversation_{candidate}.json"
+            try:
+                validate_filename(filename)
+                return candidate
+            except ValueError:
+                pass
+        digest = hashlib.sha256(str(conv_id).encode("utf-8")).hexdigest()[:12]
+        return f"id-{digest}"
+
+    @staticmethod
+    def _has_exportable_citation_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, (str, bytes, Mapping, list, tuple, set)):
+            return bool(value)
+        return True
+
+    @staticmethod
+    def _json_safe_payload(value: Any) -> Any:
+        to_payload = getattr(value, "to_payload", None)
+        if callable(to_payload):
+            return ChatbookCreator._json_safe_payload(to_payload())
+
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            return ChatbookCreator._json_safe_payload(model_dump(mode="json", exclude_none=True))
+
+        if isinstance(value, Mapping):
+            return {
+                str(key): ChatbookCreator._json_safe_payload(nested_value)
+                for key, nested_value in value.items()
+            }
+        if isinstance(value, (list, tuple, set)):
+            return [ChatbookCreator._json_safe_payload(item) for item in value]
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        return str(value)
+
+    @staticmethod
+    def _conversation_citation_export_metadata(
+        citation_messages: list[dict[str, Any]],
+        citation_report_path: str,
+    ) -> dict[str, Any]:
+        evidence_source_count = 0
+        evidence_snippet_count = 0
+        for message in citation_messages:
+            evidence_bundle = message.get("evidence_bundle")
+            if not isinstance(evidence_bundle, Mapping):
+                continue
+            references = evidence_bundle.get("references")
+            if not isinstance(references, list):
+                continue
+            evidence_source_count += len(references)
+            evidence_snippet_count += sum(
+                1
+                for reference in references
+                if isinstance(reference, Mapping)
+                and ChatbookCreator._citation_report_snippet(reference.get("snippet"))
+            )
+
+        return {
+            "citation_report_path": citation_report_path,
+            "citation_message_count": len(citation_messages),
+            "evidence_source_count": evidence_source_count,
+            "evidence_snippet_count": evidence_snippet_count,
+        }
+
+    def _write_conversation_citation_report(
+        self,
+        conv_dir: Path,
+        conv_id: str,
+        title: str,
+        citation_messages: list[dict[str, Any]],
+    ) -> tuple[str, dict[str, Any]]:
+        """Write a human-readable citation/source report for exported conversations."""
+        report_file = self._conversation_export_path(conv_dir, conv_id, "_citations.md")
+        report_metadata: dict[str, Any] = {}
+        total_references_written = 0
+        truncated = len(citation_messages) > MAX_CITATION_REPORT_MESSAGES
+        with open(report_file, 'w', encoding='utf-8') as f:
+            f.write(f"# Citations and Evidence: {self._markdown_report_text(title)}\n\n")
+            for message in citation_messages[:MAX_CITATION_REPORT_MESSAGES]:
+                references_remaining = MAX_CITATION_REPORT_TOTAL_REFERENCES - total_references_written
+                if references_remaining <= 0:
+                    truncated = True
+                    break
+                written, section_truncated = self._write_message_citation_report_section(
+                    f,
+                    message,
+                    references_remaining=references_remaining,
+                )
+                total_references_written += written
+                truncated = truncated or section_truncated
+            if truncated:
+                f.write(
+                    "Report truncated: full citation and evidence payloads remain "
+                    "available in the conversation JSON.\n"
+                )
+        if truncated:
+            report_metadata["citation_report_truncated"] = True
+        return f"content/conversations/{report_file.name}", report_metadata
+
+    @staticmethod
+    def _write_message_citation_report_section(
+        handle: Any,
+        message: Mapping[str, Any],
+        *,
+        references_remaining: int,
+    ) -> tuple[int, bool]:
+        message_id = ChatbookCreator._markdown_report_text(message.get("id", "unknown"))
+        handle.write(f"## Message {message_id}\n\n")
+        handle.write(f"Role: {ChatbookCreator._markdown_report_text(message.get('role', 'unknown'))}\n\n")
+
+        validation = message.get("citation_validation")
+        if isinstance(validation, Mapping):
+            status = validation.get("status")
+            if status is not None:
+                handle.write(f"Citation status: {ChatbookCreator._markdown_report_text(status)}\n")
+            cited_ids = validation.get("cited_evidence_ids")
+            if isinstance(cited_ids, list) and cited_ids:
+                handle.write(
+                    "Cited evidence: "
+                    f"{', '.join(ChatbookCreator._markdown_report_text(item) for item in cited_ids)}\n"
+                )
+            unknown_ids = validation.get("unknown_citation_ids")
+            if isinstance(unknown_ids, list) and unknown_ids:
+                handle.write(
+                    "Unknown evidence: "
+                    f"{', '.join(ChatbookCreator._markdown_report_text(item) for item in unknown_ids)}\n"
+                )
+            handle.write("\n")
+
+        evidence_bundle = message.get("evidence_bundle")
+        if not isinstance(evidence_bundle, Mapping):
+            return 0, False
+
+        bundle_id = evidence_bundle.get("bundle_id")
+        query = evidence_bundle.get("query")
+        source = evidence_bundle.get("source")
+        if bundle_id is not None:
+            handle.write(f"Evidence bundle: {ChatbookCreator._markdown_report_text(bundle_id)}\n")
+        if source is not None:
+            handle.write(f"Source: {ChatbookCreator._markdown_report_text(source)}\n")
+        if query is not None:
+            handle.write(f"Query: {ChatbookCreator._markdown_report_text(query)}\n")
+        handle.write("\n")
+
+        references = evidence_bundle.get("references")
+        if not isinstance(references, list) or not references:
+            return 0, False
+
+        handle.write("### Sources\n\n")
+        reference_limit = min(
+            len(references),
+            references_remaining,
+            MAX_CITATION_REPORT_REFERENCES_PER_MESSAGE,
+        )
+        references_written = 0
+        for reference in references[:reference_limit]:
+            if not isinstance(reference, Mapping):
+                continue
+            evidence_id = ChatbookCreator._markdown_report_text(reference.get("evidence_id", "unknown"))
+            title = ChatbookCreator._markdown_report_text(reference.get("title", "Untitled source"))
+            source_type = ChatbookCreator._markdown_report_text(reference.get("source_type", "source"))
+            authority = ChatbookCreator._markdown_report_text(reference.get("authority_label", "unknown authority"))
+            status = ChatbookCreator._markdown_report_text(reference.get("status", "unknown"))
+            handle.write(f"- {evidence_id} | {source_type} | {title} | {authority} | {status}\n")
+            source_id = reference.get("source_id")
+            if source_id is not None:
+                handle.write(f"  - Source id: {ChatbookCreator._markdown_report_text(source_id)}\n")
+            snippet = ChatbookCreator._citation_report_snippet(reference.get("snippet"))
+            if snippet:
+                handle.write(f"  - Snippet: {snippet}\n")
+            references_written += 1
+        handle.write("\n")
+        section_truncated = len(references) > reference_limit
+        return references_written, section_truncated
+
+    @staticmethod
+    def _citation_report_snippet(value: Any) -> str:
+        raw = "" if value is None else str(value)
+        text = " ".join(raw.split())
+        if len(text) > MAX_CITATION_REPORT_SNIPPET_CHARS:
+            text = text[: MAX_CITATION_REPORT_SNIPPET_CHARS - 3].rstrip() + "..."
+        return ChatbookCreator._markdown_report_text(text, max_length=MAX_CITATION_REPORT_SNIPPET_CHARS)
+
+    @staticmethod
+    def _markdown_report_text(value: Any, *, max_length: int = MAX_CITATION_REPORT_SNIPPET_CHARS) -> str:
+        raw = "" if value is None else str(value)
+        text = " ".join(sanitize_string(raw, max_length=max_length).split())
+        return html.escape(text, quote=False).replace("|", "\\|")
     
     def _collect_notes(
         self,
@@ -728,6 +1021,8 @@ class ChatbookCreator:
                 f.write(f"- **Characters:** {manifest.total_characters}\n")
             if manifest.total_media_items > 0:
                 f.write(f"- **Media Items:** {manifest.total_media_items}\n")
+            if manifest.total_prompts > 0:
+                f.write(f"- **Prompts:** {manifest.total_prompts}\n")
             
             if manifest.tags:
                 f.write(f"\n## Tags\n\n")
@@ -749,6 +1044,8 @@ class ChatbookCreator:
             if manifest.total_media_items > 0:
                 f.write("    ├── media/          # Media files and content\n")
                 f.write("    │   └── metadata/   # Media metadata JSON files\n")
+            if manifest.total_prompts > 0:
+                f.write("    ├── prompts/        # Prompts\n")
             f.write("```\n")
             
             f.write("\n## License\n\n")

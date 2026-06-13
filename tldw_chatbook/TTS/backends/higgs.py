@@ -183,6 +183,9 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
         # Lazy-loaded Higgs modules
         self._higgs_serve_engine = None
         self._boson_multimodal = None
+        self._ChatMLSample = None
+        self._Message = None
+        self._AudioContent = None
         
         # Shutdown and task tracking
         self._active_tasks = set()
@@ -504,7 +507,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
             )
             
             # Create ChatMLSample from messages
-            chat_ml_sample = self._ChatMLSample(messages=messages)
+            chat_ml_sample = self._make_chat_ml_sample(messages)
             
             # Check for shutdown before generation
             if self._shutdown_event.is_set():
@@ -518,8 +521,8 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
             # Create generation task with cancellation support
             gen_task = asyncio.create_task(
                 asyncio.to_thread(
-                    self.serve_engine.generate,
-                    chat_ml_sample=chat_ml_sample,  # Use ChatMLSample instead of messages
+                    self._invoke_serve_engine_generate,
+                    chat_ml_sample,
                     max_new_tokens=self.config.get("HIGGS_MAX_NEW_TOKENS", 4096),
                     temperature=self.config.get("HIGGS_TEMPERATURE", 0.7),
                     top_p=self.config.get("HIGGS_TOP_P", 0.95),
@@ -682,7 +685,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                 
                 # Generate audio for this section
                 messages = self._prepare_messages(section_text, speaker_voice_config, language)
-                chat_ml_sample = self._ChatMLSample(messages=messages)
+                chat_ml_sample = self._make_chat_ml_sample(messages)
                 
                 # Check for shutdown before each section
                 if self._shutdown_event.is_set():
@@ -692,8 +695,8 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                 # Create generation task for this section
                 section_task = asyncio.create_task(
                     asyncio.to_thread(
-                        self.serve_engine.generate,
-                        chat_ml_sample=chat_ml_sample,  # Use ChatMLSample instead of messages
+                        self._invoke_serve_engine_generate,
+                        chat_ml_sample,
                         max_new_tokens=self.config.get("HIGGS_MAX_NEW_TOKENS", 4096),
                         temperature=self.config.get("HIGGS_TEMPERATURE", 0.7),
                         top_p=self.config.get("HIGGS_TOP_P", 0.95),
@@ -916,6 +919,59 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
             return True
         
         return False
+
+    def _make_message(self, **kwargs) -> Any:
+        """Create a Higgs message, falling back to a dict for mocked engines."""
+        if self._Message is not None:
+            return self._Message(**kwargs)
+        return kwargs
+
+    def _make_audio_content(self, **kwargs) -> Any:
+        """Create Higgs audio content, falling back to a dict for mocked engines."""
+        if self._AudioContent is not None:
+            return self._AudioContent(**kwargs)
+        return kwargs
+
+    def _make_chat_ml_sample(self, messages: List[Any]) -> Any:
+        """Create a Higgs ChatML sample, falling back to a dict for mocked engines."""
+        if self._ChatMLSample is not None:
+            return self._ChatMLSample(messages=messages)
+        return {"messages": messages}
+
+    def _invoke_serve_engine_generate(self, chat_ml_sample: Any, **generation_kwargs) -> Any:
+        """Call current and legacy Higgs generate APIs with compatible kwargs."""
+        import inspect
+
+        generate = self.serve_engine.generate
+        try:
+            signature = inspect.signature(generate)
+            parameters = signature.parameters
+        except (TypeError, ValueError):
+            return generate(chat_ml_sample=chat_ml_sample, **generation_kwargs)
+
+        accepts_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD
+            for param in parameters.values()
+        )
+        kwargs = (
+            generation_kwargs
+            if accepts_kwargs
+            else {key: value for key, value in generation_kwargs.items() if key in parameters}
+        )
+
+        if "chat_ml_sample" in parameters or accepts_kwargs:
+            return generate(chat_ml_sample=chat_ml_sample, **kwargs)
+
+        messages = None
+        if isinstance(chat_ml_sample, dict):
+            messages = chat_ml_sample.get("messages")
+        else:
+            messages = getattr(chat_ml_sample, "messages", None)
+
+        if "messages" in parameters:
+            return generate(messages, **kwargs)
+
+        return generate(chat_ml_sample, **kwargs)
     
     async def _prepare_voice_config(self, voice_name: str) -> Dict[str, Any]:
         """Prepare voice configuration from voice name or profile"""
@@ -1035,13 +1091,13 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                     
                     # Add reference text and audio for voice cloning
                     reference_text = "This is the reference voice for cloning."
-                    messages.append(self._Message(
+                    messages.append(self._make_message(
                         role="user",
                         content=reference_text
                     ))
-                    messages.append(self._Message(
+                    messages.append(self._make_message(
                         role="assistant",
-                        content=self._AudioContent(raw_audio=audio_base64, audio_url="placeholder")
+                        content=self._make_audio_content(raw_audio=audio_base64, audio_url="placeholder")
                     ))
                     logger.info(f"Added reference audio for voice cloning: {ref_audio_path}")
                 except Exception as e:
@@ -1078,13 +1134,13 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
             
             system_content += "\n<|scene_desc_end|>"
             
-            messages.append(self._Message(
+            messages.append(self._make_message(
                 role="system",
                 content=system_content
             ))
         
         # Add the text to generate
-        messages.append(self._Message(
+        messages.append(self._make_message(
             role="user", 
             content=text
         ))

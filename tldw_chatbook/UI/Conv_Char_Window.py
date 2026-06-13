@@ -24,13 +24,11 @@ from .CCP_Modules import (
     CCPPromptHandler,
     CCPDictionaryHandler,
     CCPMessageManager,
-    CCPSidebarHandler,
     ConversationMessage,
     CharacterMessage,
     PromptMessage,
     DictionaryMessage,
     ViewChangeMessage,
-    SidebarMessage,
     LoadingManager,
     setup_ccp_enhancements
 )
@@ -89,7 +87,6 @@ class CCPWindow(Container):
         self.prompt_handler = CCPPromptHandler(self)
         self.dictionary_handler = CCPDictionaryHandler(self)
         self.message_manager = CCPMessageManager(self)
-        self.sidebar_handler = CCPSidebarHandler(self)
         
         # Initialize loading manager for async operation feedback
         self.loading_manager = LoadingManager(self)
@@ -393,6 +390,15 @@ class CCPWindow(Container):
                     yield TextArea(id="ccp-editor-prompt-user-textarea", classes="editor-textarea")
                     yield Label("Keywords (comma-separated):", classes="field-label")
                     yield TextArea(id="ccp-editor-prompt-keywords-textarea", classes="editor-textarea small")
+                    yield Label("Usage:", classes="field-label")
+                    yield Static("Usage: -", id="ccp-editor-prompt-usage-display", classes="field-value")
+                    yield Label("Server Version Controls:", classes="field-label")
+                    with Horizontal(classes="editor-actions"):
+                        yield Input(id="ccp-editor-prompt-version-input", placeholder="Version #", classes="editor-input")
+                        yield Button("Record Usage", id="ccp-editor-prompt-record-usage-button", classes="secondary-button")
+                        yield Button("List Versions", id="ccp-editor-prompt-list-versions-button", classes="secondary-button")
+                        yield Button("Restore Version", id="ccp-editor-prompt-restore-version-button", classes="secondary-button")
+                    yield Static("", id="ccp-editor-prompt-version-status", classes="field-value")
                     
                     # Action buttons
                     with Horizontal(classes="editor-actions"):
@@ -497,9 +503,19 @@ class CCPWindow(Container):
     
     @on(Button.Pressed, "#toggle-ccp-sidebar")
     async def handle_sidebar_toggle(self, event: Button.Pressed) -> None:
-        """Handle sidebar toggle button press."""
+        """Handle sidebar toggle button press.
+
+        Inlined from the retired CCPSidebarHandler.toggle_sidebar().
+        """
         event.stop()
-        await self.sidebar_handler.toggle_sidebar()
+        self.sidebar_collapsed = not self.sidebar_collapsed
+        try:
+            sidebar = self.query_one("#ccp-sidebar")
+            toggle_button = self.query_one("#toggle-ccp-sidebar", Button)
+            sidebar.set_class(self.sidebar_collapsed, "collapsed")
+            toggle_button.label = "▶" if self.sidebar_collapsed else "◀"
+        except NoMatches:
+            logger.warning("Could not toggle CCP sidebar: sidebar widgets not found")
     
     @on(Button.Pressed, "#conv-char-load-button")
     async def handle_load_conversation(self, event: Button.Pressed) -> None:
@@ -548,6 +564,24 @@ class CCPWindow(Container):
         """Handle saving prompt from editor."""
         event.stop()
         await self.prompt_handler.handle_save_prompt()
+
+    @on(Button.Pressed, "#ccp-editor-prompt-record-usage-button")
+    async def handle_record_prompt_usage(self, event: Button.Pressed) -> None:
+        """Handle recording usage for the selected prompt."""
+        event.stop()
+        await self.prompt_handler.handle_record_prompt_usage()
+
+    @on(Button.Pressed, "#ccp-editor-prompt-list-versions-button")
+    async def handle_list_prompt_versions(self, event: Button.Pressed) -> None:
+        """Handle listing server prompt versions."""
+        event.stop()
+        await self.prompt_handler.handle_list_prompt_versions()
+
+    @on(Button.Pressed, "#ccp-editor-prompt-restore-version-button")
+    async def handle_restore_prompt_version(self, event: Button.Pressed) -> None:
+        """Handle restoring a server prompt version."""
+        event.stop()
+        await self.prompt_handler.handle_restore_prompt_version()
     
     @on(Button.Pressed, "#ccp-editor-dict-save-button")
     async def handle_save_dictionary(self, event: Button.Pressed) -> None:

@@ -40,11 +40,14 @@ ChatbooksWindow {
 }
 
 #chatbooks-list ListItem:hover {
-    background: $primary 20%;
+    background: $surface-lighten-1;
+    color: $text;
 }
 
 #chatbooks-list ListItem.--highlight {
-    background: $primary 30%;
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
 }
 
 /* Right content area */

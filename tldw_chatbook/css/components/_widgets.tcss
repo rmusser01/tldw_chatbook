@@ -32,17 +32,24 @@ Collapsible > .collapsible--header {
 }
 
 Collapsible > .collapsible--header:hover {
-    background: $primary-background-lighten-2;
+    background: $surface;
     color: $text;
 }
 
 Collapsible > .collapsible--header:focus {
-    background: $primary-background-lighten-1;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    border-bottom: solid $ds-focus-accent;
+    outline: none;
 }
 
 Collapsible.-collapsed > .collapsible--header {
     border-bottom: none;
+}
+
+Collapsible.-collapsed > .collapsible--header:focus {
+    border-bottom: solid $ds-focus-accent;
 }
 
 Collapsible > .collapsible--header {

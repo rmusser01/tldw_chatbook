@@ -3,3 +3,34 @@
  * ======================================== 
  * Multi-pane layouts (2-pane, 3-pane, etc)
  * ======================================== */
+
+.destination-workbench {
+    height: 1fr;
+    min-height: 0;
+    width: 100%;
+}
+
+.destination-workbench-pane {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    padding: 0 1;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+.destination-pane-title {
+    height: 1;
+    min-height: 1;
+    text-style: bold;
+    color: $ds-text-primary;
+}
+
+.destination-mode-strip,
+.destination-filter-strip,
+.destination-footer-row {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+}

@@ -341,7 +341,8 @@ class PerformanceMetricsWidget(Widget):
             
             if alerts:
                 alerts_container.remove_class("hidden")
-                alerts_list.clear()
+                for child in list(alerts_list.children):
+                    child.remove()
                 
                 for alert in alerts:
                     alert_widget = Static(alert, classes="alert-item")

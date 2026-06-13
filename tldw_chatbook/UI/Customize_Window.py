@@ -27,6 +27,10 @@ class CustomizeWindow(Container):
     """
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+
     CustomizeWindow {
         layout: horizontal;
         height: 100%;
@@ -59,7 +63,9 @@ class CustomizeWindow(Container):
     }
     
     .customize-nav-button.active-nav {
-        background: $primary;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        text-style: bold underline;
     }
     
     .sidebar-title {

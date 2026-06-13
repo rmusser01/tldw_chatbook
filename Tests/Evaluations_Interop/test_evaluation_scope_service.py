@@ -1,0 +1,1349 @@
+import pytest
+
+from tldw_chatbook.Evaluations_Interop.evaluation_scope_service import EvaluationScopeService
+from tldw_chatbook.runtime_policy import PolicyDeniedError
+
+
+class FakePolicyEnforcer:
+    def __init__(self):
+        self.actions = []
+        self.calls = self.actions
+
+    def require_allowed(self, *, action_id):
+        self.actions.append(action_id)
+
+
+class FakeLocalEvaluationService:
+    def __init__(self):
+        self.calls = []
+
+    def list_evaluations(self, *, limit=100, offset=0, eval_type=None):
+        self.calls.append(("list_evaluations", limit, offset, eval_type))
+        return [
+            {
+                "id": "task_123",
+                "name": "local_eval",
+                "description": "Local evaluation",
+                "task_type": "question_answer",
+                "config_format": "custom",
+                "config_data": {"metrics": ["accuracy"]},
+                "dataset_id": "dataset_123",
+                "created_at": "2026-04-20T00:00:00Z",
+                "updated_at": "2026-04-20T00:02:00Z",
+                "version": 2,
+                "client_id": "local_client",
+            }
+        ]
+
+    def get_dataset(self, dataset_id):
+        self.calls.append(("get_dataset", dataset_id))
+        return {
+            "id": dataset_id,
+            "name": "local_dataset",
+            "description": "Local dataset",
+            "format": "custom",
+            "source_path": "inline:local_dataset",
+            "samples": [{"input": "Q", "expected": "A"}],
+            "sample_count": 1,
+            "metadata": {"project": "offline"},
+            "created_at": "2026-04-20T00:00:00Z",
+            "updated_at": "2026-04-20T00:02:00Z",
+            "version": 1,
+            "client_id": "local_client",
+        }
+
+    def list_datasets(self, *, limit=100, offset=0):
+        self.calls.append(("list_datasets", limit, offset))
+        return [
+            {
+                "id": "dataset_123",
+                "name": "local_dataset",
+                "description": "Local dataset",
+                "format": "custom",
+                "source_path": "inline:local_dataset",
+                "samples": [{"input": "Q", "expected": "A"}],
+                "sample_count": 1,
+                "metadata": {"project": "offline"},
+                "created_at": "2026-04-20T00:00:00Z",
+                "updated_at": "2026-04-20T00:02:00Z",
+                "version": 1,
+                "client_id": "local_client",
+            }
+        ]
+
+    def create_dataset(self, *, name, samples, description=None, metadata=None, format=None, source_path=None):
+        self.calls.append(("create_dataset", name, samples, description, metadata, format, source_path))
+        return "dataset_local"
+
+    def update_dataset(
+        self,
+        dataset_id,
+        *,
+        name=None,
+        samples=None,
+        description=None,
+        metadata=None,
+        format=None,
+        source_path=None,
+    ):
+        self.calls.append(("update_dataset", dataset_id, name, samples, description, metadata, format, source_path))
+        return {
+            "id": dataset_id,
+            "name": name or "local_dataset",
+            "description": description,
+            "format": format or "custom",
+            "source_path": source_path or "inline:local_dataset",
+            "samples": list(samples or []),
+            "sample_count": len(samples or []),
+            "metadata": metadata or {},
+            "created_at": "2026-04-20T00:00:00Z",
+            "updated_at": "2026-04-20T00:02:00Z",
+            "version": 2,
+            "client_id": "local_client",
+        }
+
+    def delete_dataset(self, dataset_id):
+        self.calls.append(("delete_dataset", dataset_id))
+        return None
+
+    def get_evaluation(self, eval_id):
+        self.calls.append(("get_evaluation", eval_id))
+        return {
+            "id": eval_id,
+            "name": "local_eval",
+            "description": "Local evaluation",
+            "task_type": "question_answer",
+            "config_format": "custom",
+            "config_data": {"metrics": ["accuracy"]},
+            "dataset_id": "dataset_123",
+            "created_at": "2026-04-20T00:00:00Z",
+            "updated_at": "2026-04-20T00:02:00Z",
+            "version": 2,
+            "client_id": "local_client",
+        }
+
+    def create_evaluation(self, **kwargs):
+        self.calls.append(("create_evaluation", kwargs))
+        return "task_123"
+
+    def update_evaluation(self, eval_id, **kwargs):
+        self.calls.append(("update_evaluation", eval_id, kwargs))
+        return True
+
+    def delete_evaluation(self, eval_id):
+        self.calls.append(("delete_evaluation", eval_id))
+        return None
+
+    def list_targets(self, *, provider=None, limit=100, offset=0):
+        self.calls.append(("list_targets", provider, limit, offset))
+        return [
+            {
+                "id": "model_123",
+                "name": "Preferred Local",
+                "provider": "openai",
+                "model_id": "gpt-4.1-mini",
+                "config": {"temperature": 0.2},
+                "created_at": "2026-04-20T00:00:00Z",
+                "updated_at": "2026-04-20T00:02:00Z",
+                "client_id": "local_client",
+            }
+        ]
+
+    def create_run(self, eval_id, *, target_id=None, target_model=None, config=None, run_name=None, dataset_override=None, webhook_url=None):
+        self.calls.append(("create_run", eval_id, target_id, target_model, config, run_name, dataset_override, webhook_url))
+        return "run_new"
+
+    def get_run_artifacts(self, run_id):
+        self.calls.append(("get_run_artifacts", run_id))
+        return {
+            "run": {
+                "id": run_id,
+                "task_id": "task_123",
+                "name": "local_run",
+                "status": "completed",
+                "model_id": "model_123",
+                "model_name": "gpt-4.1-mini",
+                "created_at": "2026-04-20T00:00:00Z",
+                "metrics_summary": {"accuracy": 0.95},
+                "config_overrides": {"temperature": 0.2},
+            },
+            "metrics": {"accuracy": 0.95},
+            "results": [{"sample_id": "sample_1", "metrics": {"accuracy": 1.0}}],
+            "detail_available": True,
+        }
+
+    def list_runs(self, *, eval_id=None, status=None, limit=100, offset=0):
+        self.calls.append(("list_runs", eval_id, status, limit, offset))
+        return [
+            {
+                "id": "run_123",
+                "task_id": eval_id or "task_123",
+                "name": "local_run",
+                "status": "completed",
+                "model_id": "model_123",
+                "model_name": "gpt-4.1-mini",
+                "created_at": "2026-04-20T00:00:00Z",
+                "start_time": "2026-04-20T00:01:00Z",
+                "end_time": "2026-04-20T00:02:00Z",
+                "metrics_summary": {"accuracy": 0.9},
+                "config_overrides": {"temperature": 0.2},
+            }
+        ]
+
+    def get_run(self, run_id):
+        self.calls.append(("get_run", run_id))
+        return {
+            "id": run_id,
+            "task_id": "task_123",
+            "name": "local_run",
+            "status": "completed",
+            "model_id": "model_123",
+            "model_name": "gpt-4.1-mini",
+            "created_at": "2026-04-20T00:00:00Z",
+        }
+
+    def cancel_run(self, run_id):
+        self.calls.append(("cancel_run", run_id))
+        return {"status": "cancelled", "id": run_id}
+
+    def create_dataset(
+        self,
+        *,
+        name,
+        samples=None,
+        description=None,
+        metadata=None,
+        format="custom",
+        source_path=None,
+    ):
+        if samples:
+            self.calls.append(("create_dataset", name, samples, description, metadata, None, None))
+            return "dataset_local"
+
+        self.calls.append(("create_dataset", name, format, source_path, description, metadata))
+        return {
+            "id": "dataset_local_new",
+            "name": name,
+            "description": description,
+            "format": format,
+            "source_path": source_path,
+            "metadata": metadata or {},
+        }
+
+    def delete_dataset(self, dataset_id):
+        self.calls.append(("delete_dataset", dataset_id))
+        return None
+
+
+class FakeServerEvaluationService:
+    def __init__(self):
+        self.calls = []
+
+    async def list_evaluations(self, *, limit=100, after=None, eval_type=None):
+        self.calls.append(("list_evaluations", limit, after, eval_type))
+        return [
+            {
+                "id": "eval_123",
+                "object": "evaluation",
+                "name": "server_eval",
+                "description": "Server evaluation",
+                "eval_type": "classification",
+                "eval_spec": {"metrics": ["f1"]},
+                "dataset_id": "dataset_999",
+                "created": 1713571200,
+                "updated": 1713571260,
+                "created_by": "user_1",
+                "metadata": {"project": "server"},
+            }
+        ]
+
+    async def get_evaluation(self, eval_id):
+        self.calls.append(("get_evaluation", eval_id))
+        return {
+            "id": eval_id,
+            "object": "evaluation",
+            "name": "server_eval",
+            "description": "Server evaluation",
+            "eval_type": "classification",
+            "eval_spec": {"metrics": ["f1"]},
+            "dataset_id": "dataset_999",
+            "created": 1713571200,
+            "updated": 1713571260,
+            "created_by": "user_1",
+            "metadata": {"project": "server"},
+        }
+
+    async def create_evaluation(self, **kwargs):
+        self.calls.append(("create_evaluation", kwargs))
+        return {
+            "id": "eval_created",
+            "object": "evaluation",
+            "name": kwargs["name"],
+            "description": kwargs.get("description"),
+            "eval_type": kwargs["eval_type"],
+            "eval_spec": kwargs["eval_spec"],
+            "dataset_id": kwargs.get("dataset_id"),
+            "created": 1713571200,
+            "updated": 1713571260,
+            "created_by": "user_1",
+            "metadata": kwargs.get("metadata") or {},
+        }
+
+    async def update_evaluation(self, eval_id, **kwargs):
+        self.calls.append(("update_evaluation", eval_id, kwargs))
+        return {
+            "id": eval_id,
+            "object": "evaluation",
+            "name": "server_eval",
+            "description": kwargs.get("description"),
+            "eval_type": "classification",
+            "eval_spec": kwargs.get("eval_spec") or {"metrics": ["f1"]},
+            "dataset_id": "dataset_999",
+            "created": 1713571200,
+            "updated": 1713571260,
+            "created_by": "user_1",
+            "metadata": kwargs.get("metadata") or {},
+        }
+
+    async def delete_evaluation(self, eval_id):
+        self.calls.append(("delete_evaluation", eval_id))
+        return None
+
+    async def list_runs(self, *, eval_id, limit=100, after=None, status=None):
+        self.calls.append(("list_runs", eval_id, limit, after, status))
+        return [
+            {
+                "id": "run_999",
+                "object": "run",
+                "eval_id": eval_id,
+                "status": "running",
+                "target_model": "gpt-4.1",
+                "created": 1713571200,
+                "progress": {
+                    "completed_samples": 3,
+                    "total_samples": 10,
+                    "percent_complete": 30.0,
+                },
+            }
+        ]
+
+    async def get_dataset(self, dataset_id):
+        self.calls.append(("get_dataset", dataset_id))
+        return {
+            "id": dataset_id,
+            "object": "dataset",
+            "name": "server_dataset",
+            "description": "Server dataset",
+            "sample_count": 1,
+            "samples": [{"input": "Q", "expected": "A"}],
+            "created": 1713571200,
+            "metadata": {"project": "server"},
+        }
+
+    async def list_datasets(self, *, limit=100, offset=0):
+        self.calls.append(("list_datasets", limit, offset))
+        return [
+            {
+                "id": "dataset_server",
+                "object": "dataset",
+                "name": "server_dataset",
+                "description": "Server dataset",
+                "sample_count": 1,
+                "samples": [{"input": "Q", "expected": "A"}],
+                "created": 1713571200,
+                "metadata": {"project": "server"},
+            }
+        ]
+
+    async def create_dataset(self, *, name, samples, description=None, metadata=None):
+        self.calls.append(("create_dataset", name, samples, description, metadata))
+        return {
+            "id": "dataset_server",
+            "object": "dataset",
+            "name": name,
+            "description": description,
+            "sample_count": len(samples),
+            "samples": samples,
+            "created": 1713571200,
+            "metadata": metadata or {},
+        }
+
+    async def delete_dataset(self, dataset_id):
+        self.calls.append(("delete_dataset", dataset_id))
+        return None
+
+    async def create_run(self, eval_id, *, target_model=None, dataset_override=None, config=None, webhook_url=None, run_name=None, target_id=None):
+        self.calls.append(("create_run", eval_id, target_model, dataset_override, config, webhook_url, run_name, target_id))
+        return {
+            "id": "run_srv",
+            "object": "run",
+            "eval_id": eval_id,
+            "status": "pending",
+            "target_model": target_model or "openai:gpt-4.1-mini",
+            "created": 1713571200,
+            "results": {"accuracy": 0.91},
+            "config": config or {},
+        }
+
+    async def get_run_artifacts(self, run_id):
+        self.calls.append(("get_run_artifacts", run_id))
+        return {
+            "run": {
+                "id": run_id,
+                "object": "run",
+                "eval_id": "eval_123",
+                "status": "completed",
+                "target_model": "openai:gpt-4.1-mini",
+                "created": 1713571200,
+                "results": {"accuracy": 0.91},
+            },
+            "metrics": {"accuracy": 0.91},
+            "results": None,
+            "detail_available": False,
+        }
+
+    async def get_run(self, run_id):
+        self.calls.append(("get_run", run_id))
+        return {
+            "id": run_id,
+            "object": "run",
+            "eval_id": "eval_123",
+            "status": "completed",
+            "target_model": "openai:gpt-4.1-mini",
+            "created": 1713571200,
+            "results": {"accuracy": 0.91},
+        }
+
+    async def cancel_run(self, run_id):
+        self.calls.append(("cancel_run", run_id))
+        return {"status": "cancellation_requested", "id": run_id}
+
+    async def create_dataset(self, *, name, samples, description=None, metadata=None):
+        self.calls.append(("create_dataset", name, samples, description, metadata))
+        return {
+            "id": "dataset_server_new" if name == "Server Dataset" else "dataset_server",
+            "name": name,
+            "description": description,
+            "sample_count": len(samples),
+            "samples": samples,
+            "metadata": metadata or {},
+        }
+
+    async def delete_dataset(self, dataset_id):
+        self.calls.append(("delete_dataset", dataset_id))
+        return None
+
+    async def create_or_update_rag_pipeline_preset(self, *, name, config):
+        self.calls.append(("create_or_update_rag_pipeline_preset", name, config))
+        return {"name": name, "config": config}
+
+    async def list_rag_pipeline_presets(self, *, limit=50, offset=0):
+        self.calls.append(("list_rag_pipeline_presets", limit, offset))
+        return {"items": [{"name": "fast", "config": {"retriever": "hybrid"}}], "total": 1}
+
+    async def get_rag_pipeline_preset(self, name):
+        self.calls.append(("get_rag_pipeline_preset", name))
+        return {"name": name, "config": {"retriever": "hybrid"}}
+
+    async def delete_rag_pipeline_preset(self, name):
+        self.calls.append(("delete_rag_pipeline_preset", name))
+        return None
+
+    async def cleanup_rag_pipeline(self):
+        self.calls.append(("cleanup_rag_pipeline",))
+        return {"expired_count": 2, "deleted_count": 1}
+
+    async def create_embeddings_abtest(self, *, name, config, run_immediately=False):
+        self.calls.append(("create_embeddings_abtest", name, config, run_immediately))
+        return {"test_id": "ab_1", "status": "created"}
+
+    async def run_embeddings_abtest(self, test_id, *, config):
+        self.calls.append(("run_embeddings_abtest", test_id, config))
+        return {"test_id": test_id, "status": "running"}
+
+    async def get_embeddings_abtest_status(self, test_id):
+        self.calls.append(("get_embeddings_abtest_status", test_id))
+        return {"test_id": test_id, "status": "completed", "arms": []}
+
+    async def get_embeddings_abtest_results(self, test_id, *, page=1, page_size=50):
+        self.calls.append(("get_embeddings_abtest_results", test_id, page, page_size))
+        return {"summary": {"test_id": test_id, "status": "completed", "arms": []}, "results": []}
+
+    async def get_embeddings_abtest_significance(self, test_id, *, metric="ndcg"):
+        self.calls.append(("get_embeddings_abtest_significance", test_id, metric))
+        return {"metric": metric, "p_value": 0.05}
+
+    async def export_embeddings_abtest(self, test_id, *, format="json"):
+        self.calls.append(("export_embeddings_abtest", test_id, format))
+        return {"test_id": test_id, "total": 0, "results": []}
+
+    async def delete_embeddings_abtest(self, test_id):
+        self.calls.append(("delete_embeddings_abtest", test_id))
+        return {"status": "deleted", "test_id": test_id}
+
+    async def generate_synthetic_drafts(self, **kwargs):
+        self.calls.append(("generate_synthetic_drafts", kwargs))
+        return {"generation_batch_id": "batch_1", "samples": [], "source_breakdown": {}, "coverage": {}, "missing_coverage": {}, "corpus_scope": {}}
+
+    async def list_synthetic_queue(self, **kwargs):
+        self.calls.append(("list_synthetic_queue", kwargs))
+        return {"data": [{"sample_id": "sample_1"}], "total": 1}
+
+    async def review_synthetic_sample(self, sample_id, **kwargs):
+        self.calls.append(("review_synthetic_sample", sample_id, kwargs))
+        return {"action_id": "review_1", "sample_id": sample_id, "action": "approve"}
+
+    async def promote_synthetic_samples(self, **kwargs):
+        self.calls.append(("promote_synthetic_samples", kwargs))
+        return {"dataset_id": "dataset_1", "dataset_snapshot_ref": "snapshot_1", "promotion_ids": [], "sample_count": 1}
+
+    async def list_benchmarks(self):
+        self.calls.append(("list_benchmarks",))
+        return {"object": "list", "data": [{"name": "mmlu"}], "total": 1}
+
+    async def get_benchmark(self, benchmark_name):
+        self.calls.append(("get_benchmark", benchmark_name))
+        return {"name": benchmark_name, "evaluation_type": "qa"}
+
+    async def run_benchmark(self, benchmark_name, **kwargs):
+        self.calls.append(("run_benchmark", benchmark_name, kwargs))
+        return {"benchmark": benchmark_name, "total_samples": 2, "results_summary": {"average_score": 0.75}, "evaluation_id": "eval_1"}
+
+    async def register_webhook(self, **kwargs):
+        self.calls.append(("register_webhook", kwargs))
+        return {"webhook_id": 10, "url": kwargs["url"], "events": kwargs["events"], "secret": kwargs.get("secret") or "x" * 32, "created_at": "2026-04-21T00:00:00Z"}
+
+    async def list_webhooks(self):
+        self.calls.append(("list_webhooks",))
+        return [{"webhook_id": 10, "url": "https://example.com/evals", "events": ["evaluation.completed"], "status": "active", "created_at": "2026-04-21T00:00:00Z"}]
+
+    async def unregister_webhook(self, url):
+        self.calls.append(("unregister_webhook", url))
+        return {"status": "unregistered", "url": url}
+
+    async def test_webhook(self, url):
+        self.calls.append(("test_webhook", url))
+        return {"success": True}
+
+    async def list_recipe_manifests(self):
+        self.calls.append(("list_recipe_manifests",))
+        return [{"recipe_id": "rag_answer_quality", "name": "RAG Answer Quality"}]
+
+    async def get_recipe_manifest(self, recipe_id):
+        self.calls.append(("get_recipe_manifest", recipe_id))
+        return {"recipe_id": recipe_id, "name": "RAG Answer Quality"}
+
+    async def get_recipe_launch_readiness(self, recipe_id):
+        self.calls.append(("get_recipe_launch_readiness", recipe_id))
+        return {"recipe_id": recipe_id, "ready": True}
+
+    async def validate_recipe_dataset(self, recipe_id, **kwargs):
+        self.calls.append(("validate_recipe_dataset", recipe_id, kwargs))
+        return {"valid": True, "sample_count": 1}
+
+    async def create_recipe_run(self, recipe_id, **kwargs):
+        self.calls.append(("create_recipe_run", recipe_id, kwargs))
+        return {"run_id": "recipe_run_1", "recipe_id": recipe_id, "status": "pending"}
+
+    async def get_recipe_run(self, run_id):
+        self.calls.append(("get_recipe_run", run_id))
+        return {"run_id": run_id, "recipe_id": "rag_answer_quality", "status": "completed"}
+
+    async def get_recipe_run_report(self, run_id):
+        self.calls.append(("get_recipe_run_report", run_id))
+        return {"run": {"run_id": run_id}, "summary": {"score": 0.91}}
+
+
+class FakePolicyEnforcer:
+    def __init__(self, denied_reason: str | None = None):
+        self.denied_reason = denied_reason
+        self.calls = []
+        self.actions = self.calls
+
+    @classmethod
+    def deny(cls, reason_code: str) -> "FakePolicyEnforcer":
+        return cls(denied_reason=reason_code)
+
+    def require_allowed(self, *, action_id: str) -> None:
+        self.calls.append(action_id)
+        if self.denied_reason is None:
+            return
+        raise PolicyDeniedError(
+            action_id=action_id,
+            reason_code=self.denied_reason,
+            user_message=f"{action_id} denied",
+            effective_source="local",
+            authority_owner="server",
+        )
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_evaluation_list_by_backend():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    local_records = await scope.list_evaluations(mode="local")
+    server_records = await scope.list_evaluations(mode="server")
+
+    assert local_records[0]["record_id"] == "local:evaluation:task_123"
+    assert local_records[0]["eval_type"] == "question_answer"
+    assert server_records[0]["record_id"] == "server:evaluation:eval_123"
+    assert server_records[0]["metadata"]["project"] == "server"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_enforces_policy_for_core_evaluation_surfaces():
+    policy = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=FakeServerEvaluationService(),
+        policy_enforcer=policy,
+    )
+
+    await scope.list_evaluations(mode="local")
+    await scope.get_evaluation(mode="server", eval_id="eval_123")
+    await scope.create_evaluation(
+        mode="local",
+        name="local_eval",
+        eval_type="question_answer",
+        eval_spec={"metrics": ["accuracy"]},
+    )
+    await scope.update_evaluation(
+        "eval_123",
+        mode="server",
+        description="Updated",
+    )
+    await scope.delete_evaluation(mode="local", eval_id="task_123")
+    await scope.list_datasets(mode="server")
+    await scope.get_dataset(mode="local", dataset_id="dataset_123")
+    await scope.create_dataset(
+        mode="server",
+        name="server_dataset",
+        samples=[{"input": "Q", "expected": "A"}],
+    )
+    await scope.update_dataset(
+        mode="local",
+        dataset_id="dataset_123",
+        name="renamed",
+    )
+    await scope.delete_dataset(mode="server", dataset_id="dataset_server")
+    await scope.list_targets(mode="local")
+    await scope.list_targets(mode="server")
+    await scope.list_runs(mode="local", eval_id="task_123")
+    await scope.get_run(mode="server", run_id="run_999")
+    await scope.create_run(
+        mode="server",
+        eval_id="eval_123",
+        target_model="openai:gpt-4.1-mini",
+    )
+    await scope.get_run_artifacts(mode="local", run_id="run_123")
+    await scope.cancel_run(mode="server", run_id="run_999")
+
+    assert policy.actions == [
+        "evaluations.evaluation.list.local",
+        "evaluations.evaluation.detail.server",
+        "evaluations.evaluation.create.local",
+        "evaluations.evaluation.update.server",
+        "evaluations.evaluation.delete.local",
+        "evaluations.dataset.list.server",
+        "evaluations.dataset.detail.local",
+        "evaluations.dataset.create.server",
+        "evaluations.dataset.update.local",
+        "evaluations.dataset.delete.server",
+        "evaluations.target.list.local",
+        "evaluations.target.list.server",
+        "evaluations.run.list.local",
+        "evaluations.run.detail.server",
+        "evaluations.run.launch.server",
+        "evaluations.run.detail.local",
+        "evaluations.run.update.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_enforces_policy_for_server_evaluation_adjuncts():
+    policy = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=FakeServerEvaluationService(),
+        policy_enforcer=policy,
+    )
+
+    await scope.evaluate_geval(mode="server", source_text="source", summary="summary")
+    await scope.get_evaluation_history(mode="server")
+    await scope.generate_synthetic_drafts(
+        mode="server",
+        recipe_kind="rag_answer_quality",
+        target_sample_count=1,
+    )
+    await scope.list_synthetic_queue(mode="server")
+    await scope.review_synthetic_sample(mode="server", sample_id="sample_123", action="approve")
+    await scope.promote_synthetic_samples(
+        mode="server",
+        sample_ids=["sample_123"],
+        dataset_name="Promoted",
+    )
+    await scope.create_embeddings_abtest(mode="server", name="A/B", config={"arms": []})
+    await scope.run_embeddings_abtest(mode="server", test_id="abtest_123", config={})
+    await scope.get_embeddings_abtest_summary(mode="server", test_id="abtest_123")
+    await scope.get_embeddings_abtest_results(mode="server", test_id="abtest_123")
+    await scope.get_embeddings_abtest_significance(mode="server", test_id="abtest_123")
+    await scope.list_benchmarks(mode="server")
+    await scope.get_benchmark(mode="server", benchmark_name="truthfulqa")
+    await scope.run_benchmark(mode="server", benchmark_name="truthfulqa")
+    await scope.list_recipes(mode="server")
+    await scope.get_recipe(mode="server", recipe_id="rag_answer_quality")
+    await scope.get_recipe_launch_readiness(mode="server", recipe_id="rag_answer_quality")
+    await scope.validate_recipe_dataset(mode="server", recipe_id="rag_answer_quality", dataset_id="dataset_123")
+    await scope.create_recipe_run(mode="server", recipe_id="rag_answer_quality")
+    await scope.get_recipe_run(mode="server", run_id="recipe_run_1")
+    await scope.get_recipe_run_report(mode="server", run_id="recipe_run_1")
+    await scope.save_pipeline_preset(mode="server", name="baseline", config={})
+    await scope.list_pipeline_presets(mode="server")
+    await scope.get_pipeline_preset(mode="server", name="baseline")
+    await scope.delete_pipeline_preset(mode="server", name="baseline")
+    await scope.cleanup_pipeline_collections(mode="server")
+    await scope.register_webhook(mode="server", url="https://example.com/evals", events=["evaluation.completed"])
+    await scope.list_webhooks(mode="server")
+    await scope.unregister_webhook(mode="server", url="https://example.com/evals")
+    await scope.test_webhook(mode="server", url="https://example.com/evals")
+
+    assert policy.actions == [
+        "evaluations.immediate.launch.server",
+        "evaluations.immediate.list.server",
+        "evaluations.synthetic.launch.server",
+        "evaluations.synthetic.list.server",
+        "evaluations.synthetic.update.server",
+        "evaluations.synthetic.create.server",
+        "evaluations.embeddings_abtest.create.server",
+        "evaluations.embeddings_abtest.launch.server",
+        "evaluations.embeddings_abtest.detail.server",
+        "evaluations.embeddings_abtest.observe.server",
+        "evaluations.embeddings_abtest.observe.server",
+        "evaluations.benchmarks.list.server",
+        "evaluations.benchmarks.detail.server",
+        "evaluations.benchmarks.launch.server",
+        "evaluations.recipes.list.server",
+        "evaluations.recipes.detail.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.recipes.launch.server",
+        "evaluations.recipes.launch.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.rag_pipeline.create.server",
+        "evaluations.rag_pipeline.list.server",
+        "evaluations.rag_pipeline.detail.server",
+        "evaluations.rag_pipeline.delete.server",
+        "evaluations.rag_pipeline.launch.server",
+        "evaluations.webhooks.create.server",
+        "evaluations.webhooks.list.server",
+        "evaluations.webhooks.delete.server",
+        "evaluations.webhooks.launch.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_runs_using_eval_id_for_each_backend():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    local_runs = await scope.list_runs(mode="local", eval_id="task_123")
+    server_runs = await scope.list_runs(mode="server", eval_id="eval_123")
+
+    assert local_runs[0]["evaluation_id"] == "task_123"
+    assert local_runs[0]["target_model"] == "gpt-4.1-mini"
+    assert server_runs[0]["evaluation_id"] == "eval_123"
+    assert server_runs[0]["progress"]["percent_complete"] == 30.0
+
+
+@pytest.mark.asyncio
+async def test_scope_service_lists_local_targets_and_routes_run_creation_by_backend():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    local_targets = await scope.list_targets(mode="local")
+    local_run = await scope.create_run(
+        mode="local",
+        eval_id="task_123",
+        target_id="model_123",
+        run_name="local_run",
+        config={"temperature": 0.2},
+    )
+    server_run = await scope.create_run(
+        mode="server",
+        eval_id="eval_123",
+        target_model="openai:gpt-4.1-mini",
+        config={"max_workers": 2},
+    )
+
+    assert local_targets[0]["record_id"] == "local:evaluation_target:model_123"
+    assert local_targets[0]["target_model"] == "openai:gpt-4.1-mini"
+    assert local_run["record_id"] == "local:evaluation_run:run_new"
+    assert local_run["evaluation_id"] == "task_123"
+    assert server_run["record_id"] == "server:evaluation_run:run_srv"
+    assert server_run["target_model"] == "openai:gpt-4.1-mini"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_target_catalog_when_adapter_provides_it():
+    class ServerEvaluationServiceWithTargets(FakeServerEvaluationService):
+        async def list_targets(self, *, provider=None, limit=100, offset=0):
+            self.calls.append(("list_targets", provider, limit, offset))
+            return [{"id": "server-model", "name": "Server Model", "provider": "openai"}]
+
+    server = ServerEvaluationServiceWithTargets()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    targets = await scope.list_targets(mode="server", provider="openai", limit=10, offset=5)
+
+    assert targets[0]["record_id"] == "server:evaluation_target:server-model"
+    assert targets[0]["backend"] == "server"
+    assert targets[0]["backing_id"] == "server-model"
+    assert targets[0]["name"] == "Server Model"
+    assert targets[0]["provider"] == "openai"
+    assert server.calls == [("list_targets", "openai", 10, 5)]
+    assert policy_enforcer.calls == ["evaluations.target.list.server"]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_forwards_local_dataset_override_and_webhook_url():
+    local = FakeLocalEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=FakeServerEvaluationService())
+    dataset_override = {
+        "name": "inline_cases",
+        "samples": [{"input": "Q1", "expected": "A1", "metadata": {"difficulty": "easy"}}],
+    }
+
+    await scope.create_run(
+        mode="local",
+        eval_id="task_123",
+        target_id="model_123",
+        dataset_override=dataset_override,
+        webhook_url="http://127.0.0.1:9000/eval-callback",
+    )
+
+    assert (
+        "create_run",
+        "task_123",
+        "model_123",
+        None,
+        None,
+        None,
+        dataset_override,
+        "http://127.0.0.1:9000/eval-callback",
+    ) in local.calls
+
+
+@pytest.mark.asyncio
+async def test_evaluation_scope_service_denies_server_run_creation_in_local_mode():
+    policy_enforcer = FakePolicyEnforcer.deny("wrong_source")
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=FakeServerEvaluationService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await scope.create_run(
+            mode="server",
+            eval_id="eval_123",
+            target_model="openai:gpt-4.1",
+        )
+
+    assert exc.value.reason_code == "wrong_source"
+    assert policy_enforcer.calls == ["evaluations.run.launch.server"]
+
+
+@pytest.mark.asyncio
+async def test_evaluation_scope_service_keeps_normalizing_server_runs_after_policy_passes():
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=FakeServerEvaluationService(),
+        policy_enforcer=policy_enforcer,
+    )
+
+    runs = await scope.list_runs(mode="server", eval_id="eval_123")
+
+    assert runs[0]["record_id"] == "server:evaluation_run:run_999"
+    assert policy_enforcer.calls == ["evaluations.run.list.server"]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_create_and_update_local_evaluation_resolves_raw_local_responses():
+    local = FakeLocalEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=FakeServerEvaluationService())
+
+    created = await scope.create_evaluation(
+        mode="local",
+        name="local_eval",
+        eval_type="question_answer",
+        eval_spec={"metrics": ["accuracy"]},
+    )
+    updated = await scope.update_evaluation(
+        "task_123",
+        mode="local",
+        description="Updated evaluation",
+    )
+
+    assert created["record_id"] == "local:evaluation:task_123"
+    assert updated["description"] == "Local evaluation"
+    assert ("create_evaluation", {"name": "local_eval", "description": None, "eval_type": "question_answer", "eval_spec": {"metrics": ["accuracy"]}, "dataset_id": None, "dataset": None, "metadata": None}) in local.calls
+    assert ("get_evaluation", "task_123") in local.calls
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_dataset_create_and_delete_by_backend():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    local_created = await scope.create_dataset(
+        mode="local",
+        name="local_dataset",
+        samples=[{"input": "Q", "expected": "A"}],
+        description="Local dataset",
+        metadata={"project": "offline"},
+    )
+    server_created = await scope.create_dataset(
+        mode="server",
+        name="server_dataset",
+        samples=[{"input": "Q", "expected": "A"}],
+        description="Server dataset",
+        metadata={"project": "server"},
+    )
+    await scope.delete_dataset(mode="local", dataset_id="dataset_local")
+    await scope.delete_dataset(mode="server", dataset_id="dataset_server")
+
+    assert local_created["record_id"] == "local:evaluation_dataset:dataset_local"
+    assert local_created["sample_count"] == 1
+    assert server_created["record_id"] == "server:evaluation_dataset:dataset_server"
+    assert server_created["sample_count"] == 1
+    assert (
+        "create_dataset",
+        "local_dataset",
+        [{"input": "Q", "expected": "A"}],
+        "Local dataset",
+        {"project": "offline"},
+        None,
+        None,
+    ) in local.calls
+    assert ("delete_dataset", "dataset_local") in local.calls
+    assert (
+        "create_dataset",
+        "server_dataset",
+        [{"input": "Q", "expected": "A"}],
+        "Server dataset",
+        {"project": "server"},
+    ) in server.calls
+    assert ("delete_dataset", "dataset_server") in server.calls
+
+
+@pytest.mark.asyncio
+async def test_scope_service_updates_local_dataset_but_rejects_server_dataset_update():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    updated = await scope.update_dataset(
+        mode="local",
+        dataset_id="dataset_local",
+        name="renamed_dataset",
+        samples=[{"input": "Q2", "expected": "A2"}],
+        metadata={"project": "offline-v2"},
+    )
+
+    assert updated["record_id"] == "local:evaluation_dataset:dataset_local"
+    assert updated["name"] == "renamed_dataset"
+    assert updated["sample_count"] == 1
+    assert (
+        "update_dataset",
+        "dataset_local",
+        "renamed_dataset",
+        [{"input": "Q2", "expected": "A2"}],
+        None,
+        {"project": "offline-v2"},
+        None,
+        None,
+    ) in local.calls
+    with pytest.raises(ValueError, match="dataset update is not available"):
+        await scope.update_dataset(
+            mode="server",
+            dataset_id="dataset_server",
+            name="unsupported",
+        )
+    assert not any(call[0] == "update_dataset" for call in server.calls)
+
+
+@pytest.mark.asyncio
+async def test_scope_service_get_run_artifacts_reflects_backend_detail_limitations():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    local_artifacts = await scope.get_run_artifacts(mode="local", run_id="run_123")
+    server_artifacts = await scope.get_run_artifacts(mode="server", run_id="run_999")
+
+    assert local_artifacts["detail_available"] is True
+    assert local_artifacts["metrics"]["accuracy"] == 0.95
+    assert local_artifacts["results"][0]["sample_id"] == "sample_1"
+    assert local_artifacts["run"]["record_id"] == "local:evaluation_run:run_123"
+    assert server_artifacts["detail_available"] is False
+    assert server_artifacts["metrics"]["accuracy"] == 0.91
+    assert server_artifacts["results"] is None
+    assert server_artifacts["run"]["record_id"] == "server:evaluation_run:run_999"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_cancel_run_returns_backend_response():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    scope = EvaluationScopeService(local_service=local, server_service=server)
+
+    local_payload = await scope.cancel_run(mode="local", run_id="run_123")
+    server_payload = await scope.cancel_run(mode="server", run_id="run_999")
+
+    assert local_payload["status"] == "cancelled"
+    assert server_payload["status"] == "cancellation_requested"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_dataset_create_delete_by_backend_with_policy():
+    local = FakeLocalEvaluationService()
+    server = FakeServerEvaluationService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=local,
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    local_dataset = await scope.create_dataset(
+        mode="local",
+        name="Offline Dataset",
+        format="json",
+        source_path="/tmp/offline.json",
+        metadata={"project": "offline"},
+    )
+    server_dataset = await scope.create_dataset(
+        mode="server",
+        name="Server Dataset",
+        samples=[{"input": "Q", "expected": "A"}],
+        metadata={"project": "server"},
+    )
+    await scope.delete_dataset(mode="local", dataset_id="dataset_local_new")
+    await scope.delete_dataset(mode="server", dataset_id="dataset_server_new")
+
+    assert local_dataset["record_id"] == "local:evaluation_dataset:dataset_local_new"
+    assert server_dataset["record_id"] == "server:evaluation_dataset:dataset_server_new"
+    assert local.calls[-2:] == [
+        ("create_dataset", "Offline Dataset", "json", "/tmp/offline.json", None, {"project": "offline"}),
+        ("delete_dataset", "dataset_local_new"),
+    ]
+    assert server.calls[-2:] == [
+        ("create_dataset", "Server Dataset", [{"input": "Q", "expected": "A"}], None, {"project": "server"}),
+        ("delete_dataset", "dataset_server_new"),
+    ]
+    assert policy_enforcer.calls[-4:] == [
+        "evaluations.dataset.create.local",
+        "evaluations.dataset.create.server",
+        "evaluations.dataset.delete.local",
+        "evaluations.dataset.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_rag_pipeline_preset_admin_with_policy():
+    server = FakeServerEvaluationService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    created = await scope.create_or_update_rag_pipeline_preset(
+        mode="server",
+        name="fast",
+        config={"retriever": "hybrid"},
+    )
+    listed = await scope.list_rag_pipeline_presets(mode="server", limit=10, offset=5)
+    fetched = await scope.get_rag_pipeline_preset(mode="server", name="fast")
+    await scope.delete_rag_pipeline_preset(mode="server", name="fast")
+    cleanup = await scope.cleanup_rag_pipeline(mode="server")
+
+    assert created["name"] == "fast"
+    assert listed["total"] == 1
+    assert fetched["config"]["retriever"] == "hybrid"
+    assert cleanup["deleted_count"] == 1
+    assert server.calls[-5:] == [
+        ("create_or_update_rag_pipeline_preset", "fast", {"retriever": "hybrid"}),
+        ("list_rag_pipeline_presets", 10, 5),
+        ("get_rag_pipeline_preset", "fast"),
+        ("delete_rag_pipeline_preset", "fast"),
+        ("cleanup_rag_pipeline",),
+    ]
+    assert policy_enforcer.calls[-5:] == [
+        "evaluations.rag_pipeline.create.server",
+        "evaluations.rag_pipeline.list.server",
+        "evaluations.rag_pipeline.detail.server",
+        "evaluations.rag_pipeline.delete.server",
+        "evaluations.rag_pipeline.launch.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_embeddings_abtest_admin_with_policy():
+    server = FakeServerEvaluationService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+    config = {"retrieval": {"k": 10}}
+
+    created = await scope.create_embeddings_abtest(
+        mode="server",
+        name="embed-test",
+        config=config,
+        run_immediately=True,
+    )
+    launched = await scope.run_embeddings_abtest(mode="server", test_id="ab_1", config=config)
+    status = await scope.get_embeddings_abtest_status(mode="server", test_id="ab_1")
+    results = await scope.get_embeddings_abtest_results(mode="server", test_id="ab_1", page=2, page_size=25)
+    significance = await scope.get_embeddings_abtest_significance(mode="server", test_id="ab_1", metric="mrr")
+    exported = await scope.export_embeddings_abtest(mode="server", test_id="ab_1", format="json")
+    deleted = await scope.delete_embeddings_abtest(mode="server", test_id="ab_1")
+
+    assert created["test_id"] == "ab_1"
+    assert launched["status"] == "running"
+    assert status["status"] == "completed"
+    assert results["results"] == []
+    assert significance["metric"] == "mrr"
+    assert exported["test_id"] == "ab_1"
+    assert deleted["status"] == "deleted"
+    assert server.calls[-7:] == [
+        ("create_embeddings_abtest", "embed-test", config, True),
+        ("run_embeddings_abtest", "ab_1", config),
+        ("get_embeddings_abtest_status", "ab_1"),
+        ("get_embeddings_abtest_results", "ab_1", 2, 25),
+        ("get_embeddings_abtest_significance", "ab_1", "mrr"),
+        ("export_embeddings_abtest", "ab_1", "json"),
+        ("delete_embeddings_abtest", "ab_1"),
+    ]
+    assert policy_enforcer.calls[-7:] == [
+        "evaluations.embeddings_abtest.create.server",
+        "evaluations.embeddings_abtest.launch.server",
+        "evaluations.embeddings_abtest.detail.server",
+        "evaluations.embeddings_abtest.observe.server",
+        "evaluations.embeddings_abtest.observe.server",
+        "evaluations.embeddings_abtest.export.server",
+        "evaluations.embeddings_abtest.delete.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_synthetic_benchmark_and_webhook_controls_with_policy():
+    server = FakeServerEvaluationService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    generated = await scope.generate_synthetic_drafts(
+        mode="server",
+        recipe_kind="rag_answer_quality",
+        target_sample_count=2,
+        corpus_scope={"collection": "docs"},
+    )
+    queue = await scope.list_synthetic_queue(mode="server", recipe_kind="rag_answer_quality", limit=25, offset=5)
+    reviewed = await scope.review_synthetic_sample(mode="server", sample_id="sample_1", action="approve")
+    promoted = await scope.promote_synthetic_samples(
+        mode="server",
+        sample_ids=["sample_1"],
+        dataset_name="approved_synthetic",
+    )
+    benchmarks = await scope.list_benchmarks(mode="server")
+    benchmark = await scope.get_benchmark(mode="server", benchmark_name="mmlu")
+    run = await scope.run_benchmark(mode="server", benchmark_name="mmlu", limit=2, api_name="openai")
+    registered = await scope.register_webhook(
+        mode="server",
+        url="https://example.com/evals",
+        events=["evaluation.completed"],
+        secret="x" * 32,
+    )
+    webhooks = await scope.list_webhooks(mode="server")
+    unregistered = await scope.unregister_webhook(mode="server", url="https://example.com/evals")
+    tested = await scope.test_webhook(mode="server", url="https://example.com/evals")
+
+    assert generated["generation_batch_id"] == "batch_1"
+    assert queue["total"] == 1
+    assert reviewed["sample_id"] == "sample_1"
+    assert promoted["dataset_id"] == "dataset_1"
+    assert benchmarks["total"] == 1
+    assert benchmark["name"] == "mmlu"
+    assert run["evaluation_id"] == "eval_1"
+    assert registered["webhook_id"] == 10
+    assert webhooks[0]["webhook_id"] == 10
+    assert unregistered["status"] == "unregistered"
+    assert tested["success"] is True
+    assert server.calls[-11:] == [
+        ("generate_synthetic_drafts", {"recipe_kind": "rag_answer_quality", "corpus_scope": {"collection": "docs"}, "generation_metadata": None, "context_snapshot_ref": None, "retrieval_baseline_ref": None, "reference_answer": None, "real_examples": None, "seed_examples": None, "target_sample_count": 2}),
+        ("list_synthetic_queue", {"recipe_kind": "rag_answer_quality", "review_state": None, "source_kind": None, "generation_batch_id": None, "limit": 25, "offset": 5}),
+        ("review_synthetic_sample", "sample_1", {"action": "approve", "notes": None, "action_payload": None, "resulting_review_state": None}),
+        ("promote_synthetic_samples", {"sample_ids": ["sample_1"], "dataset_name": "approved_synthetic", "dataset_description": None, "dataset_metadata": None, "promotion_reason": None}),
+        ("list_benchmarks",),
+        ("get_benchmark", "mmlu"),
+        ("run_benchmark", "mmlu", {"limit": 2, "api_name": "openai", "parallel": 4, "save_results": True, "filter_categories": None}),
+        ("register_webhook", {"url": "https://example.com/evals", "events": ["evaluation.completed"], "secret": "x" * 32, "retry_count": None, "timeout_seconds": None}),
+        ("list_webhooks",),
+        ("unregister_webhook", "https://example.com/evals"),
+        ("test_webhook", "https://example.com/evals"),
+    ]
+    assert policy_enforcer.calls[-11:] == [
+        "evaluations.synthetic.launch.server",
+        "evaluations.synthetic.list.server",
+        "evaluations.synthetic.update.server",
+        "evaluations.synthetic.create.server",
+        "evaluations.benchmarks.list.server",
+        "evaluations.benchmarks.detail.server",
+        "evaluations.benchmarks.launch.server",
+        "evaluations.webhooks.create.server",
+        "evaluations.webhooks.list.server",
+        "evaluations.webhooks.delete.server",
+        "evaluations.webhooks.launch.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_server_recipe_controls_with_policy():
+    server = FakeServerEvaluationService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    manifests = await scope.list_recipe_manifests(mode="server")
+    manifest = await scope.get_recipe_manifest(mode="server", recipe_id="rag_answer_quality")
+    readiness = await scope.get_recipe_launch_readiness(mode="server", recipe_id="rag_answer_quality")
+    validation = await scope.validate_recipe_dataset(
+        mode="server",
+        recipe_id="rag_answer_quality",
+        dataset_id="dataset_1",
+        run_config={"mode": "fast"},
+    )
+    created = await scope.create_recipe_run(
+        mode="server",
+        recipe_id="rag_answer_quality",
+        dataset_id="dataset_1",
+        run_config={"mode": "fast"},
+        force_rerun=True,
+    )
+    fetched = await scope.get_recipe_run(mode="server", run_id="recipe_run_1")
+    report = await scope.get_recipe_run_report(mode="server", run_id="recipe_run_1")
+
+    assert manifests[0]["recipe_id"] == "rag_answer_quality"
+    assert manifest["name"] == "RAG Answer Quality"
+    assert readiness["ready"] is True
+    assert validation["valid"] is True
+    assert created["run_id"] == "recipe_run_1"
+    assert fetched["status"] == "completed"
+    assert report["summary"]["score"] == 0.91
+    assert server.calls[-7:] == [
+        ("list_recipe_manifests",),
+        ("get_recipe_manifest", "rag_answer_quality"),
+        ("get_recipe_launch_readiness", "rag_answer_quality"),
+        ("validate_recipe_dataset", "rag_answer_quality", {"dataset_id": "dataset_1", "dataset": None, "run_config": {"mode": "fast"}}),
+        ("create_recipe_run", "rag_answer_quality", {"dataset_id": "dataset_1", "dataset": None, "run_config": {"mode": "fast"}, "force_rerun": True}),
+        ("get_recipe_run", "recipe_run_1"),
+        ("get_recipe_run_report", "recipe_run_1"),
+    ]
+    assert policy_enforcer.calls[-7:] == [
+        "evaluations.recipes.list.server",
+        "evaluations.recipes.detail.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.recipes.launch.server",
+        "evaluations.recipes.launch.server",
+        "evaluations.recipes.observe.server",
+        "evaluations.recipes.observe.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_rejects_server_only_evaluation_helpers_in_local_mode():
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=FakeServerEvaluationService(),
+    )
+
+    with pytest.raises(ValueError, match="Synthetic evaluation draft administration"):
+        await scope.list_synthetic_queue(mode="local")
+
+    with pytest.raises(ValueError, match="Evaluation benchmark administration"):
+        await scope.list_benchmarks(mode="local")
+
+    with pytest.raises(ValueError, match="Evaluation webhook administration"):
+        await scope.list_webhooks(mode="local")
+
+    with pytest.raises(ValueError, match="Evaluation recipe controls"):
+        await scope.list_recipe_manifests(mode="local")
+
+
+def test_evaluation_scope_service_reports_known_source_scoped_capability_gaps():
+    scope = EvaluationScopeService(
+        local_service=FakeLocalEvaluationService(),
+        server_service=FakeServerEvaluationService(),
+    )
+
+    local_report = scope.list_unsupported_capabilities(mode="local")
+    server_report = scope.list_unsupported_capabilities(mode="server")
+
+    assert local_report == [
+        {
+            "operation_id": "evaluations.run.webhook_delivery.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "local_contract_missing",
+            "user_message": "Local evaluation runs can persist requested webhook URLs, but do not dispatch webhook callbacks yet; observe the local run record and artifacts instead.",
+            "affected_action_ids": ["evaluations.run.observe.local", "evaluations.run.update.local"],
+        },
+        {
+            "operation_id": "evaluations.server_auxiliary_controls.local",
+            "source": "local",
+            "supported": False,
+            "reason_code": "remote_only_surface",
+            "user_message": "Server synthetic evaluation drafts, benchmark runs, webhook administration, and recipe-run controls are unavailable in local/offline mode.",
+            "affected_action_ids": [],
+        },
+    ]
+    assert server_report == [
+        {
+            "operation_id": "evaluations.targets.list.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server evaluation API does not expose a target catalog; server runs require an explicit target_model string.",
+            "affected_action_ids": ["evaluations.run.list.server", "evaluations.run.launch.server"],
+        },
+        {
+            "operation_id": "evaluations.run.results.detail.server",
+            "source": "server",
+            "supported": False,
+            "reason_code": "server_contract_missing",
+            "user_message": "The current server unified run detail exposes summary metrics, but not sample-level result artifacts.",
+            "affected_action_ids": ["evaluations.run.detail.server", "evaluations.run.observe.server"],
+        },
+    ]

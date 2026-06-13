@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 from typing import Optional, Dict, List, Set, Callable
+import hashlib
 import os
 from pathlib import Path
 
@@ -19,6 +20,12 @@ from textual.widget import Widget
 from textual.widgets import Button, Checkbox, Static
 
 logger = logger.bind(module="repo_tree_widgets")
+
+
+def _safe_dom_id(prefix: str, path: str) -> str:
+    """Build a Textual-safe DOM id from an arbitrary repository path."""
+    digest = hashlib.sha1(path.encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}-{digest}"
 
 
 class TreeNodeSelected(Message):
@@ -41,6 +48,10 @@ class TreeNode(Widget):
     """A single node in the repository tree view."""
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+
     TreeNode {
         height: 3;
         width: 100%;
@@ -70,7 +81,8 @@ class TreeNode(Widget):
     }
     
     .tree-expand-btn:hover {
-        background: $primary 20%;
+        background: $surface-lighten-1;
+        color: $text;
     }
     
     .tree-expand-spacer {
@@ -94,7 +106,9 @@ class TreeNode(Widget):
     }
     
     .tree-node-selected {
-        background: $accent 20%;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        text-style: bold underline;
     }
     """
     
@@ -107,16 +121,17 @@ class TreeNode(Widget):
         size: Optional[int] = None,
         **kwargs
     ):
+        file_size = kwargs.pop("file_size", None)
         super().__init__(**kwargs)
         self.path = path
         self.node_name = name  # Changed from 'name' to avoid conflict with Widget.name property
         self.is_directory = is_directory
         self.level = level
-        self.file_size = size  # Changed from 'size' to avoid conflict with Widget.size property
-        self.expanded = reactive(False)
-        self.selected = reactive(False)
+        self.file_size = size if size is not None else file_size  # Changed from 'size' to avoid conflict with Widget.size property
+        self.expanded = False
+        self.selected = False
         self.children_loaded = False
-        self.is_loading = reactive(False)
+        self.is_loading = False
         
     def compose(self) -> ComposeResult:
         """Compose the tree node UI."""
@@ -129,7 +144,7 @@ class TreeNode(Widget):
                 yield Button(
                     "▶",
                     classes="tree-expand-btn",
-                    id=f"expand-{self.path}"
+                    id=_safe_dom_id("expand", self.path)
                 )
             else:
                 yield Static("", classes="tree-expand-spacer")
@@ -137,7 +152,7 @@ class TreeNode(Widget):
             # Column 3: Checkbox
             yield Checkbox(
                 value=self.selected,
-                id=f"select-{self.path}",
+                id=_safe_dom_id("select", self.path),
                 classes="tree-checkbox"
             )
             
@@ -344,7 +359,7 @@ class TreeView(VerticalScroll):
                 is_directory=is_dir,
                 level=level,
                 size=size,
-                id=f"node-{path}"
+                id=_safe_dom_id("node", path)
             )
             
             self.nodes[path] = node
@@ -379,7 +394,7 @@ class TreeView(VerticalScroll):
                 is_directory=is_dir,
                 level=node.level + 1,
                 size=size,
-                id=f"node-{child_path}"
+                id=_safe_dom_id("node", child_path)
             )
             
             self.nodes[child_path] = child_node

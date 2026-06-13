@@ -5,6 +5,7 @@ This provides a minimal interface to the existing chunking functionality
 to satisfy the import requirements of the simplified RAG service.
 """
 
+import re
 from typing import List, Dict, Any, Optional
 import logging
 from tldw_chatbook.Chunking.Chunk_Lib import Chunker
@@ -57,6 +58,9 @@ class ChunkingService:
             List of chunk dictionaries with text and metadata
         """
         try:
+            if method in {"words", "sentences", "paragraphs"}:
+                return self._chunk_text_in_process(content, chunk_size, chunk_overlap, method)
+
             # Create options for the chunker
             options = {
                 'method': method,
@@ -186,6 +190,61 @@ class ChunkingService:
             logger.error(f"Error chunking text with method '{method}': {e}", exc_info=True)
             # Re-raise with more context instead of hiding the error
             raise ChunkingError(f"Failed to chunk text using method '{method}': {str(e)}") from e
+
+    def _chunk_text_in_process(
+        self,
+        content: str,
+        chunk_size: int,
+        chunk_overlap: int,
+        method: str,
+    ) -> List[Dict[str, Any]]:
+        """Chunk common text modes without initializing the full user-template stack."""
+        if chunk_size <= 0:
+            raise ChunkingError("max_words must be positive")
+        if chunk_overlap < 0:
+            raise ChunkingError("Overlap must be non-negative")
+        if chunk_overlap >= chunk_size:
+            raise ChunkingError("Overlap must be less than max_words")
+
+        if not content or not content.strip():
+            return []
+
+        if method == "paragraphs":
+            units = [match for match in re.finditer(r"\S(?:.*?\S)?(?=\n\s*\n|\Z)", content, re.DOTALL)]
+        elif method == "sentences":
+            units = [match for match in re.finditer(r"\S.+?(?:[.!?](?=\s)|\Z)", content, re.DOTALL)]
+        else:
+            units = [match for match in re.finditer(r"\S+", content)]
+
+        if not units:
+            return []
+
+        chunks: List[Dict[str, Any]] = []
+        step = max(1, chunk_size - chunk_overlap)
+        start_unit = 0
+
+        while start_unit < len(units):
+            end_unit = min(start_unit + chunk_size, len(units))
+            selected = units[start_unit:end_unit]
+            start_char = selected[0].start()
+            end_char = selected[-1].end()
+            chunk_text = content[start_char:end_char].strip()
+
+            if chunk_text:
+                chunks.append({
+                    "text": chunk_text,
+                    "start_char": start_char,
+                    "end_char": end_char,
+                    "word_count": len(chunk_text.split()),
+                    "chunk_index": len(chunks),
+                })
+
+            if end_unit >= len(units):
+                break
+            start_unit += step
+
+        logger.debug(f"Chunked text into {len(chunks)} chunks using in-process method '{method}'")
+        return chunks
 
 
 def improved_chunking_process(text: str, options: Dict[str, Any]) -> List[Dict[str, Any]]:

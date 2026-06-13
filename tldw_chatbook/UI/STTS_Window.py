@@ -17,10 +17,12 @@ from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSPlaygroundGenerateEvent, STTSSettingsSaveEvent, STTSAudioBookGenerateEvent
 )
+from tldw_chatbook.UI.destination_recovery import optional_dependency_recovery_state
 from tldw_chatbook.Widgets.voice_blend_dialog import VoiceBlendDialog
 from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen as FileOpen, EnhancedFileSave as FileSave
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
 from tldw_chatbook.UI.Dictation_Window_Improved import ImprovedDictationWindow as DictationWindow
+from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE, check_stt_deps, check_tts_deps
 # Note: Not using form_components due to generator/widget incompatibility
 
 import json
@@ -4103,6 +4105,13 @@ class STTSWindow(Container):
         width: 100%;
         margin-bottom: 1;
     }
+
+    .speech-capability-status {
+        margin-top: 1;
+        padding: 1;
+        border: round $surface;
+        color: $text-muted;
+    }
     """
     
     current_view = reactive("playground")
@@ -4116,7 +4125,7 @@ class STTSWindow(Container):
         """Compose the S/TT/S window"""
         # Sidebar
         with Vertical(classes="stts-sidebar"):
-            yield Label("S/TT/S Menu", classes="section-title")
+            yield Label("Speech Menu", classes="section-title")
             yield Button("🎤 TTS Playground", id="view-playground-btn", classes="sidebar-button", variant="primary")
             yield Button("⚙️ TTS Settings", id="view-settings-btn", classes="sidebar-button")
             yield Button("📚 AudioBook/Podcast", id="view-audiobook-btn", classes="sidebar-button")
@@ -4127,11 +4136,54 @@ class STTSWindow(Container):
             yield Button("🎙️ Voice Cloning", id="view-voice-cloning-btn", classes="sidebar-button")
             yield Button("🔤 Speech Recognition", id="view-stt-btn", classes="sidebar-button")
             yield Button("🎵 Audio Effects", id="view-effects-btn", classes="sidebar-button", disabled=True)
+            capability_status = Static(
+                self._speech_capability_status_text(),
+                id="speech-capability-status",
+                classes="speech-capability-status",
+            )
+            capability_status.tooltip = self._speech_capability_status_tooltip()
+            yield capability_status
         
         # Content area
         with Container(classes="stts-content"):
             # Show playground by default
             yield TTSPlaygroundWidget()
+
+    def _speech_capability_status_text(self) -> str:
+        """Return a concise local speech dependency status for the sidebar."""
+        check_tts_deps()
+        check_stt_deps()
+
+        if self._speech_dependencies_available():
+            return "Local speech: ready"
+
+        return self._speech_dependency_recovery_state().visible_copy
+
+    def _speech_capability_status_tooltip(self) -> str:
+        """Return install guidance for local speech dependencies."""
+        if self._speech_dependencies_available():
+            return "Local TTS and STT dependencies are available."
+        return self._speech_dependency_recovery_state().disabled_tooltip
+
+    def _speech_dependencies_available(self) -> bool:
+        return bool(DEPENDENCIES_AVAILABLE.get("tts_processing", False)) and bool(
+            DEPENDENCIES_AVAILABLE.get("stt_processing", False)
+        )
+
+    def _speech_dependency_recovery_state(self):
+        missing_dependencies = []
+        if not DEPENDENCIES_AVAILABLE.get("tts_processing", False):
+            missing_dependencies.append("local_tts")
+        if not DEPENDENCIES_AVAILABLE.get("stt_processing", False):
+            missing_dependencies.extend(("transcription_faster_whisper", "speech_recording"))
+
+        return optional_dependency_recovery_state(
+            unavailable_what="Local speech providers",
+            missing_dependencies=tuple(missing_dependencies),
+            install_target='pip install "tldw_chatbook[local_tts,transcription_faster_whisper,speech_recording]"',
+            stable_selector="speech-capability-status",
+            recovery_action="Settings > Speech",
+        )
     
     def watch_current_view(self, old_view: str, new_view: str) -> None:
         """Handle view changes"""

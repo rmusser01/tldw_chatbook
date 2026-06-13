@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 import tempfile
 from datetime import datetime
+from dataclasses import dataclass
 from loguru import logger
 
 # Third-party imports
@@ -83,6 +84,94 @@ class TTSProgressEvent(Message):
         self.status = status  # e.g., "Processing", "Generating", "Finalizing"
         self.estimated_time_remaining = estimated_time_remaining  # seconds
 
+
+@dataclass
+class TTSUsageRecord:
+    """Single TTS usage record for local cost tracking."""
+    provider: str
+    model: str
+    characters: int
+    voice: str
+    format: str
+    estimated_cost: float
+    created_at: datetime
+
+
+class CostTracker:
+    """Lightweight local TTS usage and cost tracker."""
+
+    DEFAULT_COSTS = {
+        ("openai", "tts-1"): {"cost_per_1k_chars": 0.015, "free_tier_chars": 0},
+        ("openai", "tts-1-hd"): {"cost_per_1k_chars": 0.030, "free_tier_chars": 0},
+        ("local", "*"): {"cost_per_1k_chars": 0.0, "free_tier_chars": 0},
+    }
+
+    def __init__(self, db_path: Optional[Path] = None):
+        self.db_path = Path(db_path) if db_path else None
+        self._costs: Dict[tuple[str, str], Dict[str, float]] = {
+            key: value.copy() for key, value in self.DEFAULT_COSTS.items()
+        }
+        self._usage: list[TTSUsageRecord] = []
+
+    def update_cost_info(
+        self,
+        provider: str,
+        cost_per_1k_chars: float,
+        free_tier_chars: int = 0,
+        model: str = "*",
+    ) -> None:
+        self._costs[(provider.lower(), model.lower())] = {
+            "cost_per_1k_chars": float(cost_per_1k_chars),
+            "free_tier_chars": int(free_tier_chars),
+        }
+
+    def estimate_cost(self, provider: str, model: str, characters: int) -> float:
+        provider_key = provider.lower()
+        model_key = model.lower()
+        cost_info = (
+            self._costs.get((provider_key, model_key))
+            or self._costs.get((provider_key, "*"))
+            or {"cost_per_1k_chars": 0.0, "free_tier_chars": 0}
+        )
+        free_tier_chars = int(cost_info.get("free_tier_chars", 0))
+        used_chars = self._monthly_usage_for_provider(provider_key)
+        billable_chars = max(0, int(characters) - max(0, free_tier_chars - used_chars))
+        return (billable_chars / 1000.0) * float(cost_info.get("cost_per_1k_chars", 0.0))
+
+    def track_usage(
+        self,
+        provider: str,
+        model: str,
+        text: str,
+        voice: str,
+        format: str,
+    ) -> TTSUsageRecord:
+        characters = len(text)
+        record = TTSUsageRecord(
+            provider=provider,
+            model=model,
+            characters=characters,
+            voice=voice,
+            format=format,
+            estimated_cost=self.estimate_cost(provider, model, characters),
+            created_at=datetime.now(),
+        )
+        self._usage.append(record)
+        return record
+
+    def get_monthly_usage(self) -> int:
+        return sum(record.characters for record in self._usage)
+
+    def get_monthly_cost(self) -> float:
+        return sum(record.estimated_cost for record in self._usage)
+
+    def _monthly_usage_for_provider(self, provider: str) -> int:
+        return sum(
+            record.characters
+            for record in self._usage
+            if record.provider.lower() == provider
+        )
+
 #######################################################################################################################
 #
 # TTS Event Handler Mixin
@@ -150,12 +239,41 @@ class TTSEventHandler:
         
         if keys_to_remove:
             logger.debug(f"Cleaned up {len(keys_to_remove)} old cooldown entries")
+
+    def _enforce_cooldown_limit(self) -> None:
+        """Trim cooldown tracking to the maximum configured entries."""
+        if len(self._request_cooldown) <= self.MAX_COOLDOWN_ENTRIES:
+            return
+
+        sorted_entries = sorted(self._request_cooldown.items(), key=lambda x: x[1])
+        overflow = len(sorted_entries) - self.MAX_COOLDOWN_ENTRIES
+        for key, _ in sorted_entries[:overflow]:
+            del self._request_cooldown[key]
+
+    async def _post_tts_message(self, message: Message) -> None:
+        """Post a message through Textual app wiring or a direct test handler."""
+        app = getattr(self, "app", None)
+        if app is not None and hasattr(app, "post_message"):
+            app.post_message(message)
+            return
+
+        post_message = getattr(self, "post_message", None)
+        if callable(post_message):
+            result = post_message(message)
+            if asyncio.iscoroutine(result):
+                await result
     
     async def handle_tts_request(self, event: TTSRequestEvent) -> None:
         """Handle TTS generation request"""
+        current_time = asyncio.get_event_loop().time()
+        if current_time - self._last_cooldown_cleanup > self.COOLDOWN_CLEANUP_INTERVAL:
+            self._cleanup_cooldown_dict(current_time)
+            self._last_cooldown_cleanup = current_time
+        self._enforce_cooldown_limit()
+
         if not self._tts_service:
             logger.error("TTS service not initialized")
-            self.app.post_message(
+            await self._post_tts_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
                     error="TTS service not available"
@@ -165,7 +283,7 @@ class TTSEventHandler:
         
         # Validate input text
         if not event.text:
-            self.app.post_message(
+            await self._post_tts_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
                     error="No text provided for TTS generation"
@@ -177,7 +295,7 @@ class TTSEventHandler:
         MAX_TTS_LENGTH = 5000  # Maximum characters for TTS
         if len(event.text) > MAX_TTS_LENGTH:
             logger.warning(f"TTS text too long: {len(event.text)} characters")
-            self.app.post_message(
+            await self._post_tts_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
                     error=f"Text is too long for TTS. Maximum {MAX_TTS_LENGTH} characters allowed."
@@ -188,7 +306,7 @@ class TTSEventHandler:
         # Basic sanitization - remove excessive whitespace
         text = ' '.join(event.text.split())
         if len(text) < 1:
-            self.app.post_message(
+            await self._post_tts_message(
                 TTSCompleteEvent(
                     message_id=event.message_id or "unknown",
                     error="Text contains only whitespace"
@@ -198,18 +316,12 @@ class TTSEventHandler:
         
         # Check rate limiting for this message
         message_id = event.message_id or "adhoc"
-        current_time = asyncio.get_event_loop().time()
-        
-        # Clean up old cooldown entries if needed
-        if current_time - self._last_cooldown_cleanup > self.COOLDOWN_CLEANUP_INTERVAL:
-            self._cleanup_cooldown_dict(current_time)
-            self._last_cooldown_cleanup = current_time
         
         if message_id in self._request_cooldown:
             time_since_last = current_time - self._request_cooldown[message_id]
             if time_since_last < self.COOLDOWN_SECONDS:
                 logger.warning(f"TTS request too soon for message {message_id}. Please wait {self.COOLDOWN_SECONDS - time_since_last:.1f}s")
-                self.app.post_message(
+                await self._post_tts_message(
                     TTSCompleteEvent(
                         message_id=message_id,
                         error=f"Please wait {self.COOLDOWN_SECONDS - time_since_last:.1f} seconds before requesting TTS again"
@@ -221,11 +333,7 @@ class TTSEventHandler:
         self._request_cooldown[message_id] = current_time
         
         # Check if we need to evict old entries (LRU style)
-        if len(self._request_cooldown) > self.MAX_COOLDOWN_ENTRIES:
-            # Remove oldest entries
-            sorted_entries = sorted(self._request_cooldown.items(), key=lambda x: x[1])
-            for key, _ in sorted_entries[:len(sorted_entries) // 2]:
-                del self._request_cooldown[key]
+        self._enforce_cooldown_limit()
         
         # Start TTS generation task
         task = asyncio.create_task(
@@ -264,16 +372,21 @@ class TTSEventHandler:
             
             # Send initial progress
             if message_id:
-                self.app.post_message(
+                await self._post_tts_message(
                     TTSProgressEvent(
                         message_id=message_id,
                         progress=0.0,
                         status="Initializing TTS generation"
                     )
                 )
-            # Determine provider and format based on default_provider
-            provider = self._tts_config["default_provider"]
-            logger.info(f"TTS config: provider={provider}, default_format={self._tts_config.get('default_format', 'N/A')}")
+            # Determine provider and format based on configured defaults.
+            tts_config = self._tts_config or {}
+            provider = tts_config.get("default_provider", "openai")
+            default_model = tts_config.get("default_model", "tts-1")
+            default_voice = tts_config.get("default_voice", "alloy")
+            default_format = tts_config.get("default_format", "mp3")
+            default_speed = tts_config.get("default_speed", 1.0)
+            logger.info(f"TTS config: provider={provider}, default_format={default_format}")
             
             # Normalize provider name to lowercase for comparison
             provider_lower = provider.lower() if isinstance(provider, str) else provider
@@ -283,8 +396,8 @@ class TTSEventHandler:
                 model = "kokoro"
                 format = "wav"  # Kokoro supports wav, pcm
             elif provider_lower == "openai":
-                model = self._tts_config["default_model"]
-                format = self._tts_config["default_format"]
+                model = default_model
+                format = default_format
             elif provider_lower == "elevenlabs":
                 model = "elevenlabs"
                 format = "mp3"  # ElevenLabs default
@@ -296,8 +409,8 @@ class TTSEventHandler:
                 format = "wav"
             else:
                 # Fallback to OpenAI defaults
-                model = self._tts_config["default_model"]
-                format = self._tts_config["default_format"]
+                model = default_model
+                format = default_format
             
             # Ensure format is a string and valid
             format = str(format).lower().strip()
@@ -306,15 +419,16 @@ class TTSEventHandler:
                 logger.warning(f"Invalid format '{format}', defaulting to 'wav'")
                 format = "wav"
             
-            logger.info(f"Creating TTS request: model={model}, format={format}, voice={voice or self._tts_config['default_voice']}")
+            selected_voice = voice or default_voice
+            logger.info(f"Creating TTS request: model={model}, format={format}, voice={selected_voice}")
             
             # Prepare request - ensure model and voice are lowercase for consistency
             request = OpenAISpeechRequest(
                 model=model.lower() if isinstance(model, str) else model,
                 input=text,
-                voice=(voice or self._tts_config["default_voice"]).lower() if isinstance(voice or self._tts_config["default_voice"], str) else (voice or self._tts_config["default_voice"]),
+                voice=selected_voice.lower() if isinstance(selected_voice, str) else selected_voice,
                 response_format=format,
-                speed=self._tts_config["default_speed"]
+                speed=default_speed
             )
             
             # Determine backend based on model
@@ -337,10 +451,15 @@ class TTSEventHandler:
                 internal_model_id = request.model
                 provider = "unknown"
             
-            # Estimate cost before generation
-            estimated_cost = cost_tracker.estimate_cost(provider, request.model, len(text))
+            # Estimate cost before generation when a tracker is attached.
+            tracker = getattr(self, "cost_tracker", None)
+            try:
+                estimated_cost = tracker.estimate_cost(provider, request.model, len(text)) if tracker else 0
+            except Exception as e:
+                logger.debug(f"TTS cost estimate unavailable: {e}")
+                estimated_cost = 0
             if message_id and estimated_cost > 0:
-                self.app.post_message(
+                await self._post_tts_message(
                     TTSProgressEvent(
                         message_id=message_id,
                         progress=0.1,
@@ -375,7 +494,7 @@ class TTSEventHandler:
                     
                     # Post progress update every 5 chunks
                     if message_id and chunk_count % 5 == 0:
-                        self.app.post_message(
+                        await self._post_tts_message(
                             TTSProgressEvent(
                                 message_id=message_id,
                                 progress=progress,
@@ -386,7 +505,7 @@ class TTSEventHandler:
                     
                     # Post streaming event for real-time playback (optional)
                     if message_id:
-                        self.app.post_message(
+                        await self._post_tts_message(
                             TTSStreamingEvent(chunk, message_id, is_final=False)
                         )
                 
@@ -405,7 +524,7 @@ class TTSEventHandler:
                 
                 # Final progress update
                 if message_id:
-                    self.app.post_message(
+                    await self._post_tts_message(
                         TTSProgressEvent(
                             message_id=message_id,
                             progress=1.0,
@@ -430,7 +549,7 @@ class TTSEventHandler:
                 })
                 
                 # Post completion event
-                self.app.post_message(
+                await self._post_tts_message(
                     TTSCompleteEvent(message_id=message_id or "adhoc", audio_file=Path(temp_path))
                 )
                 
@@ -446,13 +565,12 @@ class TTSEventHandler:
         except Exception as e:
             from rich.markup import escape
             logger.error(f"TTS generation failed: {e}")
-            if hasattr(self, 'app') and self.app:
-                self.app.post_message(
-                    TTSCompleteEvent(
-                        message_id=message_id or "adhoc",
-                        error=escape(str(e))
-                    )
+            await self._post_tts_message(
+                TTSCompleteEvent(
+                    message_id=message_id or "adhoc",
+                    error=escape(str(e))
                 )
+            )
     
     async def handle_tts_playback(self, event: TTSPlaybackEvent) -> None:
         """Handle TTS playback control"""

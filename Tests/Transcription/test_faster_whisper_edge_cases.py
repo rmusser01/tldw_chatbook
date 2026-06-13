@@ -54,12 +54,25 @@ class TestFasterWhisperEdgeCases:
     @pytest.fixture
     def mock_service(self):
         """Create a mocked transcription service."""
+        real_exists = os.path.exists
+        real_getsize = os.path.getsize
+
+        def mocked_exists(path):
+            return str(path).endswith(".wav") or real_exists(path)
+
+        def mocked_getsize(path):
+            if str(path).endswith(".wav") and not real_exists(path):
+                return 1024
+            return real_getsize(path)
+
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.FASTER_WHISPER_AVAILABLE', True), \
-             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings:
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.exists', side_effect=mocked_exists), \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.getsize', side_effect=mocked_getsize):
             
             mock_settings.return_value = None  # Use defaults
             service = TranscriptionService()
-            return service
+            yield service
     
     @pytest.fixture
     def corrupted_audio_file(self):
@@ -618,12 +631,25 @@ class TestFasterWhisperConcurrency:
     @pytest.fixture
     def mock_service(self):
         """Create a mocked transcription service."""
+        real_exists = os.path.exists
+        real_getsize = os.path.getsize
+
+        def mocked_exists(path):
+            return str(path).endswith(".wav") or real_exists(path)
+
+        def mocked_getsize(path):
+            if str(path).endswith(".wav") and not real_exists(path):
+                return 1024
+            return real_getsize(path)
+
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.FASTER_WHISPER_AVAILABLE', True), \
-             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings:
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.exists', side_effect=mocked_exists), \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.getsize', side_effect=mocked_getsize):
             
             mock_settings.return_value = None  # Use defaults
             service = TranscriptionService()
-            return service
+            yield service
     
     def test_concurrent_transcriptions_same_model(self, mock_service):
         """Test multiple concurrent transcriptions using the same model."""
@@ -778,12 +804,25 @@ class TestFasterWhisperMemoryManagement:
     @pytest.fixture
     def mock_service(self):
         """Create a mocked transcription service."""
+        real_exists = os.path.exists
+        real_getsize = os.path.getsize
+
+        def mocked_exists(path):
+            return str(path).endswith(".wav") or real_exists(path)
+
+        def mocked_getsize(path):
+            if str(path).endswith(".wav") and not real_exists(path):
+                return 1024
+            return real_getsize(path)
+
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.FASTER_WHISPER_AVAILABLE', True), \
-             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings:
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.exists', side_effect=mocked_exists), \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.getsize', side_effect=mocked_getsize):
             
             mock_settings.return_value = None  # Use defaults
             service = TranscriptionService()
-            return service
+            yield service
     
     def test_model_memory_cleanup(self, mock_service):
         """Test that models are properly cleaned up when removed from cache."""

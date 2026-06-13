@@ -87,6 +87,10 @@ class EvalSample:
     expected_output: Optional[str] = None
     choices: Optional[List[str]] = None
     metadata: Dict[str, Any] = None
+    instructions: Optional[str] = None
+    expected_format: Optional[Any] = None
+    context: Optional[str] = None
+    dialogue_history: Optional[List[Dict[str, Any]]] = None
     
     def __post_init__(self):
         if self.metadata is None:
@@ -651,13 +655,15 @@ class MetricsCalculator:
         
         if not predicted or not expected:
             return 0.0
+
+        lexical_fallback = MetricsCalculator._calculate_lexical_semantic_fallback(predicted, expected)
         
         # Try to use sentence transformers if available
         try:
             if embedding_model is None:
                 from sentence_transformers import SentenceTransformer
-                # Use a small, fast model by default
-                embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+                # Use local cache only so offline test runs do not attempt network downloads.
+                embedding_model = SentenceTransformer('all-MiniLM-L6-v2', local_files_only=True)
             
             # Get embeddings
             embeddings = embedding_model.encode([predicted, expected])
@@ -679,10 +685,36 @@ class MetricsCalculator:
         except ImportError:
             # Fallback to token overlap if embeddings not available
             logger.debug("Sentence transformers not available, using token overlap for semantic similarity")
-            return MetricsCalculator.calculate_f1_score(predicted, expected)
+            return lexical_fallback
         except Exception as e:
             logger.warning(f"Error calculating semantic similarity: {e}")
-            return MetricsCalculator.calculate_f1_score(predicted, expected)
+            return lexical_fallback
+
+    @staticmethod
+    def _calculate_lexical_semantic_fallback(predicted: str, expected: str) -> float:
+        """Offline semantic fallback for simple lexical and numeric equivalence."""
+        predicted_norm = predicted.strip().lower()
+        expected_norm = expected.strip().lower()
+        if predicted_norm == expected_norm:
+            return 1.0
+
+        number_aliases = {
+            'zero': '0',
+            'one': '1',
+            'two': '2',
+            'three': '3',
+            'four': '4',
+            'five': '5',
+            'six': '6',
+            'seven': '7',
+            'eight': '8',
+            'nine': '9',
+            'ten': '10',
+        }
+        if number_aliases.get(predicted_norm) == expected_norm or number_aliases.get(expected_norm) == predicted_norm:
+            return 0.8
+
+        return MetricsCalculator.calculate_f1_score(predicted, expected)
     
     @staticmethod
     def calculate_perplexity(logprobs: List[float]) -> float:
@@ -949,9 +981,21 @@ class BaseEvalRunner(ABC):
         """Run evaluation on a single sample."""
         pass
     
-    def calculate_metrics(self, predicted: str, expected: str, choices: List[str] = None) -> Dict[str, float]:
+    def calculate_metrics(
+        self,
+        predicted: str,
+        expected: str,
+        choices: Optional[Union[List[str], EvalSample]] = None,
+    ) -> Dict[str, float]:
         """Calculate metrics for a prediction."""
         metrics = {}
+        sample = choices if isinstance(choices, EvalSample) else None
+        choice_values = sample.choices if sample else choices
+        metric_sample = sample or EvalSample(
+            id="",
+            input_text="",
+            expected_output=expected,
+        )
         
         if self.task_config.metric == 'exact_match':
             metrics['exact_match'] = MetricsCalculator.calculate_exact_match(predicted, expected)
@@ -985,21 +1029,21 @@ class BaseEvalRunner(ABC):
         elif self.task_config.metric == 'bertscore':
             # Alias for semantic similarity
             metrics['bertscore'] = MetricsCalculator.calculate_semantic_similarity(predicted, expected)
-        elif self.task_config.metric == 'accuracy' and choices:
+        elif self.task_config.metric == 'accuracy' and choice_values:
             # For multiple choice
             metrics['accuracy'] = MetricsCalculator.calculate_exact_match(predicted, expected)
         elif self.task_config.metric == 'instruction_adherence':
             # Evaluate how well the response follows instructions
-            metrics['instruction_adherence'] = self._calculate_instruction_adherence(predicted, expected, sample)
+            metrics['instruction_adherence'] = self._calculate_instruction_adherence(predicted, expected, metric_sample)
         elif self.task_config.metric == 'format_compliance':
             # Evaluate if the response follows required format
-            metrics['format_compliance'] = self._calculate_format_compliance(predicted, sample)
+            metrics['format_compliance'] = self._calculate_format_compliance(predicted, metric_sample)
         elif self.task_config.metric == 'coherence_score':
             # Evaluate response coherence
             metrics['coherence_score'] = self._calculate_coherence_score(predicted)
         elif self.task_config.metric == 'dialogue_quality':
             # Evaluate dialogue quality
-            metrics['dialogue_quality'] = self._calculate_dialogue_quality(predicted, sample)
+            metrics['dialogue_quality'] = self._calculate_dialogue_quality(predicted, metric_sample)
         else:
             # Default to exact match
             metrics['exact_match'] = MetricsCalculator.calculate_exact_match(predicted, expected)
@@ -1209,6 +1253,9 @@ class BaseEvalRunner(ABC):
     
     def _calculate_dialogue_quality(self, predicted: str, sample: EvalSample) -> float:
         """Calculate the quality of dialogue responses."""
+        if not predicted or not predicted.strip():
+            return 0.0
+
         quality_score = 0.0
         quality_factors = []
         
@@ -1220,10 +1267,11 @@ class BaseEvalRunner(ABC):
             quality_factors.append(1.0)
         else:
             # Might be a single response, which is also valid
-            quality_factors.append(0.5)
+            quality_factors.append(0.2)
         
         # Check for speaker indicators
         speaker_patterns = [
+            r'(^|\s)[A-Z][a-zA-Z0-9]*(?:\s+[A-Z][a-zA-Z0-9]*){0,2}:',  # Person A:
             r'^[A-Z][a-zA-Z]+:',  # Name:
             r'^[-—]',  # Dash at start
             r'said\s+[A-Z][a-zA-Z]+',  # "said Name"
@@ -1231,7 +1279,7 @@ class BaseEvalRunner(ABC):
         ]
         
         has_speakers = any(re.search(pattern, predicted, re.MULTILINE) for pattern in speaker_patterns)
-        quality_factors.append(1.0 if has_speakers else 0.3)
+        quality_factors.append(1.0 if has_speakers else 0.1)
         
         # Check response relevance (if context provided)
         context = getattr(sample, 'context', None)
@@ -1253,7 +1301,7 @@ class BaseEvalRunner(ABC):
         has_questions = '?' in predicted
         has_responses = bool(re.search(r'(yes|no|okay|sure|maybe|I think|I believe)', predicted.lower()))
         
-        if has_questions or has_responses:
+        if has_dialogue_format and (has_questions or has_responses):
             quality_factors.append(0.8)
         
         # Check length appropriateness

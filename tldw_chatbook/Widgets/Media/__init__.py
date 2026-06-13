@@ -5,15 +5,18 @@ This module contains reusable components for media browsing, searching, and view
 """
 
 from .media_navigation_panel import MediaNavigationPanel
-from .media_search_panel import MediaSearchPanel, MediaSearchEvent
+from .media_search_panel import MediaSearchPanel, MediaSearchEvent, MediaBrowseSubviewChangedEvent
 from .media_list_panel import MediaListPanel, MediaItemSelectedEvent
+from .media_ingestion_source_panel import MediaIngestionSourcePanel
 from .media_viewer_panel import MediaViewerPanel
 
 __all__ = [
     'MediaNavigationPanel',
     'MediaSearchPanel',
     'MediaSearchEvent', 
+    'MediaBrowseSubviewChangedEvent',
     'MediaListPanel',
     'MediaItemSelectedEvent',
+    'MediaIngestionSourcePanel',
     'MediaViewerPanel',
 ]

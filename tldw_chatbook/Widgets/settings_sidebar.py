@@ -12,7 +12,7 @@ from textual.widgets import Static, Select, TextArea, Input, Collapsible, Button
 from textual.message import Message
 #
 # Local Imports
-from ..config import get_cli_providers_and_models
+from ..config import get_cli_providers_and_models, resolve_provider_name
 from ..Widgets.Media_Creation.swarmui_widget import SwarmUIWidget
 
 # Try to import pipeline integration
@@ -98,8 +98,9 @@ def create_settings_sidebar(id_prefix: str, config: dict) -> ComposeResult:
         )
 
         available_providers = list(providers_models.keys())
-        default_provider: str = defaults.get(
-            "provider", available_providers[0] if available_providers else ""
+        default_provider: str = resolve_provider_name(
+            defaults.get("provider", available_providers[0] if available_providers else ""),
+            providers_models,
         )
         default_model: str = defaults.get("model", "")
         default_system_prompt: str = defaults.get("system_prompt", "")

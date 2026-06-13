@@ -239,19 +239,9 @@ IngestionResultsPanel RichLog#results-log {
     background: $surface-lighten-1;
 }
 
-/* Focus states */
-Input:focus,
-TextArea:focus,
-Select:focus {
-    border: double $accent;
-}
-
+/* Focus states defer to shared form/button contracts. */
 Button:hover {
     background: $primary-lighten-1;
-}
-
-Button:focus {
-    border: double $accent;
 }
 
 /* Success/Error states */

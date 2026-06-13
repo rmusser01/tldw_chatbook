@@ -395,8 +395,10 @@ class TestPerformance:
         import gc
         import weakref
         
-        # Create service
-        service = AudioRecordingService()
+        # Create service with a mocked backend so cleanup behavior is not
+        # dependent on host audio libraries.
+        with patch('tldw_chatbook.Audio.recording_service.PYAUDIO_AVAILABLE', True):
+            service = AudioRecordingService()
         service_ref = weakref.ref(service)
         
         # Use it

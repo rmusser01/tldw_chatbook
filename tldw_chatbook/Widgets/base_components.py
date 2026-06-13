@@ -89,7 +89,8 @@ class SectionContainer(Container):
     }
     
     .collapse-button:hover {
-        background: $primary 20%;
+        background: $surface-lighten-1;
+        color: $text;
     }
     
     .section-content {
@@ -569,6 +570,10 @@ class NavigationButton(Button):
     """
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+
     NavigationButton {
         width: 100%;
         height: 3;
@@ -581,19 +586,23 @@ class NavigationButton(Button):
     }
     
     NavigationButton:hover {
-        background: $accent 30%;
+        background: $surface-lighten-1;
         color: $text;
     }
     
     NavigationButton.active {
-        background: $accent;
-        color: $text;
-        text-style: bold;
-        border-left: thick $primary;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        text-style: bold underline;
+        border: none;
     }
     
-    NavigationButton:focus {
-        text-style: bold;
+    NavigationButton:focus,
+    NavigationButton.active:focus {
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        text-style: bold underline;
+        outline: none;
     }
     """
     

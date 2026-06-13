@@ -79,6 +79,9 @@ class SyncProgressWidget(Container):
     
     SyncProgressWidget.active {
         display: block;
+        background: $surface;
+        border: solid $surface-lighten-1;
+        color: $text;
     }
     
     #sync-progress-bar {
@@ -258,7 +261,11 @@ class NotesSyncWidget(ModalScreen):
                         placeholder="Select folder to sync...",
                         id="sync-folder-input"
                     )
-                    yield Button("Browse", id="sync-browse-button")
+                    yield Button(
+                        "Browse",
+                        id="sync-browse-button",
+                        tooltip="Choose the folder to sync with Notes.",
+                    )
                 
                 with Horizontal(classes="sync-controls"):
                     yield Select(

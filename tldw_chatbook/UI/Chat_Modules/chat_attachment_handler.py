@@ -9,13 +9,11 @@ Handles all file attachment functionality including:
 - File processing workers
 """
 
+import asyncio
 import os
 from typing import TYPE_CHECKING, Optional, Any
 from pathlib import Path
 from loguru import logger
-from textual import work
-from textual.widgets import Button, Static
-from textual.worker import get_current_worker
 
 if TYPE_CHECKING:
     from ..Chat_Window_Enhanced import ChatWindowEnhanced
@@ -41,11 +39,22 @@ class ChatAttachmentHandler:
         Args:
             event: Button.Pressed event
         """
-        # Check if we're in test mode with a mocked file input
-        if self.chat_window._file_path_input:
+        # Check if we're in legacy/test mode with a mocked file input.
+        file_path_input = getattr(self.chat_window, "_file_path_input", None)
+        if file_path_input is None and not getattr(self.chat_window, "is_attached", False):
+            try:
+                file_path_input = self.chat_window.query_one("#image-file-path-input")
+                self.chat_window._file_path_input = file_path_input
+            except Exception:
+                file_path_input = None
+
+        if file_path_input:
             # Legacy mode for tests
-            self.chat_window._file_path_input.styles.display = "block"
-            self.chat_window._file_path_input.focus()
+            if hasattr(file_path_input, "remove_class"):
+                file_path_input.remove_class("hidden")
+            else:
+                file_path_input.styles.display = "block"
+            file_path_input.focus()
             return
         
         from fnmatch import fnmatch
@@ -103,134 +112,168 @@ class ChatAttachmentHandler:
         Args:
             file_path: Path to the file to process
         """
-        # Run file processing in a worker to prevent UI blocking
-        self.chat_window.run_worker(
-            self._process_file_worker,
-            file_path,
-            exclusive=True,  # Cancel any previous file processing
-            name="file_processor"
+        if self._can_use_worker_processing():
+            # Run file processing in a worker to prevent UI blocking.
+            self.chat_window.run_worker(
+                lambda: self._process_file_worker(file_path),
+                exclusive=True,
+                name="file_processor",
+                thread=True,
+            )
+            return
+
+        try:
+            processed_file = await self._load_processed_file(file_path)
+            self._handle_processed_file(processed_file, file_path)
+        except Exception as e:
+            self._handle_processing_error(file_path, e)
+
+    def _can_use_worker_processing(self) -> bool:
+        """Return True when the chat window is attached to a live Textual app."""
+        return bool(
+            getattr(self.chat_window, "is_attached", False)
+            and getattr(self.chat_window, "is_mounted", False)
         )
+
+    def _get_session_id(self) -> str:
+        """Return the current chat session id with a safe default."""
+        session_id = getattr(self.app_instance, "active_session_id", None)
+        return session_id if isinstance(session_id, str) and session_id else "default"
+
+    def _get_chat_attached_files(self) -> dict[str, list[dict[str, Any]]]:
+        """Return the app attachment map, creating a dict when mocks expose a placeholder."""
+        attached_files = getattr(self.app_instance, "chat_attached_files", None)
+        if not isinstance(attached_files, dict):
+            attached_files = {}
+            self.app_instance.chat_attached_files = attached_files
+        return attached_files
+
+    async def _load_processed_file(self, file_path: str) -> Any:
+        """Validate and process a file attachment."""
+        from ...Utils.file_handlers import file_handler_registry
+        from ...Utils.path_validation import is_safe_path
+
+        logger.info(f"Processing file attachment: {file_path}")
+
+        if not is_safe_path(file_path, os.path.expanduser("~")):
+            raise ValueError("File path is outside allowed directories")
+
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(file_path)
+
+        file_size = os.path.getsize(file_path)
+        max_size = 100 * 1024 * 1024  # 100MB limit
+        if file_size > max_size:
+            raise ValueError(
+                f"File too large: {file_size / 1024 / 1024:.1f}MB (max 100MB)"
+            )
+
+        return await file_handler_registry.process_file(file_path)
     
-    @work(thread=True)
     def _process_file_worker(self, file_path: str) -> None:
         """Worker to process file attachment in background thread.
         
         Args:
             file_path: Path to the file to process
         """
-        from ...Utils.file_handlers import file_handler_registry
-        from ...Utils.path_validation import is_safe_path
-        
         try:
-            logger.info(f"Processing file attachment: {file_path}")
-            
-            # Validate the file path is safe (within user's home directory)
-            if not is_safe_path(file_path, os.path.expanduser("~")):
-                self.chat_window.call_from_thread(
-                    self.app_instance.notify,
-                    "File path is outside allowed directories",
-                    severity="error"
-                )
-                self.chat_window.call_from_thread(self.clear_attachment_state)
-                return
-            
-            # Check file exists
-            if not os.path.exists(file_path):
-                self.chat_window.call_from_thread(
-                    self.app_instance.notify,
-                    f"File not found: {file_path}",
-                    severity="error"
-                )
-                self.chat_window.call_from_thread(self.clear_attachment_state)
-                return
-            
-            # Get file size for validation
-            file_size = os.path.getsize(file_path)
-            max_size = 100 * 1024 * 1024  # 100MB limit
-            if file_size > max_size:
-                self.chat_window.call_from_thread(
-                    self.app_instance.notify,
-                    f"File too large: {file_size / 1024 / 1024:.1f}MB (max 100MB)",
-                    severity="error"
-                )
-                self.chat_window.call_from_thread(self.clear_attachment_state)
-                return
-            
-            # Process file using appropriate handler
-            processed_file = file_handler_registry.process_file(file_path)
-            
-            # Update UI with processed file data
+            processed_file = asyncio.run(self._load_processed_file(file_path))
             self.chat_window.call_from_thread(
                 self._handle_processed_file,
-                processed_file
+                processed_file,
+                file_path,
             )
-            
-        except FileNotFoundError as e:
-            logger.error(f"File not found: {e}")
-            self.chat_window.call_from_thread(
-                self.app_instance.notify,
-                f"File not found: {file_path}",
-                severity="error"
-            )
-            self.chat_window.call_from_thread(self.clear_attachment_state)
-        except PermissionError as e:
-            logger.error(f"Permission denied accessing file: {e}")
-            self.chat_window.call_from_thread(
-                self.app_instance.notify,
-                "Permission denied accessing file",
-                severity="error"
-            )
-            self.chat_window.call_from_thread(self.clear_attachment_state)
-        except ValueError as e:
-            logger.error(f"File validation error: {e}")
-            self.chat_window.call_from_thread(
-                self.app_instance.notify,
-                str(e),
-                severity="error"
-            )
-            self.chat_window.call_from_thread(self.clear_attachment_state)
-        except MemoryError as e:
-            logger.error(f"Out of memory processing file: {file_path}")
-            self.chat_window.call_from_thread(
-                self.app_instance.notify,
-                "File too large to process",
-                severity="error"
-            )
-            self.chat_window.call_from_thread(self.clear_attachment_state)
-        except (IOError, OSError) as e:
-            logger.error(f"File system error processing attachment: {e}", exc_info=True)
-            self.chat_window.call_from_thread(
-                self.app_instance.notify,
-                f"File system error: {str(e)}",
-                severity="error"
-            )
-            self.chat_window.call_from_thread(self.clear_attachment_state)
         except Exception as e:
-            # Keep generic catch as last resort for truly unexpected errors
-            logger.critical(f"Unexpected error processing file attachment: {e}", exc_info=True)
             self.chat_window.call_from_thread(
-                self.app_instance.notify,
-                "An unexpected error occurred",
-                severity="error"
+                self._handle_processing_error,
+                file_path,
+                e,
             )
-            self.chat_window.call_from_thread(self.clear_attachment_state)
     
-    def _handle_processed_file(self, processed_file: Any) -> None:
+    def _handle_processing_error(self, file_path: str, error: Exception) -> None:
+        """Handle attachment processing errors on the main thread."""
+        file_name = Path(file_path).name
+
+        if isinstance(error, FileNotFoundError):
+            logger.error(f"File not found: {file_path}")
+            self.app_instance.notify(f"File not found: {file_name}", severity="error")
+        elif isinstance(error, PermissionError):
+            logger.error(f"Permission denied accessing file: {file_path}")
+            self.app_instance.notify(
+                f"Permission denied: {file_name}",
+                severity="error",
+            )
+        elif isinstance(error, ValueError):
+            logger.error(f"File validation error: {error}")
+            self.app_instance.notify(str(error), severity="error")
+        elif isinstance(error, MemoryError):
+            logger.error(f"Out of memory processing file: {file_path}")
+            self.app_instance.notify("File too large to process", severity="error")
+        elif isinstance(error, (IOError, OSError)):
+            logger.error(
+                f"File system error processing attachment: {error}",
+                exc_info=True,
+            )
+            self.app_instance.notify(
+                f"File system error: {str(error)}",
+                severity="error",
+            )
+        else:
+            logger.critical(
+                f"Unexpected error processing file attachment: {error}",
+                exc_info=True,
+            )
+            self.app_instance.notify("An unexpected error occurred", severity="error")
+
+        self.clear_attachment_state()
+
+    def _handle_processed_file(
+        self,
+        processed_file: Any,
+        file_path: Optional[str] = None,
+    ) -> None:
         """Handle the processed file data and update UI.
         
         Args:
             processed_file: Processed file data from file handler
+            file_path: Original file path for metadata and notifications
         """
         try:
+            resolved_path = file_path or getattr(processed_file, "path", "")
+            display_name = getattr(
+                processed_file,
+                "display_name",
+                Path(resolved_path).name if resolved_path else "attachment",
+            )
+            file_type = getattr(processed_file, "file_type", "file")
+            attachment_data = getattr(processed_file, "attachment_data", None)
+            attachment_mime_type = getattr(
+                processed_file,
+                "attachment_mime_type",
+                getattr(processed_file, "mime_type", None),
+            )
+
             if processed_file.insert_mode == "inline":
                 # Insert text content into chat input
                 chat_input = self.chat_window._get_chat_input()
                 if chat_input:
                     try:
-                        # Insert at cursor or append
-                        current_text = chat_input.value
-                        new_text = current_text + "\n" + processed_file.content if current_text else processed_file.content
-                        chat_input.value = new_text
+                        current_text = getattr(chat_input, "text", None)
+                        if current_text is None:
+                            current_text = getattr(chat_input, "value", "")
+
+                        new_text = (
+                            current_text + "\n\n" + processed_file.content
+                            if current_text
+                            else processed_file.content
+                        )
+
+                        if hasattr(chat_input, "load_text"):
+                            chat_input.load_text(new_text)
+                        if hasattr(chat_input, "text"):
+                            chat_input.text = new_text
+                        if hasattr(chat_input, "value"):
+                            chat_input.value = new_text
                         
                         # Move cursor to end
                         try:
@@ -251,19 +294,14 @@ class ChatAttachmentHandler:
                             "document": "📝",
                             "file": "📎"
                         }
-                        emoji = emoji_map.get(processed_file.file_type, "📎")
+                        emoji = emoji_map.get(file_type, "📎")
                         
                         # Check if model supports images for image files
-                        if processed_file.file_type == "image":
+                        if file_type == "image":
                             try:
                                 from ...model_capabilities import is_vision_capable
-                                provider_widget = self.chat_window._provider_select
-                                model_widget = self.chat_window._model_select
-                                if not provider_widget or not model_widget:
-                                    logger.warning("Provider or model widget not cached")
-                                    # Fall back to query if needed
-                                    provider_widget = self.app_instance.query_one("#chat-api-provider")
-                                    model_widget = self.app_instance.query_one("#chat-api-model")
+                                provider_widget = self.app_instance.query_one("#chat-api-provider")
+                                model_widget = self.app_instance.query_one("#chat-api-model")
                                 
                                 from textual.widgets import Select
                                 selected_provider = str(provider_widget.value) if provider_widget.value != Select.BLANK else None
@@ -277,10 +315,10 @@ class ChatAttachmentHandler:
                                             severity="warning",
                                             timeout=6
                                         )
-                            except ImportError:
-                                logger.warning("model_capabilities module not available")
+                            except Exception as vision_error:
+                                logger.debug(f"Could not check vision capability: {vision_error}")
                         
-                        self.app_instance.notify(f"{emoji} File content inserted: {Path(processed_file.path).name}")
+                        self.app_instance.notify(f"{emoji} {display_name} content inserted")
                         
                     except AttributeError as e:
                         logger.error(f"Chat input widget not available: {e}")
@@ -294,38 +332,43 @@ class ChatAttachmentHandler:
                         
             elif processed_file.insert_mode == "attachment":
                 # Store as attachment
-                session_id = self.app_instance.active_session_id or "default"
-                
-                # Store different data based on file type
-                if processed_file.file_type == "image":
-                    # Store image data
+                self.chat_window.pending_attachment = {
+                    "data": attachment_data,
+                    "mime_type": attachment_mime_type,
+                    "path": resolved_path,
+                    "display_name": display_name,
+                    "file_type": file_type,
+                    "insert_mode": processed_file.insert_mode,
+                }
+
+                if file_type == "image":
                     self.chat_window.pending_image = {
-                        "path": processed_file.path,
-                        "data": processed_file.content,
-                        "mime_type": processed_file.mime_type
+                        "path": resolved_path,
+                        "data": attachment_data,
+                        "mime_type": attachment_mime_type,
                     }
-                    self.chat_window.pending_attachment = processed_file.path
                 else:
-                    # Store non-image attachment
-                    self.chat_window.pending_attachment = processed_file.path
-                
-                # Add to app's attachment list
-                if session_id not in self.app_instance.chat_attached_files:
-                    self.app_instance.chat_attached_files[session_id] = []
-                
-                self.app_instance.chat_attached_files[session_id].append({
-                    "path": processed_file.path,
-                    "type": processed_file.file_type,
-                    "content": processed_file.content if processed_file.file_type != "image" else None,
-                    "mime_type": processed_file.mime_type
-                })
+                    self.chat_window.pending_image = None
+
+                session_id = self._get_session_id()
+                attached_files = self._get_chat_attached_files()
+                if session_id not in attached_files:
+                    attached_files[session_id] = []
+
+                attached_files[session_id].append(
+                    {
+                        "path": resolved_path,
+                        "type": file_type,
+                        "content": processed_file.content if file_type != "image" else None,
+                        "mime_type": attachment_mime_type,
+                    }
+                )
                 
                 # Update UI
                 self.update_attachment_ui()
                 
                 # Notify user
-                file_name = Path(processed_file.path).name
-                self.app_instance.notify(f"📎 Attached: {file_name}")
+                self.app_instance.notify(f"{display_name} attached")
                 
         except (AttributeError, KeyError) as e:
             logger.error(f"Invalid processed file structure: {e}")
@@ -343,9 +386,10 @@ class ChatAttachmentHandler:
         self.chat_window.pending_attachment = None
         
         # Clear from app's attachment list
-        session_id = self.app_instance.active_session_id or "default"
-        if session_id in self.app_instance.chat_attached_files:
-            self.app_instance.chat_attached_files[session_id] = []
+        session_id = self._get_session_id()
+        attached_files = self._get_chat_attached_files()
+        if session_id in attached_files:
+            attached_files[session_id] = []
         
         # Update UI
         self.update_attachment_ui()
@@ -353,27 +397,46 @@ class ChatAttachmentHandler:
     def update_attachment_ui(self):
         """Update the attachment indicator UI."""
         indicator = self.chat_window._get_attachment_indicator()
+        try:
+            attach_button = self.chat_window.query_one("#attach-image")
+        except Exception:
+            attach_button = None
         if not indicator:
             return
         
         try:
             
             if self.chat_window.pending_image or self.chat_window.pending_attachment:
+                if attach_button is not None:
+                    attach_button.label = "📎✓"
                 # Show attachment indicator
-                file_path = self.chat_window.pending_attachment or (
-                    self.chat_window.pending_image.get("path") if isinstance(self.chat_window.pending_image, dict) else None
+                attachment = self.chat_window.pending_attachment
+                file_path = (
+                    attachment.get("path")
+                    if isinstance(attachment, dict)
+                    else self.chat_window.pending_image.get("path")
+                    if isinstance(self.chat_window.pending_image, dict)
+                    else None
                 )
                 if file_path:
-                    file_name = Path(file_path).name
-                    indicator.update(f"📎 {file_name}")
+                    display_name = (
+                        attachment.get("display_name")
+                        if isinstance(attachment, dict)
+                        else Path(file_path).name
+                    )
+                    indicator.update(f"📎 {display_name}")
                     indicator.add_class("has-attachment")
+                    indicator.remove_class("hidden")
                 else:
                     indicator.update("")
                     indicator.remove_class("has-attachment")
             else:
+                if attach_button is not None:
+                    attach_button.label = "📎"
                 # Hide attachment indicator
                 indicator.update("")
                 indicator.remove_class("has-attachment")
+                indicator.add_class("hidden")
                 
         except (AttributeError, RuntimeError) as e:
             logger.debug(f"Could not update attachment indicator: {e}")

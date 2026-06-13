@@ -78,7 +78,7 @@
 .media-card {
     height: 10;
     background: linear-gradient(135deg, $surface, $surface-lighten-1);
-    border: round $primary;
+    border: round $border;
     padding: 2;
     cursor: pointer;
     transition: all 0.3s ease;
@@ -94,8 +94,7 @@
 }
 
 .media-card:focus {
-    border: round $accent;
-    box-shadow: 0 0 0 2px $accent;
+    border: round $ds-focus-accent;
 }
 
 /* Card header with icon and title */
@@ -199,11 +198,10 @@
 }
 
 .drop-zone.active {
-    background: linear-gradient(135deg, $accent 20%, $primary 20%);
-    border: thick solid $accent;
-    border-color: $accent;
-    transform: scale(1.02);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    background: $ds-focus-bg;
+    border: round $ds-focus-accent;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .drop-icon {
@@ -213,9 +211,10 @@
     font-size: 24px;
 }
 
-.drop-zone.active .drop-icon {
-    color: $accent;
-    animation: pulse 1s infinite;
+.drop-zone.active .drop-icon,
+.drop-zone.active .drop-message {
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .drop-message {
@@ -349,10 +348,6 @@
     color: $surface;
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.quick-actions Button:focus {
-    box-shadow: 0 0 0 2px $accent;
 }
 
 /* ================================================
@@ -550,13 +545,8 @@
     height: 2;
     width: 100%;
     background: $surface;
-    border: solid $primary;
+    border: solid $border;
     padding: 0 1;
-}
-
-.metadata-grid Input:focus {
-    border: solid $accent;
-    background: $accent 10%;
 }
 
 /* Options panel styling */
@@ -645,35 +635,36 @@
     text-align: center;
 }
 
-.mode-selector {
+#mode-selector {
     layout: horizontal;
     height: auto;
     margin-bottom: 2;
     align: center middle;
 }
 
-.mode-selector RadioButton {
+#mode-selector Button {
     margin-right: 3;
     background: $surface;
-    border: solid $primary;
-    /* border-radius: 20px; - not supported in TCSS */
-    border: round $accent;
+    color: $text-muted;
+    border: round $border;
     padding: 1 2;
     transition: all 0.2s ease;
 }
 
-.mode-selector RadioButton:hover {
-    background: $primary 20%;
-    border: solid $accent;
+#mode-selector Button:hover {
+    background: $surface-lighten-1;
+    color: $text;
+    border: round $border;
 }
 
-.mode-selector RadioButton.-active {
-    background: $primary;
-    color: $surface;
-    border: solid $primary;
+#mode-selector Button.active {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: round $ds-focus-accent;
+    text-style: bold underline;
 }
 
-.mode-description {
+#mode-description {
     color: $text-muted;
     font-style: italic;
     text-align: center;
@@ -966,14 +957,6 @@
 .processing {
     opacity: 0.8;
     animation: pulse 2s infinite;
-}
-
-/* Focus indicators for accessibility */
-Button:focus,
-Input:focus,
-RadioButton:focus {
-    box-shadow: 0 0 0 2px $accent;
-    outline: 2px solid transparent;
 }
 
 /* Scrollbar styling for webkit browsers */

@@ -17,6 +17,23 @@ os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
 os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
+
+def _install_textual_compatibility_shims() -> None:
+    """Keep older Textual widget access patterns working across dependency bumps."""
+    try:
+        from textual.widgets import Static
+    except Exception:
+        return
+
+    if not hasattr(Static, "renderable"):
+        Static.renderable = property(  # type: ignore[attr-defined]
+            lambda self: self.content,
+            lambda self, value: self.update(value),
+        )
+
+
+_install_textual_compatibility_shims()
+
 __version__ = "0.1.7.3"
 __author__ = "Robert Musser"
 __email__ = "contact@rmusser.net"

@@ -259,7 +259,7 @@ def test_rag_config(chroma_persist_dir, request):
     
     return RAGConfig(
         embedding=EmbeddingConfig(
-            model="sentence-transformers/all-MiniLM-L6-v2",  # Use real model
+            model="mock",
             device="cpu",
             cache_size=100,
             batch_size=10
@@ -300,7 +300,7 @@ def memory_rag_config(request):
     
     return RAGConfig(
         embedding=EmbeddingConfig(
-            model="sentence-transformers/all-MiniLM-L6-v2",  # Use real model
+            model="mock",
             device="cpu"
         ),
         vector_store=VectorStoreConfig(

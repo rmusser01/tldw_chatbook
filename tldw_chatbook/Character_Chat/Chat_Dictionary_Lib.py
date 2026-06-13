@@ -7,6 +7,7 @@ import logging
 import os
 import random
 import re
+import sqlite3
 import warnings
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -23,6 +24,38 @@ from ..Metrics.metrics import log_counter, log_histogram, log_gauge
 #######################################################################################################################
 #
 # Chat Dictionary Classes and Functions
+
+def _clean_dictionary_text(
+    value: Optional[str],
+    *,
+    field_name: str,
+    max_length: int,
+    required: bool = False,
+) -> str:
+    text = "" if value is None else str(value).strip()
+    if required and not text:
+        raise InputError(f"{field_name} cannot be empty")
+    if not validate_text_input(text, max_length=max_length):
+        raise InputError(f"{field_name} is invalid or too long")
+    return text
+
+
+def _ensure_chat_dictionaries_fts_update_trigger(conn) -> None:
+    conn.execute("DROP TRIGGER IF EXISTS chat_dictionaries_au")
+    conn.execute(
+        """
+        CREATE TRIGGER chat_dictionaries_au
+        AFTER UPDATE ON chat_dictionaries BEGIN
+          INSERT INTO chat_dictionaries_fts(chat_dictionaries_fts, rowid, name, description, content)
+          SELECT 'delete', OLD.id, OLD.name, OLD.description, OLD.content
+          WHERE OLD.deleted = 0;
+
+          INSERT INTO chat_dictionaries_fts(rowid, name, description, content)
+          SELECT NEW.id, NEW.name, NEW.description, NEW.content
+          WHERE NEW.deleted = 0;
+        END;
+        """
+    )
 
 class TokenBudgetExceededWarning(Warning):
     """Custom warning for token budget issues"""
@@ -663,8 +696,12 @@ def save_chat_dictionary(
     """
     try:
         # Validate inputs
-        name = validate_text_input(name, min_length=1, max_length=255)
-        description = validate_text_input(description, max_length=1000) if description else ""
+        name = _clean_dictionary_text(name, field_name="Dictionary name", max_length=255, required=True)
+        description = (
+            _clean_dictionary_text(description, field_name="Dictionary description", max_length=1000)
+            if description
+            else ""
+        )
         
         # Convert entries to JSON if provided
         entries_json = None
@@ -714,7 +751,8 @@ def load_chat_dictionary(db: CharactersRAGDB, dict_id: int) -> Optional[Dict[str
         cursor = db.get_connection().cursor()
         cursor.execute("""
             SELECT id, name, description, file_path, content, entries_json,
-                   strategy, max_tokens, enabled, created_at, last_modified
+                   strategy, max_tokens, enabled, created_at, last_modified,
+                   deleted, client_id, version
             FROM chat_dictionaries 
             WHERE id = ? AND deleted = 0
         """, (dict_id,))
@@ -734,7 +772,10 @@ def load_chat_dictionary(db: CharactersRAGDB, dict_id: int) -> Optional[Dict[str
             'max_tokens': row[7],
             'enabled': bool(row[8]),
             'created_at': row[9],
-            'last_modified': row[10]
+            'last_modified': row[10],
+            'deleted': bool(row[11]),
+            'client_id': row[12],
+            'version': row[13],
         }
         
         # Parse entries from JSON
@@ -773,7 +814,7 @@ def list_chat_dictionaries(
         cursor = db.get_connection().cursor()
         query = """
             SELECT id, name, description, strategy, max_tokens, enabled, 
-                   created_at, last_modified
+                   created_at, last_modified, client_id, version
             FROM chat_dictionaries 
             WHERE deleted = 0
         """
@@ -795,7 +836,10 @@ def list_chat_dictionaries(
                 'max_tokens': row[4],
                 'enabled': bool(row[5]),
                 'created_at': row[6],
-                'last_modified': row[7]
+                'last_modified': row[7],
+                'client_id': row[8],
+                'version': row[9],
+                'entries': [],
             })
             
         return dictionaries
@@ -842,10 +886,10 @@ def update_chat_dictionary(
         
         if name is not None:
             updates.append("name = ?")
-            params.append(validate_text_input(name, min_length=1, max_length=255))
+            params.append(_clean_dictionary_text(name, field_name="Dictionary name", max_length=255, required=True))
         if description is not None:
             updates.append("description = ?")
-            params.append(validate_text_input(description, max_length=1000))
+            params.append(_clean_dictionary_text(description, field_name="Dictionary description", max_length=1000))
         if content is not None:
             updates.append("content = ?")
             params.append(content)
@@ -876,7 +920,9 @@ def update_chat_dictionary(
             query += " AND version = ?"
             params.append(expected_version)
             
-        cursor = db.get_connection().cursor()
+        conn = db.get_connection()
+        _ensure_chat_dictionaries_fts_update_trigger(conn)
+        cursor = conn.cursor()
         cursor.execute(query, params)
         
         if cursor.rowcount == 0:
@@ -885,7 +931,7 @@ def update_chat_dictionary(
                                   entity="chat_dictionaries", entity_id=dict_id)
             return False
             
-        db.get_connection().commit()
+        conn.commit()
         logger.info(f"Updated chat dictionary {dict_id}")
         return True
         

@@ -1,6 +1,6 @@
 # tldw_chatbook
 
-A sophisticated Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. It provides a complete ecosystem for AI-powered interactions including conversation management, character/persona chat, notes with bidirectional file sync, media ingestion, advanced RAG (Retrieval-Augmented Generation) capabilities, comprehensive LLM evaluation system, and optional web browser access.
+A sophisticated Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. The product is organized around a chat-first screen shell: Chat is the main work surface, while notes, media, study, personas, ingestion, search, and model tools act as supporting destinations that can hand context back into the active conversation.
 
 ![Screenshot](https://github.com/rmusser01/tldw_chatbook/blob/main/static/PoC-Frontpage.PNG?raw=true)
 
@@ -36,12 +36,23 @@ tldw-cli --serve
 tldw-serve --port 8080
 ```
 
+### Local-first baseline
+
+The core local-first app installs with `pip install -e .` and includes the Textual shell, Console, local conversations, notes, personas, Library browsing, Chatbook artifacts, and settings. Missing optional extras should be treated as unavailable advanced capabilities, not as a broken core install.
+
+For packaged installs, use:
+
+```bash
+pip install tldw_chatbook
+```
+
 ### Installation with Optional Features
-The application supports several optional feature sets that can be installed based on your needs:
+The application supports several advanced optional capability groups that can be installed based on your needs. Source checkouts use `pip install -e ".[extra]"`; packaged installs use commands such as `pip install "tldw_chatbook[embeddings_rag]"`.
 
 ```bash
 # RAG (Retrieval-Augmented Generation) support
 pip install -e ".[embeddings_rag]"
+pip install "tldw_chatbook[embeddings_rag]"
 
 # Advanced text chunking and language detection
 pip install -e ".[embeddings_rag,chunker]"
@@ -76,32 +87,34 @@ pip install -e ".[dev]"
 
 ### Optional Feature Groups
 
-| Feature Group                  | Enables | Key Dependencies |
-|--------------------------------|---------|------------------|
-| `embeddings_rag`               | Vector search, semantic similarity, hybrid RAG | torch, transformers, sentence-transformers*, chromadb* |
-| `chunker`                      | Advanced text chunking, language detection | nltk, langdetect, jieba, fugashi |
-| `websearch`                    | Web scraping, content extraction | beautifulsoup4, playwright, trafilatura |
-| `coding_map`                   | Code analysis features | grep_ast, pygments |
-| `local_vllm`                   | vLLM inference support | vllm |
-| `local_mlx`                    | MLX inference (Apple Silicon) | mlx-lm |
-| `transcription_faster_whisper` | CPU/CUDA optimized Whisper transcription | faster-whisper |
-| `transcription_lightning_whisper` | Apple Silicon optimized Whisper | lightning-whisper-mlx |
-| `transcription_parakeet`       | Real-time ASR for Apple Silicon | parakeet-mlx |
-| `mlx_whisper`                  | Legacy: Both Apple Silicon transcription providers | lightning-whisper-mlx, parakeet-mlx |
-| `audio`                        | Audio processing with transcription | faster-whisper, soundfile, yt-dlp |
-| `video`                        | Video processing with transcription | faster-whisper, soundfile, yt-dlp |
-| `media_processing`             | Combined audio/video processing | faster-whisper, soundfile, yt-dlp |
-| `pdf`                          | PDF text extraction | pymupdf, docling |
-| `ebook`                        | E-book processing | ebooklib, beautifulsoup4, defusedxml |
-| `nemo`                         | NVIDIA Parakeet ASR models | nemo-toolkit[asr] |
-| `local_transformers`           | HuggingFace transformers | transformers |
-| `mcp`                          | Model Context Protocol integration | mcp |
-| `chatterbox`                   | Chatterbox TTS model support | chatterbox |
-| `local_tts`                    | Local TTS models (Kokoro ONNX) | kokoro-onnx, scipy, pyaudio |
-| `ocr_docext`                   | OCR and document extraction | docext, gradio_client |
-| `debugging`                    | Metrics and telemetry | prometheus-client, opentelemetry-api |
-| `diarization`                  | Speaker diarization for audio | torch, torchaudio, speechbrain |
-| `web`                          | Web server for browser access | textual-serve |
+Advanced optional capability groups:
+
+| Feature Group                  | Capability Area | Enables | Key Dependencies |
+|--------------------------------|-----------------|---------|------------------|
+| `embeddings_rag`               | RAG and retrieval | Vector search, semantic similarity, hybrid RAG | torch, transformers, sentence-transformers*, chromadb* |
+| `chunker`                      | RAG and retrieval | Advanced text chunking, language detection | nltk, langdetect, jieba, fugashi |
+| `websearch`                    | Server/research | Web search and scraping | beautifulsoup4, playwright, trafilatura |
+| `coding_map`                   | Local inference | Code analysis features | grep_ast, pygments |
+| `local_vllm`                   | Local inference | vLLM inference support | vllm |
+| `local_mlx`                    | Local inference | MLX inference (Apple Silicon) | mlx-lm |
+| `transcription_faster_whisper` | Media ingestion and transcription | CPU/CUDA optimized Whisper transcription | faster-whisper |
+| `transcription_lightning_whisper` | Media ingestion and transcription | Apple Silicon optimized Whisper | lightning-whisper-mlx |
+| `transcription_parakeet`       | Media ingestion and transcription | Real-time ASR for Apple Silicon | parakeet-mlx |
+| `mlx_whisper`                  | Media ingestion and transcription | Legacy: Both Apple Silicon transcription providers | lightning-whisper-mlx, parakeet-mlx |
+| `audio`                        | Media ingestion and transcription | Audio processing with transcription | faster-whisper, soundfile, yt-dlp |
+| `video`                        | Media ingestion and transcription | Video processing with transcription | faster-whisper, soundfile, yt-dlp |
+| `media_processing`             | Media ingestion and transcription | Combined audio/video processing | faster-whisper, soundfile, yt-dlp |
+| `pdf`                          | Media ingestion and transcription | PDF text extraction | pymupdf, docling |
+| `ebook`                        | Media ingestion and transcription | E-book processing | ebooklib, beautifulsoup4, defusedxml |
+| `nemo`                         | Media ingestion and transcription | NVIDIA Parakeet ASR models | nemo-toolkit[asr] |
+| `local_transformers`           | Local inference | HuggingFace transformers | transformers |
+| `mcp`                          | MCP integration | Model Context Protocol integration | mcp |
+| `chatterbox`                   | Media ingestion and transcription | Chatterbox TTS model support | chatterbox |
+| `local_tts`                    | Media ingestion and transcription | Local TTS models (Kokoro ONNX) | kokoro-onnx, scipy, pyaudio |
+| `ocr_docext`                   | Media ingestion and transcription | OCR and document extraction | docext, gradio_client |
+| `debugging`                    | Server/research | Metrics and telemetry | prometheus-client, opentelemetry-api |
+| `diarization`                  | Media ingestion and transcription | Speaker diarization for audio | torch, torchaudio, speechbrain |
+| `web`                          | Web access | Web server for browser access | textual-serve |
 
 *Note: `sentence-transformers` and `chromadb` are detected separately and installed automatically when needed.
 
@@ -205,23 +218,21 @@ python scripts/verify_higgs_installation.py
   - No terminal emulator required
   - Full functionality via browser interface
 
-### Main Application Tabs
-1. **Chat** - Advanced AI conversation interface with streaming support
-2. **Chat Tabs** - Multiple concurrent chat sessions (disabled by default)
-3. **Conversations, Characters & Prompts** - Manage conversations, character personas, and prompt templates
+### Main Application Destinations
+The current screen shell is organized around primary destinations and local subviews rather than equal-weight tabs:
+
+1. **Chat** - Primary conversation and agentic control surface with streaming, tool use, inline approvals, and task continuity
+2. **Conversations, Characters & Prompts** - Manage conversations, personas, and prompt templates, then hand them into the active chat session
+3. **Study** - Workspace/global study dashboard with flashcards, quizzes, study guides, and related learning flows
 4. **Notes** - Advanced note-taking with bidirectional file sync
 5. **Media** - Browse and manage ingested media content
 6. **Search/RAG** - Hybrid search across all content (FTS5 + optional vectors)
 7. **Media Ingestion** - Process documents, videos, audio, and web content
-8. **Embeddings** - Create and manage vector embeddings
-9. **Evaluations** - Comprehensive LLM benchmarking system
-10. **LLM Management** - Local model server control
-11. **Tools & Settings** - Configuration and utilities
-12. **Stats** - Usage statistics and metrics
-13. **Logs** - Application logs and debugging
-14. **Coding** - AI-powered coding assistant (WIP)
-15. **STTS** - Speech-to-Text and Text-to-Speech interface
-16. **Subscriptions** - Content subscription tracking and monitoring
+8. **Model & Evaluation Tools** - LLM management, speech tools, and evaluation workflows
+9. **System Surfaces** - Settings, customization, logs, and statistics
+10. **Subscriptions / Chatbooks** - Supporting library and monitoring destinations
+
+`Coding` still exists as a compatibility route during migration, but agentic programming and control are moving into Chat-first workflows instead of living as a separate primary destination.
 
 ### LLM Support
 - **Commercial LLM APIs**: OpenAI, Anthropic, Cohere, DeepSeek, Google, Groq, Mistral, OpenRouter, HuggingFace
@@ -343,6 +354,7 @@ All chat features listed here work with the core installation:
   - Strip thinking blocks from responses
   - Cost estimation widget (WIP)
   - Tool calling integration
+  - Inline approvals and task resume state for agentic workflows
 - **Prompt Management**
   - Save, edit, clone prompts
   - Bulk import/export
@@ -499,9 +511,10 @@ Customizable splash screens with 50+ animation effects:
 For detailed customization, see the [Splash Screen Guide](Docs/Development/SplashScreens/SPLASH_SCREEN_GUIDE.md).
 
 ### Coding Assistant
-- **AI-powered code assistance**: In dedicated coding tab
-- **Code mapping**: Analysis and understanding of codebases
-- **Integration ready**: Framework for future enhancements
+- **Chat-first programming workflows**: Agentic programming and control are designed to happen in Chat, alongside the rest of the conversation context
+- **Inline task continuity**: Approvals, progress, failures, and resume cues can be surfaced directly in the chat shell
+- **Code mapping**: Analysis and understanding of codebases remain available as supporting capabilities
+- **Legacy compatibility**: The standalone coding surface still exists during migration, but it is no longer the long-term primary UX model
 
 ## Configuration
 

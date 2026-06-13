@@ -1,0 +1,476 @@
+from unittest.mock import Mock
+
+import pytest
+
+from tldw_chatbook.RAG_Admin.server_rag_admin_service import ServerRAGAdminService
+from tldw_chatbook.runtime_policy.types import PolicyDecision, PolicyDeniedError
+from tldw_chatbook.tldw_api import (
+    BatchMediaEmbeddingsRequest,
+    BatchMediaEmbeddingsResponse,
+    ChunkingTemplateCreateRequest,
+    ChunkingTemplateDiagnosticsResponse,
+    ChunkingTemplateLearnRequest,
+    ChunkingTemplateLearnResponse,
+    ChunkingTemplateListResponse,
+    ChunkingTemplateMatchResponse,
+    ChunkingTemplateResponse,
+    ChunkingTemplateUpdateRequest,
+    EmbeddingCollectionCreateRequest,
+    EmbeddingCollectionResponse,
+    EmbeddingCollectionStatsResponse,
+    MediaEmbeddingsBatchRequest,
+    MediaEmbeddingsGenerateRequest,
+    MediaEmbeddingsSearchRequest,
+    ReprocessMediaRequest,
+    ReprocessMediaResponse,
+)
+
+
+class FakeClient:
+    def __init__(self):
+        self.calls = []
+
+    async def list_chunking_templates(self, **kwargs):
+        self.calls.append(("list_chunking_templates", kwargs))
+        return ChunkingTemplateListResponse.model_validate(
+            {
+                "templates": [
+                    {
+                        "id": 1,
+                        "uuid": "cb547cde-3720-4f1e-b3a7-90425ee6b38d",
+                        "name": "server-demo",
+                        "description": "Server demo",
+                        "template_json": '{"chunking": {"method": "words", "config": {"max_size": 256}}}',
+                        "is_builtin": False,
+                        "tags": ["rag"],
+                        "created_at": "2026-04-20T00:00:00Z",
+                        "updated_at": "2026-04-20T00:00:00Z",
+                        "version": 1,
+                        "user_id": "u1",
+                    }
+                ],
+                "total": 1,
+            }
+        )
+
+    async def create_chunking_template(self, request_data):
+        self.calls.append(("create_chunking_template", request_data))
+        return ChunkingTemplateResponse.model_validate(
+            {
+                "id": 2,
+                "uuid": "1ce34b1a-5d36-4d4f-b4f4-6cd77b31377e",
+                "name": "created",
+                "description": "Created template",
+                "template_json": '{"chunking": {"method": "words", "config": {"max_size": 512}}}',
+                "is_builtin": False,
+                "tags": ["notes"],
+                "created_at": "2026-04-20T00:00:00Z",
+                "updated_at": "2026-04-20T00:00:00Z",
+                "version": 1,
+                "user_id": "u1",
+            }
+        )
+
+    async def update_chunking_template(self, template_name, request_data):
+        self.calls.append(("update_chunking_template", template_name, request_data))
+        return ChunkingTemplateResponse.model_validate(
+            {
+                "id": 2,
+                "uuid": "1ce34b1a-5d36-4d4f-b4f4-6cd77b31377e",
+                "name": template_name,
+                "description": "Updated template",
+                "template_json": '{"chunking": {"method": "sentences", "config": {"max_size": 8}}}',
+                "is_builtin": False,
+                "tags": ["notes", "updated"],
+                "created_at": "2026-04-20T00:00:00Z",
+                "updated_at": "2026-04-20T01:00:00Z",
+                "version": 2,
+                "user_id": "u1",
+            }
+        )
+
+    async def get_chunking_template_diagnostics(self):
+        self.calls.append(("get_chunking_template_diagnostics",))
+        return ChunkingTemplateDiagnosticsResponse(
+            db_class="sqlite.MediaDatabase",
+            capability="native",
+            fallback_enabled=True,
+            hint="hint",
+        )
+
+    async def validate_chunking_template(self, template_config):
+        self.calls.append(("validate_chunking_template", template_config))
+        return ChunkingTemplateValidationResponse(valid=True)
+
+    async def match_chunking_templates(self, **kwargs):
+        self.calls.append(("match_chunking_templates", kwargs))
+        return ChunkingTemplateMatchResponse(
+            matches=[{"name": "article-template", "score": 0.85, "priority": 3}]
+        )
+
+    async def learn_chunking_template(self, request_data):
+        self.calls.append(("learn_chunking_template", request_data))
+        return ChunkingTemplateLearnResponse(
+            template={"name": "learned", "chunking": {"method": "sentences"}},
+            saved=True,
+        )
+
+    async def list_embedding_collections(self):
+        self.calls.append(("list_embedding_collections",))
+        return [EmbeddingCollectionResponse(name="demo_collection", metadata={"provider": "openai"})]
+
+    async def create_embedding_collection(self, request_data):
+        self.calls.append(("create_embedding_collection", request_data))
+        return EmbeddingCollectionResponse(
+            name=request_data.name,
+            metadata={
+                "provider": request_data.provider,
+                "embedding_model": request_data.embedding_model,
+                **dict(request_data.metadata or {}),
+            },
+        )
+
+    async def get_embedding_collection_stats(self, collection_name):
+        self.calls.append(("get_embedding_collection_stats", collection_name))
+        return EmbeddingCollectionStatsResponse(
+            name=collection_name,
+            count=3,
+            embedding_dimension=1536,
+            metadata={"provider": "openai"},
+        )
+
+    async def delete_embedding_collection(self, collection_name):
+        self.calls.append(("delete_embedding_collection", collection_name))
+        return None
+
+    async def reprocess_media(self, media_id, request_data):
+        self.calls.append(("reprocess_media", media_id, request_data))
+        return ReprocessMediaResponse(
+            media_id=media_id,
+            status="queued",
+            message="Reprocess queued",
+            chunks_created=0,
+            embeddings_started=True,
+            job_id="job-7",
+        )
+
+    async def get_media_embeddings_status(self, media_id):
+        self.calls.append(("get_media_embeddings_status", media_id))
+        return {
+            "media_id": media_id,
+            "has_embeddings": True,
+            "embedding_count": 3,
+            "embedding_model": "text-embedding-3-small",
+        }
+
+    async def generate_media_embeddings(self, media_id, request_data):
+        self.calls.append(("generate_media_embeddings", media_id, request_data))
+        return {
+            "media_id": media_id,
+            "status": "accepted",
+            "message": "Embedding generation started",
+            "embedding_model": request_data.embedding_model or "default",
+            "job_id": "job-7",
+        }
+
+    async def generate_media_embeddings_batch(self, request_data):
+        self.calls.append(("generate_media_embeddings_batch", request_data))
+        return {"status": "accepted", "job_ids": ["job-7", "job-8"], "submitted": 2}
+
+    async def search_media_embeddings(self, request_data):
+        self.calls.append(("search_media_embeddings", request_data))
+        return {
+            "results": [{"id": "chunk-1", "document": "alpha", "metadata": {"media_id": "7"}, "distance": 0.2}],
+            "count": 1,
+        }
+
+    async def delete_media_embeddings(self, media_id):
+        self.calls.append(("delete_media_embeddings", media_id))
+        return {"status": "success", "message": "deleted"}
+
+    async def get_media_embedding_job(self, job_id):
+        self.calls.append(("get_media_embedding_job", job_id))
+        return {"uuid": job_id, "status": "completed", "media_id": 7}
+
+    async def list_media_embedding_jobs(self, **kwargs):
+        self.calls.append(("list_media_embedding_jobs", kwargs))
+        return {
+            "data": [{"uuid": "job-7", "status": "completed", "media_id": 7}],
+            "pagination": {"limit": kwargs.get("limit"), "offset": kwargs.get("offset"), "count": 1},
+        }
+
+
+@pytest.mark.asyncio
+async def test_server_rag_admin_service_builds_requests_and_unwraps_models():
+    client = FakeClient()
+    service = ServerRAGAdminService(client=client)
+
+    listed = await service.list_templates(include_builtin=False, include_custom=True, tags=["rag"], user_id="u1")
+    created = await service.create_template(
+        name="created",
+        description="Created template",
+        tags=["notes"],
+        template={"chunking": {"method": "words", "config": {"max_size": 512}}},
+        user_id="u1",
+    )
+    updated = await service.update_template(
+        "created",
+        description="Updated template",
+        tags=["notes", "updated"],
+        template={"chunking": {"method": "sentences", "config": {"max_size": 8}}},
+    )
+    diagnostics = await service.get_template_diagnostics()
+    collections = await service.list_collections()
+    collection = await service.create_collection(
+        name="new_collection",
+        metadata={"purpose": "tests"},
+        embedding_model="text-embedding-3-small",
+        provider="openai",
+    )
+    stats = await service.get_collection_detail("demo_collection")
+    await service.delete_collection("demo_collection")
+    reprocessed = await service.reprocess_media(
+        7,
+        perform_chunking=True,
+        generate_embeddings=True,
+        force_regenerate_embeddings=True,
+        chunking_template_name="server-demo",
+    )
+    embedding_status = await service.get_media_embeddings_status(7)
+    embedding_generation = await service.generate_media_embeddings(
+        7,
+        embedding_model="text-embedding-3-small",
+        embedding_provider="openai",
+        chunk_size=512,
+        chunk_overlap=64,
+        force_regenerate=True,
+        priority=80,
+    )
+    embedding_batch = await service.generate_media_embeddings_batch(
+        media_ids=[7, 8],
+        embedding_model="text-embedding-3-small",
+        embedding_provider="openai",
+        chunk_size=512,
+        chunk_overlap=64,
+        force_regenerate=True,
+        priority=80,
+    )
+    embedding_search = await service.search_media_embeddings(
+        query="alpha",
+        top_k=3,
+        collection="user_1_media_embeddings",
+        filters={"media_id": "7"},
+    )
+    embedding_deleted = await service.delete_media_embeddings(7)
+    embedding_job = await service.get_media_embedding_job("job-7")
+    embedding_jobs = await service.list_media_embedding_jobs(status="completed", limit=10, offset=5)
+
+    assert client.calls[0] == (
+        "list_chunking_templates",
+        {"include_builtin": False, "include_custom": True, "tags": ["rag"], "user_id": "u1"},
+    )
+    assert isinstance(client.calls[1][1], ChunkingTemplateCreateRequest)
+    assert client.calls[1][1].name == "created"
+    assert isinstance(client.calls[2][2], ChunkingTemplateUpdateRequest)
+    assert client.calls[2][1] == "created"
+    assert client.calls[3] == ("get_chunking_template_diagnostics",)
+    assert client.calls[4] == ("list_embedding_collections",)
+    assert client.calls[5][0] == "create_embedding_collection"
+    assert isinstance(client.calls[5][1], EmbeddingCollectionCreateRequest)
+    assert client.calls[5][1].name == "new_collection"
+    assert client.calls[6] == ("get_embedding_collection_stats", "demo_collection")
+    assert client.calls[7] == ("delete_embedding_collection", "demo_collection")
+    assert client.calls[8][0] == "reprocess_media"
+    assert client.calls[8][1] == 7
+    assert isinstance(client.calls[8][2], ReprocessMediaRequest)
+    assert client.calls[8][2].generate_embeddings is True
+    assert client.calls[8][2].chunking_template_name == "server-demo"
+    assert client.calls[9] == ("get_media_embeddings_status", 7)
+    assert client.calls[10][0] == "generate_media_embeddings"
+    assert isinstance(client.calls[10][2], MediaEmbeddingsGenerateRequest)
+    assert client.calls[10][2].priority == 80
+    assert client.calls[11][0] == "generate_media_embeddings_batch"
+    assert isinstance(client.calls[11][1], MediaEmbeddingsBatchRequest)
+    assert client.calls[12][0] == "search_media_embeddings"
+    assert isinstance(client.calls[12][1], MediaEmbeddingsSearchRequest)
+    assert client.calls[13] == ("delete_media_embeddings", 7)
+    assert client.calls[14] == ("get_media_embedding_job", "job-7")
+    assert client.calls[15] == ("list_media_embedding_jobs", {"status": "completed", "limit": 10, "offset": 5})
+
+    assert listed[0]["name"] == "server-demo"
+    assert created["name"] == "created"
+    assert updated["description"] == "Updated template"
+    assert diagnostics["capability"] == "native"
+    assert collections[0]["name"] == "demo_collection"
+    assert collection["name"] == "new_collection"
+    assert collection["metadata"]["purpose"] == "tests"
+    assert stats["count"] == 3
+    assert reprocessed["status"] == "queued"
+    assert reprocessed["job_id"] == "job-7"
+    assert embedding_status["has_embeddings"] is True
+    assert embedding_generation["job_id"] == "job-7"
+    assert embedding_batch["submitted"] == 2
+    assert embedding_search["count"] == 1
+    assert embedding_deleted["status"] == "success"
+    assert embedding_job["status"] == "completed"
+    assert embedding_jobs["pagination"]["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_server_rag_admin_service_enforces_policy_actions():
+    client = FakeClient()
+    policy = Mock()
+    service = ServerRAGAdminService(client=client, policy_enforcer=policy)
+
+    await service.list_templates(include_builtin=False, include_custom=True, tags=["rag"], user_id="u1")
+    await service.create_template(
+        name="created",
+        description="Created template",
+        tags=["notes"],
+        template={"chunking": {"method": "words", "config": {"max_size": 512}}},
+        user_id="u1",
+    )
+    await service.update_template(
+        "created",
+        description="Updated template",
+        tags=["notes", "updated"],
+        template={"chunking": {"method": "sentences", "config": {"max_size": 8}}},
+    )
+    await service.get_template_diagnostics()
+    await service.list_collections()
+    await service.get_collection_detail("demo_collection")
+    await service.delete_collection("demo_collection")
+    await service.reprocess_media(7, generate_embeddings=True)
+    await service.get_media_embeddings_status(7)
+    await service.generate_media_embeddings(7, embedding_model="text-embedding-3-small")
+    await service.generate_media_embeddings_batch(media_ids=[7, 8])
+    await service.search_media_embeddings(query="alpha")
+    await service.delete_media_embeddings(7)
+    await service.get_media_embedding_job("job-7")
+    await service.list_media_embedding_jobs(status="completed")
+
+    assert [call.kwargs["action_id"] for call in policy.require_allowed.call_args_list] == [
+        "rag.template.list.server",
+        "rag.template.create.server",
+        "rag.template.update.server",
+        "rag.admin.observe.server",
+        "rag.admin.list.server",
+        "rag.admin.observe.server",
+        "rag.admin.configure.server",
+        "rag.admin.launch.server",
+        "rag.media_embeddings.status.server",
+        "rag.media_embeddings.create.server",
+        "rag.media_embeddings.create.server",
+        "rag.media_embeddings.search.server",
+        "rag.media_embeddings.delete.server",
+        "rag.media_embedding_jobs.detail.server",
+        "rag.media_embedding_jobs.list.server",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_rag_admin_service_hard_stops_denied_ui_policy_decision():
+    policy = Mock()
+    policy.require_allowed = None
+    policy.require_ui_action_allowed = Mock(
+        return_value=PolicyDecision(
+            allowed=False,
+            reason_code="server_unreachable",
+            user_message="Blocked.",
+            effective_source="server",
+            authority_owner="server",
+        )
+    )
+    client = FakeClient()
+    service = ServerRAGAdminService(client=client, policy_enforcer=policy)
+
+    with pytest.raises(PolicyDeniedError) as exc:
+        await service.list_templates()
+
+    assert exc.value.reason_code == "server_unreachable"
+    assert client.calls == []
+
+
+class FakeClientProvider:
+    def __init__(self, client):
+        self.client = client
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        return self.client
+
+
+class ExplodingClientProvider:
+    def __init__(self):
+        self.build_calls = 0
+
+    def build_client(self):
+        self.build_calls += 1
+        raise AssertionError("provider should not be used when direct client exists")
+
+
+class FreshClientProvider:
+    def __init__(self):
+        self.build_calls = 0
+        self.clients = []
+
+    def build_client(self):
+        self.build_calls += 1
+        client = object()
+        self.clients.append(client)
+        return client
+
+
+def test_server_rag_admin_service_direct_client_takes_precedence_over_provider():
+    client = object()
+    provider = ExplodingClientProvider()
+    service = ServerRAGAdminService(client=client, client_provider=provider)
+
+    assert service._require_client() is client
+    assert provider.build_calls == 0
+
+
+def test_server_rag_admin_service_from_server_context_provider_is_lazy():
+    client = object()
+    provider = FakeClientProvider(client)
+    service = ServerRAGAdminService.from_server_context_provider(provider)
+
+    assert isinstance(service, ServerRAGAdminService)
+    assert service.client is None
+    assert service.client_provider is provider
+    assert provider.build_calls == 0
+    assert service._require_client() is client
+    assert service.client is None
+    assert provider.build_calls == 1
+
+
+def test_server_rag_admin_service_re_resolves_provider_without_service_local_client_cache():
+    provider = FreshClientProvider()
+    service = ServerRAGAdminService.from_server_context_provider(provider)
+
+    first_client = service._require_client()
+    second_client = service._require_client()
+
+    assert service.client is None
+    assert provider.build_calls == 2
+    assert first_client is not second_client
+    assert provider.clients == [first_client, second_client]
+    for built_client in provider.clients:
+        assert all(value is not built_client for value in vars(service).values())
+
+
+def test_server_rag_admin_service_from_config_returns_provider_backed_service():
+    service = ServerRAGAdminService.from_config(
+        {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
+    )
+
+    assert isinstance(service, ServerRAGAdminService)
+    assert service.client is None
+    assert service.client_provider is not None
+
+    client = service.client_provider.build_client()
+
+    assert service.client is None
+    assert client.base_url == "https://example.com"
+    assert service.client_provider.build_client() is client

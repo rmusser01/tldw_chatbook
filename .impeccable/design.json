@@ -1,0 +1,277 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-28T00:00:00-07:00",
+  "title": "Design System: tldw_chatbook",
+  "extensions": {
+    "colorMeta": {
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Deep Canvas",
+        "canonical": "$background",
+        "tonalRamp": [
+          "oklch(14% 0.03 285)",
+          "oklch(20% 0.035 285)",
+          "oklch(28% 0.04 285)",
+          "oklch(38% 0.045 285)",
+          "oklch(52% 0.05 285)",
+          "oklch(66% 0.035 285)",
+          "oklch(82% 0.02 285)",
+          "oklch(94% 0.01 285)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Console Panel",
+        "canonical": "$panel",
+        "tonalRamp": [
+          "oklch(10% 0.02 285)",
+          "oklch(16% 0.025 285)",
+          "oklch(24% 0.03 285)",
+          "oklch(34% 0.035 285)",
+          "oklch(48% 0.035 285)",
+          "oklch(64% 0.025 285)",
+          "oklch(80% 0.018 285)",
+          "oklch(94% 0.01 285)"
+        ]
+      },
+      "action-primary": {
+        "role": "primary",
+        "displayName": "Signal Primary",
+        "canonical": "$primary",
+        "tonalRamp": [
+          "oklch(16% 0.08 330)",
+          "oklch(25% 0.12 330)",
+          "oklch(36% 0.16 330)",
+          "oklch(48% 0.20 330)",
+          "oklch(60% 0.22 330)",
+          "oklch(72% 0.16 330)",
+          "oklch(84% 0.08 330)",
+          "oklch(95% 0.03 330)"
+        ]
+      },
+      "focus-accent": {
+        "role": "primary",
+        "displayName": "Focus Phosphor",
+        "canonical": "$accent",
+        "tonalRamp": [
+          "oklch(18% 0.06 110)",
+          "oklch(28% 0.09 110)",
+          "oklch(40% 0.13 110)",
+          "oklch(54% 0.16 110)",
+          "oklch(68% 0.18 110)",
+          "oklch(78% 0.13 110)",
+          "oklch(88% 0.07 110)",
+          "oklch(96% 0.03 110)"
+        ]
+      },
+      "ready-success": {
+        "role": "status",
+        "displayName": "Ready Green",
+        "canonical": "$success",
+        "tonalRamp": [
+          "oklch(18% 0.06 150)",
+          "oklch(28% 0.08 150)",
+          "oklch(40% 0.11 150)",
+          "oklch(52% 0.14 150)",
+          "oklch(64% 0.15 150)",
+          "oklch(76% 0.11 150)",
+          "oklch(88% 0.06 150)",
+          "oklch(96% 0.025 150)"
+        ]
+      },
+      "warning-amber": {
+        "role": "status",
+        "displayName": "Approval Amber",
+        "canonical": "$warning",
+        "tonalRamp": [
+          "oklch(20% 0.05 85)",
+          "oklch(32% 0.08 85)",
+          "oklch(44% 0.11 85)",
+          "oklch(58% 0.14 85)",
+          "oklch(72% 0.15 85)",
+          "oklch(82% 0.10 85)",
+          "oklch(90% 0.055 85)",
+          "oklch(97% 0.02 85)"
+        ]
+      },
+      "blocked-error": {
+        "role": "status",
+        "displayName": "Blocked Red",
+        "canonical": "$error",
+        "tonalRamp": [
+          "oklch(18% 0.06 25)",
+          "oklch(28% 0.09 25)",
+          "oklch(40% 0.12 25)",
+          "oklch(52% 0.15 25)",
+          "oklch(64% 0.16 25)",
+          "oklch(76% 0.11 25)",
+          "oklch(88% 0.06 25)",
+          "oklch(96% 0.025 25)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Terminal Display",
+        "purpose": "Rare destination title use inside terminal constraints."
+      },
+      "body": {
+        "displayName": "Terminal Body",
+        "purpose": "Transcript, help text, labels, and dense work surfaces."
+      },
+      "label": {
+        "displayName": "Terminal Label",
+        "purpose": "Badges, authority chips, status labels, shortcuts, and buttons."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "state-change-only",
+        "value": "150ms ease-out",
+        "purpose": "Use only when a Textual or web-served surface needs state feedback; no decorative choreography."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact-terminal",
+        "value": "80x24"
+      },
+      {
+        "name": "default-terminal",
+        "value": "120x36"
+      },
+      {
+        "name": "wide-terminal",
+        "value": "160x48"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary terminal action, stable in size and bright only when action is earned.",
+      "html": "<button class=\"ds-btn-primary\">Run</button>",
+      "css": ".ds-btn-primary { background: #ff00ff; color: #00ffff; border: 0; min-height: 32px; padding: 0 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; transition: background 150ms ease-out, color 150ms ease-out; } .ds-btn-primary:hover { background: #ff4dff; color: #ffffff; } .ds-btn-primary:focus-visible { outline: 3px solid #fefe22; outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary utility action for dense toolbars and transcript controls.",
+      "html": "<button class=\"ds-btn-ghost\">Copy</button>",
+      "css": ".ds-btn-ghost { background: #240046; color: #9aa0c8; border: 0; min-height: 28px; padding: 0 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; transition: background 150ms ease-out, color 150ms ease-out; } .ds-btn-ghost:hover { background: #32105d; color: #00ffff; } .ds-btn-ghost:focus-visible { outline: 3px solid #fefe22; outline-offset: 2px; }"
+    },
+    {
+      "name": "Form Input",
+      "kind": "input",
+      "refersTo": "field-input",
+      "description": "Compact Textual-style input with visible focus and no dimension shift.",
+      "html": "<label class=\"ds-field\"><span>Provider URL</span><input class=\"ds-input\" value=\"http://127.0.0.1:9099\" /></label>",
+      "css": ".ds-field { display: grid; gap: 6px; color: #00ffff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; } .ds-input { background: #101010; color: #00ffff; border: 1px solid #ff00ff; min-height: 34px; padding: 0 10px; font-family: inherit; } .ds-input:focus-visible { outline: 3px solid #fefe22; outline-offset: 2px; background: #1a102a; }"
+    },
+    {
+      "name": "Destination Header",
+      "kind": "custom",
+      "refersTo": "destination-header",
+      "description": "Screen contract header with title, purpose, readiness, authority, and primary action.",
+      "html": "<section class=\"ds-destination-header\"><div><strong>Console</strong><span>Live agentic work</span></div><span class=\"ds-badge\">Local</span></section>",
+      "css": ".ds-destination-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; background: #101010; color: #00ffff; border: 2px solid #33ccff; padding: 12px 16px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; } .ds-destination-header div { display: grid; gap: 2px; } .ds-destination-header span { color: #9aa0c8; font-weight: 500; } .ds-badge { background: #240046; color: #39ff14 !important; padding: 2px 8px; font-weight: 700 !important; }"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Flat working region with border-defined structure rather than shadow elevation.",
+      "html": "<section class=\"ds-panel\"><strong>Staged Context</strong><p>3 sources ready for Console.</p></section>",
+      "css": ".ds-panel { background: #101010; color: #00ffff; border: 1px solid #32324a; padding: 12px 16px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; } .ds-panel strong { display: block; margin-bottom: 6px; } .ds-panel p { margin: 0; color: #9aa0c8; }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "status-badge",
+      "description": "One-line readable state label. Color supports the label, never replaces it.",
+      "html": "<span class=\"ds-status-badge\">Approval required</span>",
+      "css": ".ds-status-badge { display: inline-flex; align-items: center; min-height: 22px; background: #3a3210; color: #fefe22; border: 1px solid #fefe22; padding: 0 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }"
+    },
+    {
+      "name": "Recovery Callout",
+      "kind": "custom",
+      "refersTo": "recovery-callout",
+      "description": "Blocked-state surface that names owner, problem, impact, and next action.",
+      "html": "<aside class=\"ds-recovery\"><strong>Provider blocked</strong><p>llama.cpp is not reachable at 127.0.0.1:9099.</p><button>Configure provider</button></aside>",
+      "css": ".ds-recovery { background: rgba(254, 254, 34, 0.12); color: #00ffff; border: 1px solid #fefe22; padding: 12px 16px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; } .ds-recovery strong { color: #fefe22; } .ds-recovery p { color: #d7d2a8; } .ds-recovery button { background: #ff00ff; color: #00ffff; border: 0; padding: 6px 10px; font-family: inherit; font-weight: 700; } .ds-recovery button:focus-visible { outline: 3px solid #fefe22; outline-offset: 2px; }"
+    },
+    {
+      "name": "Tab Link",
+      "kind": "nav",
+      "refersTo": "navigation-tab",
+      "description": "Compact destination navigation with visible active state and no hidden workflow state.",
+      "html": "<nav class=\"ds-tabs\"><a>Home</a><a class=\"active\">Console</a><a>Library</a><a>Study</a></nav>",
+      "css": ".ds-tabs { display: flex; gap: 4px; background: #0d0221; padding: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; } .ds-tabs a { color: #9aa0c8; background: #101010; padding: 6px 10px; text-decoration: none; font-weight: 600; } .ds-tabs a:hover { color: #00ffff; background: #240046; } .ds-tabs a.active { color: #0d0221; background: #fefe22; font-weight: 800; } .ds-tabs a:focus-visible { outline: 3px solid #ff00ff; outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Neon Workbench",
+    "overview": "This system is a dense terminal workbench for controlled agentic work: cyberpunk in atmosphere, efficient in layout, effective in state exposure, and cozy enough to keep users inside long-running workflows. The interface should feel like a trusted local control room, not a decorative command-line costume. Color and borders exist to reveal state, focus, authority, and recovery.\n\nThe visual model is themeable Textual UI. Semantic variables such as `$background`, `$panel`, `$surface`, `$primary`, `$accent`, `$success`, `$warning`, and `$error` are the source of truth, with `ds-*` aliases documenting product-level roles. Future work should preserve the compact screen grammar: global destination navigation, destination header, local mode bar, primary list or queue, main workspace, optional inspector, and footer status.\n\nReject generic chatbot surfaces, study-only framing, SaaS dashboard tropes, marketing-card layouts, vague \"AI assistant\" language, hidden recovery states, and interfaces that require log reading to understand status. Console is the live work surface; other destinations prepare, inspect, organize, configure, or hand off work.",
+    "keyCharacteristics": [
+      "Terminal-native density with readable labels.",
+      "Themeable semantic tokens, not one hardcoded palette.",
+      "Status and source authority visible before action.",
+      "Flat by default, structured by borders, panels, and tonal layers.",
+      "Keyboard-first focus with no layout shifts on hover or focus."
+    ],
+    "rules": [
+      {
+        "name": "The Semantic First Rule",
+        "body": "Never choose a color because it looks cyberpunk. Choose the token that names the state: focus, ready, running, warning, approval required, blocked, error, workspace, server, local, dry-run, synced, or conflict.",
+        "section": "colors"
+      },
+      {
+        "name": "The Rare Neon Rule",
+        "body": "Bright accent color is earned by state or action. It must not become decoration, background wash, or page mood.",
+        "section": "colors"
+      },
+      {
+        "name": "The Cell Discipline Rule",
+        "body": "Do not simulate web typography inside Textual. Use one-cell rhythm, bold weight, concise copy, and region hierarchy.",
+        "section": "typography"
+      },
+      {
+        "name": "The Label Before Color Rule",
+        "body": "Every important colored state needs readable text. Color supports recognition; labels carry meaning.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Control Room Rule",
+        "body": "Surfaces are flat at rest. Use tonal layering, borders, and labeled state instead of drop shadows, blur, or glass effects.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Border Has A Job Rule",
+        "body": "Borders define regions, focus, approval, recovery, or source authority. Decorative borders are forbidden.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do use Textual semantic tokens and `ds-*` aliases for new product UI.",
+      "Do keep Console as the live work surface; destinations prepare, inspect, organize, configure, or hand off work.",
+      "Do expose local, server, workspace, remote-only, dry-run, syncing, synced, conflict, ready, blocked, approval required, and unavailable states as readable labels.",
+      "Do preserve keyboard focus with `outline: heavy $accent` or the theme-aware equivalent.",
+      "Do keep hover and focus states dimensionally stable.",
+      "Do use skeleton states, explicit empty states, and recovery callouts instead of silent disabled controls.",
+      "Do use compact panels and inspectors when they help scan dense work."
+    ],
+    "donts": [
+      "Don't make Chatbook feel like a generic chatbot, a study-only app, a file manager, or a decorative terminal skin.",
+      "Don't use SaaS dashboard tropes, marketing-card layouts, vague \"AI assistant\" language, hidden recovery states, or interfaces that require reading logs to understand status.",
+      "Don't collapse Personas, Skills, MCP, ACP, Schedules, Workflows, Library, Study, and Workspaces into one undifferentiated \"agents\" bucket.",
+      "Don't turn every destination into a live agent console.",
+      "Don't use side-stripe accent borders on cards, list items, callouts, or alerts. If a colored state is needed, use a full border, background tint, status badge, or explicit icon/label.",
+      "Don't use gradient text, decorative glass blur, bouncy motion, or full-saturation accents on inactive states.",
+      "Don't hide why an action is disabled. Give the recovery path in the surface, tooltip, inspector, or command palette."
+    ]
+  }
+}

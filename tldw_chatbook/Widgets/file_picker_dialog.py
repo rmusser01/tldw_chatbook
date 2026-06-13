@@ -63,12 +63,14 @@ class EvalFilePickerDialog(ModalScreen):
     
     def _get_default_filters(self) -> Filters:
         """Get default file filters for evaluation files."""
+        # Filters require callable testers; glob strings here crash the picker
+        # (TypeError: 'str' object is not callable). Use the create_filter helper.
         return Filters(
-            ("All Evaluation Files", "*.yaml;*.yml;*.json;*.csv;*.tsv"),
-            ("YAML Files", "*.yaml;*.yml"),
-            ("JSON Files", "*.json"),
-            ("CSV Files", "*.csv;*.tsv"),
-            ("All Files", "*.*")
+            ("All Evaluation Files", create_filter("*.yaml;*.yml;*.json;*.csv;*.tsv")),
+            ("YAML Files", create_filter("*.yaml;*.yml")),
+            ("JSON Files", create_filter("*.json")),
+            ("CSV Files", create_filter("*.csv;*.tsv")),
+            ("All Files", lambda path: True),
         )
     
     def compose(self) -> ComposeResult:
@@ -240,7 +242,12 @@ class QuickPickerWidget(Container):
         with Horizontal(classes="quick-picker"):
             yield Label(self.label, classes="picker-label")
             yield Static("No file selected", id="selected-file-display", classes="file-display")
-            yield Button("Browse...", id="browse-button", classes="browse-button")
+            yield Button(
+                "Browse...",
+                id="browse-button",
+                classes="browse-button",
+                tooltip=f"Choose {self.file_types} from disk.",
+            )
     
     @on(Button.Pressed, "#browse-button")
     def handle_browse(self):

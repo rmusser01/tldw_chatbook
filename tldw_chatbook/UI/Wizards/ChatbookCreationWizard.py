@@ -13,6 +13,7 @@ Implements the 5-step chatbook creation workflow:
 5. Progress & Completion
 """
 
+import asyncio
 import json
 from pathlib import Path
 from datetime import datetime
@@ -33,6 +34,14 @@ from .BaseWizard import WizardContainer, WizardStep, WizardStepConfig, WizardScr
 from ..Widgets.SmartContentTree import SmartContentTree, ContentNodeData, ContentSelectionChanged
 from ...Chatbooks.chatbook_creator import ChatbookCreator
 from ...Chatbooks.chatbook_models import ContentType
+from ...Chatbooks.server_chatbook_service import (
+    build_server_job_record,
+    record_server_job,
+)
+from ..server_chatbook_service_lease import (
+    close_server_chatbook_service_lease,
+    server_chatbook_service_lease,
+)
 
 if TYPE_CHECKING:
     from ...app import TldwCli
@@ -332,10 +341,24 @@ class ContentSelectionStep(WizardStep):
 
 class ExportOptionsStep(WizardStep):
     """Step 3: Export Options."""
+
+    def on_show(self) -> None:
+        """Apply initial execution mode when the step is first shown."""
+        super().on_show()
+        if getattr(self.wizard, "initial_execution_mode", "local") == "server":
+            self.query_one("#execution-mode", RadioSet).pressed_index = 1
     
     
     def compose(self) -> ComposeResult:
         """Compose export options UI."""
+        with Container(classes="option-group"):
+            yield Static("Execution Mode", classes="option-title")
+            yield RadioSet(
+                RadioButton("Local export (Recommended)", value=True, id="mode-local"),
+                RadioButton("Server export", id="mode-server"),
+                id="execution-mode"
+            )
+
         # Format selection
         with Container(classes="option-group"):
             yield Static("Format", classes="option-title")
@@ -409,6 +432,11 @@ class ExportOptionsStep(WizardStep):
     
     def get_step_data(self) -> Dict[str, Any]:
         """Get export options."""
+        execution_mode = "local"
+        mode_set = self.query_one("#execution-mode", RadioSet)
+        if mode_set.pressed_button and mode_set.pressed_button.id == "mode-server":
+            execution_mode = "server"
+
         # Get selected format
         format_map = {
             "format-zip": "zip",
@@ -423,6 +451,7 @@ class ExportOptionsStep(WizardStep):
             selected_format = format_map.get(format_set.pressed_button.id, "zip")
         
         return {
+            "execution_mode": execution_mode,
             "format": selected_format,
             "compression": self.query_one("#enable-compression", Checkbox).value,
             "include_embeddings": self.query_one("#include-embeddings", Checkbox).value,
@@ -527,11 +556,14 @@ class PreviewConfirmStep(WizardStep):
         export_format = export_options.get("format", "zip")
         filename = f"{safe_name}_{timestamp}.{export_format}"
         export_path = Path.home() / "Documents" / "Chatbooks" / filename
-        
-        self.query_one("#export-path", Static).update(str(export_path))
-        
-        # Store export path in wizard data
-        self.wizard.wizard_data["export_path"] = str(export_path)
+        execution_mode = export_options.get("execution_mode", "local")
+
+        if execution_mode == "server":
+            self.query_one("#export-path", Static).update("Server-side export via configured TLDW API")
+            self.wizard.wizard_data["export_path"] = ""
+        else:
+            self.query_one("#export-path", Static).update(str(export_path))
+            self.wizard.wizard_data["export_path"] = str(export_path)
     
     def get_step_data(self) -> Dict[str, Any]:
         """Get confirmation data."""
@@ -599,7 +631,9 @@ class ProgressStep(WizardStep):
             basic_info = self.wizard.wizard_data.get("basic-info", {})
             selections = self.wizard.wizard_data.get("content-selection", {}).get("selections", {})
             export_options = self.wizard.wizard_data.get("export-options", {})
-            export_path = Path(self.wizard.wizard_data.get("export_path", ""))
+            execution_mode = export_options.get("execution_mode", "local")
+            export_path_str = self.wizard.wizard_data.get("export_path", "")
+            export_path = Path(export_path_str) if export_path_str else None
             
             # Update progress: Validating
             self._update_status("status-validate", "active", "⟳ Validating content...")
@@ -618,6 +652,70 @@ class ProgressStep(WizardStep):
                 # Fallback to loading config directly
                 from ...config import load_settings
                 config = load_settings()
+
+            if execution_mode == "server":
+                lease = server_chatbook_service_lease(
+                    self.wizard.app_instance,
+                    config=config,
+                    policy_enforcer=getattr(self.wizard.app_instance, "service_policy_enforcer", None),
+                )
+                service = lease.service
+                try:
+                    self._update_status("status-validate", "completed", "✓ Prepared server export")
+                    self._update_status("status-conversations", "active", "⟳ Sending export request...")
+                    self._update_progress(25)
+
+                    response = await service.export_chatbook_from_selection(
+                        name=basic_info.get("name", "Untitled"),
+                        description=basic_info.get("description", ""),
+                        selections=selections,
+                        author=basic_info.get("author"),
+                        include_media=export_options.get("include_media", True),
+                        media_quality="compressed",
+                        include_embeddings=export_options.get("include_embeddings", False),
+                        tags=basic_info.get("tags", []),
+                        async_mode=True,
+                    )
+
+                    job_id = response.get("job_id")
+                    if not job_id:
+                        raise ValueError(response.get("message", "Server export did not return a job id."))
+
+                    job_result = response
+                    for _ in range(60):
+                        status = str(job_result.get("status", "")).lower()
+                        if status in {"completed", "success", "failed", "error", "cancelled"}:
+                            break
+                        self._update_status(
+                            "status-compress",
+                            "active",
+                            f"⟳ Server export {status or 'running'} ({job_result.get('progress_percentage', 0)}%)..."
+                        )
+                        self._update_progress(max(30, min(95, int(job_result.get("progress_percentage", 30) or 30))))
+                        await asyncio.sleep(1)
+                        job_result = await service.get_export_job(job_id)
+
+                    if hasattr(self.wizard, "app_instance"):
+                        record_server_job(
+                            self.wizard.app_instance,
+                            build_server_job_record("export", job_result),
+                        )
+
+                    final_status = str(job_result.get("status", "")).lower()
+                    if final_status not in {"completed", "success"}:
+                        raise ValueError(
+                            job_result.get("message")
+                            or f"Server export ended with status '{job_result.get('status', 'unknown')}'."
+                        )
+
+                    self._update_status("status-conversations", "completed", "✓ Submitted export request")
+                    self._update_status("status-compress", "completed", "✓ Server export completed")
+                    self._update_status("status-finalize", "completed", "✓ Export ready")
+                    self._update_progress(100)
+                    await self._show_server_completion(job_result)
+                    return
+                finally:
+                    await close_server_chatbook_service_lease(lease)
             
             db_config = config.get("database", {})
             db_paths = {
@@ -632,6 +730,8 @@ class ProgressStep(WizardStep):
             creator = ChatbookCreator(db_paths)
             
             # Ensure export directory exists
+            if export_path is None:
+                raise ValueError("Export path is not configured for local chatbook creation.")
             export_path.parent.mkdir(parents=True, exist_ok=True)
             
             # Update status before starting
@@ -743,6 +843,30 @@ class ProgressStep(WizardStep):
         next_button = self.wizard.query_one("#wizard-next", Button)
         next_button.label = "Close"
         next_button.variant = "default"
+
+    async def _show_server_completion(self, job_result: Dict[str, Any]) -> None:
+        """Show completion details for server-backed exports."""
+        self.is_complete = True
+        self.query_one("#progress-title", Static).update("✅ Server Chatbook Export Ready!")
+
+        completion = self.query_one("#completion-container", Container)
+        completion.remove_class("hidden")
+
+        details = [
+            f"Job ID: {job_result.get('job_id', 'unknown')}",
+            f"Status: {job_result.get('status', 'unknown')}",
+        ]
+        if job_result.get("chatbook_name"):
+            details.insert(0, f"📦 {job_result['chatbook_name']}")
+        if job_result.get("download_url"):
+            details.append(f"Download: {job_result['download_url']}")
+
+        self.query_one("#completion-details", Static).update("\n".join(details))
+
+        self.wizard.can_go_back = False
+        next_button = self.wizard.query_one("#wizard-next", Button)
+        next_button.label = "Close"
+        next_button.variant = "default"
     
     async def _show_error(self, error_message: str) -> None:
         """Show error message."""
@@ -807,7 +931,8 @@ class ChatbookCreationWizard(WizardScreen):
 class ChatbookCreationWizardContainer(WizardContainer):
     """The actual chatbook creation wizard implementation."""
     
-    def __init__(self, app_instance, template_data=None, **kwargs):
+    def __init__(self, app_instance, template_data=None, initial_execution_mode="local", **kwargs):
+        self.initial_execution_mode = initial_execution_mode
         # Create steps with proper config
         steps = self._create_steps()
         

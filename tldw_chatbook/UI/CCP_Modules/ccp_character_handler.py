@@ -1,12 +1,13 @@
 """Handler for character-related operations in the CCP window."""
 
-from typing import TYPE_CHECKING, Optional, Dict, Any, List
-from loguru import logger
-from textual import work
-from textual.widgets import Select, Button, Input, TextArea, Static
-import json
 import base64
+import json
+from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional, Dict, Any, List, Union
+
+from loguru import logger
+from textual.widgets import Select, Button, Input, TextArea, Static
 
 from .ccp_messages import CharacterMessage, ViewChangeMessage
 
@@ -14,6 +15,140 @@ if TYPE_CHECKING:
     from ..Conv_Char_Window import CCPWindow
 
 logger = logger.bind(module="CCPCharacterHandler")
+CharacterId = Union[int, str]
+
+
+def _coerce_local_character_id(character_id: CharacterId) -> CharacterId:
+    """Normalize local CCP IDs before calling the character-card DB API."""
+    raw_id = str(character_id).rsplit(":", 1)[-1]
+    try:
+        return int(raw_id)
+    except (TypeError, ValueError):
+        return raw_id
+
+
+def _default_character_db() -> Any:
+    """Return the configured local character DB for legacy CCP helpers."""
+    from ...config import get_chachanotes_db_lazy
+
+    return get_chachanotes_db_lazy()
+
+
+def _normalize_character_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Map widget field aliases into the local character-card schema."""
+    payload = dict(data)
+    if "first_mes" in payload and "first_message" not in payload:
+        payload["first_message"] = payload["first_mes"]
+    return payload
+
+
+def search_characters_fts(search_term: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """FTS search over character cards for large libraries.
+
+    The user's raw term is wrapped as a quoted FTS5 prefix query
+    (``"term"*``) so operator characters (``"``,  ``(``, ``-``, ...) are
+    treated literally and matching is prefix-based, consistent with the
+    in-memory substring filter used for small libraries.
+    """
+    term = (search_term or "").strip()
+    if not term:
+        return []
+    db = _default_character_db()
+    if db is None:
+        return []
+    escaped = term.replace('"', '""')
+    match_query = f'"{escaped}"*'
+    return [
+        _normalize_character_payload(row)
+        for row in db.search_character_cards(match_query, limit=limit)
+    ]
+
+
+def fetch_all_characters() -> List[Dict[str, Any]]:
+    """Compatibility helper for CCP tests and UI refreshes."""
+    from ...Character_Chat.Character_Chat_Lib import fetch_character_names
+
+    characters = fetch_character_names()
+    if isinstance(characters, dict):
+        return [
+            {"id": str(char_id), "name": name}
+            for char_id, name in characters.items()
+        ]
+
+    return [
+        {"id": str(character.get("id")), "name": character.get("name", "Unnamed")}
+        for character in characters
+        if character.get("id") is not None
+    ]
+
+
+def fetch_character_by_id(character_id: CharacterId) -> Dict[str, Any]:
+    """Compatibility helper for character loads."""
+    character = _default_character_db().get_character_card_by_id(
+        _coerce_local_character_id(character_id)
+    )
+    return character or {}
+
+
+def create_character(data: Dict[str, Any]) -> CharacterId:
+    """Compatibility helper for character creation."""
+    return _default_character_db().add_character_card(_normalize_character_payload(data))
+
+
+def update_character(character_id: CharacterId, data: Dict[str, Any]) -> bool:
+    """Compatibility helper for character updates."""
+    local_id = _coerce_local_character_id(character_id)
+    db = _default_character_db()
+    current = db.get_character_card_by_id(local_id)
+    if not current:
+        return False
+    expected_version = int(current.get("version") or 1)
+    return bool(
+        db.update_character_card(
+            local_id,
+            _normalize_character_payload(data),
+            expected_version,
+        )
+    )
+
+
+def delete_character(character_id: CharacterId, expected_version: int) -> bool:
+    """Soft-delete a character card with optimistic locking.
+
+    Thin seam over ``soft_delete_character_card`` for the destination
+    workbench. Returns ``True`` on success (including the already-deleted
+    idempotent case, which the DB API also reports as ``True``) and ``False``
+    when the local DB is unavailable or the id is not a local numeric id.
+
+    Raises:
+        ConflictError: When ``expected_version`` no longer matches the DB
+            record (or the record disappeared) - the optimistic lock was lost.
+        CharactersRAGDBError: For other database failures.
+    """
+    local_id = _coerce_local_character_id(character_id)
+    db = _default_character_db()
+    if db is None:
+        logger.warning("delete_character: no local character DB available.")
+        return False
+    try:
+        numeric_id = int(local_id)
+    except (TypeError, ValueError):
+        logger.warning(f"delete_character: non-numeric character id {character_id!r}.")
+        return False
+    return bool(db.soft_delete_character_card(numeric_id, int(expected_version)))
+
+
+def import_character_card(file_path: str) -> Any:
+    """Compatibility helper for character import.
+
+    Delegates to ``import_and_save_character_from_file`` (the previous
+    ``ccv3_parser.import_character_card_json`` target is an empty module).
+    Returns the imported character's DB id, or ``None`` when the file does
+    not contain a valid character card.
+    """
+    from ...Character_Chat.Character_Chat_Lib import import_and_save_character_from_file
+
+    return import_and_save_character_from_file(_default_character_db(), file_path)
 
 
 class CCPCharacterHandler:
@@ -27,29 +162,186 @@ class CCPCharacterHandler:
         """
         self.window = window
         self.app_instance = window.app_instance
-        self.current_character_id: Optional[int] = None
+        self.current_character_id: Optional[CharacterId] = None
         self.current_character_data: Dict[str, Any] = {}
+        self.character_list: List[Dict[str, Any]] = []
         self.pending_image_data: Optional[str] = None
         
         logger.debug("CCPCharacterHandler initialized")
+
+    def _current_mode(self) -> str:
+        """Resolve the currently selected backend mode, defaulting to local."""
+        candidates = (
+            getattr(getattr(self.window, "state", None), "runtime_backend", None),
+            getattr(self.window, "runtime_backend", None),
+            getattr(self.app_instance, "runtime_backend", None),
+            getattr(self.app_instance, "current_runtime_backend", None),
+        )
+        for candidate in candidates:
+            if candidate in {"local", "server"}:
+                return candidate
+        return "local"
+
+    def _notify(self, message: str, severity: str = "warning") -> None:
+        """Surface a notification when CCP execution helpers cannot complete."""
+        notifier = getattr(self.window, "notify", None)
+        if callable(notifier):
+            notifier(message, severity=severity)
+
+    def _call_from_thread(self, callback: Any, *args: Any) -> Any:
+        """Schedule a callback on Textual's main thread from a handler worker."""
+        call_from_thread = getattr(self.window, "call_from_thread", None)
+        if callable(call_from_thread):
+            return call_from_thread(callback, *args)
+        return self.window.app.call_from_thread(callback, *args)
+
+    def _current_chat_id(self, chat_id: Optional[str] = None) -> str:
+        """Resolve the active chat identifier for chat-scoped execution helpers."""
+        candidates = (
+            chat_id,
+            getattr(getattr(self.window, "state", None), "selected_conversation_id", None),
+            getattr(getattr(self.window, "conversation_handler", None), "current_conversation_id", None),
+        )
+        for candidate in candidates:
+            if candidate not in {None, ""}:
+                return str(candidate)
+        raise ValueError("Select a conversation first.")
+
+    async def list_chat_greetings(self, chat_id: Optional[str] = None) -> Dict[str, Any]:
+        """List server chat greetings for the active CCP conversation."""
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        if service is None or not hasattr(service, "list_chat_greetings"):
+            self._notify("Chat greeting execution support is not available in the current backend.")
+            return {}
+
+        try:
+            return await service.list_chat_greetings(
+                self._current_chat_id(chat_id),
+                mode=self._current_mode(),
+            )
+        except ValueError as exc:
+            logger.warning("Chat greetings unavailable: {}", exc)
+            self._notify(str(exc))
+            return {}
+        except Exception:
+            logger.error("Error loading chat greetings", exc_info=True)
+            self._notify("Failed to load chat greetings.", severity="error")
+            return {}
+
+    async def select_chat_greeting(self, index: int, chat_id: Optional[str] = None) -> Dict[str, Any]:
+        """Select a greeting for the active CCP conversation."""
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        if service is None or not hasattr(service, "select_chat_greeting"):
+            self._notify("Chat greeting execution support is not available in the current backend.")
+            return {}
+
+        try:
+            return await service.select_chat_greeting(
+                self._current_chat_id(chat_id),
+                index,
+                mode=self._current_mode(),
+            )
+        except ValueError as exc:
+            logger.warning("Chat greeting selection unavailable: {}", exc)
+            self._notify(str(exc))
+            return {}
+        except Exception:
+            logger.error("Error selecting chat greeting", exc_info=True)
+            self._notify("Failed to select chat greeting.", severity="error")
+            return {}
+
+    async def list_chat_presets(self) -> Dict[str, Any]:
+        """List server chat prompt presets available to CCP execution."""
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        if service is None or not hasattr(service, "list_chat_presets"):
+            self._notify("Chat preset execution support is not available in the current backend.")
+            return {}
+
+        try:
+            return await service.list_chat_presets(mode=self._current_mode())
+        except ValueError as exc:
+            logger.warning("Chat presets unavailable: {}", exc)
+            self._notify(str(exc))
+            return {}
+        except Exception:
+            logger.error("Error loading chat presets", exc_info=True)
+            self._notify("Failed to load chat presets.", severity="error")
+            return {}
+
+    async def create_chat_preset(self, request_data: Any) -> Dict[str, Any]:
+        """Create a server chat prompt preset through the shared scope service."""
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        if service is None or not hasattr(service, "create_chat_preset"):
+            self._notify("Chat preset execution support is not available in the current backend.")
+            return {}
+
+        try:
+            return await service.create_chat_preset(request_data, mode=self._current_mode())
+        except ValueError as exc:
+            logger.warning("Chat preset creation unavailable: {}", exc)
+            self._notify(str(exc))
+            return {}
+        except Exception:
+            logger.error("Error creating chat preset", exc_info=True)
+            self._notify("Failed to create chat preset.", severity="error")
+            return {}
+
+    async def update_chat_preset(self, preset_id: str, request_data: Any) -> Dict[str, Any]:
+        """Update a server chat prompt preset through the shared scope service."""
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        if service is None or not hasattr(service, "update_chat_preset"):
+            self._notify("Chat preset execution support is not available in the current backend.")
+            return {}
+
+        try:
+            return await service.update_chat_preset(
+                preset_id,
+                request_data,
+                mode=self._current_mode(),
+            )
+        except ValueError as exc:
+            logger.warning("Chat preset update unavailable: {}", exc)
+            self._notify(str(exc))
+            return {}
+        except Exception:
+            logger.error("Error updating chat preset", exc_info=True)
+            self._notify("Failed to update chat preset.", severity="error")
+            return {}
+
+    async def delete_chat_preset(self, preset_id: str) -> Dict[str, Any]:
+        """Delete a server chat prompt preset through the shared scope service."""
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        if service is None or not hasattr(service, "delete_chat_preset"):
+            self._notify("Chat preset execution support is not available in the current backend.")
+            return {}
+
+        try:
+            return await service.delete_chat_preset(preset_id, mode=self._current_mode())
+        except ValueError as exc:
+            logger.warning("Chat preset delete unavailable: {}", exc)
+            self._notify(str(exc))
+            return {}
+        except Exception:
+            logger.error("Error deleting chat preset", exc_info=True)
+            self._notify("Failed to delete chat preset.", severity="error")
+            return {}
     
     async def refresh_character_list(self) -> None:
         """Refresh the character select dropdown."""
         try:
-            from ...Character_Chat.Character_Chat_Lib import fetch_character_names
-            
-            # Get character names
-            characters = fetch_character_names()
-            
-            # Update the select widget
-            character_select = self.window.query_one("#conv-char-character-select", Select)
-            
-            # Convert to Select options format
-            options = [(name, str(char_id)) for char_id, name in characters.items()]
-            
-            # Update the select widget
-            character_select.set_options(options)
-            
+            self.character_list = fetch_all_characters()
+            options = [(char.get("name", "Unnamed"), str(char.get("id"))) for char in self.character_list]
+
+            try:
+                character_select = self.window.query_one("#conv-char-character-select", Select)
+                character_select.set_options(options)
+            except Exception:
+                logger.debug("Legacy character Select not mounted; using destination-native list.")
+
+            refresh_destination_list = getattr(self.window, "refresh_character_library_list", None)
+            if callable(refresh_destination_list):
+                await refresh_destination_list(self.character_list)
+
             logger.info(f"Refreshed character list with {len(options)} characters")
             
         except Exception as e:
@@ -61,7 +353,7 @@ class CCPCharacterHandler:
             character_select = self.window.query_one("#conv-char-character-select", Select)
             
             if character_select.value:
-                character_id = int(character_select.value)
+                character_id = str(character_select.value)
                 await self.load_character(character_id)
             else:
                 logger.warning("No character selected to load")
@@ -69,7 +361,7 @@ class CCPCharacterHandler:
         except Exception as e:
             logger.error(f"Error loading selected character: {e}", exc_info=True)
     
-    async def load_character(self, character_id: int) -> None:
+    async def load_character(self, character_id: CharacterId) -> None:
         """Load a character and display the card (async wrapper).
         
         Args:
@@ -79,15 +371,13 @@ class CCPCharacterHandler:
         
         # Run the sync database operation in a worker thread
         self.window.run_worker(
-            self._load_character_sync,
-            character_id,
+            partial(self._load_character_sync, character_id),
             thread=True,
             exclusive=True,
             name=f"load_character_{character_id}"
         )
     
-    @work(thread=True)
-    def _load_character_sync(self, character_id: int) -> None:
+    def _load_character_sync(self, character_id: CharacterId) -> None:
         """Sync method to load character data in a worker thread.
         
         Args:
@@ -96,29 +386,26 @@ class CCPCharacterHandler:
         logger.info(f"Loading character {character_id}")
         
         try:
-            from ...Character_Chat.Character_Chat_Lib import fetch_character_card_by_id
-            
-            # Load the character card (sync database operation)
-            card_data = fetch_character_card_by_id(character_id)
+            card_data = fetch_character_by_id(character_id)
             
             if card_data:
                 self.current_character_id = character_id
                 self.current_character_data = card_data
                 
                 # Post messages from worker thread using call_from_thread
-                self.window.call_from_thread(
+                self._call_from_thread(
                     self.window.post_message,
                     CharacterMessage.Loaded(character_id, card_data)
                 )
                 
                 # Switch view to show character card
-                self.window.call_from_thread(
+                self._call_from_thread(
                     self.window.post_message,
                     ViewChangeMessage.Requested("character_card", {"character_id": character_id})
                 )
                 
                 # Update UI on main thread
-                self.window.call_from_thread(self._display_character_card)
+                self._call_from_thread(self._display_character_card)
                 
                 logger.info(f"Character {character_id} loaded successfully")
             else:
@@ -134,6 +421,15 @@ class CCPCharacterHandler:
                 return
             
             data = self.current_character_data
+
+            try:
+                card_widget = self.window.query_one("#ccp-character-card-view")
+                if hasattr(card_widget, "load_character"):
+                    card_widget.load_character(data)
+                    logger.debug(f"Displayed character card for {data.get('name', 'Unknown')}")
+                    return
+            except Exception as e:
+                logger.warning(f"Could not use character card widget loader: {e}")
             
             # Update all the character card display fields
             self._update_field("#ccp-card-name-display", data.get("name", "N/A"))
@@ -232,6 +528,14 @@ class CCPCharacterHandler:
         """Populate the character editor fields with current data."""
         try:
             data = self.current_character_data
+
+            try:
+                editor_widget = self.window.query_one("#ccp-character-editor-view")
+                if hasattr(editor_widget, "load_character"):
+                    editor_widget.load_character(data)
+                    return
+            except Exception as e:
+                logger.warning(f"Could not use character editor widget loader: {e}")
             
             # Basic fields
             self._set_input_value("#ccp-editor-char-name-input", data.get("name", ""))
@@ -290,13 +594,31 @@ class CCPCharacterHandler:
         try:
             # Gather all field values
             character_data = self._gather_editor_data()
+            await self.save_character_data(character_data)
+
+        except Exception as e:
+            logger.error(f"Error saving character: {e}", exc_info=True)
+
+    async def save_character_data(self, character_data: Dict[str, Any]) -> None:
+        """Save character data from the current editor widget."""
+        try:
             
             if self.current_character_id:
                 # Update existing character
-                await self._update_character(self.current_character_id, character_data)
+                self.window.run_worker(
+                    partial(self._update_character, self.current_character_id, character_data),
+                    thread=True,
+                    exclusive=True,
+                    name=f"update_character_{self.current_character_id}",
+                )
             else:
                 # Create new character
-                await self._create_character(character_data)
+                self.window.run_worker(
+                    partial(self._create_character, character_data),
+                    thread=True,
+                    exclusive=True,
+                    name="create_character",
+                )
                 
         except Exception as e:
             logger.error(f"Error saving character: {e}", exc_info=True)
@@ -306,6 +628,13 @@ class CCPCharacterHandler:
         data = {}
         
         try:
+            try:
+                editor_widget = self.window.query_one("#ccp-character-editor-view")
+                if hasattr(editor_widget, "get_character_data"):
+                    return editor_widget.get_character_data()
+            except Exception as e:
+                logger.warning(f"Could not gather data from character editor widget: {e}")
+
             # Basic fields
             data["name"] = self.window.query_one("#ccp-editor-char-name-input", Input).value
             data["description"] = self.window.query_one("#ccp-editor-char-description-textarea", TextArea).text
@@ -346,50 +675,59 @@ class CCPCharacterHandler:
         
         return data
     
-    @work(thread=True)
-    def _update_character(self, character_id: int, data: Dict[str, Any]) -> None:
+    def _update_character(
+        self,
+        character_id: Union[CharacterId, Dict[str, Any]],
+        data: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Update an existing character (sync worker method)."""
+        if data is None and isinstance(character_id, dict):
+            data = character_id
+            character_id = self.current_character_id
+
+        if data is None or character_id is None:
+            logger.error("Cannot update character without both ID and data")
+            return
+
         try:
-            from ...Character_Chat.Character_Chat_Lib import update_character_card
-            
-            success = update_character_card(character_id, data)
+            success = update_character(character_id, data)
             
             if success:
                 logger.info(f"Updated character {character_id}")
+                updated_data = dict(self.current_character_data)
+                updated_data.update(data)
+                self.current_character_data = updated_data
                 
                 # Post update message from worker thread
-                self.window.call_from_thread(
+                self._call_from_thread(
                     self.window.post_message,
-                    CharacterMessage.Updated(character_id, data)
+                    CharacterMessage.Updated(character_id, updated_data)
                 )
                 
                 # Refresh the character list on main thread
-                self.window.call_from_thread(self.refresh_character_list)
+                self._call_from_thread(self.refresh_character_list)
             else:
                 logger.error(f"Failed to update character {character_id}")
                 
         except Exception as e:
             logger.error(f"Error updating character: {e}", exc_info=True)
     
-    @work(thread=True)
     def _create_character(self, data: Dict[str, Any]) -> None:
         """Create a new character (sync worker method)."""
         try:
-            from ...Character_Chat.Character_Chat_Lib import add_character_card
-            
-            character_id = add_character_card(data)
+            character_id = create_character(data)
             
             if character_id:
                 logger.info(f"Created new character with ID {character_id}")
                 
                 # Post creation message from worker thread
-                self.window.call_from_thread(
+                self._call_from_thread(
                     self.window.post_message,
                     CharacterMessage.Created(character_id, data.get("name", ""), data)
                 )
                 
                 # Refresh the character list on main thread
-                self.window.call_from_thread(self.refresh_character_list)
+                self._call_from_thread(self.refresh_character_list)
                 
                 # Set as current character
                 self.current_character_id = character_id
@@ -442,12 +780,13 @@ class CCPCharacterHandler:
         
         try:
             # Create filters for character card files
+            # Filters need callable testers; glob strings crash the picker.
             filters = Filters(
-                ("Character Cards", "*.json;*.png;*.yaml;*.yml"),
-                ("JSON Files", "*.json"),
-                ("PNG Files (with embedded data)", "*.png"),
-                ("YAML Files", "*.yaml;*.yml"),
-                ("All Files", "*.*")
+                ("Character Cards", lambda p: p.suffix.lower() in (".json", ".png", ".yaml", ".yml")),
+                ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                ("PNG Files (with embedded data)", lambda p: p.suffix.lower() == ".png"),
+                ("YAML Files", lambda p: p.suffix.lower() in (".yaml", ".yml")),
+                ("All Files", lambda p: True),
             )
             
             # Create and show the file picker
@@ -472,10 +811,7 @@ class CCPCharacterHandler:
             file_path: Path to the character card file
         """
         try:
-            from ...Character_Chat.ccv3_parser import import_character_card_json
-            
-            # Import the character card
-            character_id = import_character_card_json(file_path)
+            character_id = import_character_card(file_path)
             
             if character_id:
                 logger.info(f"Imported character from {file_path}")

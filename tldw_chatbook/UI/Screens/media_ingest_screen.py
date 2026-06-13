@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from textual.app import ComposeResult
-from textual.containers import Container
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..MediaIngestWindowRebuilt import MediaIngestWindowRebuilt
+from .media_runtime_state import MediaRuntimeState
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -21,14 +21,36 @@ class MediaIngestScreen(BaseAppScreen):
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(app_instance, "ingest", **kwargs)
+        self.media_runtime_state: MediaRuntimeState = app_instance.media_runtime_state
+        self.media_ingest_window = None
         logger.info("MediaIngestScreen initialized with rebuilt window")
     
     def compose_content(self) -> ComposeResult:
         """Compose the media ingestion content using the rebuilt window."""
         # Use the rebuilt media ingestion window
-        yield MediaIngestWindowRebuilt(self.app_instance, id="media-ingest-window")
+        self.media_ingest_window = MediaIngestWindowRebuilt(self.app_instance, id="media-ingest-window")
+        self.media_ingest_window.runtime_state = self.media_runtime_state
+        yield self.media_ingest_window
     
     def on_mount(self) -> None:
         """Handle mount event."""
         super().on_mount()
         logger.info("MediaIngestScreen mounted with rebuilt MediaIngestWindowRebuilt")
+
+    async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
+        """Refresh the rebuilt ingest window when the active media backend changes."""
+        normalized_backend = str(runtime_backend or "").strip().lower()
+        if normalized_backend in {"local", "server"}:
+            self.app_instance.current_runtime_backend = normalized_backend
+            self.app_instance.runtime_backend = normalized_backend
+            self.media_runtime_state.reset_for_backend(normalized_backend)
+
+        ingest_window = self.media_ingest_window
+        if ingest_window is None:
+            try:
+                ingest_window = self.query_one(MediaIngestWindowRebuilt)
+            except Exception:
+                return
+
+        ingest_window.runtime_state = self.media_runtime_state
+        await ingest_window.refresh_backend_view()

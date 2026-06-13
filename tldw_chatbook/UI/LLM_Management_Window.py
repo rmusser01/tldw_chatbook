@@ -29,6 +29,12 @@ class LLMManagementWindow(Container):
     """
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+    $ds-surface-raised: $surface;
+    $ds-text-primary: $text;
+
     LLMManagementWindow {
         layout: horizontal;
         height: 100%;
@@ -60,12 +66,14 @@ class LLMManagementWindow(Container):
     }
     
     .llm-nav-button:hover {
-        background: $primary-lighten-2;
+        background: $ds-surface-raised;
+        color: $ds-text-primary;
     }
     
     .llm-nav-button.-active {
-        background: $primary;
-        text-style: bold;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        text-style: bold underline;
     }
     
     .sidebar-title {
@@ -283,12 +291,22 @@ class LLMManagementWindow(Container):
                 yield Label("Llama.cpp Server Executable Path:", classes="label")
                 with Container(classes="input_container"):
                     yield Input(id="llamacpp-exec-path", placeholder="/path/to/llama.cpp/build/bin/server")
-                    yield Button("Browse", id="llamacpp-browse-exec-button", classes="browse_button")
+                    yield Button(
+                        "Browse",
+                        id="llamacpp-browse-exec-button",
+                        classes="browse_button",
+                        tooltip="Choose the llama.cpp server executable.",
+                    )
                 
                 yield Label("GGUF Model File Path:", classes="label")
                 with Container(classes="input_container"):
                     yield Input(id="llamacpp-model-path", placeholder="/path/to/model.gguf")
-                    yield Button("Browse", id="llamacpp-browse-model-button", classes="browse_button")
+                    yield Button(
+                        "Browse",
+                        id="llamacpp-browse-model-button",
+                        classes="browse_button",
+                        tooltip="Choose a GGUF model file for llama.cpp.",
+                    )
                 
                 yield Label("Host:", classes="label")
                 yield Input(id="llamacpp-host", value="127.0.0.1")
@@ -322,12 +340,22 @@ class LLMManagementWindow(Container):
                 yield Label("Llamafile Executable (.llamafile):", classes="label")
                 with Container(classes="input_container"):
                     yield Input(id="llamafile-exec-path", placeholder="/path/to/model.llamafile")
-                    yield Button("Browse", id="llamafile-browse-exec-button", classes="browse_button")
+                    yield Button(
+                        "Browse",
+                        id="llamafile-browse-exec-button",
+                        classes="browse_button",
+                        tooltip="Choose the llamafile executable.",
+                    )
                 
                 yield Label("Optional External Model (GGUF):", classes="label")
                 with Container(classes="input_container"):
                     yield Input(id="llamafile-model-path", placeholder="/path/to/external-model.gguf (optional)")
-                    yield Button("Browse", id="llamafile-browse-model-button", classes="browse_button")
+                    yield Button(
+                        "Browse",
+                        id="llamafile-browse-model-button",
+                        classes="browse_button",
+                        tooltip="Choose an optional external GGUF model for llamafile.",
+                    )
                 
                 yield Label("Host:", classes="label")
                 yield Input(id="llamafile-host", value="127.0.0.1")
@@ -361,12 +389,22 @@ class LLMManagementWindow(Container):
                 yield Label("Python Interpreter Path:", classes="label")
                 with Container(classes="input_container"):
                     yield Input(id="vllm-python-path", value="python", placeholder="e.g., /path/to/venv/bin/python")
-                    yield Button("Browse", id="vllm-browse-python-button", classes="browse_button")
+                    yield Button(
+                        "Browse",
+                        id="vllm-browse-python-button",
+                        classes="browse_button",
+                        tooltip="Choose the Python interpreter used to launch vLLM.",
+                    )
                 
                 yield Label("Model Path (or HuggingFace Repo ID):", classes="label")
                 with Container(classes="input_container"):
                     yield Input(id="vllm-model-path", placeholder="e.g., /path/to/model or HuggingFaceName/ModelName")
-                    yield Button("Browse", id="vllm-browse-model-button", classes="browse_button")
+                    yield Button(
+                        "Browse",
+                        id="vllm-browse-model-button",
+                        classes="browse_button",
+                        tooltip="Choose a local model directory for vLLM, or type a Hugging Face repo ID.",
+                    )
                 
                 yield Label("Host:", classes="label")
                 yield Input(id="vllm-host", value="127.0.0.1")
@@ -391,17 +429,32 @@ class LLMManagementWindow(Container):
                 yield Label("Python Interpreter Path:", classes="label")
                 with Container(classes="input_container"):
                     yield Input(id="onnx-python-path", value="python", placeholder="e.g., /path/to/venv/bin/python")
-                    yield Button("Browse", id="onnx-browse-python-button", classes="browse_button")
+                    yield Button(
+                        "Browse",
+                        id="onnx-browse-python-button",
+                        classes="browse_button",
+                        tooltip="Choose the Python interpreter used to launch the ONNX server.",
+                    )
                 
                 yield Label("Path to your ONNX Server Script (.py):", classes="label")
                 with Container(classes="input_container"):
                     yield Input(id="onnx-script-path", placeholder="/path/to/your/onnx_server_script.py")
-                    yield Button("Browse Script", id="onnx-browse-script-button", classes="browse_button")
+                    yield Button(
+                        "Browse Script",
+                        id="onnx-browse-script-button",
+                        classes="browse_button",
+                        tooltip="Choose the ONNX server script to run.",
+                    )
                 
                 yield Label("Model to Load (Path for script):", classes="label")
                 with Container(classes="input_container"):
                     yield Input(id="onnx-model-path", placeholder="Path to your .onnx model file or directory")
-                    yield Button("Browse Model", id="onnx-browse-model-button", classes="browse_button")
+                    yield Button(
+                        "Browse Model",
+                        id="onnx-browse-model-button",
+                        classes="browse_button",
+                        tooltip="Choose the ONNX model file or directory to load.",
+                    )
                 
                 yield Label("Host:", classes="label")
                 yield Input(id="onnx-host", value="127.0.0.1", classes="input_field")
@@ -426,8 +479,12 @@ class LLMManagementWindow(Container):
                 with Container(classes="input_container"):
                     yield Input(id="transformers-models-dir-path",
                               placeholder="/path/to/your/hf_models_cache_or_local_dir")
-                    yield Button("Browse Dir", id="transformers-browse-models-dir-button",
-                               classes="browse_button")
+                    yield Button(
+                        "Browse Dir",
+                        id="transformers-browse-models-dir-button",
+                        classes="browse_button",
+                        tooltip="Choose the local Transformers models root directory.",
+                    )
                 
                 yield Button("List Local Models", id="transformers-list-local-models-button",
                            classes="action_button")
@@ -454,8 +511,12 @@ class LLMManagementWindow(Container):
                 with Container(classes="input_container"):
                     yield Input(id="transformers-script-path", 
                               placeholder="/path/to/your_transformers_server_script.py")
-                    yield Button("Browse Script", id="transformers-browse-script-button", 
-                               classes="browse_button")
+                    yield Button(
+                        "Browse Script",
+                        id="transformers-browse-script-button",
+                        classes="browse_button",
+                        tooltip="Choose the custom Transformers server script to run.",
+                    )
                 
                 yield Label("Model to Load (ID or Path for script):", classes="label")
                 yield Input(id="transformers-server-model-arg", 
@@ -488,7 +549,12 @@ class LLMManagementWindow(Container):
                 with Container(classes="input_container"):
                     yield Input(id="mlx-model-path", 
                               placeholder="e.g., mlx-community/Nous-Hermes-2-Mistral-7B-DPO-4bit-MLX")
-                    yield Button("Browse", id="mlx-browse-model-button", classes="browse_button")
+                    yield Button(
+                        "Browse",
+                        id="mlx-browse-model-button",
+                        classes="browse_button",
+                        tooltip="Choose a local MLX model path, or type a Hugging Face repo ID.",
+                    )
                 
                 yield Label("Host:", classes="label")
                 yield Input(id="mlx-host", value="127.0.0.1", classes="input_field")
@@ -522,7 +588,12 @@ class LLMManagementWindow(Container):
                 with Container(classes="input_container"):
                     yield Input(id="ollama-exec-path",
                               placeholder="Path to ollama executable (e.g., /usr/local/bin/ollama)")
-                    yield Button("Browse", id="ollama-browse-exec-button", classes="browse_button")
+                    yield Button(
+                        "Browse",
+                        id="ollama-browse-exec-button",
+                        classes="browse_button",
+                        tooltip="Choose the Ollama executable.",
+                    )
                 
                 with Horizontal(classes="ollama-button-bar"):
                     yield Button("Start Ollama Service", id="ollama-start-service-button")
@@ -589,8 +660,12 @@ class LLMManagementWindow(Container):
                             yield Input(id="ollama-create-modelfile-path", 
                                       placeholder="Path to Modelfile...", disabled=True, 
                                       classes="input_field_short")
-                            yield Button("Browse", id="ollama-browse-modelfile-button", 
-                                       classes="browse_button_short")
+                            yield Button(
+                                "Browse",
+                                id="ollama-browse-modelfile-button",
+                                classes="browse_button_short",
+                                tooltip="Choose the Modelfile used to create an Ollama model.",
+                            )
                         yield Button("Create Model", id="ollama-create-model-button", 
                                    classes="full_width_button")
                 

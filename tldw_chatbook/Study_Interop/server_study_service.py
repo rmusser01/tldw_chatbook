@@ -1,0 +1,1036 @@
+"""Thin server-backed study service around the shared flashcards API client."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, Optional
+
+from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
+from ..runtime_policy.types import PolicyDeniedError
+from ..tldw_api import (
+    FlashcardBulkUpdateItem,
+    FlashcardBulkUpdateItemRequest,
+    FlashcardCreateRequest,
+    FlashcardDeckCreateRequest,
+    FlashcardDeckUpdateRequest,
+    FlashcardGenerateRequest,
+    FlashcardReviewRequest,
+    FlashcardResetSchedulingRequest,
+    FlashcardTagsUpdate,
+    FlashcardTemplateCreateRequest,
+    FlashcardTemplateUpdateRequest,
+    FlashcardUpdateRequest,
+    FlashcardsImportRequest,
+    StudyAssistantRespondRequest,
+    StudyPackCreateJobRequest,
+    StructuredQaImportPreviewRequest,
+    SuggestionActionRequest,
+    SuggestionRefreshRequest,
+    TLDWAPIClient,
+)
+
+
+class ServerStudyService:
+    """Thin wrapper around server-backed flashcard deck/card/review endpoints."""
+
+    def __init__(
+        self,
+        client: Optional[TLDWAPIClient],
+        *,
+        client_provider: Any | None = None,
+        policy_enforcer: Any | None = None,
+    ):
+        self.client = client
+        self.client_provider = client_provider
+        self.policy_enforcer = policy_enforcer
+
+    @classmethod
+    def from_config(
+        cls,
+        app_config: Mapping[str, Any],
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerStudyService":
+        return cls(
+            client=None,
+            client_provider=build_runtime_api_client_provider_from_config(app_config),
+            policy_enforcer=policy_enforcer,
+        )
+
+    @classmethod
+    def from_server_context_provider(
+        cls,
+        provider: Any,
+        *,
+        policy_enforcer: Any | None = None,
+    ) -> "ServerStudyService":
+        return cls(
+            client=None,
+            client_provider=provider,
+            policy_enforcer=policy_enforcer,
+        )
+
+    def _require_client(self) -> TLDWAPIClient:
+        if self.client is not None:
+            return self.client
+        if self.client_provider is not None:
+            return self.client_provider.build_client()
+        raise ValueError("TLDW API client is required for server study operations.")
+
+    def _enforce(self, action_id: str) -> None:
+        if self.policy_enforcer is None:
+            return
+        require_allowed = getattr(self.policy_enforcer, "require_allowed", None)
+        require_ui_action_allowed = getattr(self.policy_enforcer, "require_ui_action_allowed", None)
+        if callable(require_allowed):
+            require_allowed(action_id=action_id)
+            return
+        if callable(require_ui_action_allowed):
+            decision = require_ui_action_allowed(action_id=action_id)
+            if decision is not None and getattr(decision, "allowed", True) is False:
+                raise PolicyDeniedError(
+                    action_id=action_id,
+                    reason_code=getattr(decision, "reason_code", None) or "authority_denied",
+                    user_message=getattr(decision, "user_message", None) or "Server study action is not allowed.",
+                    effective_source=getattr(decision, "effective_source", None) or "server",
+                    authority_owner=getattr(decision, "authority_owner", None) or "server",
+                )
+
+    @staticmethod
+    def _deck_action_id(action: str) -> str:
+        return f"study.deck.{action}.server"
+
+    @staticmethod
+    def _flashcard_action_id(action: str) -> str:
+        return f"study.flashcard.{action}.server"
+
+    @staticmethod
+    def _flashcard_tags_action_id(action: str) -> str:
+        return f"study.flashcard.tags.{action}.server"
+
+    @staticmethod
+    def _flashcard_analytics_action_id(action: str) -> str:
+        return f"study.flashcard.analytics.{action}.server"
+
+    @staticmethod
+    def _flashcard_review_sessions_action_id(action: str) -> str:
+        return f"study.flashcard.review_sessions.{action}.server"
+
+    @staticmethod
+    def _flashcard_assistant_action_id(action: str) -> str:
+        return f"study.flashcard.assistant.{action}.server"
+
+    @staticmethod
+    def _flashcard_generation_action_id(action: str) -> str:
+        return f"study.flashcard.generation.{action}.server"
+
+    @staticmethod
+    def _flashcard_template_action_id(action: str) -> str:
+        return f"study.flashcard.templates.{action}.server"
+
+    @staticmethod
+    def _flashcard_asset_action_id(action: str) -> str:
+        return f"study.flashcard.assets.{action}.server"
+
+    @staticmethod
+    def _flashcard_bulk_action_id(action: str) -> str:
+        return f"study.flashcard.bulk.{action}.server"
+
+    @staticmethod
+    def _flashcard_import_action_id(action: str) -> str:
+        return f"study.flashcard.import.{action}.server"
+
+    @staticmethod
+    def _flashcard_export_action_id(action: str) -> str:
+        return f"study.flashcard.export.{action}.server"
+
+    @staticmethod
+    def _study_pack_action_id(action: str) -> str:
+        return f"study.packs.jobs.{action}.server"
+
+    @staticmethod
+    def _study_suggestion_action_id(action: str) -> str:
+        return f"study.suggestions.{action}.server"
+
+    @staticmethod
+    def _model_to_dict(value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        return value
+
+    @staticmethod
+    def _coerce_deck_id(deck_id: Any) -> Optional[int]:
+        if deck_id in {None, ""}:
+            return None
+        return int(deck_id)
+
+    @staticmethod
+    def _flashcard_create_request(card: Mapping[str, Any]) -> FlashcardCreateRequest:
+        payload = dict(card)
+        payload.setdefault("is_cloze", None)
+        return FlashcardCreateRequest(**payload)
+
+    async def list_decks(self, *, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+        self._enforce(self._deck_action_id("list"))
+        response = await self._require_client().list_flashcard_decks(limit=limit, offset=offset)
+        return [self._model_to_dict(item) for item in list(response or [])]
+
+    async def create_deck(
+        self,
+        *,
+        name: str,
+        description: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        scheduler_type: Optional[str] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("create"))
+        response = await self._require_client().create_flashcard_deck(
+            FlashcardDeckCreateRequest(
+                name=name,
+                description=description,
+                workspace_id=workspace_id,
+                scheduler_type=scheduler_type,
+            )
+        )
+        return self._model_to_dict(response)
+
+    async def update_deck(
+        self,
+        deck_id: int,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        review_prompt_side: Optional[str] = None,
+        scheduler_type: Optional[str] = None,
+        scheduler_settings: Optional[dict[str, Any]] = None,
+        expected_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("update"))
+        response = await self._require_client().update_flashcard_deck(
+            int(deck_id),
+            FlashcardDeckUpdateRequest(
+                name=name,
+                description=description,
+                workspace_id=workspace_id,
+                review_prompt_side=review_prompt_side,
+                scheduler_type=scheduler_type,
+                scheduler_settings=scheduler_settings,
+                expected_version=expected_version,
+            ),
+        )
+        return self._model_to_dict(response)
+
+    async def list_flashcards(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        q: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        self._enforce(self._deck_action_id("detail"))
+        response = await self._require_client().list_flashcards(
+            deck_id=self._coerce_deck_id(deck_id),
+            q=q,
+            limit=limit,
+            offset=offset,
+        )
+        payload = self._model_to_dict(response)
+        return list(payload.get("items", []))
+
+    async def create_flashcard(
+        self,
+        *,
+        deck_id: int,
+        front: str,
+        back: str,
+        tags: Optional[list[str]] = None,
+        notes: Optional[str] = None,
+        extra: Optional[str] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("update"))
+        response = await self._require_client().create_flashcard(
+            FlashcardCreateRequest(
+                deck_id=self._coerce_deck_id(deck_id),
+                front=front,
+                back=back,
+                tags=tags,
+                notes=notes,
+                extra=extra,
+                model_type="basic",
+            )
+        )
+        return self._model_to_dict(response)
+
+    async def get_flashcard(self, card_id: str) -> dict[str, Any]:
+        self._enforce(self._flashcard_action_id("detail"))
+        response = await self._require_client().get_flashcard(card_id)
+        return self._model_to_dict(response)
+
+    async def reset_flashcard_scheduling(
+        self,
+        card_id: str,
+        *,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_action_id("update"))
+        response = await self._require_client().reset_flashcard_scheduling(
+            card_id,
+            FlashcardResetSchedulingRequest(expected_version=expected_version),
+        )
+        return self._model_to_dict(response)
+
+    async def set_flashcard_tags(
+        self,
+        card_id: str,
+        *,
+        tags: list[str],
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_tags_action_id("update"))
+        response = await self._require_client().set_flashcard_tags(
+            card_id,
+            FlashcardTagsUpdate(tags=tags),
+        )
+        return self._model_to_dict(response)
+
+    async def get_flashcard_tags(self, card_id: str) -> dict[str, Any]:
+        self._enforce(self._flashcard_tags_action_id("list"))
+        return await self._require_client().get_flashcard_tags(card_id)
+
+    async def list_flashcard_tag_suggestions(
+        self,
+        *,
+        q: Optional[str] = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_tags_action_id("list"))
+        response = await self._require_client().list_flashcard_tag_suggestions(q=q, limit=limit)
+        return self._model_to_dict(response)
+
+    async def get_flashcard_analytics_summary(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_analytics_action_id("observe"))
+        response = await self._require_client().get_flashcard_analytics_summary(
+            deck_id=self._coerce_deck_id(deck_id),
+            workspace_id=workspace_id,
+            include_workspace_items=include_workspace_items,
+        )
+        return self._model_to_dict(response)
+
+    async def list_review_sessions(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        scope_key: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        self._enforce(self._flashcard_review_sessions_action_id("list"))
+        response = await self._require_client().list_flashcard_review_sessions(
+            deck_id=self._coerce_deck_id(deck_id),
+            scope_key=scope_key,
+            status=status,
+            limit=limit,
+        )
+        return [self._model_to_dict(item) for item in list(response or [])]
+
+    async def get_flashcard_assistant(self, card_id: str) -> dict[str, Any]:
+        self._enforce(self._flashcard_assistant_action_id("detail"))
+        response = await self._require_client().get_flashcard_assistant(card_id)
+        return self._model_to_dict(response)
+
+    async def respond_flashcard_assistant(
+        self,
+        card_id: str,
+        *,
+        action: str,
+        message: Optional[str] = None,
+        input_modality: str = "text",
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        expected_thread_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_assistant_action_id("launch"))
+        response = await self._require_client().respond_flashcard_assistant(
+            card_id,
+            StudyAssistantRespondRequest(
+                action=action,
+                message=message,
+                input_modality=input_modality,
+                provider=provider,
+                model=model,
+                expected_thread_version=expected_thread_version,
+            ),
+        )
+        return self._model_to_dict(response)
+
+    async def generate_flashcards(
+        self,
+        *,
+        text: str,
+        num_cards: int = 10,
+        card_type: str = "basic",
+        difficulty: str = "mixed",
+        focus_topics: Optional[list[str]] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_generation_action_id("launch"))
+        response = await self._require_client().generate_flashcards(
+            FlashcardGenerateRequest(
+                text=text,
+                num_cards=num_cards,
+                card_type=card_type,
+                difficulty=difficulty,
+                focus_topics=focus_topics or [],
+                provider=provider,
+                model=model,
+            )
+        )
+        return self._model_to_dict(response)
+
+    async def upload_flashcard_asset(self, file: tuple[str, bytes, str]) -> dict[str, Any]:
+        self._enforce(self._flashcard_asset_action_id("create"))
+        response = await self._require_client().upload_flashcard_asset(file)
+        return self._model_to_dict(response)
+
+    async def get_flashcard_asset_content(self, asset_uuid: str) -> Any:
+        self._enforce(self._flashcard_asset_action_id("detail"))
+        return await self._require_client().get_flashcard_asset_content(asset_uuid)
+
+    async def create_flashcards_bulk(self, cards: list[Mapping[str, Any]]) -> dict[str, Any]:
+        self._enforce(self._flashcard_bulk_action_id("create"))
+        response = await self._require_client().create_flashcards_bulk(
+            [self._flashcard_create_request(card) for card in cards]
+        )
+        return self._model_to_dict(response)
+
+    async def update_flashcards_bulk(self, updates: list[Mapping[str, Any]]) -> dict[str, Any]:
+        self._enforce(self._flashcard_bulk_action_id("update"))
+        response = await self._require_client().update_flashcards_bulk(
+            [FlashcardBulkUpdateItem(**dict(update)) for update in updates]
+        )
+        return self._model_to_dict(response)
+
+    async def preview_structured_qa_import(
+        self,
+        content: str,
+        *,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_import_action_id("preview"))
+        response = await self._require_client().preview_structured_qa_import(
+            StructuredQaImportPreviewRequest(content=content),
+            max_lines=max_lines,
+            max_line_length=max_line_length,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def import_flashcards(
+        self,
+        content: str,
+        *,
+        delimiter: Optional[str] = "\t",
+        has_header: Optional[bool] = False,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_import_action_id("import"))
+        return await self._require_client().import_flashcards(
+            FlashcardsImportRequest(
+                content=content,
+                delimiter=delimiter,
+                has_header=has_header,
+            ),
+            max_lines=max_lines,
+            max_line_length=max_line_length,
+            max_field_length=max_field_length,
+        )
+
+    async def import_flashcards_json(
+        self,
+        file: tuple[str, bytes, str],
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_import_action_id("import"))
+        return await self._require_client().import_flashcards_json(
+            file,
+            max_items=max_items,
+            max_field_length=max_field_length,
+        )
+
+    async def import_flashcards_apkg(
+        self,
+        file: tuple[str, bytes, str],
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_import_action_id("import"))
+        return await self._require_client().import_flashcards_apkg(
+            file,
+            max_items=max_items,
+            max_field_length=max_field_length,
+        )
+
+    async def export_flashcards(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: Optional[bool] = None,
+        tag: Optional[str] = None,
+        q: Optional[str] = None,
+        format: str = "csv",
+        include_reverse: Optional[bool] = None,
+        delimiter: Optional[str] = None,
+        include_header: Optional[bool] = None,
+        extended_header: Optional[bool] = None,
+    ) -> Any:
+        self._enforce(self._flashcard_export_action_id("export"))
+        return await self._require_client().export_flashcards(
+            deck_id=self._coerce_deck_id(deck_id),
+            workspace_id=workspace_id,
+            include_workspace_items=include_workspace_items,
+            tag=tag,
+            q=q,
+            format=format,
+            include_reverse=include_reverse,
+            delimiter=delimiter,
+            include_header=include_header,
+            extended_header=extended_header,
+        )
+
+    async def create_flashcard_template(
+        self,
+        *,
+        name: str,
+        front_template: str,
+        model_type: str = "basic",
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_template_action_id("create"))
+        response = await self._require_client().create_flashcard_template(
+            FlashcardTemplateCreateRequest(
+                name=name,
+                model_type=model_type,
+                front_template=front_template,
+                back_template=back_template,
+                notes_template=notes_template,
+                extra_template=extra_template,
+                placeholder_definitions=placeholder_definitions or [],
+            )
+        )
+        return self._model_to_dict(response)
+
+    async def list_flashcard_templates(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        self._enforce(self._flashcard_template_action_id("list"))
+        response = await self._require_client().list_flashcard_templates(limit=limit, offset=offset)
+        return self._model_to_dict(response)
+
+    async def get_flashcard_template(self, template_id: int) -> dict[str, Any]:
+        self._enforce(self._flashcard_template_action_id("detail"))
+        response = await self._require_client().get_flashcard_template(int(template_id))
+        return self._model_to_dict(response)
+
+    async def update_flashcard_template(
+        self,
+        template_id: int,
+        *,
+        name: Optional[str] = None,
+        model_type: Optional[str] = None,
+        front_template: Optional[str] = None,
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
+        expected_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._flashcard_template_action_id("update"))
+        response = await self._require_client().update_flashcard_template(
+            int(template_id),
+            FlashcardTemplateUpdateRequest(
+                name=name,
+                model_type=model_type,
+                front_template=front_template,
+                back_template=back_template,
+                notes_template=notes_template,
+                extra_template=extra_template,
+                placeholder_definitions=placeholder_definitions,
+                expected_version=expected_version,
+            ),
+        )
+        return self._model_to_dict(response)
+
+    async def delete_flashcard_template(self, template_id: int, *, expected_version: int) -> dict[str, Any]:
+        self._enforce(self._flashcard_template_action_id("delete"))
+        return await self._require_client().delete_flashcard_template(
+            int(template_id),
+            expected_version=expected_version,
+        )
+
+    async def move_flashcard(
+        self,
+        card_id: str,
+        *,
+        target_deck_id: int,
+        expected_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("update"))
+        return self._model_to_dict(
+            await self._require_client().update_flashcard(
+                card_id,
+                FlashcardUpdateRequest(
+                    deck_id=self._coerce_deck_id(target_deck_id),
+                    expected_version=expected_version,
+                ),
+            )
+        )
+
+    async def delete_flashcard(
+        self,
+        card_id: str,
+        *,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("update"))
+        if expected_version is None:
+            raise ValueError("expected_version is required for server flashcard deletion.")
+        if expected_version < 1:
+            raise ValueError("expected_version must be >= 1 for server flashcard deletion.")
+        return await self._require_client().delete_flashcard(
+            card_id,
+            expected_version=expected_version,
+        )
+
+    async def update_flashcards_bulk(self, cards: list[Mapping[str, Any]]) -> dict[str, Any]:
+        response = await self._require_client().update_flashcards_bulk(
+            [FlashcardBulkUpdateItemRequest.model_validate(dict(card)) for card in cards]
+        )
+        return self._model_to_dict(response)
+
+    async def reset_flashcard_scheduling(
+        self,
+        card_id: str,
+        *,
+        expected_version: int,
+    ) -> dict[str, Any]:
+        response = await self._require_client().reset_flashcard_scheduling(
+            card_id,
+            FlashcardResetSchedulingRequest(expected_version=expected_version),
+        )
+        return self._model_to_dict(response)
+
+    async def set_flashcard_tags(
+        self,
+        card_id: str,
+        *,
+        tags: list[str],
+    ) -> dict[str, Any]:
+        response = await self._require_client().set_flashcard_tags(
+            card_id,
+            FlashcardTagsUpdate(tags=tags),
+        )
+        return self._model_to_dict(response)
+
+    async def get_flashcard_tags(self, card_id: str) -> dict[str, Any]:
+        return self._model_to_dict(await self._require_client().get_flashcard_tags(card_id))
+
+    async def list_flashcard_tag_suggestions(
+        self,
+        *,
+        q: Optional[str] = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return self._model_to_dict(
+            await self._require_client().list_flashcard_tag_suggestions(q=q, limit=limit)
+        )
+
+    async def preview_structured_qa_import(
+        self,
+        content: str,
+        *,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().preview_structured_qa_import(
+            StructuredQaImportPreviewRequest(content=content),
+            max_lines=max_lines,
+            max_line_length=max_line_length,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def import_flashcards_tsv(
+        self,
+        content: str,
+        *,
+        delimiter: str = "\t",
+        has_header: bool = False,
+        max_lines: Optional[int] = None,
+        max_line_length: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().import_flashcards_tsv(
+            FlashcardsImportRequest(
+                content=content,
+                delimiter=delimiter,
+                has_header=has_header,
+            ),
+            max_lines=max_lines,
+            max_line_length=max_line_length,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def export_flashcards(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: Optional[bool] = None,
+        tag: Optional[str] = None,
+        q: Optional[str] = None,
+        format: str = "csv",
+        export_format: Optional[str] = None,
+        include_reverse: Optional[bool] = None,
+        delimiter: Optional[str] = None,
+        include_header: Optional[bool] = None,
+        extended_header: Optional[bool] = None,
+    ) -> Any:
+        requested_format = export_format or format
+        return await self._require_client().export_flashcards(
+            deck_id=deck_id,
+            workspace_id=workspace_id,
+            include_workspace_items=include_workspace_items,
+            tag=tag,
+            q=q,
+            format=requested_format,
+            include_reverse=include_reverse,
+            delimiter=delimiter,
+            include_header=include_header,
+            extended_header=extended_header,
+        )
+
+    async def upload_flashcard_asset(self, file_path: Any) -> dict[str, Any]:
+        response = await self._require_client().upload_flashcard_asset(file_path)
+        return self._model_to_dict(response)
+
+    async def get_flashcard_asset_content(self, asset_uuid: str) -> bytes:
+        return await self._require_client().get_flashcard_asset_content(asset_uuid)
+
+    async def import_flashcards_json_file(
+        self,
+        file_path: Any,
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().import_flashcards_json_file(
+            file_path,
+            max_items=max_items,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def import_flashcards_apkg(
+        self,
+        file_path: Any,
+        *,
+        max_items: Optional[int] = None,
+        max_field_length: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().import_flashcards_apkg(
+            file_path,
+            max_items=max_items,
+            max_field_length=max_field_length,
+        )
+        return self._model_to_dict(response)
+
+    async def get_flashcard_study_assistant_context(self, card_id: str) -> dict[str, Any]:
+        response = await self._require_client().get_flashcard_study_assistant_context(card_id)
+        return self._model_to_dict(response)
+
+    async def respond_flashcard_study_assistant(
+        self,
+        card_id: str,
+        *,
+        action: str,
+        message: Optional[str] = None,
+        input_modality: str = "text",
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        expected_thread_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().respond_flashcard_study_assistant(
+            card_id,
+            StudyAssistantRespondRequest(
+                action=action,
+                message=message,
+                input_modality=input_modality,
+                provider=provider,
+                model=model,
+                expected_thread_version=expected_thread_version,
+            ),
+        )
+        return self._model_to_dict(response)
+
+    async def get_flashcard_analytics_summary(
+        self,
+        *,
+        deck_id: Optional[int] = None,
+        workspace_id: Optional[str] = None,
+        include_workspace_items: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().get_flashcard_analytics_summary(
+            deck_id=deck_id,
+            workspace_id=workspace_id,
+            include_workspace_items=include_workspace_items,
+        )
+        payload = self._model_to_dict(response)
+        payload["source"] = "server"
+        return payload
+
+    async def create_flashcard_template(
+        self,
+        *,
+        name: str,
+        model_type: str = "basic",
+        front_template: str,
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        response = await self._require_client().create_flashcard_template(
+            FlashcardTemplateCreateRequest(
+                name=name,
+                model_type=model_type,
+                front_template=front_template,
+                back_template=back_template,
+                notes_template=notes_template,
+                extra_template=extra_template,
+                placeholder_definitions=placeholder_definitions or [],
+            )
+        )
+        return self._model_to_dict(response)
+
+    async def list_flashcard_templates(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        return self._model_to_dict(
+            await self._require_client().list_flashcard_templates(limit=limit, offset=offset)
+        )
+
+    async def get_flashcard_template(self, template_id: int) -> dict[str, Any]:
+        return self._model_to_dict(
+            await self._require_client().get_flashcard_template(int(template_id))
+        )
+
+    async def update_flashcard_template(
+        self,
+        template_id: int,
+        *,
+        name: Optional[str] = None,
+        model_type: Optional[str] = None,
+        front_template: Optional[str] = None,
+        back_template: Optional[str] = None,
+        notes_template: Optional[str] = None,
+        extra_template: Optional[str] = None,
+        placeholder_definitions: Optional[list[dict[str, Any]]] = None,
+        expected_version: Optional[int] = None,
+    ) -> dict[str, Any]:
+        payload = {
+            key: value
+            for key, value in {
+                "name": name,
+                "model_type": model_type,
+                "front_template": front_template,
+                "back_template": back_template,
+                "notes_template": notes_template,
+                "extra_template": extra_template,
+                "placeholder_definitions": placeholder_definitions,
+                "expected_version": expected_version,
+            }.items()
+            if value is not None
+        }
+        response = await self._require_client().update_flashcard_template(
+            int(template_id),
+            FlashcardTemplateUpdateRequest(**payload),
+        )
+        return self._model_to_dict(response)
+
+    async def delete_flashcard_template(self, template_id: int, *, expected_version: int) -> dict[str, Any]:
+        return self._model_to_dict(
+            await self._require_client().delete_flashcard_template(
+                int(template_id),
+                expected_version=expected_version,
+            )
+        )
+
+    async def delete_deck(
+        self,
+        deck_id: int,
+        *,
+        expected_version: Optional[int] = None,
+        hard_delete: bool = False,
+    ) -> Any:
+        self._enforce(self._deck_action_id("delete"))
+        if hard_delete:
+            raise ValueError("hard_delete is not supported for server flashcard deck deletion.")
+        if expected_version is None or int(expected_version) < 1:
+            raise ValueError("expected_version must be >= 1 for server flashcard deck deletion.")
+        return self._model_to_dict(
+            await self._require_client().delete_flashcard_deck(
+                int(deck_id),
+                expected_version=int(expected_version),
+            )
+        )
+
+    async def get_next_review_candidate(self, *, deck_id: Optional[int] = None) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("detail"))
+        if deck_id is not None:
+            response = await self._require_client().get_next_flashcard_review(deck_id=self._coerce_deck_id(deck_id))
+        else:
+            response = await self._require_client().get_next_flashcard_review(deck_id=None)
+        payload = self._model_to_dict(response)
+        return {
+            "card": payload.get("card"),
+            "selection_reason": payload.get("selection_reason"),
+        }
+
+    async def submit_flashcard_review(
+        self,
+        card_id: str,
+        *,
+        rating: int,
+        answer_time_ms: Optional[int] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("update"))
+        response = await self._require_client().review_flashcard(
+            FlashcardReviewRequest(card_uuid=card_id, rating=rating, answer_time_ms=answer_time_ms)
+        )
+        return self._model_to_dict(response)
+
+    async def end_review_session(self, review_session_id: int) -> dict[str, Any]:
+        self._enforce(self._deck_action_id("update"))
+        response = await self._require_client().end_flashcard_review_session(review_session_id)
+        return self._model_to_dict(response)
+
+    async def create_study_pack_job(
+        self,
+        *,
+        title: str,
+        source_items: list[Mapping[str, Any]],
+        workspace_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._study_pack_action_id("launch"))
+        response = await self._require_client().create_study_pack_job(
+            StudyPackCreateJobRequest(
+                title=title,
+                workspace_id=workspace_id,
+                source_items=source_items,
+            )
+        )
+        return self._model_to_dict(response)
+
+    async def list_study_pack_jobs(
+        self,
+        *,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        self._enforce(self._study_pack_action_id("list"))
+        response = await self._require_client().list_study_pack_jobs(status=status, limit=limit)
+        return self._model_to_dict(response)
+
+    async def get_study_pack_job_status(self, job_id: int) -> dict[str, Any]:
+        self._enforce(self._study_pack_action_id("observe"))
+        response = await self._require_client().get_study_pack_job_status(int(job_id))
+        return self._model_to_dict(response)
+
+    async def get_study_pack(self, pack_id: int) -> dict[str, Any]:
+        self._enforce(self._study_pack_action_id("observe"))
+        response = await self._require_client().get_study_pack(int(pack_id))
+        return self._model_to_dict(response)
+
+    async def regenerate_study_pack(self, pack_id: int) -> dict[str, Any]:
+        self._enforce(self._study_pack_action_id("launch"))
+        response = await self._require_client().regenerate_study_pack(int(pack_id))
+        return self._model_to_dict(response)
+
+    async def get_study_suggestion_status(
+        self,
+        *,
+        anchor_type: str,
+        anchor_id: int,
+    ) -> dict[str, Any]:
+        self._enforce(self._study_suggestion_action_id("list"))
+        response = await self._require_client().get_study_suggestion_status(
+            anchor_type=anchor_type,
+            anchor_id=int(anchor_id),
+        )
+        return self._model_to_dict(response)
+
+    async def get_study_suggestion_snapshot(self, snapshot_id: int) -> dict[str, Any]:
+        self._enforce(self._study_suggestion_action_id("observe"))
+        response = await self._require_client().get_study_suggestion_snapshot(int(snapshot_id))
+        return self._model_to_dict(response)
+
+    async def refresh_study_suggestion_snapshot(
+        self,
+        snapshot_id: int,
+        *,
+        reason: Optional[str] = None,
+    ) -> dict[str, Any]:
+        self._enforce(self._study_suggestion_action_id("launch"))
+        response = await self._require_client().refresh_study_suggestion_snapshot(
+            int(snapshot_id),
+            SuggestionRefreshRequest(reason=reason),
+        )
+        return self._model_to_dict(response)
+
+    async def trigger_study_suggestion_action(
+        self,
+        snapshot_id: int,
+        *,
+        target_service: str,
+        target_type: str,
+        action_kind: str,
+        selected_topic_ids: Optional[list[str]] = None,
+        selected_topic_edits: Optional[list[dict[str, str]]] = None,
+        manual_topic_labels: Optional[list[str]] = None,
+        has_explicit_selection: bool = False,
+        generator_version: str = "v1",
+        force_regenerate: bool = False,
+    ) -> dict[str, Any]:
+        self._enforce(self._study_suggestion_action_id("configure"))
+        response = await self._require_client().trigger_study_suggestion_action(
+            int(snapshot_id),
+            SuggestionActionRequest(
+                target_service=target_service,
+                target_type=target_type,
+                action_kind=action_kind,
+                selected_topic_ids=selected_topic_ids or [],
+                selected_topic_edits=selected_topic_edits or [],
+                manual_topic_labels=manual_topic_labels or [],
+                has_explicit_selection=has_explicit_selection,
+                generator_version=generator_version,
+                force_regenerate=force_regenerate,
+            ),
+        )
+        return self._model_to_dict(response)

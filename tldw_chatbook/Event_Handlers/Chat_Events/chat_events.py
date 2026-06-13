@@ -3,13 +3,16 @@
 #
 # Imports
 import logging
+import asyncio
+import inspect
 import json
+import math
 import os
 import time
 from datetime import datetime
 from pathlib import Path
 import uuid
-from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
+from typing import TYPE_CHECKING, List, Dict, Any, Mapping, Optional, Union
 #
 # 3rd-Party Imports
 from loguru import logger as loguru_logger
@@ -24,6 +27,13 @@ from textual.css.query import QueryError
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_sidebar
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_worldbooks
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_dictionaries
+from tldw_chatbook.Chat.answer_citations import (
+    AnswerCitationValidation,
+    build_answer_citation_validation,
+    evidence_bundle_from_value,
+)
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Utils.Utils import safe_float, safe_int
 from tldw_chatbook.Utils.input_validation import validate_text_input, validate_number_range, sanitize_string
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
@@ -53,6 +63,15 @@ if TYPE_CHECKING:
 #
 # Security Functions:
 
+MAX_CONSOLE_CHATBOOK_ARTIFACT_CONTENT_CHARS = 20_000
+MAX_CONSOLE_CHATBOOK_ARTIFACT_TITLE_CHARS = 80
+MAX_CONSOLE_CHATBOOK_ARTIFACT_DESCRIPTION_CHARS = 280
+MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_STRING_CHARS = 4_000
+MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_LIST_ITEMS = 50
+MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DICT_ITEMS = 80
+MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DEPTH = 6
+_UNSAFE_STRUCTURED_METADATA = object()
+
 def safe_json_loads(json_str: str, max_size: int = 1024 * 1024) -> Optional[Union[dict, list]]:
     """
     Safely parse JSON with size limits to prevent DoS attacks.
@@ -81,6 +100,187 @@ def safe_json_loads(json_str: str, max_size: int = 1024 * 1024) -> Optional[Unio
         loguru_logger.error(f"Unexpected error parsing JSON: {e}")
         return None
 
+
+def _simple_metadata_value(value: Any) -> Optional[Union[str, int, float, bool]]:
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return None
+
+
+def _json_safe_structured_metadata_value(value: Any, *, depth: int = 0) -> Any:
+    """Copy only bounded JSON-safe metadata for saved Console artifacts."""
+    if depth > MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DEPTH:
+        return _UNSAFE_STRUCTURED_METADATA
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value[:MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_STRING_CHARS]
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else _UNSAFE_STRUCTURED_METADATA
+    if isinstance(value, Mapping):
+        safe_mapping: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_DICT_ITEMS:
+                break
+            safe_key = _json_safe_structured_metadata_value(key, depth=depth + 1)
+            if safe_key is _UNSAFE_STRUCTURED_METADATA:
+                continue
+            safe_item = _json_safe_structured_metadata_value(item, depth=depth + 1)
+            if safe_item is _UNSAFE_STRUCTURED_METADATA:
+                continue
+            safe_mapping[str(safe_key)[:MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_STRING_CHARS]] = safe_item
+        return safe_mapping
+    if isinstance(value, (list, tuple)):
+        safe_items = []
+        for item in value[:MAX_CONSOLE_CHATBOOK_ARTIFACT_METADATA_LIST_ITEMS]:
+            safe_item = _json_safe_structured_metadata_value(item, depth=depth + 1)
+            if safe_item is not _UNSAFE_STRUCTURED_METADATA:
+                safe_items.append(safe_item)
+        return safe_items
+    return _UNSAFE_STRUCTURED_METADATA
+
+
+def _structured_metadata_from_sources(*values: Any) -> Any | None:
+    for value in values:
+        safe_value = _json_safe_structured_metadata_value(value)
+        if isinstance(safe_value, (dict, list)) and safe_value:
+            return safe_value
+    return None
+
+
+def _is_console_chatbook_artifact_eligible(
+    action_widget: Union[ChatMessage, ChatMessageEnhanced],
+    message_role: str,
+) -> bool:
+    return action_widget.has_class("-ai") and str(message_role or "").strip().lower() != "system"
+
+
+def _console_chatbook_artifact_title(message_text: str) -> str:
+    for line in str(message_text or "").splitlines():
+        title = " ".join(line.strip().lstrip("#>*-` ").split())
+        if title:
+            if len(title) > MAX_CONSOLE_CHATBOOK_ARTIFACT_TITLE_CHARS:
+                return title[: MAX_CONSOLE_CHATBOOK_ARTIFACT_TITLE_CHARS - 3].rstrip() + "..."
+            return title
+    return "Console response artifact"
+
+
+def _console_chatbook_artifact_description(message_text: str) -> str:
+    preview = " ".join(str(message_text or "").split())
+    if len(preview) > MAX_CONSOLE_CHATBOOK_ARTIFACT_DESCRIPTION_CHARS:
+        preview = preview[: MAX_CONSOLE_CHATBOOK_ARTIFACT_DESCRIPTION_CHARS - 3].rstrip() + "..."
+    if not preview:
+        return "Saved from Console assistant response."
+    return f"Saved from Console assistant response. Preview: {preview}"
+
+
+def _console_chatbook_artifact_metadata(
+    app: "TldwCli",
+    action_widget: Union[ChatMessage, ChatMessageEnhanced],
+    message_text: str,
+    message_role: str,
+) -> dict[str, Any]:
+    content = str(message_text or "")
+    conversation_id = getattr(app, "current_chat_conversation_id", None)
+    if conversation_id is None:
+        conversation_id = getattr(app, "current_conversation_id", None)
+    metadata: dict[str, Any] = {
+        "artifact_source": "console",
+        "artifact_kind": "assistant-response",
+        "message_role": str(message_role or "Assistant"),
+        "content": content[:MAX_CONSOLE_CHATBOOK_ARTIFACT_CONTENT_CHARS],
+        "content_truncated": len(content) > MAX_CONSOLE_CHATBOOK_ARTIFACT_CONTENT_CHARS,
+    }
+    optional_values = {
+        "conversation_id": conversation_id,
+        "message_id": getattr(action_widget, "message_id_internal", None),
+        "provider": getattr(app, "current_provider", None),
+        "model": getattr(app, "current_model", None),
+    }
+    for key, value in optional_values.items():
+        simple_value = _simple_metadata_value(value)
+        if simple_value is None:
+            continue
+        if isinstance(simple_value, str) and not simple_value.strip():
+            continue
+        metadata[key] = simple_value
+    citation_validation = _structured_metadata_from_sources(
+        getattr(action_widget, "citation_validation_payload", None),
+        getattr(app, "_current_chat_answer_citation_validation", None),
+    )
+    if citation_validation is not None:
+        metadata["citation_validation"] = citation_validation
+    evidence_bundle = _structured_metadata_from_sources(
+        getattr(action_widget, "citation_evidence_bundle", None),
+        getattr(app, "_current_chat_pending_evidence_bundle", None),
+    )
+    if evidence_bundle is not None:
+        metadata["evidence_bundle"] = evidence_bundle
+    return metadata
+
+
+def _run_console_chatbook_create(create_chatbook: Any, payload: dict[str, Any]) -> Any:
+    result = create_chatbook(**payload)
+    if inspect.isawaitable(result):
+        return asyncio.run(result)
+    return result
+
+
+async def _save_console_chatbook_artifact(
+    app: "TldwCli",
+    action_widget: Union[ChatMessage, ChatMessageEnhanced],
+    message_text: str,
+    message_role: str,
+) -> None:
+    if not _is_console_chatbook_artifact_eligible(action_widget, message_role):
+        app.notify("Only assistant responses can be saved as Chatbook artifacts.", severity="warning", timeout=5)
+        return
+
+    service = getattr(app, "local_chatbook_service", None)
+    create_chatbook = getattr(service, "create_chatbook", None)
+    if not callable(create_chatbook):
+        app.notify("Local Chatbook artifact service is unavailable.", severity="warning", timeout=5)
+        return
+
+    title = _console_chatbook_artifact_title(message_text)
+    payload = {
+        "name": title,
+        "description": _console_chatbook_artifact_description(message_text),
+        "tags": ["console", "artifact"],
+        "categories": ["Console", "Artifacts"],
+        "metadata": _console_chatbook_artifact_metadata(app, action_widget, message_text, message_role),
+    }
+
+    def save_worker() -> None:
+        try:
+            _run_console_chatbook_create(create_chatbook, payload)
+            app.call_from_thread(
+                app.notify,
+                f"Saved response as Chatbook artifact: {title}",
+                severity="information",
+                timeout=4,
+            )
+        except Exception as exc:
+            loguru_logger.error("Failed to save Console response as Chatbook artifact", exc_info=True)
+            app.call_from_thread(
+                app.notify,
+                f"Failed to save Chatbook artifact: {exc}",
+                severity="error",
+                timeout=7,
+            )
+
+    app.run_worker(
+        save_worker,
+        name="console-chatbook-artifact-save",
+        group="chat-artifacts",
+        description="Save Console response as Chatbook artifact",
+        thread=True,
+    )
+
 ########################################################################################################################
 #
 # Functions:
@@ -97,6 +297,106 @@ async def handle_chat_tab_sidebar_toggle(app: 'TldwCli', event: Button.Pressed) 
         loguru_logger.debug("Chat tab character sidebar (right) now %s", "collapsed" if app.chat_right_sidebar_collapsed else "expanded")
     else:
         loguru_logger.warning(f"Unhandled sidebar toggle button ID '{button_id}' in Chat tab handler.")
+
+
+def apply_current_handoff_context(app: "TldwCli", message_text: str) -> str:
+    payload = getattr(app, "_current_chat_handoff_payload", None)
+    if payload is None:
+        _clear_current_handoff_evidence_bundle(app)
+        return message_text
+
+    payload = ChatHandoffPayload.from_dict(payload)
+    if payload is None or payload.status == "sent":
+        _clear_current_handoff_evidence_bundle(app)
+        return message_text
+
+    _stage_current_handoff_evidence_bundle(app, payload)
+    return payload.format_for_model(message_text)
+
+
+def attach_current_handoff_citation_validation(
+    app: "TldwCli",
+    message_widget: Any,
+    answer_text: str,
+) -> Optional[AnswerCitationValidation]:
+    """Attach validated answer citations from the staged evidence bundle.
+
+    Args:
+        app: Running application instance holding the staged or pending evidence bundle.
+        message_widget: Assistant message widget that should receive citation metadata.
+        answer_text: Final assistant response text to validate.
+
+    Returns:
+        Citation validation result when staged evidence exists, otherwise ``None``.
+    """
+    bundle = _current_handoff_evidence_bundle(app, message_widget)
+    if bundle is None:
+        setattr(app, "_current_chat_answer_citation_validation", None)
+        _clear_message_citation_validation(message_widget)
+        return None
+
+    validation = build_answer_citation_validation(answer_text, bundle)
+    validation_payload = validation.to_payload()
+    setattr(app, "_current_chat_answer_citation_validation", validation_payload)
+
+    if message_widget is not None:
+        setattr(message_widget, "citation_validation", validation)
+        setattr(message_widget, "citation_refs", validation.citations)
+        setattr(message_widget, "citation_validation_payload", validation_payload)
+
+    return validation
+
+
+def _clear_message_citation_validation(message_widget: Any) -> None:
+    if message_widget is None:
+        return
+    for attr in ("citation_validation", "citation_refs", "citation_validation_payload"):
+        if hasattr(message_widget, attr):
+            delattr(message_widget, attr)
+
+
+def _stage_current_handoff_evidence_bundle(app: "TldwCli", payload: ChatHandoffPayload) -> None:
+    metadata = payload.metadata or {}
+    bundle = evidence_bundle_from_value(metadata.get("evidence_bundle"))
+    if bundle is None:
+        _clear_current_handoff_evidence_bundle(app)
+        return
+
+    bundle_payload = bundle.to_payload()
+    setattr(app, "_current_chat_pending_evidence_bundle", bundle_payload)
+    message_widget = getattr(app, "current_ai_message_widget", None)
+    if message_widget is not None:
+        setattr(message_widget, "citation_evidence_bundle", bundle_payload)
+
+
+def _clear_current_handoff_evidence_bundle(app: "TldwCli") -> None:
+    if hasattr(app, "_current_chat_pending_evidence_bundle"):
+        setattr(app, "_current_chat_pending_evidence_bundle", None)
+
+
+def _current_handoff_evidence_bundle(app: "TldwCli", message_widget: Any = None) -> Any:
+    if message_widget is not None:
+        bundle = evidence_bundle_from_value(getattr(message_widget, "citation_evidence_bundle", None))
+        if bundle is not None:
+            return bundle
+
+    bundle = evidence_bundle_from_value(getattr(app, "_current_chat_pending_evidence_bundle", None))
+    if bundle is not None:
+        return bundle
+
+    payload = ChatHandoffPayload.from_dict(getattr(app, "_current_chat_handoff_payload", None))
+    if payload is None:
+        return None
+    return evidence_bundle_from_value((payload.metadata or {}).get("evidence_bundle"))
+
+
+def _tabbed_chat_selector(app: "TldwCli", selector: str) -> str:
+    """Map legacy chat selectors to the active tab-specific widgets."""
+    current_tab_id = getattr(app, "_current_chat_tab_id", None)
+    if isinstance(current_tab_id, str) and current_tab_id and selector in {"#chat-input", "#chat-log"}:
+        return f"{selector}-{current_tab_id}"
+    return selector
+
 
 async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles the send button press for the main chat tab."""
@@ -120,10 +420,12 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     try:
         # Get the current screen first
         current_screen = app.screen
+        chat_input_selector = _tabbed_chat_selector(app, f"#{prefix}-input")
+        chat_log_selector = _tabbed_chat_selector(app, f"#{prefix}-log")
         
         # Try to find widgets from the current screen's context
-        text_area = current_screen.query_one(f"#{prefix}-input", TextArea)
-        chat_container = current_screen.query_one(f"#{prefix}-log", VerticalScroll)
+        text_area = current_screen.query_one(chat_input_selector, TextArea)
+        chat_container = current_screen.query_one(chat_log_selector, VerticalScroll)
         provider_widget = current_screen.query_one(f"#{prefix}-api-provider", Select)
         model_widget = current_screen.query_one(f"#{prefix}-api-model", Select)
         system_prompt_widget = current_screen.query_one(f"#{prefix}-system-prompt", TextArea)
@@ -152,8 +454,13 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             strip_thinking_tags_value = strip_tags_checkbox.value
             loguru_logger.info(f"Read strip_thinking_tags checkbox value: {strip_thinking_tags_value}")
         except QueryError:
-            loguru_logger.warning("Could not find '#chat-strip-thinking-tags-checkbox'. Defaulting to True for strip_thinking_tags.")
-            strip_thinking_tags_value = True
+            strip_thinking_tags_value = bool(
+                app.app_config.get("chat_defaults", {}).get("strip_thinking_tags", True)
+            )
+            loguru_logger.debug(
+                "Strip-thinking checkbox is not mounted; using chat_defaults.strip_thinking_tags="
+                f"{strip_thinking_tags_value}."
+            )
 
     except QueryError as e:
         loguru_logger.error(f"Send Button: Could not find UI widgets for '{prefix}': {e}")
@@ -162,7 +469,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             # Get current screen for error handling
             current_screen = app.screen
             container_for_error = chat_container if 'chat_container' in locals() and chat_container.is_mounted else current_screen.query_one(
-                f"#{prefix}-log", VerticalScroll) # Re-query if initial one failed
+                _tabbed_chat_selector(app, f"#{prefix}-log"), VerticalScroll) # Re-query if initial one failed
             error_text = f"**Internal Error:**\nMissing UI elements for {prefix}."
             await container_for_error.mount(
                 ChatMessage(error_text, role="System", classes="-error"))
@@ -613,40 +920,12 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     text_area.focus()
 
     # --- 9. API Key Fetching ---
-    api_key_for_call = None
-    if selected_provider:
-        provider_settings_key = selected_provider.lower().replace(" ", "_")
-        provider_config_settings = app.app_config.get("api_settings", {}).get(provider_settings_key, {})
+    provider_readiness = get_provider_readiness(selected_provider, app.app_config)
+    api_key_for_call = provider_readiness.api_key
 
-        if "api_key" in provider_config_settings:
-            direct_config_key_checked = True
-            config_api_key = provider_config_settings.get("api_key", "").strip()
-            if config_api_key and config_api_key != "<API_KEY_HERE>":
-                api_key_for_call = config_api_key
-                loguru_logger.debug(f"Using API key for '{selected_provider}' from config file field.")
-
-        if not api_key_for_call: # If not found in direct 'api_key' field or it was empty
-            env_var_name = provider_config_settings.get("api_key_env_var", "").strip()
-            if env_var_name:
-                env_api_key = os.environ.get(env_var_name, "").strip()
-                if env_api_key:
-                    api_key_for_call = env_api_key
-                    loguru_logger.debug(f"Using API key for '{selected_provider}' from ENV var '{env_var_name}'.")
-                else:
-                    loguru_logger.debug(f"ENV var '{env_var_name}' for '{selected_provider}' not found or empty.")
-            else:
-                loguru_logger.debug(f"No 'api_key_env_var' specified for '{selected_provider}' in config.")
-
-    providers_requiring_key = ["OpenAI", "Anthropic", "Google", "MistralAI", "Groq", "Cohere", "OpenRouter", "HuggingFace", "DeepSeek"]
-    if selected_provider in providers_requiring_key and not api_key_for_call:
+    if provider_readiness.requires_api_key and not provider_readiness.ready:
         loguru_logger.error(f"API Key for '{selected_provider}' is missing and required.")
-        error_message_markup = (
-            f"API Key for {selected_provider} is missing.\n\n"
-            "Please add it to your config file under:\n"
-            f"\\[api_settings.{selected_provider.lower().replace(' ', '_')}\\]\n" 
-            "api_key = \"YOUR_KEY\"\n\n"
-            "Or set the environment variable specified by 'api_key_env_var' in the config for this provider."
-        )
+        error_message_markup = provider_readiness.user_message
         await chat_container.mount(ChatMessage(message=error_message_markup, role="System"))
         if app.current_ai_message_widget and app.current_ai_message_widget.is_mounted:
             await app.current_ai_message_widget.remove()
@@ -723,15 +1002,16 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             loguru_logger.error(f"Error loading chat dictionaries: {e}", exc_info=True)
             # Continue without dictionaries on error
     
-    # --- 10.7. Apply World Info if enabled ---
-    message_text_with_world_info = message_text_with_rag
+    # --- 10.7. Apply staged handoff context and World Info if enabled ---
+    message_text_with_handoff = apply_current_handoff_context(app, message_text_with_rag)
+    message_text_with_world_info = message_text_with_handoff
     world_info_injections = {}
     
     if world_info_processor:
         try:
             # Process messages to find matching world info entries
             world_info_result = world_info_processor.process_messages(
-                message_text_with_rag,
+                message_text_with_handoff,
                 chat_history_for_api
             )
             
@@ -755,7 +1035,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                     parts.append(at_start_content)
                 if before_content:
                     parts.append(before_content)
-                parts.append(message_text_with_rag)
+                parts.append(message_text_with_handoff)
                 if after_content:
                     parts.append(after_content)
                 if at_end_content:
@@ -1128,6 +1408,10 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
         app.notify("Message content copied to clipboard.", severity="information", timeout=2)
         button.label = get_char(EMOJI_COPIED, FALLBACK_COPIED) + "Copied"
         app.set_timer(1.5, lambda: setattr(button, "label", get_char(EMOJI_COPY, FALLBACK_COPY)))
+
+    elif "artifact-button" in button_classes:
+        logging.info("Action: Save artifact clicked for %s message", message_role)
+        await _save_console_chatbook_artifact(app, action_widget, message_text, message_role)
 
     elif "note-button" in button_classes:
         logging.info("Action: Create Note clicked for %s message: '%s...'", message_role, message_text[:50])
@@ -2800,6 +3084,15 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
             if filtered_count > 0:
                 loguru_logger.debug(f"Filtered out {filtered_count} character conversations, keeping {len(conversations)} regular chats")
 
+        if conversations:
+            original_count = len(conversations)
+            conversations = [conv for conv in conversations if is_general_history_conversation(conv)]
+            filtered_count = original_count - len(conversations)
+            if filtered_count > 0:
+                loguru_logger.debug(
+                    f"Filtered out {filtered_count} CCP-owned conversations from general history"
+                )
+
         if not conversations:
             await results_list_view.append(ListItem(Label("No conversations found.")))
         else:
@@ -2855,6 +3148,11 @@ async def handle_chat_conversation_search_bar_changed(app: 'TldwCli', event_valu
         0.5,
         lambda: perform_chat_conversation_search(app)
     )
+
+
+def is_general_history_conversation(row: Mapping[str, Any]) -> bool:
+    """Return True when a conversation belongs in the general chat history."""
+    return (row.get("discovery_owner") or "general_chat") == "general_chat"
 
 
 async def handle_chat_search_checkbox_changed(app: 'TldwCli', checkbox_id: str, value: bool) -> None:

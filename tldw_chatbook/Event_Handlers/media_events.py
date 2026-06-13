@@ -41,10 +41,22 @@ class MediaTypeSelectedEvent(Message):
 class MediaMetadataUpdateEvent(Message):
     """Event for updating media metadata."""
     
-    def __init__(self, media_id: int, title: str, media_type: str, author: str, 
-                 url: str, keywords: list, type_slug: str) -> None:
+    def __init__(
+        self,
+        media_id: Any,
+        title: str,
+        media_type: str,
+        author: str,
+        url: str,
+        keywords: list,
+        type_slug: str,
+        record_id: Any = None,
+        backing_media_id: Any = None,
+    ) -> None:
         super().__init__()
         self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
+        self.backing_media_id = backing_media_id
         self.title = title
         self.media_type = media_type
         self.author = author
@@ -56,9 +68,18 @@ class MediaMetadataUpdateEvent(Message):
 class MediaDeleteConfirmationEvent(Message):
     """Event to trigger deletion confirmation dialog."""
     
-    def __init__(self, media_id: int, media_title: str, type_slug: str) -> None:
+    def __init__(
+        self,
+        media_id: Any,
+        media_title: str,
+        type_slug: str,
+        record_id: Any = None,
+        backing_media_id: Any = None,
+    ) -> None:
         super().__init__()
         self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
+        self.backing_media_id = backing_media_id
         self.media_title = media_title
         self.type_slug = type_slug
 
@@ -66,9 +87,10 @@ class MediaDeleteConfirmationEvent(Message):
 class MediaUndeleteEvent(Message):
     """Event to trigger media undeletion."""
     
-    def __init__(self, media_id: int, type_slug: str) -> None:
+    def __init__(self, media_id: Any, type_slug: str, record_id: Any = None) -> None:
         super().__init__()
         self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
         self.type_slug = type_slug
 
 
@@ -85,12 +107,25 @@ class SidebarCollapseEvent(Message):
 class MediaAnalysisRequestEvent(Message):
     """Event fired when requesting LLM analysis of media content."""
     
-    def __init__(self, media_id: int, provider: str, model: str, 
-                 system_prompt: str, user_prompt: str, type_slug: str,
-                 temperature: float = 0.7, top_p: float = 0.95, 
-                 min_p: float = 0.05, max_tokens: int = 4096) -> None:
+    def __init__(
+        self,
+        media_id: Any,
+        provider: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        type_slug: str,
+        temperature: float = 0.7,
+        top_p: float = 0.95,
+        min_p: float = 0.05,
+        max_tokens: int = 4096,
+        record_id: Any = None,
+        backing_media_id: Any = None,
+    ) -> None:
         super().__init__()
         self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
+        self.backing_media_id = backing_media_id
         self.provider = provider
         self.model = model
         self.system_prompt = system_prompt
@@ -105,9 +140,10 @@ class MediaAnalysisRequestEvent(Message):
 class MediaAnalysisSaveEvent(Message):
     """Event fired when saving new analysis content."""
     
-    def __init__(self, media_id: int, analysis_content: str, type_slug: str) -> None:
+    def __init__(self, media_id: Any, analysis_content: str, type_slug: str, record_id: Any = None) -> None:
         super().__init__()
         self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
         self.analysis_content = analysis_content
         self.type_slug = type_slug
 
@@ -115,9 +151,10 @@ class MediaAnalysisSaveEvent(Message):
 class MediaAnalysisSaveAsNoteEvent(Message):
     """Event fired when saving analysis as a new note."""
     
-    def __init__(self, media_id: int, media_title: str, analysis_content: str) -> None:
+    def __init__(self, media_id: Any, media_title: str, analysis_content: str, record_id: Any = None) -> None:
         super().__init__()
         self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
         self.media_title = media_title
         self.analysis_content = analysis_content
 
@@ -125,9 +162,10 @@ class MediaAnalysisSaveAsNoteEvent(Message):
 class MediaAnalysisOverwriteEvent(Message):
     """Event fired when overwriting existing analysis content."""
     
-    def __init__(self, media_id: int, analysis_content: str, type_slug: str) -> None:
+    def __init__(self, media_id: Any, analysis_content: str, type_slug: str, record_id: Any = None) -> None:
         super().__init__()
         self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
         self.analysis_content = analysis_content
         self.type_slug = type_slug
 
@@ -135,11 +173,102 @@ class MediaAnalysisOverwriteEvent(Message):
 class MediaAnalysisDeleteEvent(Message):
     """Event fired when deleting an analysis version."""
     
-    def __init__(self, media_id: int, version_uuid: str, type_slug: str) -> None:
+    def __init__(
+        self,
+        media_id: Any,
+        version_uuid: str,
+        type_slug: str,
+        record_id: Any = None,
+        version_number: Any = None,
+    ) -> None:
         super().__init__()
         self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
         self.version_uuid = version_uuid
+        self.version_number = version_number
         self.type_slug = type_slug
+
+
+class MediaReadItLaterToggleEvent(Message):
+    """Event fired when toggling a record's read-it-later state."""
+
+    def __init__(self, media_id: Any, *, record_id: Any = None, save_for_later: bool = True) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
+        self.save_for_later = save_for_later
+
+
+class MediaReadingHighlightCreateEvent(Message):
+    """Event fired when creating a reading highlight for a media record."""
+
+    def __init__(
+        self,
+        media_id: Any,
+        *,
+        record_id: Any = None,
+        quote: str,
+        start_offset: int | None = None,
+        end_offset: int | None = None,
+        color: str | None = None,
+        note: str | None = None,
+        anchor_strategy: str = "fuzzy_quote",
+        media_data: Dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
+        self.quote = quote
+        self.start_offset = start_offset
+        self.end_offset = end_offset
+        self.color = color
+        self.note = note
+        self.anchor_strategy = anchor_strategy
+        self.media_data = media_data
+
+
+class MediaReadingHighlightUpdateEvent(Message):
+    """Event fired when updating a reading highlight for a media record."""
+
+    def __init__(
+        self,
+        media_id: Any,
+        *,
+        highlight_id: Any,
+        record_id: Any = None,
+        quote: str | None = None,
+        color: str | None = None,
+        note: str | None = None,
+        state: str | None = "active",
+        media_data: Dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
+        self.highlight_id = highlight_id
+        self.quote = quote
+        self.color = color
+        self.note = note
+        self.state = state
+        self.media_data = media_data
+
+
+class MediaReadingHighlightDeleteEvent(Message):
+    """Event fired when deleting a reading highlight from a media record."""
+
+    def __init__(
+        self,
+        media_id: Any,
+        *,
+        highlight_id: Any,
+        record_id: Any = None,
+        media_data: Dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__()
+        self.media_id = media_id
+        self.record_id = record_id if record_id is not None else media_id
+        self.highlight_id = highlight_id
+        self.media_data = media_data
 
 #
 # Functions:

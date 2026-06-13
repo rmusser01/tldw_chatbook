@@ -51,6 +51,7 @@ from tldw_chatbook.Utils.Utils import generate_unique_filename, logging
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.config import load_settings
+from .chat_persistence_service import ChatPersistenceService
 #
 ####################################################################################################
 #
@@ -141,6 +142,9 @@ PROVIDER_PARAM_MAP = {
         'response_format': 'response_format',
         'n': 'n',
         'user_identifier': 'user',
+        'reasoning_effort': 'reasoning_effort',
+        'reasoning_summary': 'reasoning_summary',
+        'verbosity': 'verbosity',
     },
     'anthropic': {
         'api_key': 'api_key',
@@ -156,6 +160,8 @@ PROVIDER_PARAM_MAP = {
         #'tool_choice': 'tool_choice',
         'max_tokens': 'max_tokens',  # Anthropic uses max_tokens
         'stop': 'stop_sequences',  # Anthropic uses stop_sequences
+        'thinking_effort': 'thinking_effort',
+        'thinking_budget_tokens': 'thinking_budget_tokens',
     },
     'cohere': {
         'api_key': 'api_key',
@@ -683,6 +689,11 @@ def chat_api_call(
     response_format: Optional[Dict[str, str]] = None,  # Expects {'type': 'text' | 'json_object'}
     n: Optional[int] = None,
     user_identifier: Optional[str] = None,  # Renamed from 'user' to avoid conflict with 'user' role in messages
+    reasoning_effort: Optional[str] = None,
+    reasoning_summary: Optional[str] = None,
+    verbosity: Optional[str] = None,
+    thinking_effort: Optional[str] = None,
+    thinking_budget_tokens: Optional[int] = None,
     llm_fixed_tokens_kobold: Optional[bool] = False # Added
     ):
     """
@@ -721,6 +732,11 @@ def chat_api_call(
         response_format: Specifies the format of the response (e.g., `{'type': 'json_object'}`).
         n: The number of chat completion choices to generate.
         user_identifier: An identifier for the end-user, for tracking or moderation purposes.
+        reasoning_effort: Provider-specific reasoning effort for OpenAI-compatible reasoning models.
+        reasoning_summary: Provider-specific reasoning summary setting for OpenAI-compatible reasoning models.
+        verbosity: Provider-specific response verbosity setting for OpenAI-compatible reasoning models.
+        thinking_effort: Provider-specific thinking level for Anthropic-style thinking models.
+        thinking_budget_tokens: Optional thinking token budget for Anthropic-style thinking models.
 
     Returns:
         The LLM's response. This can be a string for non-streaming responses or
@@ -780,6 +796,11 @@ def chat_api_call(
         'response_format': response_format,
         'n': n,
         'user_identifier': user_identifier,
+        'reasoning_effort': reasoning_effort,
+        'reasoning_summary': reasoning_summary,
+        'verbosity': verbosity,
+        'thinking_effort': thinking_effort,
+        'thinking_budget_tokens': thinking_budget_tokens,
         'llm_fixed_tokens_kobold': llm_fixed_tokens_kobold # Added
     }
 
@@ -1399,7 +1420,16 @@ def save_chat_history_to_db_wrapper(
     # not for the content of the messages themselves.
     media_content_for_char_assoc: Optional[Dict[str, Any]],
     media_name_for_char_assoc: Optional[str] = None,
-    character_name_for_chat: Optional[str] = None
+    character_name_for_chat: Optional[str] = None,
+    *,
+    assistant_kind: Optional[str] = None,
+    assistant_id: Optional[str] = None,
+    persona_memory_mode: Optional[str] = None,
+    runtime_backend: Optional[str] = None,
+    discovery_owner: Optional[str] = None,
+    discovery_entity_id: Optional[str] = None,
+    scope_type: Optional[str] = None,
+    workspace_id: Optional[str] = None,
 ) -> Tuple[Optional[str], str]:
     """
     Saves or updates a chat conversation in the database.
@@ -1447,76 +1477,153 @@ def save_chat_history_to_db_wrapper(
         # The `db` instance methods will raise exceptions if issues occur.
 
         associated_character_id: Optional[int] = None
-        final_character_name_for_title = "Unknown Character" # For conversation title
+        final_character_name_for_title: Optional[str] = None
+        conversation_assistant_kind: Optional[str] = None
+        conversation_assistant_id: Optional[str] = None
+        conversation_persona_memory_mode: Optional[str] = None
+        conversation_runtime_backend: Optional[str] = None
+        conversation_discovery_owner: Optional[str] = None
+        conversation_discovery_entity_id: Optional[str] = None
+        conversation_scope_type: Optional[str] = None
+        conversation_workspace_id: Optional[str] = None
+        persistence_service = ChatPersistenceService(db)
+        explicit_assistant_kind = str(assistant_kind).strip().lower() if assistant_kind else None
+        explicit_assistant_id = str(assistant_id).strip() if assistant_id else None
+        explicit_persona_memory_mode = str(persona_memory_mode).strip() if persona_memory_mode else None
 
         # --- Character Association Logic (largely same as your provided version) ---
-        char_lookup_name = character_name_for_chat
-        if not char_lookup_name and media_name_for_char_assoc:
-            char_lookup_name = media_name_for_char_assoc
-
-        # Fallback to media_content_for_char_assoc to derive char_lookup_name if others are None
-        if not char_lookup_name and media_content_for_char_assoc:
-            content_details = media_content_for_char_assoc.get('content')
-            if isinstance(content_details, str):
-                try: content_details = json.loads(content_details)
-                except json.JSONDecodeError: content_details = {}
-            if isinstance(content_details, dict):
-                char_lookup_name = content_details.get('title')
-
-        if char_lookup_name:
-            try:
-                character = db.get_character_card_by_name(char_lookup_name)
-                if character:
-                    associated_character_id = character['id']
-                    final_character_name_for_title = character['name']
-                    logging.info(f"Chat will be associated with specific character '{final_character_name_for_title}' (ID: {associated_character_id}).")
-                else:
-                    logging.error(f"Intended specific character '{char_lookup_name}' not found in DB. Chat save aborted.")
-                    return conversation_id, f"Error: Specific character '{char_lookup_name}' intended for this chat was not found. Cannot save chat."
-            except CharactersRAGDBError as e:
-                logging.error(f"DB error looking up specific character '{char_lookup_name}': {e}")
-                return conversation_id, f"DB error finding specific character: {e}"
-        else:
-            logging.info("No specific character name for chat. Using Default Character.")
-            try:
-                default_char = db.get_character_card_by_name(DEFAULT_CHARACTER_NAME)
-                if default_char:
-                    associated_character_id = default_char['id']
-                    final_character_name_for_title = default_char['name']
-                    logging.info(f"Chat will be associated with '{DEFAULT_CHARACTER_NAME}' (ID: {associated_character_id}).")
-                else:
-                    # This is a critical state: no specific char, and default char is missing (should have been created by DB dep)
-                    logging.error(f"'{DEFAULT_CHARACTER_NAME}' is missing from the DB and no specific character was provided. Chat save aborted.")
-                    return conversation_id, f"Error: Critical - '{DEFAULT_CHARACTER_NAME}' is missing. Cannot save chat."
-            except CharactersRAGDBError as e:
-                logging.error(f"DB error looking up '{DEFAULT_CHARACTER_NAME}': {e}")
-                return conversation_id, f"DB error finding '{DEFAULT_CHARACTER_NAME}': {e}"
-
-        # Ensure we have a character_id to proceed
-        if associated_character_id is None:
-             # This should be an unreachable state if the logic above is correct.
-             logging.critical(f"Logic error: associated_character_id is None after character lookup. Chat save aborted.")
-             return conversation_id, "Critical internal error: Could not determine character for chat."
-        # --- End Character Association ---
-
         current_conversation_id = conversation_id
         is_new_conversation = not current_conversation_id
 
         # --- Create or Prepare Conversation ---
-        if is_new_conversation:
-            conv_title_base = f"Chat with {final_character_name_for_title}"
-
-            timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-            conversation_title = f"{conv_title_base} ({timestamp_str})"
-
-            conv_data = {
-                'character_id': associated_character_id,
-                'title': conversation_title,
-                # 'root_id' will be set to new conv_id by add_conversation if not provided
-                'client_id': db.client_id  # Use client_id from the DB instance
-            }
+        existing_conv_details = None
+        existing_assistant_kind = None
+        existing_assistant_id = None
+        existing_runtime_backend = None
+        existing_discovery_owner = None
+        existing_discovery_entity_id = None
+        existing_scope_type = None
+        existing_workspace_id = None
+        if not is_new_conversation:
             try:
-                current_conversation_id = db.add_conversation(conv_data)
+                existing_conv_details = db.get_conversation_by_id(current_conversation_id)
+                if not existing_conv_details:
+                    logging.error(f"Cannot resave: Conversation {current_conversation_id} not found.")
+                    return current_conversation_id, f"Error: Conversation {current_conversation_id} not found for resaving."
+                existing_assistant_kind = existing_conv_details.get("assistant_kind")
+                existing_assistant_id = existing_conv_details.get("assistant_id")
+                existing_runtime_backend = existing_conv_details.get("runtime_backend")
+                existing_discovery_owner = existing_conv_details.get("discovery_owner")
+                existing_discovery_entity_id = existing_conv_details.get("discovery_entity_id")
+                existing_scope_type = existing_conv_details.get("scope_type")
+                existing_workspace_id = existing_conv_details.get("workspace_id")
+            except (InputError, ConflictError, CharactersRAGDBError) as e:
+                logging.error(f"Error preparing existing conversation {current_conversation_id} for resave: {e}", exc_info=True)
+                return current_conversation_id, f"Error during resave prep: {e}"
+
+        conversation_runtime_backend = runtime_backend or existing_runtime_backend or "local"
+        conversation_discovery_owner = discovery_owner or existing_discovery_owner or "general_chat"
+        conversation_discovery_entity_id = (
+            discovery_entity_id
+            if discovery_entity_id is not None
+            else existing_discovery_entity_id
+        )
+        conversation_scope_type = scope_type if scope_type is not None else existing_scope_type
+        conversation_workspace_id = workspace_id if workspace_id is not None else existing_workspace_id
+
+        if explicit_assistant_kind == "persona":
+            if not explicit_assistant_id:
+                return conversation_id, "Error: Persona conversations require an assistant_id."
+            conversation_assistant_kind = "persona"
+            conversation_assistant_id = explicit_assistant_id
+            conversation_persona_memory_mode = explicit_persona_memory_mode
+            conversation_runtime_backend = runtime_backend or existing_runtime_backend or "local"
+            conversation_discovery_owner = discovery_owner or "ccp_persona"
+            conversation_discovery_entity_id = discovery_entity_id or explicit_assistant_id
+            final_character_name_for_title = explicit_assistant_id
+        else:
+            char_lookup_name = character_name_for_chat
+            if not char_lookup_name and media_name_for_char_assoc:
+                char_lookup_name = media_name_for_char_assoc
+
+            if not char_lookup_name and media_content_for_char_assoc:
+                content_details = media_content_for_char_assoc.get('content')
+                if isinstance(content_details, str):
+                    try:
+                        content_details = json.loads(content_details)
+                    except json.JSONDecodeError:
+                        content_details = {}
+                if isinstance(content_details, dict):
+                    char_lookup_name = content_details.get('title')
+
+            if char_lookup_name:
+                try:
+                    character = db.get_character_card_by_name(char_lookup_name)
+                    if character:
+                        associated_character_id = character['id']
+                        final_character_name_for_title = character['name']
+                        conversation_assistant_kind = "character"
+                        conversation_assistant_id = str(character['id'])
+                        conversation_discovery_owner = discovery_owner or "ccp_character"
+                        conversation_discovery_entity_id = (
+                            discovery_entity_id
+                            if discovery_entity_id is not None
+                            else str(character['id'])
+                        )
+                        conversation_runtime_backend = runtime_backend or existing_runtime_backend or "local"
+                        logging.info(
+                            f"Chat will be associated with specific character '{final_character_name_for_title}' (ID: {associated_character_id})."
+                        )
+                    else:
+                        logging.error(f"Intended specific character '{char_lookup_name}' not found in DB. Chat save aborted.")
+                        return conversation_id, f"Error: Specific character '{char_lookup_name}' intended for this chat was not found. Cannot save chat."
+                except CharactersRAGDBError as e:
+                    logging.error(f"DB error looking up specific character '{char_lookup_name}': {e}")
+                    return conversation_id, f"DB error finding specific character: {e}"
+            elif existing_assistant_kind == "persona" and existing_assistant_id:
+                conversation_assistant_kind = "persona"
+                conversation_assistant_id = str(existing_assistant_id)
+                conversation_persona_memory_mode = existing_conv_details.get("persona_memory_mode")
+                conversation_runtime_backend = existing_runtime_backend or "local"
+                conversation_discovery_owner = existing_discovery_owner or "ccp_persona"
+                conversation_discovery_entity_id = existing_discovery_entity_id or str(existing_assistant_id)
+                conversation_scope_type = existing_scope_type
+                conversation_workspace_id = existing_workspace_id
+                final_character_name_for_title = str(existing_assistant_id)
+            else:
+                if existing_conv_details and existing_assistant_kind is None:
+                    conversation_runtime_backend = (
+                        runtime_backend
+                        or existing_conv_details.get("runtime_backend")
+                        or "local"
+                    )
+                    conversation_discovery_owner = (
+                        discovery_owner
+                        or existing_conv_details.get("discovery_owner")
+                        or "general_chat"
+                    )
+                    conversation_discovery_entity_id = (
+                        discovery_entity_id
+                        or existing_conv_details.get("discovery_entity_id")
+                    )
+                    conversation_scope_type = scope_type or existing_conv_details.get("scope_type")
+                    conversation_workspace_id = workspace_id or existing_conv_details.get("workspace_id")
+                logging.info("No specific character resolved for chat. Using generic conversation metadata.")
+
+        if is_new_conversation:
+            try:
+                current_conversation_id = persistence_service.create_conversation(
+                    character_id=associated_character_id,
+                    character_name=final_character_name_for_title,
+                    assistant_kind=conversation_assistant_kind,
+                    assistant_id=conversation_assistant_id,
+                    persona_memory_mode=conversation_persona_memory_mode,
+                    runtime_backend=conversation_runtime_backend,
+                    discovery_owner=conversation_discovery_owner,
+                    discovery_entity_id=conversation_discovery_entity_id,
+                    scope_type=conversation_scope_type,
+                    workspace_id=conversation_workspace_id,
+                )
                 if not current_conversation_id:  # Should not happen if add_conversation raises on failure
                     return None, "Failed to create new conversation in DB."
                 logging.info(f"Created new conv ID: {current_conversation_id} for char ID: {associated_character_id} ('{final_character_name_for_title}')")
@@ -1526,25 +1633,26 @@ def save_chat_history_to_db_wrapper(
         else: # Resaving existing conversation
             logging.info(f"Resaving history for existing conv ID: {current_conversation_id}. Char context ID: {associated_character_id} ('{final_character_name_for_title}')")
             try:
-                with db.transaction():
-                    existing_conv_details = db.get_conversation_by_id(current_conversation_id)
-                    if not existing_conv_details:
-                        logging.error(f"Cannot resave: Conversation {current_conversation_id} not found.")
-                        return current_conversation_id, f"Error: Conversation {current_conversation_id} not found for resaving."
-
-                    # Important: Ensure the existing conversation being updated belongs to the character context we're in.
-                    # This prevents accidentally overwriting a chat from Character A if the current UI context is Character B (or Default).
-                    if existing_conv_details.get('character_id') != associated_character_id:
-                        # Fetch names for better logging
-                        existing_char_of_conv = db.get_character_card_by_id(existing_conv_details.get('character_id'))
-                        existing_char_name = existing_char_of_conv['name'] if existing_char_of_conv else "ID "+str(existing_conv_details.get('character_id'))
-                        logging.error(f"Cannot resave: Conversation {current_conversation_id} (for char '{existing_char_name}') does not match current character context '{final_character_name_for_title}' (ID: {associated_character_id}).")
+                existing_character_id = existing_conv_details.get('character_id')
+                if existing_assistant_kind == "character":
+                    if existing_character_id != associated_character_id:
+                        existing_char_of_conv = db.get_character_card_by_id(existing_character_id)
+                        existing_char_name = existing_char_of_conv['name'] if existing_char_of_conv else "ID "+str(existing_character_id)
+                        logging.error(
+                            f"Cannot resave: Conversation {current_conversation_id} (for char '{existing_char_name}') does not match current character context '{final_character_name_for_title}' (ID: {associated_character_id})."
+                        )
                         return current_conversation_id, "Error: Mismatch in character association for resaving chat. The conversation belongs to a different character."
-
-                    existing_messages = db.get_messages_for_conversation(current_conversation_id, limit=10000, order_by_timestamp="ASC")
-                    logging.info(f"Found {len(existing_messages)} existing messages to soft-delete for conv {current_conversation_id}.")
-                    for msg in existing_messages:
-                        db.soft_delete_message(msg['id'], msg['version'])
+                elif existing_assistant_kind == "persona":
+                    if conversation_assistant_kind != "persona" or conversation_assistant_id != existing_assistant_id:
+                        logging.error(
+                            f"Cannot resave: Conversation {current_conversation_id} belongs to persona '{existing_assistant_id}', but the current context resolves to '{conversation_assistant_id}'."
+                        )
+                        return current_conversation_id, "Error: Mismatch in persona association for resaving chat. The conversation belongs to a different persona."
+                elif conversation_assistant_kind in {"character", "persona"}:
+                    logging.error(
+                        f"Cannot resave: Conversation {current_conversation_id} is generic but current context resolves to {conversation_assistant_kind}."
+                    )
+                    return current_conversation_id, "Error: Mismatch in assistant association for resaving chat. The conversation belongs to a different context."
             except (InputError, ConflictError, CharactersRAGDBError) as e:
                 logging.error(f"Error preparing existing conversation {current_conversation_id} for resave: {e}", exc_info=True)
                 return current_conversation_id, f"Error during resave prep: {e}"
@@ -1552,84 +1660,33 @@ def save_chat_history_to_db_wrapper(
 
         # --- Save Messages (Handles new OpenAI format) ---
         try:
-            # Ensure transaction wraps message saving, especially for new conversations or full resaves.
-            # For resaves, the transaction is already started above.
-            with db.transaction() if is_new_conversation else db.transaction(): # No-op if already in transaction for resave
-                message_save_count = 0
-                for i, message_obj in enumerate(chatbot_history):
-                    sender = message_obj.get("role")
-                    if not sender or sender == "system": # Don't save system prompts as messages
-                        logging.debug(f"Skipping message with role '{sender}' at index {i}")
-                        continue
-
-                    text_content_parts = []
-                    image_data_bytes: Optional[bytes] = None
-                    image_mime_type_str: Optional[str] = None
-
-                    content_data = message_obj.get("content")
-
-                    if isinstance(content_data, str): # Simple text content (e.g., from older history or some assistant responses)
-                        text_content_parts.append(content_data)
-                    elif isinstance(content_data, list): # OpenAI multimodal content list
-                        for part in content_data:
-                            part_type = part.get("type")
-                            if part_type == "text":
-                                text_content_parts.append(part.get("text", ""))
-                            elif part_type == "image_url":
-                                image_url_dict = part.get("image_url", {})
-                                url_str = image_url_dict.get("url", "")
-                                if url_str.startswith("data:") and ";base64," in url_str:
-                                    try:
-                                        header, b64_data = url_str.split(";base64,", 1)
-                                        image_mime_type_str = header.split("data:", 1)[1] if "data:" in header else None
-                                        if image_mime_type_str: # Ensure mime type was found
-                                            image_data_bytes = base64.b64decode(b64_data)
-                                            logging.debug(f"Decoded image for saving (MIME: {image_mime_type_str}, Size: {len(image_data_bytes) if image_data_bytes else 0}) for msg {i} in conv {current_conversation_id}")
-                                        else:
-                                            logging.warning(f"Could not parse MIME type from data URI: {url_str[:60]}...")
-                                            text_content_parts.append("<Error: Malformed image data URI in history>")
-                                    except Exception as e_b64:
-                                        logging.error(f"Error decoding base64 image from history for msg {i} in conv {current_conversation_id}: {e_b64}")
-                                        text_content_parts.append("<Error: Failed to decode image data from history>")
-                                else:
-                                    # If it's a non-data URL, store it as text.
-                                    logging.debug(f"Storing non-data image URL as text: {url_str}")
-                                    text_content_parts.append(f"<Image URL: {url_str}>")
-                    else:
-                        logging.warning(f"Unsupported message content type at index {i}: {type(content_data)}")
-                        text_content_parts.append(f"<Unsupported content type: {type(content_data)}>")
-
-                    final_text_content = "\n".join(text_content_parts).strip()
-
-                    # A message must have either text or an image to be saved.
-                    if not final_text_content and not image_data_bytes:
-                        logging.warning(f"Skipping empty message (no text or decodable image) at index {i} for conv {current_conversation_id}")
-                        continue
-
-                    db.add_message({
-                        'conversation_id': current_conversation_id,
-                        'sender': sender, # 'user' or 'assistant'
-                        'content': final_text_content,
-                        'image_data': image_data_bytes,
-                        'image_mime_type': image_mime_type_str,
-                        'client_id': db.client_id
-                        # timestamp, version, ranking, etc., handled by db.add_message
-                    })
-                    message_save_count +=1
+            with db.transaction():
+                message_save_count = persistence_service.save_history(
+                    conversation_id=current_conversation_id,
+                    chatbot_history=chatbot_history,
+                )
                 logging.info(f"Successfully saved {message_save_count} messages to conversation {current_conversation_id}.")
 
-                # If resaving (not a new conversation), update conversation's last_modified and version
-                if not is_new_conversation:
-                    conv_details_for_update = db.get_conversation_by_id(current_conversation_id)
-                    if conv_details_for_update:
-                        db.update_conversation(
-                            current_conversation_id,
-                            {'title': conv_details_for_update.get('title')}, # Keep title, just bump version/timestamp
-                            conv_details_for_update['version']
-                        )
-                    else:
-                        logging.error(f"Conversation {current_conversation_id} disappeared before final metadata update during resave.")
-
+                conv_details_for_update = db.get_conversation_by_id(current_conversation_id)
+                if conv_details_for_update:
+                    db.update_conversation(
+                        current_conversation_id,
+                        {
+                            'title': conv_details_for_update.get('title'),
+                            'character_id': associated_character_id,
+                            'assistant_kind': conversation_assistant_kind,
+                            'assistant_id': conversation_assistant_id,
+                            'persona_memory_mode': conversation_persona_memory_mode,
+                            'runtime_backend': conversation_runtime_backend,
+                            'discovery_owner': conversation_discovery_owner,
+                            'discovery_entity_id': conversation_discovery_entity_id,
+                            'scope_type': conversation_scope_type,
+                            'workspace_id': conversation_workspace_id,
+                        },
+                        conv_details_for_update['version']
+                    )
+                else:
+                    logging.error(f"Conversation {current_conversation_id} disappeared before final metadata update during save.")
 
         except (InputError, ConflictError, CharactersRAGDBError) as e:
             logging.error(f"Error saving messages to conversation {current_conversation_id}: {e}", exc_info=True)

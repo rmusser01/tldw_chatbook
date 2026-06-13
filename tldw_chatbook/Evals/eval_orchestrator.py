@@ -314,8 +314,8 @@ class EvaluationOrchestrator:
                 task_config_dict.update(config_overrides)
             
             # Validate configurations
-            ConfigurationValidator.validate_task_config(task_config_dict)
-            ConfigurationValidator.validate_model_config(model_data)
+            self.validator.raise_if_invalid(task_config_dict, 'task')
+            self.validator.raise_if_invalid(model_data, 'model')
             
             # Filter task_config_dict to only include TaskConfig fields
             from inspect import signature
@@ -438,8 +438,18 @@ class EvaluationOrchestrator:
             
             self.db.store_run_metrics(run_id, db_metrics)
             
-            # Update run status to completed
-            self.db.update_run_status(run_id, 'completed')
+            stored_result_count = len(self.db.get_results_for_run(run_id))
+            expected_result_count = len(results)
+            result_storage_failed = stored_result_count < expected_result_count
+            final_status = 'failed' if result_storage_failed else 'completed'
+            final_error = None
+            if result_storage_failed:
+                final_error = (
+                    f"Only stored {stored_result_count} of "
+                    f"{expected_result_count} evaluation results"
+                )
+
+            self.db.update_run_status(run_id, final_status, final_error)
             
             # Log completion metrics
             eval_duration = time.time() - eval_start_time
@@ -447,9 +457,9 @@ class EvaluationOrchestrator:
                 "task_type": task_config.task_type,
                 "provider": model_data['provider'],
                 "model": model_data['model_id'],
-                "status": "completed"
+                "status": final_status
             })
-            log_counter("eval_run_completed", labels={
+            log_counter(f"eval_run_{final_status}", labels={
                 "task_type": task_config.task_type,
                 "provider": model_data['provider'],
                 "model": model_data['model_id']
@@ -460,7 +470,7 @@ class EvaluationOrchestrator:
                 "model": model_data['model_id']
             })
             
-            logger.info(f"Evaluation completed successfully: {run_name} ({run_id})")
+            logger.info(f"Evaluation finished with status {final_status}: {run_name} ({run_id})")
             logger.info(f"Results summary: {aggregate_metrics}")
             
             return run_id

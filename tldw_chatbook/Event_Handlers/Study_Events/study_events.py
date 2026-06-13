@@ -293,11 +293,11 @@ class StudyEventHandler:
 study_event_handler = StudyEventHandler()
 
 # Button handler mappings
+# Flashcards actions are handled directly by StudyWindow in screen mode so they stay
+# backend-aware and do not rely on parent traversal or direct DB access from this module.
 STUDY_BUTTON_HANDLERS = {
-    "create-card-btn": study_event_handler.handle_create_card,
     "add-topic-btn": study_event_handler.handle_add_topic,
     "add-child-btn": study_event_handler.handle_add_mindmap_child,
-    "start-review-btn": study_event_handler.handle_start_review,
     "create-course-btn": study_event_handler.handle_create_course,
     "generate-guide-btn": study_event_handler.handle_generate_study_guide,
     "add-milestone-btn": study_event_handler.handle_add_milestone,

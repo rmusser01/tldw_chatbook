@@ -394,9 +394,10 @@ class ChatterboxTTSBackend(TTSBackendBase):
         # Normalize whitespace
         text = re.sub(r'\s+', ' ', text).strip()
         
-        # Convert "J.R.R." to "J R R" for better pronunciation
-        # This handles abbreviations with periods between capital letters
-        text = re.sub(r'(?<=[A-Z])\.(?=[A-Z])', ' ', text)
+        # Convert initial sequences like "J.R.R. Tolkien" to "J R R Tolkien"
+        # for better pronunciation, including the trailing initial before a name.
+        text = re.sub(r'\b([A-Z])\.(?=(?:[A-Z]\.)|(?:\s+[A-Z]))', r'\1 ', text)
+        text = re.sub(r'\s+', ' ', text)
         
         # Remove inline reference numbers like [1], [2], etc.
         text = re.sub(r'\[\d+\]', '', text)
@@ -431,6 +432,23 @@ class ChatterboxTTSBackend(TTSBackendBase):
         current_chunk = ""
         
         for sentence in sentences:
+            if len(sentence) > self.max_chunk_size:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = ""
+                word_chunk = ""
+                for word in sentence.split():
+                    separator = " " if word_chunk else ""
+                    if len(word_chunk) + len(separator) + len(word) > self.max_chunk_size:
+                        if word_chunk:
+                            chunks.append(word_chunk.strip())
+                        word_chunk = word
+                    else:
+                        word_chunk = f"{word_chunk}{separator}{word}"
+                if word_chunk:
+                    chunks.append(word_chunk.strip())
+                continue
+
             # If adding this sentence would exceed max chunk size
             if len(current_chunk) + len(sentence) + 1 > self.max_chunk_size:
                 if current_chunk:
@@ -825,6 +843,9 @@ class ChatterboxTTSBackend(TTSBackendBase):
         Yields:
             Audio bytes in the requested format
         """
+        if not self._initialized and self.model is not None and self.model != "process":
+            self._initialized = True
+
         # If not initialized, start initialization and wait
         if not self._initialized:
             logger.info("Chatterbox not initialized, starting initialization...")
@@ -939,6 +960,36 @@ class ChatterboxTTSBackend(TTSBackendBase):
                 
             else:
                 # Single chunk generation
+                if (
+                    self.streaming_enabled
+                    and num_candidates <= 1
+                    and not validate_with_whisper
+                    and hasattr(self.model, "generate_stream")
+                ):
+                    async for audio_chunk, metrics in self._generate_stream_async(
+                        text,
+                        reference_audio_path,
+                        exaggeration,
+                        cfg_weight,
+                    ):
+                        chunk_bytes = self._tensor_to_wav_bytes(audio_chunk, self.model.sr)
+                        if request.response_format != "wav":
+                            chunk_bytes = await self.audio_service.convert_audio_format(
+                                chunk_bytes,
+                                "wav",
+                                request.response_format,
+                            )
+                        yield chunk_bytes
+
+                    await self._report_progress(
+                        progress=1.0,
+                        processed=1,
+                        total=1,
+                        status="Generation complete",
+                        metrics={"format": request.response_format, "streaming": True},
+                    )
+                    return
+
                 if num_candidates > 1 or validate_with_whisper:
                     # Use multi-candidate generation with validation
                     audio_bytes = await self.generate_with_validation(
@@ -1124,7 +1175,10 @@ class ChatterboxTTSBackend(TTSBackendBase):
         import io
         import wave
         import torch
-        import torchaudio
+        try:
+            import torchaudio
+        except ModuleNotFoundError:
+            torchaudio = None
         
         if len(audio_chunks) <= 1:
             return b''.join(audio_chunks)
@@ -1137,7 +1191,32 @@ class ChatterboxTTSBackend(TTSBackendBase):
             for chunk_bytes in audio_chunks:
                 # Load WAV from bytes
                 buffer = io.BytesIO(chunk_bytes)
-                tensor, sr = torchaudio.load(buffer)
+                if torchaudio is not None:
+                    tensor, sr = torchaudio.load(buffer)
+                else:
+                    import numpy as np
+
+                    with wave.open(buffer, "rb") as wav_file:
+                        sr = wav_file.getframerate()
+                        channels = wav_file.getnchannels()
+                        sample_width = wav_file.getsampwidth()
+                        raw_audio = wav_file.readframes(wav_file.getnframes())
+
+                    if sample_width == 1:
+                        audio = np.frombuffer(raw_audio, dtype=np.uint8).astype("float32")
+                        audio = (audio - 128.0) / 128.0
+                    elif sample_width == 2:
+                        audio = np.frombuffer(raw_audio, dtype="<i2").astype("float32") / 32768.0
+                    elif sample_width == 4:
+                        audio = np.frombuffer(raw_audio, dtype="<i4").astype("float32") / 2147483648.0
+                    else:
+                        raise ValueError(f"Unsupported WAV sample width: {sample_width}")
+
+                    if channels > 1:
+                        audio = audio.reshape(-1, channels).T
+                    else:
+                        audio = audio.reshape(1, -1)
+                    tensor = torch.from_numpy(audio)
                 
                 # Ensure mono
                 if tensor.shape[0] > 1:
@@ -1164,7 +1243,6 @@ class ChatterboxTTSBackend(TTSBackendBase):
     def _tensor_to_wav_bytes(self, tensor, sample_rate: int) -> bytes:
         """Convert PyTorch tensor to WAV bytes"""
         import io
-        import torchaudio
         
         # Create a bytes buffer
         buffer = io.BytesIO()
@@ -1176,10 +1254,24 @@ class ChatterboxTTSBackend(TTSBackendBase):
         # Add batch dimension if needed
         if tensor.dim() == 1:
             tensor = tensor.unsqueeze(0)
-        
-        # Save to buffer
-        torchaudio.save(buffer, tensor, sample_rate, format="wav")
-        
+
+        try:
+            import torchaudio
+            torchaudio.save(buffer, tensor, sample_rate, format="wav")
+        except ModuleNotFoundError:
+            import wave
+
+            audio = tensor.detach().cpu()
+            if audio.dim() > 1:
+                audio = audio.mean(dim=0)
+            audio = audio.clamp(-1.0, 1.0).numpy()
+            pcm = (audio * 32767.0).astype("<i2").tobytes()
+            with wave.open(buffer, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(int(sample_rate))
+                wav_file.writeframes(pcm)
+
         # Get bytes
         buffer.seek(0)
         return buffer.read()

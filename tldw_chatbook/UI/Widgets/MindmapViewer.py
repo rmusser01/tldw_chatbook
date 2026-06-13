@@ -199,17 +199,53 @@ class MindmapViewer(Container):
             if self.show_controls:
                 # Main controls
                 with Horizontal(classes="mindmap-controls"):
-                    yield Button("◀ Collapse All", id="collapse-all", classes="mindmap-button")
-                    yield Button("▶ Expand All", id="expand-all", classes="mindmap-button")
-                    yield Button("🔍 Search", id="search-btn", classes="mindmap-button")
-                    yield Button("↻ Refresh", id="refresh-btn", classes="mindmap-button")
+                    yield Button(
+                        "◀ Collapse All",
+                        id="collapse-all",
+                        classes="mindmap-button",
+                        tooltip="Collapse every expanded mindmap node.",
+                    )
+                    yield Button(
+                        "▶ Expand All",
+                        id="expand-all",
+                        classes="mindmap-button",
+                        tooltip="Expand every mindmap node.",
+                    )
+                    yield Button(
+                        "🔍 Search",
+                        id="search-btn",
+                        classes="mindmap-button",
+                        tooltip="Open mindmap node search.",
+                    )
+                    yield Button(
+                        "↻ Refresh",
+                        id="refresh-btn",
+                        classes="mindmap-button",
+                        tooltip="Refresh the current mindmap view.",
+                    )
                 
                 # View mode selector
                 with Horizontal(classes="view-mode-selector"):
                     yield Label("View: ")
-                    yield Button("Tree", id="view-tree", classes="view-mode-button", variant="primary")
-                    yield Button("Outline", id="view-outline", classes="view-mode-button")
-                    yield Button("ASCII", id="view-ascii", classes="view-mode-button")
+                    yield Button(
+                        "Tree",
+                        id="view-tree",
+                        classes="view-mode-button",
+                        variant="primary",
+                        tooltip="Show the mindmap as an indented tree.",
+                    )
+                    yield Button(
+                        "Outline",
+                        id="view-outline",
+                        classes="view-mode-button",
+                        tooltip="Show the mindmap as a structured outline.",
+                    )
+                    yield Button(
+                        "ASCII",
+                        id="view-ascii",
+                        classes="view-mode-button",
+                        tooltip="Show the mindmap as ASCII art.",
+                    )
             
             # Search bar (hidden by default)
             with Horizontal(id="search-container"):
@@ -217,9 +253,25 @@ class MindmapViewer(Container):
                     placeholder="Search nodes...",
                     id="search-input"
                 )
-                yield Button("Next", id="search-next", classes="search-nav-button")
-                yield Button("Prev", id="search-prev", classes="search-nav-button")
-                yield Button("✕", id="search-close", classes="search-nav-button", variant="error")
+                yield Button(
+                    "Next",
+                    id="search-next",
+                    classes="search-nav-button",
+                    tooltip="Jump to the next matching node.",
+                )
+                yield Button(
+                    "Prev",
+                    id="search-prev",
+                    classes="search-nav-button",
+                    tooltip="Jump to the previous matching node.",
+                )
+                yield Button(
+                    "✕",
+                    id="search-close",
+                    classes="search-nav-button",
+                    variant="error",
+                    tooltip="Close search and clear current matches.",
+                )
         
         # Main display area
         yield ScrollableContainer(

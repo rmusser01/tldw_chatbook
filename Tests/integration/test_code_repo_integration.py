@@ -11,8 +11,20 @@ from pathlib import Path
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Coding_Window import CodingWindow, CODING_VIEW_REPO_COPY_PASTE
 from tldw_chatbook.UI.CodeRepoCopyPasteWindow import CodeRepoCopyPasteWindow
+from tldw_chatbook.UI.Screens.coding_screen import CodingScreen
+from tldw_chatbook.Constants import TAB_CODING
 from tldw_chatbook.Utils.github_api_client import GitHubAPIError
 from Tests.textual_test_utils import app_pilot
+
+
+class CodeRepoTestApp(TldwCli):
+    """Minimal app shell for code-repo integration screens."""
+
+    def compose(self):
+        yield from []
+
+    def on_mount(self):
+        pass
 
 
 class TestCodeRepoIntegration:
@@ -22,22 +34,35 @@ class TestCodeRepoIntegration:
     def mock_github_api(self):
         """Mock GitHub API for integration tests."""
         with patch('tldw_chatbook.UI.CodeRepoCopyPasteWindow.GitHubAPIClient') as mock_class:
-            mock_instance = AsyncMock()
+            mock_instance = MagicMock()
             mock_class.return_value = mock_instance
             
             # Default successful responses
             mock_instance.parse_github_url.return_value = ("test-owner", "test-repo")
-            mock_instance.get_repository_info.return_value = {
+            mock_instance.get_repository_info = AsyncMock(return_value={
                 "name": "test-repo",
                 "full_name": "test-owner/test-repo"
-            }
-            mock_instance.get_branches.return_value = ["main", "develop"]
+            })
+            mock_instance.get_branches = AsyncMock(return_value=["main", "develop"])
+            mock_instance.get_repository_tree = AsyncMock(return_value=[
+                {'path': 'README.md', 'name': 'README.md', 'type': 'blob', 'size': 1000},
+                {'path': 'LICENSE', 'name': 'LICENSE', 'type': 'blob', 'size': 500},
+                {'path': 'src', 'name': 'src', 'type': 'tree'},
+                {'path': 'src/main.py', 'name': 'main.py', 'type': 'blob', 'size': 2000},
+            ])
             mock_instance.build_tree_hierarchy.return_value = [
                 {
                     'path': 'README.md',
                     'name': 'README.md',
                     'type': 'blob',
                     'size': 1000,
+                    'children': []
+                },
+                {
+                    'path': 'LICENSE',
+                    'name': 'LICENSE',
+                    'type': 'blob',
+                    'size': 500,
                     'children': []
                 },
                 {
@@ -55,8 +80,8 @@ class TestCodeRepoIntegration:
                     ]
                 }
             ]
-            mock_instance.get_file_content.side_effect = lambda o, r, p, b: f"Content of {p}"
-            mock_instance.close.return_value = None
+            mock_instance.get_file_content = AsyncMock(side_effect=lambda o, r, p, b: f"Content of {p}")
+            mock_instance.close = AsyncMock(return_value=None)
             
             yield mock_instance
     
@@ -72,50 +97,44 @@ class TestCodeRepoIntegration:
         # Track workflow steps
         workflow_steps = []
         
-        class TestApp(TldwCli):
+        class TestApp(CodeRepoTestApp):
             def __init__(self):
                 super().__init__()
                 # Override some initialization that might cause issues in tests
                 self._init_complete = True
-            
+
             def notify(self, message, **kwargs):
                 workflow_steps.append(('notify', message, kwargs))
                 super().notify(message, **kwargs)
         
         async with app_pilot(TestApp) as pilot:
-            # Navigate to Coding Tab
-            await pilot.press("ctrl+4")  # Assuming Coding Tab is 4th tab
+            # Navigate directly; key ordering is presentation-level and may change.
+            await pilot.app.push_screen(CodingScreen(pilot.app))
+            pilot.app.current_tab = TAB_CODING
             await pilot.pause()
             
-            # Click on Code Repo Copy/Paste in sidebar
+            # Activate the Code Repo Copy/Paste view. Sidebar click routing is
+            # covered separately; this workflow verifies the embedded tool.
             coding_window = pilot.app.query_one(CodingWindow)
-            repo_button = coding_window.query_one(f"#{CODING_VIEW_REPO_COPY_PASTE.replace('view', 'nav')}")
-            
-            if repo_button:
-                await pilot.click(repo_button)
-                await pilot.pause()
+            coding_window.coding_active_view = CODING_VIEW_REPO_COPY_PASTE
+            await pilot.pause()
             
             # The view should now be active
             repo_view = coding_window.query_one(f"#{CODING_VIEW_REPO_COPY_PASTE}")
             assert repo_view is not None
             assert repo_view.styles.display != "none"
             
-            # Click "Open Repository Selector" button
-            open_button = repo_view.query_one("#open-repo-selector")
-            await pilot.click(open_button)
-            await pilot.pause()
-            
-            # The modal should be open
-            repo_window = pilot.app.query_one(CodeRepoCopyPasteWindow)
+            # The repository browser is embedded directly in the coding view.
+            repo_window = repo_view.query_one(CodeRepoCopyPasteWindow)
             assert repo_window is not None
             
             # Enter repository URL
-            url_input = repo_window.query_one("#repo-url-input")
+            url_input = repo_window.query_one("#empty-state-input")
             url_input.value = "https://github.com/test-owner/test-repo"
             
             # Load repository
-            load_button = repo_window.query_one("#load-repo-btn")
-            await pilot.click(load_button)
+            load_button = repo_window.query_one("#empty-load-btn")
+            load_button.press()
             await pilot.pause()
             
             # Verify repository loaded
@@ -128,16 +147,22 @@ class TestCodeRepoIntegration:
             
             # Select some files (simulate selection)
             tree_view.select_node('README.md', True)
-            tree_view.select_node('src/main.py', True)
+            tree_view.select_node('LICENSE', True)
+
+            generate_button = repo_window.query_one("#generate-compilation-btn")
+            generate_button.press()
+            await pilot.pause()
+
+            assert mock_github_api.get_file_content.call_count == 2
             
             # Copy to clipboard
             copy_button = repo_window.query_one("#copy-clipboard-btn")
-            await pilot.click(copy_button)
+            copy_button.press()
             await pilot.pause()
             
-            # Verify files were fetched and copied
-            assert mock_github_api.get_file_content.call_count == 2
-            assert any("Copied 2 files" in str(step[1]) for step in workflow_steps if step[0] == 'notify')
+            # Verify generated content was copied
+            mock_clipboard.assert_called_once()
+            assert any("Copied compilation" in str(step[1]) for step in workflow_steps if step[0] == 'notify')
     
     @pytest.mark.asyncio
     async def test_error_handling_workflow(self, app_pilot, mock_github_api):
@@ -147,7 +172,7 @@ class TestCodeRepoIntegration:
         
         errors_captured = []
         
-        class TestApp(TldwCli):
+        class TestApp(CodeRepoTestApp):
             def notify(self, message, severity="information", **kwargs):
                 if severity == "error":
                     errors_captured.append(message)
@@ -156,7 +181,7 @@ class TestCodeRepoIntegration:
         async with app_pilot(TestApp) as pilot:
             # Open repo window directly
             repo_window = CodeRepoCopyPasteWindow(pilot.app)
-            pilot.app.push_screen(repo_window)
+            await pilot.app.push_screen(repo_window)
             await pilot.pause()
             
             # Try to load non-existent repository
@@ -164,7 +189,7 @@ class TestCodeRepoIntegration:
             url_input.value = "https://github.com/nonexistent/repo"
             
             load_button = repo_window.query_one("#load-repo-btn")
-            await pilot.click(load_button)
+            load_button.press()
             await pilot.pause()
             
             # Should show error
@@ -191,12 +216,12 @@ class TestCodeRepoIntegration:
         
         mock_github_api.build_tree_hierarchy.return_value = large_tree
         
-        class TestApp(TldwCli):
+        class TestApp(CodeRepoTestApp):
             pass
         
         async with app_pilot(TestApp) as pilot:
             repo_window = CodeRepoCopyPasteWindow(pilot.app)
-            pilot.app.push_screen(repo_window)
+            await pilot.app.push_screen(repo_window)
             await pilot.pause()
             
             # Set up repo
@@ -226,14 +251,14 @@ class TestCodeRepoIntegration:
         main_tree = [{'path': 'main.txt', 'name': 'main.txt', 'type': 'blob', 'children': []}]
         develop_tree = [{'path': 'develop.txt', 'name': 'develop.txt', 'type': 'blob', 'children': []}]
         
-        mock_github_api.build_tree_hierarchy.side_effect = [main_tree, develop_tree]
+        mock_github_api.build_tree_hierarchy.return_value = main_tree
         
-        class TestApp(TldwCli):
+        class TestApp(CodeRepoTestApp):
             pass
         
         async with app_pilot(TestApp) as pilot:
             repo_window = CodeRepoCopyPasteWindow(pilot.app)
-            pilot.app.push_screen(repo_window)
+            await pilot.app.push_screen(repo_window)
             await pilot.pause()
             
             # Load repository
@@ -241,7 +266,7 @@ class TestCodeRepoIntegration:
             url_input.value = "https://github.com/test/repo"
             
             load_button = repo_window.query_one("#load-repo-btn")
-            await pilot.click(load_button)
+            load_button.press()
             await pilot.pause()
             
             # Should load main branch by default
@@ -249,6 +274,7 @@ class TestCodeRepoIntegration:
             assert 'main.txt' in tree_view.nodes
             
             # Switch to develop branch
+            mock_github_api.build_tree_hierarchy.return_value = develop_tree
             branch_selector = repo_window.query_one("#branch-selector")
             branch_selector.value = "develop"
             await repo_window.on_branch_changed(MagicMock())
@@ -269,24 +295,15 @@ class TestCodeRepoIntegration:
         
         mock_github_api.close = mock_close
         
-        class TestApp(TldwCli):
+        class TestApp(CodeRepoTestApp):
             pass
         
         async with app_pilot(TestApp) as pilot:
             repo_window = CodeRepoCopyPasteWindow(pilot.app)
-            pilot.app.push_screen(repo_window)
+            await pilot.app.push_screen(repo_window)
             await pilot.pause()
             
-            # Start loading
-            url_input = repo_window.query_one("#repo-url-input")
-            url_input.value = "https://github.com/test/repo"
-            
-            # Cancel before completion
-            cancel_button = repo_window.query_one("#cancel-btn")
-            await pilot.click(cancel_button)
-            await pilot.pause()
-            
-            # Cleanup should be called when window exits
+            # Cleanup should close the API client when window exits.
             await repo_window.__aexit__(None, None, None)
             assert cleanup_called
     
@@ -302,12 +319,12 @@ class TestCodeRepoIntegration:
         ]
         mock_github_api.build_tree_hierarchy.return_value = mixed_tree
         
-        class TestApp(TldwCli):
+        class TestApp(CodeRepoTestApp):
             pass
         
         async with app_pilot(TestApp) as pilot:
             repo_window = CodeRepoCopyPasteWindow(pilot.app)
-            pilot.app.push_screen(repo_window)
+            await pilot.app.push_screen(repo_window)
             await pilot.pause()
             
             # Load repository
@@ -317,7 +334,7 @@ class TestCodeRepoIntegration:
             
             # Apply different filters
             filter_docs = repo_window.query_one("#filter-docs")
-            await pilot.click(filter_docs)
+            filter_docs.press()
             await pilot.pause()
             
             filter_select = repo_window.query_one("#file-type-filter")
@@ -325,13 +342,13 @@ class TestCodeRepoIntegration:
             
             # Try other filters
             filter_code = repo_window.query_one("#filter-code")
-            await pilot.click(filter_code)
+            filter_code.press()
             await pilot.pause()
             
             assert filter_select.value == "code"
             
             filter_config = repo_window.query_one("#filter-config")
-            await pilot.click(filter_config)
+            filter_config.press()
             await pilot.pause()
             
             assert filter_select.value == "config"
@@ -339,12 +356,12 @@ class TestCodeRepoIntegration:
     @pytest.mark.asyncio
     async def test_keyboard_shortcuts(self, app_pilot, mock_github_api):
         """Test keyboard shortcuts in the window."""
-        class TestApp(TldwCli):
+        class TestApp(CodeRepoTestApp):
             pass
         
         async with app_pilot(TestApp) as pilot:
             repo_window = CodeRepoCopyPasteWindow(pilot.app)
-            pilot.app.push_screen(repo_window)
+            await pilot.app.push_screen(repo_window)
             await pilot.pause()
             
             # Test Ctrl+A (select all)

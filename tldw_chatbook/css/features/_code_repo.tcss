@@ -255,8 +255,9 @@ TreeNode {
 }
 
 .tree-node-selected {
-    background: $accent 20%;
-    border-left: thick $accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .tree-indent {
@@ -274,7 +275,8 @@ TreeNode {
 }
 
 .tree-expand-btn:hover {
-    background: $primary 20%;
+    background: $surface-lighten-1;
+    color: $text;
 }
 
 .tree-expand-spacer {

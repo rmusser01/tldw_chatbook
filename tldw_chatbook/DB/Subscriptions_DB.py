@@ -25,7 +25,7 @@ import json
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional, Union
@@ -75,7 +75,7 @@ class SubscriptionsDB(BaseDB):
     
     def _initialize_schema(self):
         """Initialize the database schema."""
-        with self._get_connection() as conn:
+        with closing(self._get_connection()) as conn:
             conn.executescript("""
             PRAGMA foreign_keys = ON;
             
@@ -426,7 +426,7 @@ class SubscriptionsDB(BaseDB):
             
             # Build update query
             allowed_fields = [
-                'name', 'description', 'tags', 'priority', 'folder',
+                'name', 'type', 'source', 'description', 'tags', 'priority', 'folder',
                 'check_frequency', 'is_active', 'is_paused', 'auth_config',
                 'custom_headers', 'rate_limit_config', 'extraction_method',
                 'extraction_rules', 'processing_options', 'auto_ingest',

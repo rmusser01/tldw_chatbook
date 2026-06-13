@@ -39,14 +39,30 @@
 }
 
 .chat-tab.active {
-    background: $primary;
-    color: $text;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.chat-tab.active:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
+}
+
+.chat-tab.active:hover,
+.chat-tab.active:hover:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Close tab button */
 .close-tab-button {
     width: 3;
+    min-width: 3;
+    max-width: 3;
     height: 2;
     padding: 0;
     margin-left: 1;
@@ -56,23 +72,25 @@
 }
 
 .close-tab-button:hover {
-    background: $error;
+    background: $surface-lighten-1;
     color: $text;
 }
 
 /* New tab button */
 .new-tab-button {
-    width: 5;
+    width: 11;
+    min-width: 11;
     height: 2;
     padding: 0;
     margin: 0 1;
-    background: $panel;
-    color: $text-muted;
-    border: round $accent;
+    background: $boost;
+    color: $text;
+    text-style: bold;
+    border: none;
 }
 
 .new-tab-button:hover {
-    background: $accent;
+    background: $surface-lighten-1;
     color: $text;
 }
 
@@ -96,6 +114,21 @@
     content-align: center middle;
     text-style: italic;
     color: $text-muted;
+}
+
+/* First-run guidance inside tabbed chat sessions */
+.chat-session .chat-empty-state {
+    width: 100%;
+    height: auto;
+    min-height: 5;
+    padding: 1 2;
+    text-align: center;
+    color: $text-muted;
+    content-align: center middle;
+}
+
+.chat-session .chat-empty-state.hidden {
+    display: none;
 }
 
 /* Chat log in tabbed interface */

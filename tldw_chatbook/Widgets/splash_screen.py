@@ -31,9 +31,6 @@ from ..Utils.Splash import get_ascii_art, get_splash_card_config
 from ..Utils.Splash_Screens import load_all_effects, get_effect_class
 from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
 
-# Load all effects on module import
-load_all_effects()
-
 
 class SplashScreen(Container):
     """Customizable splash screen widget with animation support."""
@@ -161,9 +158,13 @@ class SplashScreen(Container):
         
         # Always use random selection unless a specific card is set
         if card_selection == "random" or card_selection == "sequential":
-            # Pick random from active cards
+            # Pick random from active cards that have registered definitions.
             active_cards = self.config.get("active_cards", ["default"])
-            selected_card = random.choice(active_cards)
+            predefined_cards = self._get_predefined_cards()
+            selectable_cards = [card for card in active_cards if card in predefined_cards]
+            if not selectable_cards:
+                selectable_cards = ["default"]
+            selected_card = random.choice(selectable_cards)
             logger.info(f"Randomly selected splash card: {selected_card}")
             return selected_card
         else:
@@ -262,6 +263,7 @@ class SplashScreen(Container):
         logger.debug(f"Starting animation with effect: {effect_type}")
         
         if effect_type:
+            load_all_effects()
             # Get the effect class from the registry
             effect_class = get_effect_class(effect_type)
             

@@ -68,19 +68,15 @@ EmbeddingsWindow {
 }
 
 .embeddings-nav-button:hover {
-    background: $primary 50%;
+    background: $surface-lighten-1;
     color: $text;
 }
 
-.embeddings-nav-button:focus {
-    background: $primary-lighten-1;
-    color: $text;
-}
-
+.embeddings-nav-button:focus,
 .embeddings-nav-button.-active {
-    background: $accent;
-    color: $text;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* ========================================
@@ -308,18 +304,6 @@ EmbeddingsWindow {
     min-width: 10;
 }
 
-DataTable > .datatable--cursor {
-    background: $primary 20%;
-}
-
-DataTable > .datatable--hover {
-    background: $primary 10%;
-}
-
-DataTable > .datatable--selected {
-    background: $accent 30%;
-}
-
 /* Bottom spacer to ensure content is visible */
 .embeddings-bottom-spacer {
     height: 5;
@@ -407,11 +391,6 @@ EmbeddingsManagementWindow {
 
 .embeddings-list-item:hover {
     background: $panel-lighten-1;
-    border: round $accent;
-}
-
-.embeddings-list-item.-selected {
-    background: $accent-darken-1;
     border: round $accent;
 }
 
@@ -564,8 +543,9 @@ EmbeddingsManagementWindow {
 }
 
 .embeddings-toggle-button-enhanced:focus {
-    background: $primary 50%;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Management specific styles */
@@ -953,10 +933,11 @@ CollectionListItem:hover {
     background: $panel-lighten-1;
 }
 
-ModelListItem.-selected,
-CollectionListItem.-selected {
-    background: $accent 20%;
-    border-left: thick $accent;
+#embeddings-model-list ModelListItem.--highlight,
+#embeddings-collection-list CollectionListItem.--highlight {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* ========================================
@@ -1026,26 +1007,6 @@ CollectionListItem.-selected {
     background: $surface;
     border: round $primary-darken-1;
     padding: 1;
-}
-
-/* Enhanced focus states */
-Input:focus,
-Select:focus,
-TextArea:focus,
-Button:focus,
-Checkbox:focus {
-    outline: solid $accent;
-
-}
-
-/* Show outline for keyboard focus */
-Input:focus,
-Select:focus,
-TextArea:focus,
-Button:focus,
-Checkbox:focus {
-    outline: solid $accent;
-
 }
 
 /* Enhanced hover states */
@@ -1347,6 +1308,12 @@ Select:hover {
     align: left middle;
 }
 
+.progress-action-row {
+    layout: horizontal;
+    margin-bottom: 1;
+    align: right middle;
+}
+
 .progress-label {
     width: 12;
     text-align: right;
@@ -1367,7 +1334,6 @@ Select:hover {
 }
 
 .pause-button {
-    margin-left: 2;
     min-width: 10;
 }
 
@@ -1599,8 +1565,9 @@ Select:hover {
 }
 
 .filter-button.active {
-    background: $primary;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .log-search-input {

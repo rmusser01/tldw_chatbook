@@ -1,384 +1,251 @@
-"""Integration tests for ChatWindowEnhanced using Textual's Pilot framework."""
+"""Integration tests for ChatWindowEnhanced using a lightweight widget harness."""
+
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
-import asyncio
-from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock
-import tempfile
-
-from textual.app import App
-from textual.widgets import Button, TextArea, Static
+from textual.app import App, ComposeResult
 from textual.containers import Container
+from textual.widgets import Button, Static, TextArea
+
+from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
+from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+
+
+def _text(widget: Static) -> str:
+    return str(widget.render())
+
+
+def _textarea_text(widget: TextArea) -> str:
+    return getattr(widget, "text", getattr(widget, "value", ""))
+
+
+class _ChatWindowHarnessApp(App):
+    def __init__(self, app_instance) -> None:
+        super().__init__()
+        self._app_instance = app_instance
+
+    def compose(self) -> ComposeResult:
+        yield ChatWindowEnhanced(self._app_instance)
 
 
 @pytest.fixture
-def mock_app_config():
-    """Create a mock app configuration."""
-    return {
+def mock_chat_host():
+    host = Mock()
+    host.app_config = {
         "chat_defaults": {
             "provider": "openai",
-            "model": "gpt-4",
+            "model": "gpt-4.1",
             "temperature": 0.7,
-            "enable_tabs": False
-        },
-        "chat": {
-            "voice": {"show_mic_button": True},
-            "images": {"show_attach_button": True}
         }
     }
+    host.chat_attached_files = {}
+    host.active_session_id = "default"
+    host.is_streaming = False
+    host.chat_sidebar_collapsed = False
+    host.chat_right_sidebar_collapsed = False
+    host.notify = Mock()
+    host.run_worker = Mock()
+    host.bell = Mock()
+    host.push_screen = Mock()
+    host.call_later = Mock()
+    return host
 
 
 @pytest.fixture
-def chat_app(mock_app_config):
-    """Create a test app with ChatWindowEnhanced."""
-    from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
-    
-    with patch('tldw_chatbook.config.get_cli_setting') as mock_get_setting:
-        # Mock config settings
-        def get_setting(section, key, default=None):
-            if section == "chat_defaults":
-                return mock_app_config["chat_defaults"].get(key, default)
-            elif section == "chat":
-                if key in mock_app_config["chat"]:
-                    return mock_app_config["chat"][key]
-            return default
-        
-        mock_get_setting.side_effect = get_setting
-        
-        # Create app instance
-        app = TldwCli()
-        app.app_config = mock_app_config
-        
-        # Mock necessary attributes
-        app.chat_attached_files = {}
-        app.active_session_id = "default"
-        app.is_streaming = False
-        
-        return app
+def chat_window_settings(monkeypatch):
+    def get_setting(section, key, default=None):
+        overrides = {
+            ("chat_defaults", "enable_tabs"): False,
+            ("chat.voice", "show_mic_button"): True,
+            ("chat.images", "show_attach_button"): True,
+        }
+        return overrides.get((section, key), default)
+
+    providers = {"openai": ["gpt-4.1"]}
+
+    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", get_setting)
+    monkeypatch.setattr("tldw_chatbook.UI.Chat_Window_Enhanced.get_cli_setting", get_setting)
+    monkeypatch.setattr("tldw_chatbook.Widgets.compact_model_bar.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.compact_model_bar.get_cli_providers_and_models",
+        lambda: providers,
+    )
+    monkeypatch.setattr("tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_setting", get_setting)
+    monkeypatch.setattr(
+        "tldw_chatbook.Widgets.enhanced_settings_sidebar.get_cli_providers_and_models",
+        lambda: providers,
+    )
+
+
+@pytest.fixture
+def chat_app(chat_window_settings, mock_chat_host):
+    return _ChatWindowHarnessApp(mock_chat_host)
 
 
 class TestChatWindowEnhancedIntegration:
-    """Integration tests for ChatWindowEnhanced functionality."""
-    
     @pytest.mark.asyncio
     async def test_widget_initialization(self, chat_app):
-        """Test that all widgets are properly initialized on mount."""
+        """Core chat widgets mount under the current shell contract."""
         async with chat_app.run_test() as pilot:
-            # Navigate to chat tab
-            await pilot.press("ctrl+1")
-            await pilot.pause(0.1)
-            
-            # Check core widgets exist
+            chat_window = pilot.app.query_one(ChatWindowEnhanced)
+
             assert pilot.app.query_one("#send-stop-chat", Button) is not None
             assert pilot.app.query_one("#chat-input", TextArea) is not None
-            
-            # Check optional widgets based on config
-            mic_button = pilot.app.query("#mic-button", Button)
-            assert len(mic_button) > 0  # Should exist based on mock config
-            
-            attach_button = pilot.app.query("#attach-image", Button)
-            assert len(attach_button) > 0  # Should exist based on mock config
-    
-    @pytest.mark.asyncio
-    async def test_send_button_state_changes(self, chat_app):
-        """Test send/stop button state changes during streaming."""
-        async with chat_app.run_test() as pilot:
-            # Navigate to chat tab
-            await pilot.press("ctrl+1")
-            await pilot.pause(0.1)
-            
-            # Get the send button
-            send_button = pilot.app.query_one("#send-stop-chat", Button)
-            
-            # Initially should be in "Send" state
-            assert "Send" in send_button.label or "➤" in send_button.label
-            
-            # Type a message
-            chat_input = pilot.app.query_one("#chat-input", TextArea)
-            chat_input.value = "Test message"
-            
-            # Click send button
-            await pilot.click("#send-stop-chat")
-            await pilot.pause(0.1)
-            
-            # During streaming, button should change to "Stop"
-            # Note: This would need proper mocking of the streaming functionality
-            # For now, we just test that the button click is handled
-            assert send_button is not None
-    
-    @pytest.mark.asyncio
-    async def test_attachment_indicator_updates(self, chat_app):
-        """Test that attachment indicator updates when files are attached."""
-        async with chat_app.run_test() as pilot:
-            # Navigate to chat tab
-            await pilot.press("ctrl+1")
-            await pilot.pause(0.1)
-            
-            # Get attachment indicator
-            indicator = pilot.app.query_one("#image-attachment-indicator", Static)
-            
-            # Initially should be empty or hidden
-            assert indicator.renderable == "" or not indicator.display
-            
-            # Simulate attaching a file
-            pilot.app.chat_attached_files["default"] = [
-                {"path": "/test/file.txt", "type": "text"}
-            ]
-            
-            # Trigger update (in real app this would happen via reactive property)
-            from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
-            chat_window = pilot.app.query_one(ChatWindowEnhanced)
-            if chat_window:
-                chat_window.pending_attachment = "/test/file.txt"
-                await pilot.pause(0.1)
-    
-    @pytest.mark.asyncio
-    async def test_sidebar_toggle_functionality(self, chat_app):
-        """Test that sidebar toggles work correctly."""
-        async with chat_app.run_test() as pilot:
-            # Navigate to chat tab
-            await pilot.press("ctrl+1")
-            await pilot.pause(0.1)
-            
-            # Test left sidebar toggle
-            left_sidebar = pilot.app.query("#chat-left-sidebar")
-            if left_sidebar:
-                initial_display = left_sidebar[0].display
-                
-                # Click toggle button
-                await pilot.click("#toggle-chat-left-sidebar")
-                await pilot.pause(0.1)
-                
-                # Display should have changed
-                assert left_sidebar[0].display != initial_display
-                
-                # Toggle back
-                await pilot.click("#toggle-chat-left-sidebar")
-                await pilot.pause(0.1)
-                assert left_sidebar[0].display == initial_display
-    
-    @pytest.mark.asyncio
-    async def test_keyboard_shortcuts(self, chat_app):
-        """Test keyboard shortcuts work correctly."""
-        async with chat_app.run_test() as pilot:
-            # Navigate to chat tab
-            await pilot.press("ctrl+1")
-            await pilot.pause(0.1)
-            
-            # Test sidebar resize shortcuts
-            left_sidebar = pilot.app.query("#chat-left-sidebar")
-            if left_sidebar:
-                initial_width = left_sidebar[0].styles.width
-                
-                # Expand sidebar
-                await pilot.press("ctrl+shift+right")
-                await pilot.pause(0.1)
-                
-                # Width should have increased (if implemented)
-                # Note: This depends on the actual implementation
-                
-            # Test voice input toggle
-            await pilot.press("ctrl+m")
-            await pilot.pause(0.1)
-            # Voice input widget should be created/toggled
-    
-    @pytest.mark.asyncio
-    async def test_chat_input_focus(self, chat_app):
-        """Test that chat input receives focus correctly."""
-        async with chat_app.run_test() as pilot:
-            # Navigate to chat tab
-            await pilot.press("ctrl+1")
-            await pilot.pause(0.1)
-            
-            # Get chat input
-            chat_input = pilot.app.query_one("#chat-input", TextArea)
-            
-            # Type some text
-            await pilot.click("#chat-input")
-            await pilot.press("H", "e", "l", "l", "o")
-            await pilot.pause(0.1)
-            
-            # Check text was entered
-            assert chat_input.value == "Hello"
-            
-            # Clear the input
-            chat_input.clear()
-            assert chat_input.value == ""
-    
-    @pytest.mark.asyncio
-    async def test_file_attachment_workflow(self, chat_app):
-        """Test the complete file attachment workflow."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-            f.write("Test file content")
-            test_file_path = f.name
-        
-        try:
-            async with chat_app.run_test() as pilot:
-                # Navigate to chat tab
-                await pilot.press("ctrl+1")
-                await pilot.pause(0.1)
-                
-                # Click attach button
-                attach_button = pilot.app.query("#attach-image", Button)
-                if attach_button:
-                    # Simulate file selection (would normally open file picker)
-                    from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
-                    chat_window = pilot.app.query_one(ChatWindowEnhanced)
-                    
-                    # Directly set the pending attachment
-                    chat_window.pending_attachment = test_file_path
-                    await pilot.pause(0.1)
-                    
-                    # Check that attachment indicator updated
-                    indicator = pilot.app.query_one("#image-attachment-indicator", Static)
-                    # Indicator should show something
-                    assert chat_window.pending_attachment == test_file_path
-        finally:
-            # Clean up test file
-            Path(test_file_path).unlink(missing_ok=True)
-    
-    @pytest.mark.asyncio
-    async def test_error_handling_display(self, chat_app):
-        """Test that errors are properly displayed to the user."""
-        async with chat_app.run_test() as pilot:
-            # Navigate to chat tab
-            await pilot.press("ctrl+1")
-            await pilot.pause(0.1)
-            
-            # Simulate an error condition
-            from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
-            chat_window = pilot.app.query_one(ChatWindowEnhanced)
-            
-            # Try to attach a non-existent file
-            chat_window.pending_attachment = "/non/existent/file.txt"
-            
-            # Process the attachment (this should fail)
-            with patch.object(pilot.app, 'notify') as mock_notify:
-                # Trigger file processing
-                await chat_window._process_file_worker("/non/existent/file.txt")
-                
-                # Check that an error notification was shown
-                # Note: Actual implementation would need proper error handling
-    
-    @pytest.mark.asyncio
-    async def test_reactive_properties_update_ui(self, chat_app):
-        """Test that reactive properties properly update the UI."""
-        async with chat_app.run_test() as pilot:
-            # Navigate to chat tab
-            await pilot.press("ctrl+1")
-            await pilot.pause(0.1)
-            
-            from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
-            chat_window = pilot.app.query_one(ChatWindowEnhanced)
-            
-            # Get send button
-            send_button = pilot.app.query_one("#send-stop-chat", Button)
-            initial_label = send_button.label
-            
-            # Change is_send_button reactive property
-            chat_window.is_send_button = False
-            await pilot.pause(0.1)
-            
-            # Button label should have changed
-            assert send_button.label != initial_label
-            
-            # Change back
-            chat_window.is_send_button = True
-            await pilot.pause(0.1)
-            assert send_button.label == initial_label
-
-
-class TestChatWindowEnhancedPerformance:
-    """Performance-related integration tests."""
-    
-    @pytest.mark.asyncio
-    async def test_widget_caching_performance(self, chat_app):
-        """Test that widget caching improves performance."""
-        async with chat_app.run_test() as pilot:
-            # Navigate to chat tab
-            await pilot.press("ctrl+1")
-            await pilot.pause(0.1)
-            
-            from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
-            chat_window = pilot.app.query_one(ChatWindowEnhanced)
-            
-            # Check that widgets are cached
+            assert pilot.app.query_one("#chat-task-surface", ChatTaskCards) is not None
             assert chat_window._send_button is not None
             assert chat_window._chat_input is not None
-            
-            # Accessing cached widgets should be fast
-            import time
-            start = time.time()
-            for _ in range(100):
-                _ = chat_window._send_button
-                _ = chat_window._chat_input
-            cached_time = time.time() - start
-            
-            # Compare with querying
-            start = time.time()
-            for _ in range(100):
-                _ = pilot.app.query_one("#send-stop-chat", Button)
-                _ = pilot.app.query_one("#chat-input", TextArea)
-            query_time = time.time() - start
-            
-            # Cached access should be significantly faster
-            assert cached_time < query_time * 0.5  # At least 2x faster
-    
+            assert chat_window._attachment_indicator is not None
+
     @pytest.mark.asyncio
-    async def test_batch_updates_reduce_reflows(self, chat_app):
-        """Test that batch updates reduce UI reflows."""
+    async def test_send_button_state_changes(self, chat_app):
+        """The send button reflects the current streaming state."""
         async with chat_app.run_test() as pilot:
-            # Navigate to chat tab
-            await pilot.press("ctrl+1")
-            await pilot.pause(0.1)
-            
-            from tldw_chatbook.UI.Chat_Window_Enhanced import ChatWindowEnhanced
             chat_window = pilot.app.query_one(ChatWindowEnhanced)
-            
-            # Test batch update if implemented
-            # This would need the actual batch_update context manager
-            # to be implemented in the main code
+            send_button = pilot.app.query_one("#send-stop-chat", Button)
+
+            assert send_button.tooltip == "Send message"
+
+            chat_window.is_send_button = False
+            await pilot.pause(0.05)
+
+            assert send_button.tooltip == "Stop generation"
+
+            chat_window.is_send_button = True
+            await pilot.pause(0.05)
+
+            assert send_button.tooltip == "Send message"
+
+    @pytest.mark.asyncio
+    async def test_attachment_indicator_updates(self, chat_app):
+        """Setting a pending image updates the inline attachment affordance."""
+        async with chat_app.run_test() as pilot:
+            chat_window = pilot.app.query_one(ChatWindowEnhanced)
+            indicator = pilot.app.query_one("#image-attachment-indicator", Static)
+
+            assert _text(indicator) == ""
+
+            chat_window.pending_image = {
+                "path": "/tmp/reference-notes.txt",
+                "data": b"",
+                "mime_type": "text/plain",
+            }
+            await pilot.pause(0.05)
+
+            assert "reference-notes.txt" in _text(indicator)
+
+            chat_window._clear_attachment_state()
+            await pilot.pause(0.05)
+
+            assert _text(indicator) == ""
+
+    @pytest.mark.asyncio
+    async def test_sidebar_toggle_functionality(self, chat_app):
+        """The left sidebar toggle still controls the settings rail."""
+        async with chat_app.run_test() as pilot:
+            chat_window = pilot.app.query_one(ChatWindowEnhanced)
+            sidebar = pilot.app.query_one("#chat-left-sidebar")
+            initial_display = sidebar.display
+
+            await pilot.click("#toggle-chat-left-sidebar")
+            await pilot.pause(0.05)
+            assert sidebar.display != initial_display
+            assert chat_window.app_instance.chat_sidebar_collapsed is True
+
+    @pytest.mark.asyncio
+    async def test_keyboard_shortcut_toggles_voice_input(self, chat_app):
+        """Ctrl+M routes through the chat window voice toggle action."""
+        async with chat_app.run_test() as pilot:
+            chat_window = pilot.app.query_one(ChatWindowEnhanced)
+
+            def fake_toggle() -> None:
+                chat_window.voice_handler.is_voice_recording = True
+
+            chat_window.voice_handler.toggle_voice_input = fake_toggle
+
+            await pilot.press("ctrl+m")
+            await pilot.pause(0.05)
+
+            assert chat_window.is_voice_recording is True
+
+    @pytest.mark.asyncio
+    async def test_chat_input_focus_and_editing(self, chat_app):
+        """The chat input can take focus and accept text updates."""
+        async with chat_app.run_test() as pilot:
+            chat_input = pilot.app.query_one("#chat-input", TextArea)
+
+            await pilot.click("#chat-input")
+            await pilot.pause(0.05)
+            assert chat_input.has_focus
+
+            chat_input.load_text("Hello")
+            assert _textarea_text(chat_input) == "Hello"
+
+            chat_input.clear()
+            assert _textarea_text(chat_input) == ""
+
+    @pytest.mark.asyncio
+    async def test_file_attachment_workflow_updates_session_state(self, chat_app, mock_chat_host):
+        """Processed attachments update both the indicator and session attachment list."""
+        async with chat_app.run_test() as pilot:
+            chat_window = pilot.app.query_one(ChatWindowEnhanced)
+            indicator = pilot.app.query_one("#image-attachment-indicator", Static)
+
+            processed_file = SimpleNamespace(
+                insert_mode="attachment",
+                file_type="text",
+                path="/tmp/test-brief.txt",
+                content="Test file content",
+                mime_type="text/plain",
+            )
+
+            chat_window.attachment_handler._handle_processed_file(processed_file)
+            await pilot.pause(0.05)
+
+            assert mock_chat_host.chat_attached_files["default"][0]["path"] == "/tmp/test-brief.txt"
+            assert "test-brief.txt" in _text(indicator)
+
+    @pytest.mark.asyncio
+    async def test_attachment_errors_notify_the_user(self, chat_app, mock_chat_host):
+        """Malformed processed file data fails closed with a user-visible notification."""
+        async with chat_app.run_test() as pilot:
+            chat_window = pilot.app.query_one(ChatWindowEnhanced)
+            mock_chat_host.notify.reset_mock()
+
+            chat_window.attachment_handler._handle_processed_file(object())
+
+            mock_chat_host.notify.assert_called_with("Invalid file data", severity="error")
+
+    @pytest.mark.asyncio
+    async def test_cached_widget_references_are_reused(self, chat_app):
+        """Mount-time widget caches point at the live chat widgets."""
+        async with chat_app.run_test() as pilot:
+            chat_window = pilot.app.query_one(ChatWindowEnhanced)
+
+            assert chat_window._get_send_button() is pilot.app.query_one("#send-stop-chat", Button)
+            assert chat_window._get_chat_input() is pilot.app.query_one("#chat-input", TextArea)
+            assert chat_window._get_task_cards() is pilot.app.query_one("#chat-task-surface", ChatTaskCards)
 
 
 class TestChatWindowEnhancedAccessibility:
-    """Accessibility and usability tests."""
-    
     @pytest.mark.asyncio
     async def test_tooltips_present(self, chat_app):
-        """Test that all buttons have helpful tooltips."""
+        """Primary controls expose non-empty tooltips."""
         async with chat_app.run_test() as pilot:
-            # Navigate to chat tab
-            await pilot.press("ctrl+1")
-            await pilot.pause(0.1)
-            
-            # Check main buttons have tooltips
-            buttons_to_check = [
+            for button_id in (
                 "#send-stop-chat",
                 "#toggle-chat-left-sidebar",
-                "#toggle-chat-right-sidebar"
-            ]
-            
-            for button_id in buttons_to_check:
-                button = pilot.app.query(button_id, Button)
-                if button:
-                    assert button[0].tooltip is not None
-                    assert len(button[0].tooltip) > 0
-    
+                "#attach-image",
+                "#mic-button",
+            ):
+                button = pilot.app.query_one(button_id, Button)
+                assert button.tooltip is not None
+                assert len(str(button.tooltip)) > 0
+
     @pytest.mark.asyncio
     async def test_keyboard_navigation(self, chat_app):
-        """Test that keyboard navigation works properly."""
+        """Tab navigation should move focus to a focusable control."""
         async with chat_app.run_test() as pilot:
-            # Navigate to chat tab
-            await pilot.press("ctrl+1")
-            await pilot.pause(0.1)
-            
-            # Tab through widgets
             await pilot.press("tab")
             await pilot.pause(0.05)
-            await pilot.press("tab")
-            await pilot.pause(0.05)
-            
-            # Should be able to navigate between focusable widgets
-            focused = pilot.app.focused
-            assert focused is not None
+            assert pilot.app.focused is not None

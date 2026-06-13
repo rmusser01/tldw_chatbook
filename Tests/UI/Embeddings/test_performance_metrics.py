@@ -1,582 +1,231 @@
 """
-Tests for Performance Metrics Widget.
-Tests CPU/memory monitoring, sparkline charts, and embedding statistics.
+Tests for the current performance metrics widget.
 """
 
-import pytest
-import pytest_asyncio
-import asyncio
-import time
-from unittest.mock import MagicMock, patch, PropertyMock
+from __future__ import annotations
+
 from datetime import datetime, timedelta
-from collections import deque
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
-from textual.widgets import Static, ProgressBar
-from textual.containers import Container, Grid
+import pytest
+from textual.widgets import Sparkline, Static
 
-from tldw_chatbook.Widgets.performance_metrics import PerformanceMetricsWidget
-
-# Mock missing classes
-class MetricHistory:
-    def __init__(self, max_size=100):
-        self.max_size = max_size
-        self.values = []
-
-class EmbeddingStats:
-    def __init__(self):
-        self.total_chunks = 0
-        self.processed_chunks = 0
-        self.total_time = 0
-        self.average_chunk_time = 0
-
-class SparklineChart:
-    pass
+from tldw_chatbook.Widgets.performance_metrics import (
+    MetricSnapshot,
+    PerformanceMetricsWidget,
+)
 
 from .test_base import EmbeddingsTestBase, WidgetTestApp
 
 
-class TestMetricHistory(EmbeddingsTestBase):
-    """Test MetricHistory data structure."""
-    
-    def test_metric_history_creation(self):
-        """Test creating metric history."""
-        history = MetricHistory(max_points=100)
-        
-        assert history.max_points == 100
-        assert len(history.values) == 0
-        assert len(history.timestamps) == 0
-    
-    def test_add_point(self):
-        """Test adding data points."""
-        history = MetricHistory(max_points=5)
-        
-        # Add points
-        for i in range(3):
-            history.add_point(i * 10)
-            time.sleep(0.01)  # Ensure different timestamps
-        
-        assert len(history.values) == 3
-        assert len(history.timestamps) == 3
-        assert history.values[0] == 0
-        assert history.values[2] == 20
-    
-    def test_max_points_limit(self):
-        """Test max points limit enforcement."""
-        history = MetricHistory(max_points=3)
-        
-        # Add more than max points
-        for i in range(5):
-            history.add_point(i)
-        
-        # Should only keep last 3
-        assert len(history.values) == 3
-        assert list(history.values) == [2, 3, 4]
-    
-    def test_get_average(self):
-        """Test calculating average."""
-        history = MetricHistory()
-        
-        # Empty history
-        assert history.get_average() == 0
-        
-        # Add values
-        history.add_point(10)
-        history.add_point(20)
-        history.add_point(30)
-        
-        assert history.get_average() == 20
-    
-    def test_get_min_max(self):
-        """Test getting min/max values."""
-        history = MetricHistory()
-        
-        # Empty history
-        assert history.get_min() == 0
-        assert history.get_max() == 0
-        
-        # Add values
-        history.add_point(50)
-        history.add_point(10)
-        history.add_point(30)
-        
-        assert history.get_min() == 10
-        assert history.get_max() == 50
-    
-    def test_clear_history(self):
-        """Test clearing history."""
-        history = MetricHistory()
-        
-        # Add data
-        history.add_point(100)
-        history.add_point(200)
-        
-        # Clear
-        history.clear()
-        
-        assert len(history.values) == 0
-        assert len(history.timestamps) == 0
+def _static_text(widget: Static) -> str:
+    return str(widget.render())
 
 
-class TestEmbeddingStats(EmbeddingsTestBase):
-    """Test EmbeddingStats functionality."""
-    
-    def test_stats_creation(self):
-        """Test creating embedding stats."""
-        stats = EmbeddingStats()
-        
-        assert stats.total_embeddings == 0
-        assert stats.total_chunks == 0
-        assert stats.total_bytes == 0
-        assert stats.start_time is not None
-        assert stats.embeddings_per_model == {}
-    
-    def test_record_embedding(self):
-        """Test recording embedding statistics."""
-        stats = EmbeddingStats()
-        
-        # Record embeddings
-        stats.record_embedding("model1", chunks=10, bytes_processed=1024)
-        stats.record_embedding("model1", chunks=5, bytes_processed=512)
-        stats.record_embedding("model2", chunks=20, bytes_processed=2048)
-        
-        assert stats.total_embeddings == 3
-        assert stats.total_chunks == 35
-        assert stats.total_bytes == 3584
-        assert stats.embeddings_per_model["model1"] == 2
-        assert stats.embeddings_per_model["model2"] == 1
-    
-    def test_get_rate(self):
-        """Test calculating processing rate."""
-        stats = EmbeddingStats()
-        
-        # Set start time to known value
-        stats.start_time = datetime.now() - timedelta(seconds=10)
-        
-        # Record some data
-        stats.record_embedding("model", chunks=100, bytes_processed=10240)
-        
-        # Get rates
-        chunks_per_sec = stats.get_chunks_per_second()
-        bytes_per_sec = stats.get_bytes_per_second()
-        
-        # Should be approximately 10 chunks/sec and 1024 bytes/sec
-        assert 9 <= chunks_per_sec <= 11
-        assert 1000 <= bytes_per_sec <= 1100
-    
-    def test_reset_stats(self):
-        """Test resetting statistics."""
-        stats = EmbeddingStats()
-        
-        # Add data
-        stats.record_embedding("model", chunks=50, bytes_processed=5000)
-        
-        # Reset
-        old_start = stats.start_time
-        stats.reset()
-        
-        assert stats.total_embeddings == 0
-        assert stats.total_chunks == 0
-        assert stats.total_bytes == 0
-        assert stats.embeddings_per_model == {}
-        assert stats.start_time != old_start
+def _disk_io(read_bytes: int, write_bytes: int) -> SimpleNamespace:
+    return SimpleNamespace(read_bytes=read_bytes, write_bytes=write_bytes)
 
 
-class TestSparklineChart(EmbeddingsTestBase):
-    """Test SparklineChart rendering."""
-    
-    def test_sparkline_creation(self):
-        """Test creating sparkline chart."""
-        chart = SparklineChart(
-            data=[10, 20, 15, 30, 25],
-            width=20,
-            height=5
+class TestMetricSnapshot(EmbeddingsTestBase):
+    """Test the snapshot dataclass."""
+
+    def test_snapshot_creation(self):
+        snapshot = MetricSnapshot(
+            timestamp=datetime.now(),
+            cpu_percent=25.0,
+            memory_mb=128.0,
+            memory_percent=32.0,
+            disk_read_mb=1.5,
+            disk_write_mb=0.5,
+            embeddings_per_second=3.0,
+            average_chunk_time_ms=42.0,
         )
-        
-        assert chart.data == [10, 20, 15, 30, 25]
-        assert chart.width == 20
-        assert chart.height == 5
-    
-    def test_sparkline_render(self):
-        """Test sparkline rendering."""
-        chart = SparklineChart(
-            data=[0, 50, 100, 25, 75],
-            width=10,
-            height=3
-        )
-        
-        # Get rendered output
-        rendered = chart.render()
-        
-        # Should produce a string representation
-        assert isinstance(rendered, str)
-        assert len(rendered.split('\n')) == 3  # Height
-        
-        # Should contain plotting characters
-        plot_chars = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
-        assert any(char in rendered for char in plot_chars)
-    
-    def test_sparkline_empty_data(self):
-        """Test sparkline with empty data."""
-        chart = SparklineChart(data=[], width=10, height=3)
-        rendered = chart.render()
-        
-        # Should handle gracefully
-        assert isinstance(rendered, str)
-        assert "No data" in rendered or rendered.strip() == ""
-    
-    def test_sparkline_single_value(self):
-        """Test sparkline with single value."""
-        chart = SparklineChart(data=[50], width=10, height=3)
-        rendered = chart.render()
-        
-        # Should handle single value
-        assert isinstance(rendered, str)
+
+        assert snapshot.cpu_percent == 25.0
+        assert snapshot.memory_mb == 128.0
+        assert snapshot.embeddings_per_second == 3.0
 
 
 class TestPerformanceMetricsWidget(EmbeddingsTestBase):
-    """Test PerformanceMetricsWidget functionality."""
-    
-    @pytest.fixture
-    def mock_psutil(self):
-        """Mock psutil for system metrics."""
-        with patch('psutil.Process') as mock_process_class:
-            mock_process = MagicMock()
-            mock_process_class.return_value = mock_process
-            
-            # Mock CPU percent
-            mock_process.cpu_percent.return_value = 25.5
-            
-            # Mock memory info
-            memory_info = MagicMock()
-            memory_info.rss = 1024 * 1024 * 256  # 256MB
-            mock_process.memory_info.return_value = memory_info
-            
-            # Mock memory percent
-            mock_process.memory_percent.return_value = 15.0
-            
-            yield mock_process
-    
-    @pytest.mark.asyncio
-    async def test_widget_creation(self, mock_psutil):
-        """Test creating performance metrics widget."""
-        metrics = PerformanceMetricsWidget(
-            update_interval=1.0,
-            history_size=60
-        )
-        
-        assert metrics.update_interval == 1.0
-        assert metrics.cpu_history.max_points == 60
-        assert metrics.memory_history.max_points == 60
-        assert metrics.embedding_stats is not None
-    
-    @pytest.mark.asyncio
-    async def test_widget_compose(self, mock_psutil):
-        """Test widget UI composition."""
-        metrics = PerformanceMetricsWidget()
-        
-        app = WidgetTestApp(metrics)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            
-            # Check sections exist
-            cpu_section = pilot.app.query_one("#cpu-section")
-            assert cpu_section is not None
-            
-            memory_section = pilot.app.query_one("#memory-section")
-            assert memory_section is not None
-            
-            embeddings_section = pilot.app.query_one("#embeddings-section")
-            assert embeddings_section is not None
-            
-            # Check CPU display
-            cpu_percent = pilot.app.query_one("#cpu-percent", Static)
-            assert cpu_percent is not None
-            
-            cpu_bar = pilot.app.query_one("#cpu-bar", ProgressBar)
-            assert cpu_bar is not None
-            
-            # Check memory display
-            memory_usage = pilot.app.query_one("#memory-usage", Static)
-            assert memory_usage is not None
-            
-            memory_bar = pilot.app.query_one("#memory-bar", ProgressBar)
-            assert memory_bar is not None
-    
-    @pytest.mark.asyncio
-    async def test_metrics_update(self, mock_psutil):
-        """Test metrics update cycle."""
-        metrics = PerformanceMetricsWidget(update_interval=0.1)
-        
-        app = WidgetTestApp(metrics)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            
-            # Start monitoring
-            metrics.start_monitoring()
-            
-            # Wait for a few updates
-            await asyncio.sleep(0.3)
-            await pilot.pause()
-            
-            # Check values were recorded
-            assert len(metrics.cpu_history.values) > 0
-            assert len(metrics.memory_history.values) > 0
-            
-            # Check UI updated
-            cpu_percent = pilot.app.query_one("#cpu-percent", Static)
-            assert "25.5%" in cpu_percent.renderable
-            
-            memory_usage = pilot.app.query_one("#memory-usage", Static)
-            assert "256" in memory_usage.renderable  # MB
-            
-            # Stop monitoring
-            metrics.stop_monitoring()
-    
-    @pytest.mark.asyncio
-    async def test_sparkline_display(self, mock_psutil):
-        """Test sparkline chart display."""
-        metrics = PerformanceMetricsWidget()
-        
-        # Pre-populate some data
-        for i in range(10):
-            metrics.cpu_history.add_point(20 + i * 5)
-            metrics.memory_history.add_point(200 + i * 10)
-        
-        app = WidgetTestApp(metrics)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            
-            # Force update display
-            metrics._update_display()
-            await pilot.pause()
-            
-            # Check sparklines exist
-            cpu_sparkline = pilot.app.query_one("#cpu-sparkline", Static)
-            assert cpu_sparkline is not None
-            assert cpu_sparkline.renderable != ""
-            
-            memory_sparkline = pilot.app.query_one("#memory-sparkline", Static)
-            assert memory_sparkline is not None
-            assert memory_sparkline.renderable != ""
-    
-    @pytest.mark.asyncio
-    async def test_embedding_stats_display(self, mock_psutil):
-        """Test embedding statistics display."""
-        metrics = PerformanceMetricsWidget()
-        
-        app = WidgetTestApp(metrics)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            
-            # Record some embeddings
-            metrics.record_embedding_processed(
-                model="e5-small",
-                chunks=100,
-                bytes_processed=10240
-            )
-            metrics.record_embedding_processed(
-                model="e5-small",
-                chunks=50,
-                bytes_processed=5120
-            )
-            await pilot.pause()
-            
-            # Check stats display
-            total_embeddings = pilot.app.query_one("#total-embeddings", Static)
-            assert "2" in total_embeddings.renderable
-            
-            total_chunks = pilot.app.query_one("#total-chunks", Static)
-            assert "150" in total_chunks.renderable
-            
-            # Check model breakdown
-            model_stats = pilot.app.query_one("#model-stats", Static)
-            assert "e5-small" in model_stats.renderable
-            assert "2" in model_stats.renderable
-    
-    @pytest.mark.asyncio
-    async def test_rate_calculations(self, mock_psutil):
-        """Test rate calculations."""
-        metrics = PerformanceMetricsWidget()
-        
-        # Set known start time
-        metrics.embedding_stats.start_time = datetime.now() - timedelta(seconds=10)
-        
-        app = WidgetTestApp(metrics)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            
-            # Record embeddings
-            metrics.record_embedding_processed(
-                model="test",
-                chunks=100,
-                bytes_processed=102400  # 100KB
-            )
-            await pilot.pause()
-            
-            # Check rate display
-            chunk_rate = pilot.app.query_one("#chunk-rate", Static)
-            # Should be ~10 chunks/sec
-            assert chunk_rate is not None
-            rate_text = chunk_rate.renderable
-            assert "chunks/s" in rate_text
-    
-    @pytest.mark.asyncio
-    async def test_reset_stats(self, mock_psutil):
-        """Test resetting statistics."""
-        metrics = PerformanceMetricsWidget()
-        
-        app = WidgetTestApp(metrics)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            
-            # Add some data
-            metrics.record_embedding_processed("model", 100, 1000)
-            metrics.cpu_history.add_point(50)
-            metrics.memory_history.add_point(500)
-            await pilot.pause()
-            
-            # Reset stats
-            await pilot.click("#reset-stats")
-            await pilot.pause()
-            
-            # Check stats were reset
-            assert metrics.embedding_stats.total_embeddings == 0
-            assert metrics.embedding_stats.total_chunks == 0
-            
-            # History should be preserved (only embedding stats reset)
-            assert len(metrics.cpu_history.values) > 0
-            assert len(metrics.memory_history.values) > 0
-    
-    @pytest.mark.asyncio
-    async def test_alert_thresholds(self, mock_psutil):
-        """Test alert thresholds for high usage."""
-        # Mock high CPU and memory
-        mock_psutil.cpu_percent.return_value = 95.0
-        mock_psutil.memory_percent.return_value = 90.0
-        
-        metrics = PerformanceMetricsWidget(
-            cpu_alert_threshold=80,
-            memory_alert_threshold=85
-        )
-        
-        app = WidgetTestApp(metrics)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            
-            # Update metrics
-            metrics._update_metrics()
-            metrics._update_display()
-            await pilot.pause()
-            
-            # Check for alert styling
-            cpu_section = pilot.app.query_one("#cpu-section")
-            assert "alert" in cpu_section.classes or "warning" in cpu_section.classes
-            
-            memory_section = pilot.app.query_one("#memory-section")
-            assert "alert" in memory_section.classes or "warning" in memory_section.classes
-    
-    @pytest.mark.asyncio
-    async def test_export_metrics(self, mock_psutil):
-        """Test exporting metrics data."""
-        metrics = PerformanceMetricsWidget()
-        
-        # Add some data
-        for i in range(5):
-            metrics.cpu_history.add_point(20 + i)
-            metrics.memory_history.add_point(200 + i * 10)
-        
-        metrics.record_embedding_processed("model1", 100, 1000)
-        
-        # Export data
-        exported = metrics.export_metrics_data()
-        
-        assert "cpu_history" in exported
-        assert "memory_history" in exported
-        assert "embedding_stats" in exported
-        
-        assert len(exported["cpu_history"]) == 5
-        assert len(exported["memory_history"]) == 5
-        assert exported["embedding_stats"]["total_embeddings"] == 1
+    """Test widget behavior against the current implementation."""
 
+    @pytest.mark.asyncio
+    async def test_widget_creation(self):
+        with patch("tldw_chatbook.Widgets.performance_metrics.psutil.Process") as mock_process:
+            mock_process.return_value = MagicMock()
+            metrics = PerformanceMetricsWidget(
+                show_charts=True,
+                show_alerts=True,
+                compact=False,
+            )
 
-class TestPerformanceIntegration(EmbeddingsTestBase):
-    """Test performance metrics integration scenarios."""
-    
+        assert metrics.show_charts is True
+        assert metrics.show_alerts is True
+        assert metrics.compact is False
+        assert metrics.history == []
+
     @pytest.mark.asyncio
-    async def test_real_time_monitoring(self, mock_psutil):
-        """Test real-time monitoring updates."""
-        # Simulate changing CPU/memory values
-        cpu_values = [20, 40, 60, 40, 20]
-        memory_values = [30, 35, 40, 35, 30]
-        
-        value_index = 0
-        
-        def get_cpu():
-            nonlocal value_index
-            return cpu_values[min(value_index, len(cpu_values) - 1)]
-        
-        def get_memory():
-            nonlocal value_index
-            val = memory_values[min(value_index, len(memory_values) - 1)]
-            value_index += 1
-            return val
-        
-        mock_psutil.cpu_percent.side_effect = get_cpu
-        mock_psutil.memory_percent.side_effect = get_memory
-        
-        metrics = PerformanceMetricsWidget(update_interval=0.05)
-        
-        app = WidgetTestApp(metrics)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            
-            # Start monitoring
-            metrics.start_monitoring()
-            
-            # Let it collect several data points
-            await asyncio.sleep(0.3)
-            
-            # Stop monitoring
-            metrics.stop_monitoring()
-            await pilot.pause()
-            
-            # Should have collected multiple points
-            assert len(metrics.cpu_history.values) >= 5
-            assert len(metrics.memory_history.values) >= 5
-            
-            # Values should vary
-            cpu_vals = list(metrics.cpu_history.values)
-            assert max(cpu_vals) > min(cpu_vals)
-    
+    async def test_widget_compose(self):
+        with patch("tldw_chatbook.Widgets.performance_metrics.psutil.Process") as mock_process:
+            process = MagicMock()
+            process.cpu_percent.return_value = 10.0
+            process.memory_info.return_value = MagicMock(rss=100 * 1024 * 1024)
+            process.memory_percent.return_value = 20.0
+            mock_process.return_value = process
+
+            with patch("tldw_chatbook.Widgets.performance_metrics.psutil.disk_io_counters") as mock_disk:
+                mock_disk.return_value = _disk_io(0, 0)
+                metrics = PerformanceMetricsWidget(show_charts=True, show_alerts=True, compact=False)
+                app = WidgetTestApp(metrics)
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+
+                    assert pilot.app.query_one("#cpu-usage-value", Static) is not None
+                    assert pilot.app.query_one("#memory-usage-value", Static) is not None
+                    assert pilot.app.query_one("#embeddings-rate-value", Static) is not None
+                    assert pilot.app.query_one("#cpu-usage-chart", Sparkline) is not None
+                    assert pilot.app.query_one("#memory-usage-chart", Sparkline) is not None
+                    assert pilot.app.query_one("#metrics-alerts") is not None
+
     @pytest.mark.asyncio
-    async def test_concurrent_embedding_tracking(self, mock_psutil):
-        """Test tracking embeddings from multiple concurrent operations."""
-        metrics = PerformanceMetricsWidget()
-        
-        app = WidgetTestApp(metrics)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            
-            # Simulate concurrent embedding operations
-            async def embed_task(model_name, count):
-                for i in range(count):
-                    metrics.record_embedding_processed(
-                        model=model_name,
-                        chunks=10,
-                        bytes_processed=1024
+    async def test_metrics_update_populates_history_and_display(self):
+        with patch("tldw_chatbook.Widgets.performance_metrics.psutil.Process") as mock_process:
+            process = MagicMock()
+            process.cpu_percent.return_value = 25.0
+            process.memory_info.return_value = MagicMock(rss=256 * 1024 * 1024)
+            process.memory_percent.return_value = 40.0
+            mock_process.return_value = process
+
+            with patch("tldw_chatbook.Widgets.performance_metrics.psutil.disk_io_counters") as mock_disk:
+                mock_disk.side_effect = [
+                    _disk_io(0, 0),
+                    _disk_io(10 * 1024 * 1024, 5 * 1024 * 1024),
+                ]
+
+                metrics = PerformanceMetricsWidget(show_charts=True, show_alerts=True, compact=False)
+                app = WidgetTestApp(metrics)
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+                    metrics._update_metrics()
+                    await pilot.pause()
+
+                    snapshot = metrics.get_current_metrics()
+                    assert snapshot is not None
+                    assert snapshot.cpu_percent == 25.0
+                    assert snapshot.memory_mb == pytest.approx(256.0, rel=0.01)
+                    assert len(metrics.history) >= 1
+                    assert "25.0" in _static_text(pilot.app.query_one("#cpu-usage-value", Static))
+                    assert "256" in _static_text(pilot.app.query_one("#memory-usage-value", Static))
+
+    @pytest.mark.asyncio
+    async def test_record_embedding_and_chunk_time_flow_into_snapshot(self):
+        with patch("tldw_chatbook.Widgets.performance_metrics.psutil.Process") as mock_process:
+            process = MagicMock()
+            process.cpu_percent.return_value = 15.0
+            process.memory_info.return_value = MagicMock(rss=128 * 1024 * 1024)
+            process.memory_percent.return_value = 22.0
+            mock_process.return_value = process
+
+            with patch("tldw_chatbook.Widgets.performance_metrics.psutil.disk_io_counters") as mock_disk:
+                mock_disk.side_effect = [_disk_io(0, 0), _disk_io(0, 0)]
+                metrics = PerformanceMetricsWidget(compact=False)
+                app = WidgetTestApp(metrics)
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+
+                    metrics.record_embedding_processed(4)
+                    metrics.record_chunk_processed(50.0)
+                    metrics.record_chunk_processed(70.0)
+                    metrics._update_metrics()
+                    await pilot.pause()
+
+                    snapshot = metrics.get_current_metrics()
+                    assert snapshot is not None
+                    assert snapshot.embeddings_per_second == pytest.approx(2.0)
+                    assert snapshot.average_chunk_time_ms == pytest.approx(60.0)
+                    assert "60ms/chunk" in _static_text(pilot.app.query_one("#chunk-time", Static))
+
+    def test_get_current_metrics_returns_last_snapshot(self):
+        with patch("tldw_chatbook.Widgets.performance_metrics.psutil.Process") as mock_process:
+            mock_process.return_value = MagicMock()
+            metrics = PerformanceMetricsWidget()
+
+        first = MetricSnapshot(datetime.now(), 10, 100, 20, 0, 0)
+        second = MetricSnapshot(datetime.now(), 20, 120, 25, 0, 0)
+        metrics.history.extend([first, second])
+
+        assert metrics.get_current_metrics() is second
+
+    def test_get_average_metrics_uses_recent_window(self):
+        with patch("tldw_chatbook.Widgets.performance_metrics.psutil.Process") as mock_process:
+            mock_process.return_value = MagicMock()
+            metrics = PerformanceMetricsWidget()
+
+        metrics.history = [
+            MetricSnapshot(datetime.now() - timedelta(seconds=120), 10, 100, 20, 1, 2, 0.5, 30),
+            MetricSnapshot(datetime.now() - timedelta(seconds=10), 30, 200, 40, 3, 4, 1.5, 50),
+            MetricSnapshot(datetime.now(), 50, 300, 60, 5, 6, 2.5, 70),
+        ]
+
+        averages = metrics.get_average_metrics(window_seconds=60)
+        assert averages["avg_cpu_percent"] == pytest.approx(40.0)
+        assert averages["avg_memory_mb"] == pytest.approx(250.0)
+        assert averages["max_cpu_percent"] == 50
+
+    @pytest.mark.asyncio
+    async def test_alerts_render_when_thresholds_exceeded(self):
+        with patch("tldw_chatbook.Widgets.performance_metrics.psutil.Process") as mock_process:
+            process = MagicMock()
+            process.cpu_percent.return_value = 10.0
+            process.memory_info.return_value = MagicMock(rss=64 * 1024 * 1024)
+            process.memory_percent.return_value = 10.0
+            mock_process.return_value = process
+
+            with patch("tldw_chatbook.Widgets.performance_metrics.psutil.disk_io_counters") as mock_disk:
+                mock_disk.return_value = _disk_io(0, 0)
+                metrics = PerformanceMetricsWidget(show_alerts=True, compact=False)
+                app = WidgetTestApp(metrics)
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+
+                    alert_snapshot = MetricSnapshot(
+                        timestamp=datetime.now(),
+                        cpu_percent=90.0,
+                        memory_mb=512.0,
+                        memory_percent=85.0,
+                        disk_read_mb=120.0,
+                        disk_write_mb=110.0,
                     )
-                    await asyncio.sleep(0.01)
-            
-            # Run multiple tasks
-            await asyncio.gather(
-                embed_task("model1", 5),
-                embed_task("model2", 3),
-                embed_task("model3", 4)
-            )
-            await pilot.pause()
-            
-            # Check all embeddings were tracked
-            assert metrics.embedding_stats.total_embeddings == 12
-            assert metrics.embedding_stats.embeddings_per_model["model1"] == 5
-            assert metrics.embedding_stats.embeddings_per_model["model2"] == 3
-            assert metrics.embedding_stats.embeddings_per_model["model3"] == 4
+                    metrics._check_alerts(alert_snapshot)
+                    await pilot.pause()
+
+                    alerts_container = pilot.app.query_one("#metrics-alerts")
+                    alerts = list(pilot.app.query(".alert-item"))
+                    assert "hidden" not in alerts_container.classes
+                    assert len(alerts) >= 3
+
+    @pytest.mark.asyncio
+    async def test_compact_mode_hides_disk_io_and_alerts(self):
+        with patch("tldw_chatbook.Widgets.performance_metrics.psutil.Process") as mock_process:
+            process = MagicMock()
+            process.cpu_percent.return_value = 10.0
+            process.memory_info.return_value = MagicMock(rss=64 * 1024 * 1024)
+            process.memory_percent.return_value = 10.0
+            mock_process.return_value = process
+
+            with patch("tldw_chatbook.Widgets.performance_metrics.psutil.disk_io_counters") as mock_disk:
+                mock_disk.return_value = _disk_io(0, 0)
+                metrics = PerformanceMetricsWidget(show_charts=False, show_alerts=False, compact=True)
+                app = WidgetTestApp(metrics)
+
+                async with app.run_test() as pilot:
+                    await pilot.pause()
+
+                    assert len(pilot.app.query("#disk-io-value")) == 0
+                    assert len(pilot.app.query("#metrics-alerts")) == 0
+                    assert len(pilot.app.query("#embeddings-rate-chart")) == 0

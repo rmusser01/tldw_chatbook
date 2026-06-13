@@ -10,7 +10,7 @@ from datetime import datetime
 try:
     from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
         TTSEventHandler, TTSRequestEvent, TTSCompleteEvent, 
-        TTSProgressEvent, TTSExportEvent, play_audio_file
+        TTSProgressEvent, TTSExportEvent, play_audio_file, CostTracker
     )
 except ImportError:
     # Fallback imports if classes don't exist
@@ -20,15 +20,18 @@ except ImportError:
     TTSProgressEvent = None
     TTSExportEvent = None
     play_audio_file = None
+    CostTracker = None
 try:
     from tldw_chatbook.TTS.audio_player import SimpleAudioPlayer, PlaybackState
 except ImportError:
     SimpleAudioPlayer = None
     PlaybackState = None
 
+if CostTracker is None:
+    class CostTracker:
+        pass
+
 # cost_tracker module doesn't exist, create mock classes
-class CostTracker:
-    pass
 
 class TTSProvider:
     pass

@@ -33,7 +33,7 @@ def session_data():
     )
 
 @pytest.fixture
-async def tab_bar(mock_app):
+def tab_bar(mock_app):
     """Create a ChatTabBar instance."""
     tab_bar = ChatTabBar()
     # Mock the query_one method to return mock widgets
@@ -166,6 +166,23 @@ class TestChatTabBar:
         message = tab_bar.post_message.call_args[0][0]
         assert isinstance(message, ChatTabBar.TabSelected)
         assert message.tab_id == "tab2"
+
+    def test_set_active_tab_can_suppress_programmatic_selection_message(self, tab_bar):
+        """Internal restore/sync callers should not recursively emit tab selections."""
+        button1 = Mock()
+        button2 = Mock()
+        tab_bar.tab_buttons = {
+            "tab1": button1,
+            "tab2": button2,
+        }
+        tab_bar.post_message = Mock()
+
+        tab_bar.set_active_tab("tab2", emit=False)
+
+        assert tab_bar.active_tab_id == "tab2"
+        button1.remove_class.assert_called_with("active")
+        button2.add_class.assert_called_with("active")
+        tab_bar.post_message.assert_not_called()
     
     def test_set_active_nonexistent_tab(self, tab_bar):
         """Test setting active tab with invalid ID."""

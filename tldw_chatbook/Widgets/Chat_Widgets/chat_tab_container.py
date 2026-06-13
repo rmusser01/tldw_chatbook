@@ -4,7 +4,7 @@
 # Imports
 import re
 import uuid
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 #
 # 3rd-Party Imports
 from loguru import logger
@@ -13,11 +13,13 @@ from textual.containers import Container, Vertical
 from textual.widgets import Static
 from textual.reactive import reactive
 from textual.binding import Binding
+from textual.message import Message
 #
 # Local Imports
 from .chat_tab_bar import ChatTabBar
 from .chat_session import ChatSession
 from tldw_chatbook.Widgets.confirmation_dialog import UnsavedChangesDialog
+from tldw_chatbook.Chat.chat_conversation_service import derive_conversation_title
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Utils.input_validation import validate_text_input
@@ -28,6 +30,29 @@ if TYPE_CHECKING:
 #######################################################################################################################
 #
 # Classes:
+
+
+def _derive_session_title(
+    session_data: ChatSessionData,
+    fallback_title: Optional[str] = None,
+) -> str:
+    effective_fallback_title = session_data.title if fallback_title is None else fallback_title
+    assistant_name = None
+    if session_data.assistant_kind == "character":
+        assistant_name = session_data.character_name
+    elif session_data.assistant_kind == "persona" and session_data.assistant_id:
+        assistant_name = f"Persona {session_data.assistant_id}"
+
+    return derive_conversation_title(
+        assistant_kind=session_data.assistant_kind,
+        assistant_name=assistant_name,
+        fallback_title=effective_fallback_title,
+        character_id=session_data.character_id,
+    )
+
+
+def _session_reuse_key(session_data: ChatSessionData) -> Tuple[str, Optional[str]]:
+    return (session_data.runtime_backend, session_data.conversation_id)
 
 class ChatTabContainer(Container):
     """
@@ -46,13 +71,20 @@ class ChatTabContainer(Container):
     
     # Current active session
     active_session_id: reactive[Optional[str]] = reactive(None)
+
+    class ActiveSessionChanged(Message):
+        """Sent when the live active chat session changes."""
+
+        def __init__(self, session_data: Optional[ChatSessionData]) -> None:
+            super().__init__()
+            self.session_data = session_data
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.sessions: Dict[str, ChatSession] = {}
         self.tab_bar: Optional[ChatTabBar] = None
-        self.max_tabs = get_cli_setting("chat", "max_tabs", 10)
+        self.max_tabs = get_cli_setting("chat_defaults", "max_tabs", 10)
         # Pattern for valid tab IDs
         self._tab_id_pattern = re.compile(r'^[a-f0-9]{8}$')
         logger.debug(f"ChatTabContainer initialized with max_tabs: {self.max_tabs}")
@@ -77,17 +109,35 @@ class ChatTabContainer(Container):
         # Create initial tab
         await self.create_new_tab()
     
-    async def create_new_tab(self, title: Optional[str] = None) -> str:
+    async def create_new_tab(
+        self,
+        title: Optional[str] = None,
+        session_data: Optional[ChatSessionData] = None,
+    ) -> str:
         """
         Create a new chat tab.
         
         Args:
             title: Optional title for the tab
-            
+            session_data: Optional session contract to seed the new tab
+
         Returns:
             The tab ID of the created tab, or empty string on failure
         """
         try:
+            if session_data is not None and session_data.conversation_id:
+                reuse_key = _session_reuse_key(session_data)
+                for existing_tab_id, existing_session in self.sessions.items():
+                    existing_session_data = existing_session.session_data
+                    if not existing_session_data.conversation_id:
+                        continue
+                    if _session_reuse_key(existing_session_data) == reuse_key:
+                        logger.info(
+                            f"Reusing existing chat tab {existing_tab_id} for conversation {reuse_key}"
+                        )
+                        await self.switch_to_tab_async(existing_tab_id)
+                        return existing_tab_id
+
             # Check max tabs limit
             if len(self.sessions) >= self.max_tabs:
                 self.app_instance.notify(
@@ -95,7 +145,7 @@ class ChatTabContainer(Container):
                     severity="warning"
                 )
                 return ""
-            
+
             # Validate and sanitize title
             if title:
                 try:
@@ -119,10 +169,18 @@ class ChatTabContainer(Container):
                 return ""
             
             # Create session data
-            session_data = ChatSessionData(
-                tab_id=tab_id,
-                title=title or f"Chat {len(self.sessions) + 1}"
-            )
+            if session_data is not None:
+                session_data = ChatSessionData.from_dict(session_data.to_dict())
+                session_data.tab_id = tab_id
+                session_data.title = _derive_session_title(
+                    session_data,
+                    fallback_title=title or session_data.title,
+                )
+            else:
+                session_data = ChatSessionData(
+                    tab_id=tab_id,
+                    title=title or f"Chat {len(self.sessions) + 1}"
+                )
             
             # Create session widget
             try:
@@ -132,6 +190,7 @@ class ChatTabContainer(Container):
                     id=f"chat-session-{tab_id}",
                     classes="chat-session"
                 )
+                session.suppress_auto_focus = self.id == "console-chat-tabs"
             except Exception as e:
                 logger.error(f"Failed to create ChatSession widget: {e}")
                 self.app_instance.notify("Failed to create chat session", severity="error")
@@ -229,8 +288,13 @@ class ChatTabContainer(Container):
         if self.tab_bar:
             self.tab_bar.remove_tab(tab_id)
         
-        # Remove session widget
-        await session.remove()
+        # Remove session widget. In tests and recovery paths a session may
+        # already be detached from a live Textual app; state cleanup should
+        # still proceed.
+        try:
+            await session.remove()
+        except Exception as e:
+            logger.debug(f"Could not remove chat session widget {tab_id}: {e}")
         
         # Remove from sessions dict
         del self.sessions[tab_id]
@@ -241,6 +305,7 @@ class ChatTabContainer(Container):
             placeholder = self.query_one("#no-sessions-placeholder", Static)
             placeholder.styles.display = "block"
             self.active_session_id = None
+            self._publish_active_session_changed(None)
         elif was_active:
             # Switch to another tab if this was active
             remaining_tabs = list(self.sessions.keys())
@@ -273,13 +338,15 @@ class ChatTabContainer(Container):
                 return
                 
             if tab_id not in self.sessions:
-                logger.warning(f"Attempted to switch to non-existent tab: {tab_id}")
+                logger.debug(f"Ignored stale tab switch for non-existent tab: {tab_id}")
                 return
             
             # If switching to the same tab, just ensure it's resumed
             if self.active_session_id == tab_id:
                 try:
-                    await self.sessions[tab_id].resume()
+                    session = self.sessions[tab_id]
+                    await session.resume()
+                    self._publish_active_session_changed(session.session_data)
                 except Exception as e:
                     logger.error(f"Error resuming current tab {tab_id}: {e}")
                 return
@@ -311,15 +378,27 @@ class ChatTabContainer(Container):
             # Update tab bar
             if self.tab_bar:
                 try:
-                    self.tab_bar.set_active_tab(tab_id)
+                    self.tab_bar.set_active_tab(tab_id, emit=False)
                 except Exception as e:
                     logger.warning(f"Error updating tab bar: {e}")
+
+            self._publish_active_session_changed(new_session.session_data)
             
             logger.debug(f"Switched to tab: {tab_id}")
             
         except Exception as e:
             logger.error(f"Unexpected error switching to tab {tab_id}: {e}")
             self.app_instance.notify("Error switching tabs", severity="error")
+
+    def _publish_active_session_changed(
+        self,
+        session_data: Optional[ChatSessionData],
+    ) -> None:
+        """Notify listeners that the live active chat session changed."""
+        try:
+            self.post_message(self.ActiveSessionChanged(session_data))
+        except Exception as e:
+            logger.debug(f"Could not publish active session change: {e}")
     
     def get_active_session(self) -> Optional[ChatSession]:
         """Get the currently active chat session."""
@@ -447,24 +526,37 @@ class ChatTabContainer(Container):
         Args:
             state: Dictionary mapping tab IDs to session data
         """
-        # Clear existing sessions except default
+        # Clear all existing live tabs so restore replaces the mounted UI state.
         for tab_id in list(self.sessions.keys()):
-            if tab_id != "default":
-                await self.close_tab(tab_id)
-        
+            await self._force_close_tab(tab_id)
+
+        restored_reuse_keys = set()
+
         # Restore each session
-        for tab_id, session_data in state.items():
-            if tab_id == "default" and "default" in self.sessions:
-                # Update default session
-                self.sessions["default"].session_data = session_data
-            else:
-                # Create new session
-                new_tab_id = await self.create_new_tab(title=session_data.title)
-                if new_tab_id and new_tab_id in self.sessions:
-                    # Copy the session data
-                    self.sessions[new_tab_id].session_data = session_data
-                    # Update the tab ID in session data to match new ID
-                    self.sessions[new_tab_id].session_data.tab_id = new_tab_id
+        for _, session_data in state.items():
+            restored_session_data = ChatSessionData.from_dict(session_data.to_dict())
+            restored_session_data.title = _derive_session_title(restored_session_data)
+            reuse_key = None
+            if restored_session_data.conversation_id:
+                reuse_key = _session_reuse_key(restored_session_data)
+
+            # Create new session
+            new_tab_id = await self.create_new_tab(session_data=restored_session_data)
+            if new_tab_id and new_tab_id in self.sessions:
+                if reuse_key is not None and reuse_key in restored_reuse_keys:
+                    continue
+
+                # Preserve the saved session state while rebinding it to the new widget tab ID.
+                restored_session_data.tab_id = new_tab_id
+                self.sessions[new_tab_id].session_data = restored_session_data
+                if self.tab_bar:
+                    self.tab_bar.update_tab_title(
+                        new_tab_id,
+                        restored_session_data.title,
+                        restored_session_data.character_name,
+                    )
+                if reuse_key is not None:
+                    restored_reuse_keys.add(reuse_key)
 
 #
 # End of chat_tab_container.py

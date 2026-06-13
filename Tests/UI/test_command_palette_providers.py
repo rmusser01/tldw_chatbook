@@ -37,10 +37,13 @@ try:
         DeveloperProvider
     )
     from tldw_chatbook.Constants import (
+        ALL_TABS,
         TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, 
         TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS, 
-        TAB_STATS, TAB_EVALS, TAB_CODING
+        TAB_STATS, TAB_EVALS, TAB_CODING, TAB_STTS, TAB_MCP,
+        TAB_SETTINGS, TAB_STUDY, TAB_WATCHLISTS_COLLECTIONS, get_tab_display_label
     )
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     IMPORTS_AVAILABLE = True
 except ImportError as e:
     print(f"Import error: {e}")
@@ -76,6 +79,23 @@ except ImportError as e:
     TAB_STATS = "stats"
     TAB_EVALS = "evals"
     TAB_CODING = "coding"
+    TAB_STTS = "stts"
+    TAB_MCP = "mcp"
+    TAB_SETTINGS = "settings"
+    TAB_STUDY = "study"
+    TAB_WATCHLISTS_COLLECTIONS = "watchlists_collections"
+    ALL_TABS = [
+        TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH,
+        TAB_INGEST, TAB_EVALS, TAB_LLM, TAB_STTS,
+        TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_CODING, TAB_STATS,
+    ]
+
+    def get_tab_display_label(tab_id):
+        return tab_id.replace("_", " ").title()
+
+    class NavigateToScreen:
+        def __init__(self, screen_name):
+            self.screen_name = screen_name
 
 #######################################################################################################################
 #
@@ -247,43 +267,108 @@ class TestTabNavigationProvider:
         async for hit in tab_provider.discover():
             hits.append(hit)
         
-        assert len(hits) == 5  # Popular tabs defined in discover method
+        assert len(hits) == 6  # Popular tabs defined in discover method
         tab_names = [hit.text for hit in hits]
-        assert any("Chat" in name for name in tab_names)
-        assert any("Character Chat" in name for name in tab_names)
-        assert any("Notes" in name for name in tab_names)
+        assert any("Console" in name for name in tab_names)
+        assert any("Library" in name for name in tab_names)
+        assert any("Artifacts" in name for name in tab_names)
+        assert any("MCP" in name for name in tab_names)
+        assert any("Settings" in name for name in tab_names)
     
     @pytest.mark.asyncio
-    async def test_search_shows_all_tabs(self, tab_provider):
-        """Test that search shows all available tabs."""
+    async def test_search_shows_shell_and_legacy_direct_commands(self, tab_provider):
+        """Test that search shows shell and legacy direct commands."""
         hits = []
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
         
-        # Should show all 12 tabs
-        assert len(hits) == 12
-        
-        # Check that all major tabs are present
+        assert len(hits) == len(TabNavigationProvider.command_palette_tab_ids())
         tab_texts = [hit.text for hit in hits]
-        assert any("Chat" in text for text in tab_texts)
-        assert any("Character Chat" in text for text in tab_texts)
-        assert any("Tools & Settings" in text for text in tab_texts)
-        assert any("LLM Management" in text for text in tab_texts)
+        assert any("Console" in text for text in tab_texts)
+        assert any("Library" in text for text in tab_texts)
+        assert any("Settings" in text for text in tab_texts)
+        assert any("Models" in text for text in tab_texts)
+        assert any("Speech" in text for text in tab_texts)
+        assert any("Coding" in text for text in tab_texts)
+
+    @pytest.mark.asyncio
+    async def test_search_uses_current_display_labels_for_renamed_tabs(self, tab_provider):
+        """Command palette labels should match top-level navigation labels."""
+        hits = []
+        async for hit in tab_provider.search("tab"):
+            hits.append(hit)
+
+        by_text = {hit.text: hit for hit in hits}
+
+        for tab_id in (TAB_CHAT, TAB_CCP, TAB_LLM, TAB_STTS, TAB_MCP, TAB_SETTINGS):
+            expected_text = f"Tab Navigation: Switch to {get_tab_display_label(tab_id)}"
+            assert expected_text in by_text
+
+        joined_text = "\n".join(by_text)
+        assert "Tab Navigation: Switch to Chat" not in by_text
+        assert "Character Chat" not in joined_text
+        assert "LLM Management" not in joined_text
+        assert "Tools & Settings" not in joined_text
+
+    def test_tab_navigation_provider_uses_watchlists_label(self, tab_provider):
+        command_text, tab_id, help_text = tab_provider._tab_command(TAB_WATCHLISTS_COLLECTIONS)
+
+        assert tab_id == TAB_WATCHLISTS_COLLECTIONS
+        assert "Watchlists" in command_text
+        assert "Watchlists" in help_text
+        assert "W+C" not in command_text
+        assert "Watchlists+Collections" not in command_text
+        assert "Watchlists+Collections" not in help_text
+
+    @pytest.mark.asyncio
+    async def test_search_finds_watchlists_by_visible_label(self, tab_provider):
+        hits = []
+        async for hit in tab_provider.search("Watchlists"):
+            hits.append(hit)
+
+        assert any("Watchlists" in hit.text for hit in hits)
+        assert all("Watchlists+Collections" not in hit.text for hit in hits)
+        assert all("Watchlists+Collections" not in (hit.help or "") for hit in hits)
+
+    @pytest.mark.asyncio
+    async def test_search_matches_destination_help_keywords(self, tab_provider):
+        class QueryMatcher:
+            def __init__(self, query: str):
+                self.query = query.lower()
+
+            def match(self, text: str) -> float:
+                return 1.0 if self.query in text.lower() else 0.0
+
+            def highlight(self, text: str) -> str:
+                return text
+
+        cases = [
+            ("Workspaces", "Library"),
+            ("flashcards", "Study"),
+            ("quizzes", "Study"),
+        ]
+
+        for query, expected_label in cases:
+            tab_provider.matcher = lambda query_text, _query=query: QueryMatcher(_query)
+            hits = []
+            async for hit in tab_provider.search(query):
+                hits.append(hit)
+
+            assert any(expected_label in hit.text for hit in hits), query
     
     def test_switch_tab_success(self, tab_provider):
         """Test successful tab switching."""
         tab_provider.switch_tab(TAB_NOTES)
         
-        assert tab_provider.app.current_tab == TAB_NOTES
+        tab_provider.app.post_message.assert_called_once()
+        message = tab_provider.app.post_message.call_args.args[0]
+        assert message.screen_name == TabNavigationProvider.route_for_tab(TAB_NOTES)
         tab_provider.app.notify.assert_called_once()
-        call_args = tab_provider.app.notify.call_args[0]
-        assert "Switched to" in call_args[0]
-        assert "Notes" in call_args[0]
+        assert "Switched to" in tab_provider.app.notify.call_args.args[0]
     
     def test_switch_tab_failure(self, tab_provider):
         """Test tab switching with error handling."""
-        # Mock the current_tab property to raise an exception when set
-        type(tab_provider.app).current_tab = PropertyMock(side_effect=Exception("Tab error"))
+        tab_provider.app.post_message.side_effect = Exception("Tab error")
         
         tab_provider.switch_tab(TAB_CHAT)
         
@@ -294,15 +379,25 @@ class TestTabNavigationProvider:
         assert "Tab error" in call_args[0][0]  # The exception message is included
         assert call_args[1]['severity'] == "error"
     
+    def test_all_command_palette_tabs_are_navigable(self, tab_provider):
+        """Test that all command palette tabs can be routed."""
+        for tab_id in TabNavigationProvider.command_palette_tab_ids():
+            tab_provider.app.post_message.reset_mock()
+            tab_provider.app.notify.reset_mock()
+            tab_provider.switch_tab(tab_id)
+            message = tab_provider.app.post_message.call_args.args[0]
+            assert message.screen_name == TabNavigationProvider.route_for_tab(tab_id)
+
     @pytest.mark.parametrize("tab_id", [
         TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH,
         TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS,
         TAB_STATS, TAB_EVALS, TAB_CODING
     ])
-    def test_all_tabs_switchable(self, tab_provider, tab_id):
-        """Test that all defined tabs can be switched to."""
+    def test_all_legacy_tabs_switchable(self, tab_provider, tab_id):
+        """Test that legacy tabs remain switchable through route aliases."""
         tab_provider.switch_tab(tab_id)
-        assert tab_provider.app.current_tab == tab_id
+        message = tab_provider.app.post_message.call_args.args[0]
+        assert message.screen_name == TabNavigationProvider.route_for_tab(tab_id)
 
 
 #######################################################################################################################
@@ -356,23 +451,26 @@ class TestQuickActionsProvider:
     def test_execute_new_chat_action(self, quick_actions_provider):
         """Test new chat action execution."""
         quick_actions_provider.execute_quick_action("new_chat")
-        
-        assert quick_actions_provider.app.current_tab == TAB_CHAT
+
+        quick_actions_provider.app.post_message.assert_called_once()
+        message = quick_actions_provider.app.post_message.call_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_CHAT
         quick_actions_provider.app.notify.assert_called_once()
         call_args = quick_actions_provider.app.notify.call_args[0]
-        assert "Chat tab" in call_args[0]
+        assert "Console" in call_args[0]
     
     def test_execute_new_note_action(self, quick_actions_provider):
         """Test new note action execution."""
         quick_actions_provider.execute_quick_action("new_note")
-        
-        assert quick_actions_provider.app.current_tab == TAB_NOTES
+
+        message = quick_actions_provider.app.post_message.call_args.args[0]
+        assert message.screen_name == TAB_NOTES
         quick_actions_provider.app.notify.assert_called_once()
     
     def test_execute_action_failure(self, quick_actions_provider):
         """Test quick action execution with error handling."""
-        # Mock the current_tab property to raise an exception when set
-        type(quick_actions_provider.app).current_tab = PropertyMock(side_effect=Exception("Action error"))
+        quick_actions_provider.app.post_message.side_effect = Exception("Action error")
         
         quick_actions_provider.execute_quick_action("new_chat")
         
@@ -474,8 +572,11 @@ class TestSettingsProvider:
     def test_open_settings_tab(self, settings_provider):
         """Test opening settings tab."""
         settings_provider.handle_setting("open_settings")
-        
-        assert settings_provider.app.current_tab == TAB_TOOLS_SETTINGS
+
+        settings_provider.app.post_message.assert_called_once()
+        message = settings_provider.app.post_message.call_args.args[0]
+        assert isinstance(message, NavigateToScreen)
+        assert message.screen_name == TAB_SETTINGS
         settings_provider.app.notify.assert_called_once()
     
     def test_show_config_path(self, settings_provider):
@@ -617,9 +718,10 @@ class TestCommandPaletteIntegration:
             # Don't try to set provider.app as it's a read-only property
             
             # Mock app to raise exception based on the method being tested
-            if method_name == "switch_tab" or method_name == "execute_quick_action":
-                # These methods set current_tab
-                type(provider.app).current_tab = PropertyMock(side_effect=Exception("Test error"))
+            if method_name == "switch_tab":
+                provider.app.post_message.side_effect = Exception("Test error")
+            elif method_name == "execute_quick_action":
+                provider.app.post_message.side_effect = Exception("Test error")
             elif method_name == "switch_theme":
                 # This method sets theme
                 type(provider.app).theme = PropertyMock(side_effect=Exception("Test error"))

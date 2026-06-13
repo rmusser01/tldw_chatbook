@@ -287,8 +287,8 @@ content
             assert len(files) == 1
             assert files[0].filename.endswith(ext), f"Expected {ext} for {lang}"
     
-    def test_csv_content_cleaning(self, extractor):
-        """Test CSV content is properly cleaned."""
+    def test_csv_content_preservation(self, extractor):
+        """Test fenced CSV content preserves file-significant whitespace."""
         text = '''
         ```csv
           name,age  
@@ -298,8 +298,7 @@ content
         '''
         files = extractor.extract_files(text)
         assert len(files) == 1
-        # Check that lines are stripped but structure preserved
-        assert files[0].content == "name,age\nJohn,30\nJane,25"
+        assert files[0].content == "          name,age  \n          John,30  \n          Jane,25  \n        "
     
     def test_filename_sanitization(self, extractor):
         """Test filename sanitization."""

@@ -56,9 +56,10 @@
 }
 
 .step-number.active {
-    background: $accent;
-    color: $text;
-    border: thick $accent;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    border: round $ds-focus-accent;
+    text-style: bold underline;
 }
 
 .step-number.complete {
@@ -73,8 +74,8 @@
 }
 
 .step-title.active {
-    color: $text;
-    text-style: bold;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .step-title.complete {
@@ -193,8 +194,10 @@
 }
 
 .content-type-card.selected {
-    background: $accent 20%;
-    border: thick $accent;
+    background: $ds-focus-bg;
+    border: round $ds-focus-accent;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .content-type-icon {
@@ -211,6 +214,12 @@
 .content-type-description {
     color: $text-muted;
     text-align: center;
+}
+
+.content-type-card.selected .content-type-title,
+.content-type-card.selected .content-type-description {
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* ========================================
@@ -364,8 +373,10 @@
 }
 
 .preset-card.selected {
-    background: $accent 20%;
-    border: thick $accent;
+    background: $ds-focus-bg;
+    border: round $ds-focus-accent;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .preset-icon {
@@ -393,6 +404,13 @@
 .preset-detail {
     color: $text-muted;
     margin-bottom: 0;
+}
+
+.preset-card.selected .preset-name,
+.preset-card.selected .preset-description,
+.preset-card.selected .preset-detail {
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Advanced settings */
@@ -706,8 +724,9 @@ ProgressStep .status-item.completed {
 }
 
 ProgressStep .status-item.active {
-    color: $primary;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 ProgressStep .status-item.error {
@@ -1013,8 +1032,9 @@ ImportProgressStep .status-item.completed {
 }
 
 ImportProgressStep .status-item.active {
-    color: $primary;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 ImportProgressStep .status-item.error {
@@ -1120,10 +1140,13 @@ SmartContentTree .tree-stats {
 
 /* Tree node styling */
 SmartContentTree Tree > .tree--cursor {
-    background: $primary 20%;
+    background: $surface;
+    color: $text;
+    text-style: bold underline;
 }
 
 SmartContentTree Tree > .selected-node {
-    text-style: bold;
-    color: $success;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }

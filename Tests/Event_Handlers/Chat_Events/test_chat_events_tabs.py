@@ -3,6 +3,7 @@
 #
 # Imports
 import pytest
+from contextlib import asynccontextmanager
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 #
 # 3rd-Party Imports
@@ -11,6 +12,7 @@ from textual.containers import VerticalScroll
 #
 # Local Imports
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_tabs
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
 #
 ########################################################################################################################
@@ -45,6 +47,11 @@ def session_data():
         title="Test Chat",
         conversation_id="conv-123",
         is_ephemeral=False,
+        assistant_kind="persona",
+        assistant_id="assistant-123",
+        persona_memory_mode="workspace",
+        scope_type="workspace",
+        workspace_id="workspace-123",
         is_streaming=False,
         current_worker=None,
         current_ai_message_widget=None
@@ -53,7 +60,7 @@ def session_data():
 @pytest.fixture
 def mock_config():
     """Mock configuration settings."""
-    with patch('tldw_chatbook.config.get_cli_setting') as mock_get_setting:
+    with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events_tabs.get_cli_setting') as mock_get_setting:
         # Default: tabs enabled
         mock_get_setting.return_value = True
         yield mock_get_setting
@@ -67,7 +74,7 @@ class TestChatEventsTabsHelpers:
     
     def test_get_active_session_data_tabs_disabled(self, mock_app):
         """Test getting session data when tabs are disabled."""
-        with patch('tldw_chatbook.config.get_cli_setting', return_value=False):
+        with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events_tabs.get_cli_setting', return_value=False):
             result = chat_events_tabs.get_active_session_data(mock_app)
             
             assert result is not None
@@ -154,6 +161,147 @@ class TestChatEventsTabsHelpers:
 
 class TestChatEventsTabsHandlers:
     """Test tab-aware event handlers."""
+
+    @pytest.mark.asyncio
+    async def test_handle_chat_send_button_pressed_with_tabs_preserves_expanded_metadata(
+        self, mock_app, session_data, mock_config
+    ):
+        """The wrapped send flow preserves persona/scope metadata on the session object."""
+        query_one_calls = []
+        query_calls = []
+
+        class FakeTabContext:
+            def __init__(self, app, session, *, query_one=None, query=None):
+                self.query_one = Mock(side_effect=lambda selector, *args: query_one_calls.append(selector))
+                self.query = Mock(side_effect=lambda selector, *args: query_calls.append(selector))
+
+        class FakeStateManager:
+            @asynccontextmanager
+            async def tab_context(self, tab_id):
+                yield self
+
+            get_tab_state = AsyncMock(return_value=None)
+            create_tab_state = AsyncMock()
+            update_tab_state = AsyncMock()
+
+        fake_state_manager = FakeStateManager()
+
+        async def fake_handler(app, event):
+            app.current_chat_worker = Mock()
+            app.current_ai_message_widget = Mock()
+            app.query_one("#chat-log")
+
+        mock_app.get_current_chat_is_streaming = Mock(return_value=True)
+
+        with patch.object(chat_events_tabs, "TabContext", FakeTabContext):
+            with patch.object(chat_events_tabs, "get_tab_state_manager", return_value=fake_state_manager):
+                with patch("tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed", side_effect=fake_handler):
+                    button = Mock(spec=Button)
+                    event = Mock()
+                    event.button = button
+
+                    await chat_events_tabs.handle_chat_send_button_pressed_with_tabs(
+                        mock_app, event, session_data
+                    )
+
+        assert session_data.assistant_kind == "persona"
+        assert session_data.assistant_id == "assistant-123"
+        assert session_data.persona_memory_mode == "workspace"
+        assert session_data.scope_type == "workspace"
+        assert session_data.workspace_id == "workspace-123"
+        assert session_data.is_streaming is True
+        assert session_data.current_worker == mock_app.current_chat_worker
+        assert session_data.current_ai_message_widget == mock_app.current_ai_message_widget
+        assert "#chat-log" in query_one_calls
+        assert query_calls == []
+
+    @pytest.mark.asyncio
+    async def test_tab_send_sets_current_handoff_payload_for_original_handler(
+        self, mock_app, session_data, mock_config
+    ):
+        payload = ChatHandoffPayload(
+            source="notes",
+            item_type="note",
+            title="Plan",
+            body="Body",
+        )
+        session_data.handoff_payload = payload
+
+        class FakeStateManager:
+            @asynccontextmanager
+            async def tab_context(self, tab_id):
+                yield self
+
+            get_tab_state = AsyncMock(return_value=None)
+            create_tab_state = AsyncMock()
+            update_tab_state = AsyncMock()
+
+        fake_state_manager = FakeStateManager()
+
+        async def fake_original_handler(app_arg, event_arg):
+            assert app_arg._current_chat_handoff_payload.title == "Plan"
+            app_arg.current_chat_worker = Mock()
+
+        with patch.object(chat_events_tabs, "get_tab_state_manager", return_value=fake_state_manager):
+            with patch(
+                "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed",
+                side_effect=fake_original_handler,
+            ):
+                event = Mock()
+                event.button = Mock(spec=Button)
+
+                await chat_events_tabs.handle_chat_send_button_pressed_with_tabs(
+                    mock_app, event, session_data=session_data
+                )
+
+        assert session_data.handoff_payload.status == "sent"
+        assert getattr(mock_app, "_current_chat_handoff_payload", None) is None
+
+    @pytest.mark.asyncio
+    async def test_tab_send_preserves_handoff_payload_when_original_handler_does_not_dispatch(
+        self, mock_app, session_data, mock_config
+    ):
+        payload = ChatHandoffPayload(
+            source="search-rag",
+            item_type="search-result",
+            title="Local RAG result",
+            body="Grounded answer evidence",
+            metadata={"authority": "local-index"},
+        )
+        session_data.handoff_payload = payload
+
+        class FakeStateManager:
+            @asynccontextmanager
+            async def tab_context(self, tab_id):
+                yield self
+
+            get_tab_state = AsyncMock(return_value=None)
+            create_tab_state = AsyncMock()
+            update_tab_state = AsyncMock()
+
+        fake_state_manager = FakeStateManager()
+
+        async def fake_blocked_handler(app_arg, event_arg):
+            assert app_arg._current_chat_handoff_payload.title == "Local RAG result"
+            # Simulates validation or runtime setup recovery returning before run_worker().
+            app_arg.current_chat_worker = None
+            app_arg.set_current_chat_is_streaming(False)
+
+        with patch.object(chat_events_tabs, "get_tab_state_manager", return_value=fake_state_manager):
+            with patch(
+                "tldw_chatbook.Event_Handlers.Chat_Events.chat_events.handle_chat_send_button_pressed",
+                side_effect=fake_blocked_handler,
+            ):
+                event = Mock()
+                event.button = Mock(spec=Button)
+
+                await chat_events_tabs.handle_chat_send_button_pressed_with_tabs(
+                    mock_app, event, session_data=session_data
+                )
+
+        assert session_data.handoff_payload is payload
+        assert session_data.handoff_payload.status == "staged"
+        assert getattr(mock_app, "_current_chat_handoff_payload", None) is None
     
     @pytest.mark.skip(reason="Complex mocking of TabContext and state_manager required")
     @pytest.mark.asyncio
@@ -344,6 +492,11 @@ class TestChatEventsTabsStateSynchronization:
             assert session_data.is_streaming is True
             assert session_data.current_worker == mock_app.current_chat_worker
             assert session_data.current_ai_message_widget == mock_app.current_ai_message_widget
+            assert session_data.assistant_kind == "persona"
+            assert session_data.assistant_id == "assistant-123"
+            assert session_data.persona_memory_mode == "workspace"
+            assert session_data.scope_type == "workspace"
+            assert session_data.workspace_id == "workspace-123"
     
     @pytest.mark.asyncio
     async def test_display_conversation_updates_tab_title(self, mock_app, session_data, mock_config):
@@ -385,6 +538,81 @@ class TestChatEventsTabsStateSynchronization:
             # Verify app state was updated
             assert mock_app.current_chat_conversation_id == "new-conv-id"
             assert mock_app.current_chat_is_ephemeral is False
+            assert session_data.assistant_kind == "persona"
+            assert session_data.assistant_id == "assistant-123"
+            assert session_data.persona_memory_mode == "workspace"
+            assert session_data.scope_type == "workspace"
+            assert session_data.workspace_id == "workspace-123"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("session_kwargs", "expected_title"),
+        [
+            (
+                {
+                    "title": "",
+                    "assistant_kind": "persona",
+                    "assistant_id": "Planner",
+                    "character_name": None,
+                },
+                "Chat with Persona Planner",
+            ),
+            (
+                {
+                    "title": "",
+                    "assistant_kind": "character",
+                    "assistant_id": "char-77",
+                    "character_name": "Navigator",
+                },
+                "Chat with Navigator",
+            ),
+            (
+                {
+                    "title": "",
+                    "assistant_kind": None,
+                    "assistant_id": None,
+                    "character_name": None,
+                },
+                "New Chat",
+            ),
+        ],
+    )
+    async def test_display_conversation_derives_session_backed_title_when_input_empty(
+        self, mock_app, session_data, mock_config, session_kwargs, expected_title
+    ):
+        """Loading a conversation falls back to the local contract when the title input is blank."""
+        for field_name, field_value in session_kwargs.items():
+            setattr(session_data, field_name, field_value)
+
+        mock_title_input = Mock()
+        mock_title_input.value = ""
+
+        mock_tab_container = Mock()
+        mock_tab_container.update_tab_title = Mock()
+
+        mock_chat_window = Mock()
+        mock_chat_window.tab_container = mock_tab_container
+
+        def query_one_side_effect(selector, widget_type=None):
+            if selector == "#chat-conversation-title-input":
+                return mock_title_input
+            if selector == "#chat-window":
+                return mock_chat_window
+            return Mock()
+
+        with patch('tldw_chatbook.Event_Handlers.Chat_Events.chat_events.display_conversation_in_chat_tab_ui') as mock_handler:
+            mock_handler.return_value = None
+            mock_app.query_one = Mock(side_effect=query_one_side_effect)
+
+            await chat_events_tabs.display_conversation_in_chat_tab_ui_with_tabs(
+                mock_app, "derived-conv-id", session_data
+            )
+
+        assert session_data.title == expected_title
+        mock_tab_container.update_tab_title.assert_called_once_with(
+            session_data.tab_id,
+            expected_title,
+        )
 
 ########################################################################################################################
 #

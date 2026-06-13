@@ -116,8 +116,13 @@ data_dir = "{}"
         app.media_db.close_connection()
 
 
-# Test marker for integration tests
-pytestmark = pytest.mark.integration
+# The live Chat route now mounts the Console-native ChatScreen instead of the
+# legacy Chat right sidebar. The sidebar event handlers remain covered in
+# Tests/Event_Handlers/Chat_Events/test_chat_events_sidebar.py.
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skip(reason="Legacy Chat media sidebar is not mounted in the Console-native ChatScreen."),
+]
 
 
 # --- Test Cases ---

@@ -22,6 +22,9 @@ if TYPE_CHECKING:
 #
 # Classes:
 
+CHAT_TAB_CLOSE_BUTTON_WIDTH = 3
+
+
 class ChatTabBar(Horizontal):
     """
     A tab bar widget for managing multiple chat sessions.
@@ -60,7 +63,7 @@ class ChatTabBar(Horizontal):
         with HorizontalScroll(id="chat-tabs-scroll", classes="chat-tabs-scroll"):
             # New tab button
             yield Button(
-                "+",
+                "New tab",
                 id="new-chat-tab-button",
                 classes="new-tab-button",
                 tooltip="New chat tab (Ctrl+T)"
@@ -90,11 +93,14 @@ class ChatTabBar(Horizontal):
         
         # Close button
         close_button = Button(
-            "×",
+            "x",
             id=f"close-tab-{tab_id}",
             classes="close-tab-button",
             name=tab_id  # Store tab_id in name for easy access
         )
+        close_button.styles.width = CHAT_TAB_CLOSE_BUTTON_WIDTH
+        close_button.styles.min_width = CHAT_TAB_CLOSE_BUTTON_WIDTH
+        close_button.styles.max_width = CHAT_TAB_CLOSE_BUTTON_WIDTH
         
         # Create tab container with buttons already as children
         tab_container = Horizontal(
@@ -116,7 +122,7 @@ class ChatTabBar(Horizontal):
         
         # If this is the first tab or no active tab, make it active
         if not self.active_tab_id:
-            self.set_active_tab(tab_id)
+            self.set_active_tab(tab_id, emit=False)
         
         logger.info(f"Added tab: {tab_id} with title: {session_data.title}")
     
@@ -145,18 +151,19 @@ class ChatTabBar(Horizontal):
             if self.tab_buttons:
                 # Activate the first remaining tab
                 next_tab_id = next(iter(self.tab_buttons.keys()))
-                self.set_active_tab(next_tab_id)
+                self.set_active_tab(next_tab_id, emit=False)
             else:
                 self.active_tab_id = None
         
         logger.info(f"Removed tab: {tab_id}")
     
-    def set_active_tab(self, tab_id: str) -> None:
+    def set_active_tab(self, tab_id: str, *, emit: bool = True) -> None:
         """
         Set the active tab.
         
         Args:
             tab_id: The ID of the tab to activate
+            emit: Whether to emit TabSelected for user-driven selection.
         """
         if tab_id not in self.tab_buttons:
             logger.warning(f"Attempted to activate non-existent tab: {tab_id}")
@@ -170,8 +177,8 @@ class ChatTabBar(Horizontal):
         self.tab_buttons[tab_id].add_class("active")
         self.active_tab_id = tab_id
         
-        # Post message about tab selection
-        self.post_message(self.TabSelected(tab_id))
+        if emit:
+            self.post_message(self.TabSelected(tab_id))
         
         logger.debug(f"Activated tab: {tab_id}")
     

@@ -4,13 +4,12 @@ Integration tests for file extraction workflow.
 import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 from textual.app import App
 
 from tldw_chatbook.Widgets.file_extraction_dialog import FileExtractionDialog
 from tldw_chatbook.Utils.file_extraction import FileExtractor, ExtractedFile
-from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
 
 
 class MockApp(App):
@@ -27,6 +26,13 @@ class TestFileExtractionIntegration:
     def mock_app(self):
         """Create a mock app instance."""
         return MockApp()
+
+    @pytest.fixture(autouse=True)
+    def bind_dialog_app(self, mock_app):
+        """Expose the mock app through Textual's read-only app property."""
+        with patch.object(FileExtractionDialog, "app", new_callable=PropertyMock) as app_property:
+            app_property.return_value = mock_app
+            yield
     
     @pytest.fixture
     def sample_files(self):
@@ -84,14 +90,6 @@ class TestFileExtractionIntegration:
         ```
         '''
         
-        # Create a chat message widget
-        message = ChatMessageEnhanced(
-            message_id=1,
-            author="assistant",
-            content=message_content,
-            timestamp="2024-01-01 12:00:00"
-        )
-        
         # The message should detect that files can be extracted
         extractor = FileExtractor()
         files = extractor.extract_files(message_content)
@@ -130,7 +128,7 @@ class TestFileExtractionIntegration:
         """Test that invalid files are caught during save."""
         invalid_files = [
             ExtractedFile(
-                filename="bad<>file.txt",  # Invalid filename
+                filename="../bad.txt",  # Invalid filename
                 content="content",
                 language="text",
                 start_pos=0,
@@ -161,18 +159,17 @@ class TestFileExtractionIntegration:
         dialog = FileExtractionDialog(sample_files)
         dialog.app = mock_app
         
-        # Simulate mounting
-        dialog._preview_content = Mock()
-        
-        # Update preview for first file
-        dialog._update_preview(0)
-        
-        # The preview should show the Python file content
-        assert dialog._preview_content.call_args[0][0] == "```python\nprint('Hello, World!')\n```"
-        
-        # Update preview for JSON file
-        dialog._update_preview(1)
-        assert "json" in dialog._preview_content.call_args[0][0]
+        preview = Mock()
+        with patch.object(dialog, 'query_one', return_value=preview):
+            # Update preview for first file
+            dialog._update_preview(0)
+            
+            # The preview should show the Python file content
+            assert preview.update.call_args[0][0] == "```python\nprint('Hello, World!')\n```"
+            
+            # Update preview for JSON file
+            dialog._update_preview(1)
+            assert "json" in preview.update.call_args[0][0]
     
     @pytest.mark.asyncio
     async def test_filename_editing(self, mock_app, sample_files):
@@ -277,12 +274,12 @@ class TestFileExtractionIntegration:
         
         dialog = FileExtractionDialog(files)
         dialog.app = mock_app
-        dialog._preview_content = Mock()
-        
-        dialog._update_preview(0)
+        preview = Mock()
+        with patch.object(dialog, 'query_one', return_value=preview):
+            dialog._update_preview(0)
         
         # Verify content was truncated
-        preview_text = dialog._preview_content.call_args[0][0]
+        preview_text = preview.update.call_args[0][0]
         assert len(preview_text) < 6000  # 5000 + markup
         assert "truncated" in preview_text
     

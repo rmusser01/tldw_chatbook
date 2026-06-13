@@ -38,12 +38,27 @@ class TestMLXWhisperEdgeCases:
     @pytest.fixture
     def mock_service(self):
         """Create a mocked transcription service."""
+        real_exists = os.path.exists
+        real_getsize = os.path.getsize
+
+        def exists_side_effect(path):
+            if str(path).endswith(".wav"):
+                return True
+            return real_exists(path)
+
+        def getsize_side_effect(path):
+            if str(path).endswith(".wav"):
+                return 1024
+            return real_getsize(path)
+
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.LIGHTNING_WHISPER_AVAILABLE', True), \
-             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings:
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.exists', side_effect=exists_side_effect), \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.getsize', side_effect=getsize_side_effect):
             
             mock_settings.return_value = None  # Use defaults
             service = TranscriptionService()
-            return service
+            yield service
     
     @pytest.fixture
     def corrupted_audio_file(self):
@@ -465,12 +480,27 @@ class TestMLXWhisperRobustness:
     @pytest.fixture
     def mock_service(self):
         """Create a mocked transcription service."""
+        real_exists = os.path.exists
+        real_getsize = os.path.getsize
+
+        def exists_side_effect(path):
+            if str(path).endswith(".wav"):
+                return True
+            return real_exists(path)
+
+        def getsize_side_effect(path):
+            if str(path).endswith(".wav"):
+                return 1024
+            return real_getsize(path)
+
         with patch('tldw_chatbook.Local_Ingestion.transcription_service.LIGHTNING_WHISPER_AVAILABLE', True), \
-             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings:
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.get_cli_setting') as mock_settings, \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.exists', side_effect=exists_side_effect), \
+             patch('tldw_chatbook.Local_Ingestion.transcription_service.os.path.getsize', side_effect=getsize_side_effect):
             
             mock_settings.return_value = None  # Use defaults
             service = TranscriptionService()
-            return service
+            yield service
     
     def test_network_timeout_during_model_download(self, mock_service):
         """Test handling of network timeout during model download."""

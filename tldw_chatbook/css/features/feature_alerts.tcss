@@ -52,10 +52,6 @@ FeatureNotAvailableDialog Button {
     min-width: 12;
 }
 
-FeatureNotAvailableDialog Button:focus {
-    text-style: bold;
-}
-
 /* Warning styles for disabled UI elements */
 .feature-disabled-warning {
     color: $warning;

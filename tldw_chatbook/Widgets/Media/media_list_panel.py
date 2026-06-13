@@ -21,12 +21,21 @@ if TYPE_CHECKING:
     from ...app import TldwCli
 
 
+MEDIA_PAGINATION_SINGLE_PAGE_TOOLTIP = "Only one page of media results is available."
+MEDIA_PAGINATION_PREVIOUS_ENABLED_TOOLTIP = "Show the previous media results page."
+MEDIA_PAGINATION_PREVIOUS_FIRST_TOOLTIP = "Already on the first media results page."
+MEDIA_PAGINATION_NEXT_ENABLED_TOOLTIP = "Show the next media results page."
+MEDIA_PAGINATION_NEXT_LAST_TOOLTIP = "Already on the last media results page."
+
+
 class MediaItemSelectedEvent(Message):
     """Event fired when a media item is selected."""
     
-    def __init__(self, media_id: int, media_data: Dict[str, Any]) -> None:
+    def __init__(self, record_id: str, media_data: Dict[str, Any]) -> None:
         super().__init__()
-        self.media_id = media_id
+        self.record_id = record_id
+        # Keep the legacy attribute name as an alias while the rest of the stack transitions.
+        self.media_id = record_id
         self.media_data = media_data
 
 
@@ -85,12 +94,14 @@ class MediaListPanel(Container):
     }
     
     MediaListPanel .media-item:hover {
-        background: $accent 50%;
+        background: $surface-lighten-1;
+        color: $text;
     }
     
     MediaListPanel .media-item.selected {
-        background: $accent;
-        text-style: bold;
+        background: $surface;
+        color: $text;
+        text-style: bold underline;
     }
     
     MediaListPanel .item-title {
@@ -147,7 +158,7 @@ class MediaListPanel(Container):
     items: reactive[List[Dict[str, Any]]] = reactive([])
     current_page: reactive[int] = reactive(1)
     total_pages: reactive[int] = reactive(1)
-    selected_id: reactive[Optional[int]] = reactive(None)
+    selected_id: reactive[Optional[str]] = reactive(None)
     loading: reactive[bool] = reactive(False)
     
     def __init__(self, app_instance: 'TldwCli', **kwargs):
@@ -168,9 +179,19 @@ class MediaListPanel(Container):
         
         # Pagination
         with Horizontal(classes="pagination-bar"):
-            yield Button("Previous", id="prev-button", disabled=True)
+            yield Button(
+                "Previous",
+                id="prev-button",
+                disabled=True,
+                tooltip=MEDIA_PAGINATION_SINGLE_PAGE_TOOLTIP,
+            )
             yield Label("Page 1 / 1", id="page-label", classes="page-label")
-            yield Button("Next", id="next-button", disabled=True)
+            yield Button(
+                "Next",
+                id="next-button",
+                disabled=True,
+                tooltip=MEDIA_PAGINATION_SINGLE_PAGE_TOOLTIP,
+            )
     
     def watch_items(self, items: List[Dict[str, Any]]) -> None:
         """Update the list when items change."""
@@ -185,15 +206,21 @@ class MediaListPanel(Container):
         """Update pagination controls when total pages change."""
         self.update_pagination()
     
-    def watch_selected_id(self, media_id: Optional[int]) -> None:
+    def watch_selected_id(self, record_id: Optional[str]) -> None:
         """Update list selection when selected ID changes."""
-        if media_id is None:
+        if record_id is None:
             return
-            
+
+        selected_widget_id = None
+        for index, item in enumerate(self.items):
+            if str(item.get("id")) == str(record_id):
+                selected_widget_id = self._row_widget_id(index)
+                break
+
         # Update visual selection
         list_view = self.query_one("#media-list", ListView)
         for item in list_view.children:
-            if isinstance(item, ListItem) and item.id == f"media-item-{media_id}":
+            if isinstance(item, ListItem) and item.id == selected_widget_id:
                 item.add_class("selected")
             else:
                 item.remove_class("selected")
@@ -218,7 +245,7 @@ class MediaListPanel(Container):
                 ))
                 return
             
-            for item in self.items:
+            for index, item in enumerate(self.items):
                 # Get item data
                 title = item.get("title", "Untitled")
                 media_type = item.get("type") or item.get("media_type", "Unknown")
@@ -255,13 +282,33 @@ class MediaListPanel(Container):
                 
                 list_item = ListItem(
                     Static("\n".join(formatted_lines), classes=meta_classes),
-                    id=f"media-item-{item['id']}",
+                    id=self._row_widget_id(index),
                     classes=list_item_classes
                 )
                 
                 await list_view.append(list_item)
         finally:
             self._updating = False
+
+    def _row_widget_id(self, index: int) -> str:
+        """Return the stable widget ID for a rendered row."""
+        return f"media-row-{index}"
+
+    def _row_index_for_widget(self, widget: ListItem) -> int:
+        """Resolve the backing item index from a rendered row widget."""
+        widget_id = str(widget.id or "")
+        if not widget_id.startswith("media-row-"):
+            raise ValueError(f"Unsupported media row widget id: {widget_id}")
+        return int(widget_id.replace("media-row-", "", 1))
+
+    def _record_for_row(self, row_index: int) -> Dict[str, Any]:
+        """Return the normalized media record for a rendered row index."""
+        return self.items[row_index]
+
+    def _build_selection_event_for_test(self, row_index: int) -> MediaItemSelectedEvent:
+        """Build the selection event for a given row without requiring a mounted app."""
+        record = self._record_for_row(row_index)
+        return MediaItemSelectedEvent(str(record["id"]), record)
     
     def update_pagination(self) -> None:
         """Update pagination controls."""
@@ -272,6 +319,20 @@ class MediaListPanel(Container):
             
             prev_button.disabled = self.current_page <= 1
             next_button.disabled = self.current_page >= self.total_pages
+            if self.total_pages <= 1:
+                prev_button.tooltip = MEDIA_PAGINATION_SINGLE_PAGE_TOOLTIP
+                next_button.tooltip = MEDIA_PAGINATION_SINGLE_PAGE_TOOLTIP
+            else:
+                prev_button.tooltip = (
+                    MEDIA_PAGINATION_PREVIOUS_FIRST_TOOLTIP
+                    if prev_button.disabled
+                    else MEDIA_PAGINATION_PREVIOUS_ENABLED_TOOLTIP
+                )
+                next_button.tooltip = (
+                    MEDIA_PAGINATION_NEXT_LAST_TOOLTIP
+                    if next_button.disabled
+                    else MEDIA_PAGINATION_NEXT_ENABLED_TOOLTIP
+                )
             
             page_label.update(f"Page {self.current_page} / {self.total_pages}")
         except:
@@ -282,18 +343,11 @@ class MediaListPanel(Container):
         """Handle list item selection."""
         if event.item and event.item.id:
             try:
-                media_id = int(event.item.id.replace("media-item-", ""))
-                
-                # Find the media data
-                media_data = None
-                for item in self.items:
-                    if item["id"] == media_id:
-                        media_data = item
-                        break
-                
-                if media_data:
-                    self.selected_id = media_id
-                    self.post_message(MediaItemSelectedEvent(media_id, media_data))
+                row_index = self._row_index_for_widget(event.item)
+                media_data = self._record_for_row(row_index)
+                record_id = str(media_data["id"])
+                self.selected_id = record_id
+                self.post_message(MediaItemSelectedEvent(record_id, media_data))
             except Exception as e:
                 logger.error(f"Error handling item selection: {e}")
     
@@ -302,14 +356,30 @@ class MediaListPanel(Container):
         """Handle previous page button."""
         if self.current_page > 1:
             self.current_page -= 1
-            self.post_message(MediaSearchEvent("", "", False))  # Trigger search with new page
+            self.post_message(self._build_pagination_search_event())
     
     @on(Button.Pressed, "#next-button")
     def handle_next_page(self) -> None:
         """Handle next page button."""
         if self.current_page < self.total_pages:
             self.current_page += 1
-            self.post_message(MediaSearchEvent("", "", False))  # Trigger search with new page
+            self.post_message(self._build_pagination_search_event())
+
+    def _build_pagination_search_event(self) -> "MediaSearchEvent":
+        """Build a search event that preserves the active filters during pagination."""
+        search_term = ""
+        keyword_filter = ""
+        show_deleted = False
+
+        try:
+            search_panel = self.screen.query_one("#media-search-panel")
+            search_term = str(getattr(search_panel, "search_term", "") or "")
+            keyword_filter = str(getattr(search_panel, "keyword_filter", "") or "")
+            show_deleted = bool(getattr(search_panel, "show_deleted", False))
+        except Exception:
+            logger.debug("Media pagination fell back to empty search state")
+
+        return MediaSearchEvent(search_term, keyword_filter, show_deleted)
     
     def set_loading(self, loading: bool) -> None:
         """Set loading state."""

@@ -14,8 +14,11 @@ from textual.widgets import Button, TextArea, Static
 from textual.reactive import reactive
 #
 # Local Imports
+from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.chat_models import ChatSessionData
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_SEND, FALLBACK_SEND, EMOJI_STOP, FALLBACK_STOP
+from tldw_chatbook.Widgets.Chat_Widgets.chat_handoff_card import ChatHandoffCard
 #
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -58,17 +61,24 @@ class ChatSession(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.session_data = session_data
+        self.suppress_auto_focus = False
         logger.debug(f"ChatSession initialized for tab: {session_data.tab_id}")
     
     def compose(self) -> ComposeResult:
         """Compose the chat session UI."""
         logger.debug(f"Composing ChatSession UI for tab: {self.session_data.tab_id}")
+
+        yield Static(
+            self._build_first_run_orientation_text(),
+            id=f"chat-empty-state-{self.session_data.tab_id}",
+            classes="chat-empty-state",
+        )
         
         # Chat log area
         yield VerticalScroll(id=f"chat-log-{self.session_data.tab_id}", classes="chat-log")
         
         # Image attachment indicator (for enhanced chat)
-        if hasattr(self.app_instance, 'chat_enhanced_mode') and self.app_instance.chat_enhanced_mode:
+        if getattr(self.app_instance, "chat_enhanced_mode", False) is True:
             yield Static(
                 "",
                 id=f"image-attachment-indicator-{self.session_data.tab_id}",
@@ -92,8 +102,8 @@ class ChatSession(Container):
             )
             
             # Attach file button (if enhanced mode)
-            if hasattr(self.app_instance, 'chat_enhanced_mode') and self.app_instance.chat_enhanced_mode:
-                from ..config import get_cli_setting
+            if getattr(self.app_instance, "chat_enhanced_mode", False) is True:
+                from tldw_chatbook.config import get_cli_setting
                 show_attach_button = get_cli_setting("chat.images", "show_attach_button", True)
                 if show_attach_button:
                     yield Button(
@@ -117,6 +127,23 @@ class ChatSession(Container):
         self._streaming_check_timer = self.set_interval(0.5, self._check_streaming_state)
         self._update_button_state()
         logger.debug(f"ChatSession mounted for tab: {self.session_data.tab_id}")
+
+    async def on_unmount(self) -> None:
+        """Stop periodic UI checks when Textual detaches this session."""
+        self._is_active = False
+        self._stop_streaming_check_timer()
+        logger.debug(f"ChatSession unmounted for tab: {self.session_data.tab_id}")
+
+    def _stop_streaming_check_timer(self) -> None:
+        """Stop and clear the periodic streaming-state timer."""
+        if self._streaming_check_timer:
+            try:
+                self._streaming_check_timer.stop()
+                logger.debug(f"Stopped streaming timer for tab: {self.session_data.tab_id}")
+            except Exception as e:
+                logger.warning(f"Error stopping timer for tab {self.session_data.tab_id}: {e}")
+            finally:
+                self._streaming_check_timer = None
     
     def _update_button_state(self) -> None:
         """Update the send/stop button based on streaming state."""
@@ -144,13 +171,42 @@ class ChatSession(Container):
     
     def _check_streaming_state(self) -> None:
         """Periodically check streaming state and update button."""
-        # Only update if this session is active
-        if self._is_active:
-            self._update_button_state()
+        if not self._is_active or not getattr(self, "is_mounted", True):
+            self._stop_streaming_check_timer()
+            return
+
+        self._update_button_state()
+
+    def _selected_provider_for_orientation(self) -> Optional[str]:
+        """Return the configured provider for first-run guidance."""
+        app_config = getattr(self.app_instance, "app_config", {})
+        defaults = app_config.get("chat_defaults", {}) if isinstance(app_config, dict) else {}
+        if isinstance(defaults, dict):
+            provider = defaults.get("provider")
+            if provider:
+                return str(provider)
+        return None
+
+    def _build_first_run_orientation_text(self) -> str:
+        """Build compact first-run guidance for a tabbed Console session."""
+        app_config = getattr(self.app_instance, "app_config", {})
+        readiness = get_provider_readiness(self._selected_provider_for_orientation(), app_config)
+        provider_line = (
+            f"Provider ready: {readiness.provider}."
+            if readiness.ready
+            else "Provider setup required before sending."
+        )
+        return (
+            "Empty transcript\n"
+            "No messages yet. Send a prompt or attach context.\n"
+            "Event stream ready. Start with a command or attach sources.\n"
+            f"{provider_line}\n"
+            "Context lanes: Library, Search/RAG, Artifacts, Personas, Skills."
+        )
     
     async def handle_send_stop_button(self, event):
         """Handle send/stop button press with debouncing."""
-        from ..Event_Handlers.Chat_Events import chat_events_tabs
+        from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_tabs
         
         current_time = time.time() * 1000
         
@@ -197,7 +253,7 @@ class ChatSession(Container):
     
     async def handle_suggest_button(self, event):
         """Handle suggest response button press."""
-        from ..Event_Handlers.Chat_Events import chat_events_tabs
+        from tldw_chatbook.Event_Handlers.Chat_Events import chat_events_tabs
         logger.info(f"Suggest button pressed for tab {self.session_data.tab_id}")
         # Use tab-aware handler
         await chat_events_tabs.handle_respond_for_me_button_pressed_with_tabs(
@@ -220,9 +276,50 @@ class ChatSession(Container):
     
     def clear_chat(self) -> None:
         """Clear the chat log for this session."""
-        chat_log = self.get_chat_log()
-        chat_log.remove_children()
-        logger.info(f"Cleared chat log for tab {self.session_data.tab_id}")
+        try:
+            chat_log = self.get_chat_log()
+            chat_log.remove_children()
+            logger.info(f"Cleared chat log for tab {self.session_data.tab_id}")
+        except Exception as e:
+            logger.warning(f"Could not clear chat log for tab {self.session_data.tab_id}: {e}")
+
+    async def mount_handoff_card(self, payload: ChatHandoffPayload) -> None:
+        """Mount the staged context card at the top of this session's chat log."""
+        chat_log = self.query_one(f"#chat-log-{self.session_data.tab_id}")
+        await chat_log.mount(
+            ChatHandoffCard(
+                payload,
+                clear_action_id=f"clear-chat-handoff-context-{self.session_data.tab_id}",
+            )
+        )
+
+    def set_draft_text(self, text: str) -> None:
+        """Preload the per-tab composer with handoff guidance."""
+        input_widget = self.query_one(f"#chat-input-{self.session_data.tab_id}", TextArea)
+        input_widget.load_text(text)
+
+    async def clear_handoff_context(self) -> None:
+        """Remove staged handoff context before the user sends."""
+        payload = self.session_data.handoff_payload
+        self.session_data.handoff_payload = None
+        if getattr(self.app_instance, "_current_chat_handoff_payload", None) is payload:
+            self.app_instance._current_chat_handoff_payload = None
+
+        if payload is not None:
+            try:
+                input_widget = self.get_chat_input()
+                if input_widget.text.strip() == payload.default_prompt():
+                    input_widget.clear()
+            except Exception as e:
+                logger.debug(f"Could not clear handoff draft text: {e}")
+
+        for card in list(self.query(ChatHandoffCard)):
+            if getattr(card.payload, "status", "staged") == "sent":
+                continue
+            try:
+                await card.remove()
+            except Exception as e:
+                logger.debug(f"Could not remove handoff card: {e}")
     
     # Button event handlers
     @on(Button.Pressed)
@@ -236,6 +333,12 @@ class ChatSession(Container):
             await self.handle_suggest_button(event)
         elif button_id == f"attach-image-{self.session_data.tab_id}":
             await self.handle_attach_button(event)
+
+    @on(ChatHandoffCard.ClearRequested)
+    async def on_handoff_clear_requested(self, event: ChatHandoffCard.ClearRequested) -> None:
+        """Handle clear requests emitted by the staged-context card."""
+        event.stop()
+        await self.clear_handoff_context()
     
     # Lifecycle management methods
     
@@ -252,12 +355,7 @@ class ChatSession(Container):
             self._is_active = False
             
             # Stop the streaming check timer
-            if self._streaming_check_timer:
-                try:
-                    self._streaming_check_timer.stop()
-                    logger.debug(f"Stopped streaming timer for tab: {self.session_data.tab_id}")
-                except Exception as e:
-                    logger.warning(f"Error stopping timer for tab {self.session_data.tab_id}: {e}")
+            self._stop_streaming_check_timer()
             
             # Cancel any active workers
             if self.session_data.current_worker and self.session_data.current_worker.is_running:
@@ -310,12 +408,13 @@ class ChatSession(Container):
             except Exception as e:
                 logger.warning(f"Error updating button state on resume: {e}")
             
-            # Focus input area
-            try:
-                input_area = self.get_chat_input()
-                input_area.focus()
-            except Exception as e:
-                logger.debug(f"Could not focus input on resume: {e}")
+            # Focus input area unless a host shell owns a separate composer.
+            if not self.suppress_auto_focus:
+                try:
+                    input_area = self.get_chat_input()
+                    input_area.focus()
+                except Exception as e:
+                    logger.debug(f"Could not focus input on resume: {e}")
                 
         except Exception as e:
             logger.error(f"Unexpected error resuming session {self.session_data.tab_id}: {e}")

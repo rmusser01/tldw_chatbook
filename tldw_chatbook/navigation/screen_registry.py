@@ -21,7 +21,7 @@ class ScreenRegistry:
         from ..UI.Screens.chat_screen import ChatScreen
         from ..UI.Screens.media_ingest_screen import MediaIngestScreen
         from ..UI.Screens.coding_screen import CodingScreen
-        from ..UI.Screens.conversation_screen import ConversationScreen
+        from ..UI.Screens.personas_screen import PersonasScreen
         from ..UI.Screens.media_screen import MediaScreen
         from ..UI.Screens.notes_screen import NotesScreen
         from ..UI.Screens.search_screen import SearchScreen
@@ -41,7 +41,7 @@ class ScreenRegistry:
             'chat': ChatScreen,
             'ingest': MediaIngestScreen,
             'coding': CodingScreen,
-            'conversation': ConversationScreen,
+            'conversation': PersonasScreen,
             'media': MediaScreen,
             'notes': NotesScreen,
             'search': SearchScreen,

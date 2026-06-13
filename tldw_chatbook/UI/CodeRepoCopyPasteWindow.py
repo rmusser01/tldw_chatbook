@@ -24,6 +24,7 @@ from textual.widgets import (
 )
 from textual.reactive import reactive
 from textual.message import Message
+from textual.css.query import NoMatches
 
 # Local imports
 from tldw_chatbook.Widgets.Coding_Widgets.repo_tree_widgets import TreeView
@@ -52,6 +53,10 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         ("ctrl+shift+a", "deselect_all", "Deselect All"),
         ("ctrl+i", "invert_selection", "Invert Selection"),
     ]
+
+    is_loading = reactive(False)
+    loading_message = reactive("Loading...")
+    compiled_text = reactive("")
     
     # CSS is handled by external file: css/features/_code_repo.tcss
     
@@ -60,12 +65,9 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         self.app_instance = app_instance
         self.api_client = GitHubAPIClient()
         self.current_repo: Optional[Dict[str, str]] = None
-        self.is_loading = reactive(False)
-        self.loading_message = reactive("Loading...")
         self.tree_data: Optional[List[Dict]] = None
         self.has_loaded_repo = False
         self.selected_files: set = set()
-        self.compiled_text = reactive("")  # Store the compiled text
         self.is_local_repo = False  # Track if it's a local repo
         self._token_configured = bool(self.api_client.token)
         
@@ -180,7 +182,6 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                                     "Click 'Generate Compilation' to aggregate selected files",
                                     id="aggregated-text",
                                     read_only=True,
-                                    language="markdown"
                                 )
                         
                         # File preview (bottom half)
@@ -224,8 +225,11 @@ class CodeRepoCopyPasteWindow(ModalScreen):
     
     def watch_is_loading(self, is_loading: bool) -> None:
         """Show/hide loading overlay."""
-        overlay = self.query_one("#loading-overlay")
-        label = self.query_one("#loading-label", Label)
+        try:
+            overlay = self.query_one("#loading-overlay")
+            label = self.query_one("#loading-label", Label)
+        except NoMatches:
+            return
         
         if is_loading:
             overlay.remove_class("hidden")
@@ -391,6 +395,8 @@ class CodeRepoCopyPasteWindow(ModalScreen):
         
         self.loading_message = "Loading repository..."
         self.is_loading = True
+        previous_repo = self.current_repo
+        previous_is_local_repo = self.is_local_repo
         
         try:
             # Check if it's a local path
@@ -418,9 +424,13 @@ class CodeRepoCopyPasteWindow(ModalScreen):
                 await self.load_tree()
             
         except GitHubAPIError as e:
+            self.current_repo = previous_repo
+            self.is_local_repo = previous_is_local_repo
             self.notify(str(e), severity="error")
             logger.error(f"GitHub API error: {e}")
         except Exception as e:
+            self.current_repo = previous_repo
+            self.is_local_repo = previous_is_local_repo
             self.notify(f"Failed to load repository: {e}", severity="error")
             logger.error(f"Failed to load repository: {e}")
         finally:
@@ -741,8 +751,9 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             return
         
         try:
-            # Copy to clipboard (this would need platform-specific implementation)
-            # For now, we'll dismiss with the content
+            import pyperclip
+
+            pyperclip.copy(aggregated_text)
             self.notify("Copied compilation to clipboard", severity="success")
             self.dismiss((self.selected_files, aggregated_text))
             

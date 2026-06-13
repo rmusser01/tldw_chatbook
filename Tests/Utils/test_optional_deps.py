@@ -3,7 +3,12 @@
 #
 import pytest
 import sys
+import tomllib
+from pathlib import Path
 from unittest.mock import patch
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_optional_deps_import():
@@ -18,6 +23,92 @@ def test_optional_deps_import():
     assert callable(get_safe_import)
     assert callable(require_dependency)
     assert callable(create_unavailable_feature_handler)
+
+
+def test_optional_feature_metadata_exposes_recovery_commands_and_capability_tiers():
+    """Optional extras expose source-honest recovery metadata for blocked features."""
+    from tldw_chatbook.Utils.optional_deps import get_optional_feature_info
+
+    rag = get_optional_feature_info("embeddings_rag")
+    assert rag.extra == "embeddings_rag"
+    assert rag.label == "Library/Search-RAG"
+    assert rag.capability_tier == "advanced"
+    assert rag.feature_area == "RAG and retrieval"
+    assert rag.owner == "Library Search/RAG"
+    assert rag.source_install_command == 'pip install -e ".[embeddings_rag]"'
+    assert rag.package_install_command == 'pip install "tldw_chatbook[embeddings_rag]"'
+    assert rag.recovery_action == "Settings > RAG"
+    assert rag.unavailable_what == "Search/RAG queries"
+
+    web = get_optional_feature_info("web")
+    assert web.label == "Web server"
+    assert web.feature_area == "Web access"
+    assert web.owner == "Web/browser serving"
+    assert web.source_install_command == 'pip install -e ".[web]"'
+
+
+def test_optional_feature_metadata_covers_pyproject_extras():
+    """Every declared optional extra has source-honest recovery metadata."""
+    from tldw_chatbook.Utils.optional_deps import OPTIONAL_FEATURES, get_optional_feature_info
+
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    declared_extras = set(pyproject["project"]["optional-dependencies"])
+
+    assert set(OPTIONAL_FEATURES) == declared_extras
+    for extra in declared_extras:
+        info = get_optional_feature_info(extra)
+        assert info.extra == extra
+        assert info.owner != "optional dependency"
+        assert info.feature_area
+        assert info.recovery_action
+        assert info.unavailable_what
+
+
+def test_optional_feature_metadata_groups_release_capabilities_without_core_install():
+    """The optional matrix separates baseline install from advanced feature groups."""
+    from tldw_chatbook.Utils.optional_deps import (
+        LOCAL_FIRST_BASELINE_INSTALL_COMMAND,
+        optional_feature_groups_by_area,
+    )
+
+    groups = optional_feature_groups_by_area()
+    assert LOCAL_FIRST_BASELINE_INSTALL_COMMAND == "pip install -e ."
+    assert "RAG and retrieval" in groups
+    assert "Media ingestion and transcription" in groups
+    assert "MCP integration" in groups
+    assert "Local inference" in groups
+    assert "Web access" in groups
+    assert "embeddings_rag" in groups["RAG and retrieval"]
+    assert "mcp" in groups["MCP integration"]
+    assert "web" in groups["Web access"]
+
+
+def test_subscriptions_deps_require_beautifulsoup_for_route_import(monkeypatch):
+    """The subscriptions route guard blocks imports when BeautifulSoup is absent."""
+    from tldw_chatbook.Utils import optional_deps
+
+    optional_deps.reset_dependency_checks()
+    seen: list[tuple[str, str]] = []
+
+    def fake_check_dependency(module_name: str, feature_name: str | None = None) -> bool:
+        dependency_key = feature_name or module_name
+        seen.append((module_name, dependency_key))
+        is_available = module_name != "bs4"
+        optional_deps.DEPENDENCIES_AVAILABLE[dependency_key] = is_available
+        return is_available
+
+    monkeypatch.setattr(optional_deps, "check_dependency", fake_check_dependency)
+
+    assert optional_deps.check_subscriptions_deps() is False
+    assert ("bs4", "beautifulsoup4") in seen
+    assert optional_deps.DEPENDENCIES_AVAILABLE["subscriptions"] is False
+
+
+def test_subscriptions_extra_declares_beautifulsoup_dependency():
+    """The install extra matches the route guard's BeautifulSoup dependency."""
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "beautifulsoup4" in pyproject["project"]["optional-dependencies"]["subscriptions"]
 
 
 def test_unavailable_feature_handler():

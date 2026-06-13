@@ -257,6 +257,7 @@ subscriptions = [
     "markdown",  # For HTML generation from markdown
     "schedule",  # For scheduled tasks
     "feedparser",  # For RSS feed parsing
+    "beautifulsoup4", # HTML parsing for subscription monitors
     "cryptography", # Security.py
     "defusedxml",  # For safe XML parsing
     "tqdm",
@@ -415,7 +416,7 @@ exclude = ["Tests*", ".venv*"]
 [tool.pytest.ini_options]
 testpaths = ["Tests"]
 # Exclude server tests that don't belong in the TUI
-addopts = "--ignore=STests"
+addopts = "--ignore=STests --import-mode=importlib"
 # Default timeout for all tests (in seconds)
 timeout = 300
 # Timeout method: thread (default) or signal
@@ -423,6 +424,7 @@ timeout_method = "thread"
 markers = [
     "unit: marks tests as unit tests",
     "integration: marks tests as integration tests",
+    "ui: marks tests as UI/Textual tests",
     "asyncio: marks tests as async",
     "timeout: marks tests with custom timeout values",
     "optional: marks tests that require optional dependencies",

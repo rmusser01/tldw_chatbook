@@ -5,11 +5,8 @@ This module automatically discovers and loads all effect classes
 from subdirectories, making them available through a central registry.
 """
 
-import os
 import importlib
-import pkgutil
 from pathlib import Path
-from typing import Dict, Type, List
 
 from loguru import logger
 
@@ -26,8 +23,10 @@ __all__ = [
     'load_all_effects',
 ]
 
+_effects_loaded = False
 
-def load_all_effects():
+
+def load_all_effects(force: bool = False):
     """
     Automatically discover and load all effect modules from subdirectories.
     
@@ -35,6 +34,10 @@ def load_all_effects():
     and imports any Python modules found, which should register their effects
     using the @register_effect decorator.
     """
+    global _effects_loaded
+    if _effects_loaded and not force:
+        return 0
+
     # Get the current package directory
     package_dir = Path(__file__).parent
     
@@ -64,13 +67,6 @@ def load_all_effects():
             except Exception as e:
                 logger.error(f"Failed to load effect module '{full_module_name}': {e}")
     
+    _effects_loaded = True
     logger.info(f"Loaded {loaded_count} effect modules, {len(EFFECTS_REGISTRY)} effects registered")
     return loaded_count
-
-
-# Auto-load all effects when this module is imported
-try:
-    load_all_effects()
-except Exception as e:
-    logger.error(f"Failed to auto-load effects: {e}")
-    # Don't fail the import if auto-loading fails

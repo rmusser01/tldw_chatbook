@@ -13,7 +13,7 @@ import shutil
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple, Set
+from typing import List, Dict, Any, Optional, Tuple, Set, Mapping
 from enum import Enum
 from loguru import logger
 
@@ -23,12 +23,15 @@ from .chatbook_models import (
 )
 from .conflict_resolver import ConflictResolver, ConflictResolution
 from .error_handler import ChatbookErrorHandler, ChatbookErrorType, safe_chatbook_operation
+from ..Chat.chat_conversation_service import ChatConversationService
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
 from ..DB.RAG_Indexing_DB import RAGIndexingDB
 from ..DB.Evals_DB import EvalsDB
 from ..Character_Chat.character_card_formats import detect_and_parse_character_card
+from ..Utils.path_validation import validate_filename
+from ..Utils.paths import get_user_data_dir
 
 
 class ImportStatus:
@@ -301,6 +304,10 @@ class ChatbookImporter:
             return
             
         db = CharactersRAGDB(db_path, "chatbook_importer")
+        conversation_service = ChatConversationService(
+            db,
+            rag_context_store_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
+        )
         conv_dir = extract_dir / "content" / "conversations"
         logger.info(f"ChatbookImporter._import_conversations: Looking for conversations in {conv_dir}")
         
@@ -310,7 +317,7 @@ class ChatbookImporter:
             
             try:
                 # Find conversation file
-                conv_file = conv_dir / f"conversation_{conv_id}.json"
+                conv_file = self._conversation_file_path(extract_dir, conv_dir, manifest, conv_id)
                 if not conv_file.exists():
                     logger.warning(f"ChatbookImporter._import_conversations: Conversation file not found: {conv_file.name}")
                     status.add_warning(f"Conversation file not found: {conv_file.name}")
@@ -370,7 +377,14 @@ class ChatbookImporter:
                             'content': msg['content'],
                             'timestamp': msg.get('timestamp', datetime.now().isoformat())
                         }
-                        db.add_message(msg_dict)
+                        new_message_id = db.add_message(msg_dict)
+                        if new_message_id:
+                            self._persist_imported_message_citation_context(
+                                conversation_service,
+                                str(new_conv_id),
+                                str(new_message_id),
+                                msg,
+                            )
                     
                     status.successful_items += 1
                     logger.info(f"ChatbookImporter._import_conversations: Successfully imported conversation: {conv_name}")
@@ -382,7 +396,64 @@ class ChatbookImporter:
             except Exception as e:
                 status.failed_items += 1
                 status.add_error(f"Error importing conversation {conv_id}: {str(e)}")
-                logger.error(f"ChatbookImporter._import_conversations: Error importing conversation {conv_id}: {e}", exc_info=True)
+                logger.opt(exception=True).error(
+                    "ChatbookImporter._import_conversations: Error importing conversation {}",
+                    conv_id,
+                )
+
+    @staticmethod
+    def _conversation_file_path(
+        extract_dir: Path,
+        conv_dir: Path,
+        manifest: ChatbookManifest,
+        conv_id: str,
+    ) -> Path:
+        for item in manifest.content_items:
+            if item.id == conv_id and item.type == ContentType.CONVERSATION and item.file_path:
+                return ChatbookImporter._safe_manifest_relative_path(extract_dir, item.file_path)
+        fallback_filename = f"conversation_{conv_id}.json"
+        validate_filename(fallback_filename)
+        return conv_dir / fallback_filename
+
+    @staticmethod
+    def _safe_manifest_relative_path(base_dir: Path, relative_path: str) -> Path:
+        path = Path(relative_path)
+        if path.is_absolute():
+            raise ValueError("Chatbook manifest file paths must be relative")
+        for part in path.parts:
+            validate_filename(part)
+        resolved_base = base_dir.resolve()
+        resolved_path = (resolved_base / path).resolve()
+        resolved_path.relative_to(resolved_base)
+        return resolved_path
+
+    @staticmethod
+    def _persist_imported_message_citation_context(
+        conversation_service: ChatConversationService,
+        conversation_id: str,
+        message_id: str,
+        message_payload: Mapping[str, Any],
+    ) -> None:
+        rag_context = {}
+        exported_rag_context = message_payload.get("rag_context")
+        if isinstance(exported_rag_context, Mapping):
+            rag_context.update(dict(exported_rag_context))
+        for key in ("citation_validation", "evidence_bundle"):
+            value = message_payload.get(key)
+            if value is not None:
+                rag_context[key] = value
+
+        citations = message_payload.get("citations")
+        citation_items = citations if isinstance(citations, list) else []
+        if not rag_context and not citation_items:
+            return
+
+        conversation_service.record_message_rag_context(
+            conversation_id,
+            message_id,
+            rag_context=rag_context,
+            citations=[item for item in citation_items if isinstance(item, Mapping)],
+        )
     
     def _import_notes(
         self,
@@ -487,7 +558,10 @@ class ChatbookImporter:
             except Exception as e:
                 status.failed_items += 1
                 status.add_error(f"Error importing note {note_id}: {str(e)}")
-                logger.error(f"ChatbookImporter._import_notes: Error importing note {note_id}: {e}", exc_info=True)
+                logger.opt(exception=True).error(
+                    "ChatbookImporter._import_notes: Error importing note {}",
+                    note_id,
+                )
     
     def _import_characters(
         self,
@@ -611,7 +685,10 @@ class ChatbookImporter:
             except Exception as e:
                 status.failed_items += 1
                 status.add_error(f"Error importing character {char_id}: {str(e)}")
-                logger.error(f"ChatbookImporter._import_characters: Error importing character {char_id}: {e}", exc_info=True)
+                logger.opt(exception=True).error(
+                    "ChatbookImporter._import_characters: Error importing character {}",
+                    char_id,
+                )
     
     def _import_prompts(
         self,

@@ -777,8 +777,16 @@ class STTSEventHandler:
         
         try:
             import shutil
-            shutil.copy2(self._current_audio_file, target_path)
-            self.app.notify(f"Audio exported to {target_path}", severity="information")
+            from tldw_chatbook.Utils.path_validation import validate_filename, validate_path_simple
+
+            target_path = Path(target_path)
+            validate_path_simple(target_path, require_exists=False)
+            validated_parent = validate_path_simple(target_path.parent, require_exists=True).resolve()
+            validated_filename = validate_filename(target_path.name)
+            validated_target_path = validated_parent / validated_filename
+
+            shutil.copy2(self._current_audio_file, validated_target_path)
+            self.app.notify(f"Audio exported to {validated_target_path}", severity="information")
         except Exception as e:
             logger.error(f"Failed to export audio: {e}")
             self.app.notify(f"Failed to export audio: {e}", severity="error")

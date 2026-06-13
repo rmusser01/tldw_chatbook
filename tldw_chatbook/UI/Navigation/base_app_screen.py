@@ -6,6 +6,7 @@ from loguru import logger
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.containers import Container
+from textual.widgets import Footer
 
 from .main_navigation import MainNavigationBar
 
@@ -26,8 +27,9 @@ class BaseAppScreen(Screen):
     
     #screen-content {
         width: 100%;
-        height: 100%;
-        padding-top: 3;
+        height: 1fr;
+        min-height: 0;
+        padding-top: 0;
     }
     """
     
@@ -42,11 +44,13 @@ class BaseAppScreen(Screen):
     def compose(self) -> ComposeResult:
         """Compose the screen with navigation bar and content."""
         # Navigation bar at the top
-        yield MainNavigationBar(active=self.screen_name)
+        yield MainNavigationBar(active=self.screen_name, active_route=self.screen_name)
         
         # Content area below navigation
         with Container(id="screen-content"):
             yield from self.compose_content()
+
+        yield Footer()
     
     def compose_content(self) -> ComposeResult:
         """Override in subclasses to provide screen-specific content."""

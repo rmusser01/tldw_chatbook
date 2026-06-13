@@ -18,15 +18,17 @@ class ConfigEncryption:
     """Handles encryption/decryption of configuration values with authenticated encryption."""
     
     # Constants
-    VERSION = 1  # Clean start with new format
+    VERSION = 2  # v2 lowers scrypt cost; v1 remains readable for existing config values.
+    LEGACY_VERSION = 1
     ENCRYPTION_PREFIX = "enc:"
     SALT_SIZE = 32  # 256 bits
     KEY_SIZE = 32   # 256 bits for AES-256
     NONCE_SIZE = 12  # 96 bits for GCM
     TAG_SIZE = 16   # 128 bits for GCM
     
-    # scrypt parameters (2^20 = 1048576)
-    SCRYPT_N = 1048576  # CPU/memory cost
+    # scrypt parameters. v1 used 2^20, which made normal config saves unusably slow.
+    SCRYPT_N = 16384    # CPU/memory cost
+    LEGACY_SCRYPT_N = 1048576
     SCRYPT_R = 8        # Block size
     SCRYPT_P = 1        # Parallelization
     
@@ -51,15 +53,7 @@ class ConfigEncryption:
         salt = os.urandom(self.SALT_SIZE)
         nonce = os.urandom(self.NONCE_SIZE)
         
-        # Derive key using scrypt
-        key = scrypt(
-            password.encode('utf-8'),
-            salt,
-            key_len=self.KEY_SIZE,
-            N=self.SCRYPT_N,
-            r=self.SCRYPT_R,
-            p=self.SCRYPT_P
-        )
+        key = self._derive_key(password=password, salt=salt, version=self.VERSION)
         
         # Create cipher and encrypt
         cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
@@ -104,7 +98,7 @@ class ConfigEncryption:
             
             # Extract components
             version = combined[0]
-            if version != self.VERSION:
+            if version not in {self.LEGACY_VERSION, self.VERSION}:
                 raise ValueError(f"Unsupported encryption version: {version}")
             
             offset = 1
@@ -118,15 +112,7 @@ class ConfigEncryption:
             ciphertext = combined[offset:-self.TAG_SIZE]
             tag = combined[-self.TAG_SIZE:]
             
-            # Derive key using scrypt
-            key = scrypt(
-                password.encode('utf-8'),
-                salt,
-                key_len=self.KEY_SIZE,
-                N=self.SCRYPT_N,
-                r=self.SCRYPT_R,
-                p=self.SCRYPT_P
-            )
+            key = self._derive_key(password=password, salt=salt, version=version)
             
             # Create cipher and decrypt
             cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
@@ -137,6 +123,17 @@ class ConfigEncryption:
         except Exception as e:
             logger.error(f"Decryption failed: {type(e).__name__}")
             raise ValueError("Failed to decrypt value. Invalid password or corrupted data.")
+
+    def _derive_key(self, *, password: str, salt: bytes, version: int) -> bytes:
+        n = self.LEGACY_SCRYPT_N if version == self.LEGACY_VERSION else self.SCRYPT_N
+        return scrypt(
+            password.encode('utf-8'),
+            salt,
+            key_len=self.KEY_SIZE,
+            N=n,
+            r=self.SCRYPT_R,
+            p=self.SCRYPT_P
+        )
     
     def is_encrypted(self, value: str) -> bool:
         """Check if a value is encrypted based on its prefix."""

@@ -46,13 +46,14 @@
     height: 3;
 }
 .ingest-nav-pane .ingest-nav-button:hover {
-    background: $accent 60%; /* Slightly different hover potentially */
+    background: $surface-lighten-1;
+    color: $text;
 }
 /* Active state for selected ingest nav button */
 .ingest-nav-pane .ingest-nav-button.active {
-    background: $accent;
-    color: $text;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Collapsible sidebar styles */
@@ -123,7 +124,7 @@
     min-height: 5;
     max-height: 10;
     height: auto;
-    border: round $primary;
+    border: round $ds-focus-accent;
     margin-bottom: 1;
     background: $surface;
 }
@@ -421,7 +422,7 @@ IngestWindowTabbed {
     min-height: 3;
     max-height: 8;
     height: auto;
-    border: round $primary;
+    border: round $ds-focus-accent;
     margin-bottom: 1;
     background: $surface;
 }

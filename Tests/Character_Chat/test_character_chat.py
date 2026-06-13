@@ -162,6 +162,18 @@ class TestConversationManagement:
 
 
 class TestCharacterLoading:
+    def test_restore_character_card_undeletes_with_optimistic_version(self, db_instance: CharactersRAGDB):
+        char_id = db_instance.add_character_card({"name": "RestoreMe"})
+        original = db_instance.get_character_card_by_id(char_id)
+
+        assert db_instance.soft_delete_character_card(char_id, original["version"]) is True
+        assert db_instance.get_character_card_by_id(char_id) is None
+        assert db_instance.restore_character_card(char_id, original["version"] + 1) is True
+
+        restored = db_instance.get_character_card_by_id(char_id)
+        assert restored["deleted"] == 0
+        assert restored["version"] == original["version"] + 2
+
     def test_extract_character_id_from_ui_choice(self):
         assert extract_character_id_from_ui_choice("My Character (ID: 123)") == 123
         assert extract_character_id_from_ui_choice("456") == 456

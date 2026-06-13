@@ -121,8 +121,10 @@ class ConfigurationValidator:
         # Validate API key if required (for non-local providers)
         if 'provider' in model_config:
             provider = model_config['provider'].lower()
-            local_providers = {'ollama', 'vllm', 'llama', 'kobold', 'tabbyapi', 'local-llm'}
-            if provider not in local_providers and 'api_key' not in model_config:
+            local_providers = {'ollama', 'vllm', 'llama', 'kobold', 'tabbyapi', 'local-llm', 'mock', 'test'}
+            config_values = model_config.get('config') or {}
+            api_key = model_config.get('api_key') or config_values.get('api_key')
+            if provider not in local_providers and not api_key:
                 errors.append(f"API key required for provider: {provider}")
         
         return errors
@@ -154,8 +156,7 @@ class ConfigurationValidator:
         
         return errors
     
-    @classmethod
-    def raise_if_invalid(cls, config: Dict[str, Any], config_type: str):
+    def raise_if_invalid(self, config: Dict[str, Any], config_type: str):
         """
         Validate configuration and raise if invalid.
         
@@ -167,9 +168,9 @@ class ConfigurationValidator:
             ValidationError: If configuration is invalid
         """
         validators = {
-            'task': cls.validate_task_config,
-            'model': cls.validate_model_config,
-            'run': cls.validate_run_config
+            'task': self.validate_task_config,
+            'model': self.validate_model_config,
+            'run': self.validate_run_config
         }
         
         if config_type not in validators:

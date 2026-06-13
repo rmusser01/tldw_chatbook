@@ -250,6 +250,11 @@ class WizardProgress(Horizontal):
     """Visual progress indicator for wizard steps."""
     
     DEFAULT_CSS = """
+    /* Local fallbacks so DEFAULT_CSS parses without the app bundle. */
+    $ds-focus-accent: $primary;
+    $ds-focus-bg: $surface;
+    $ds-focus-fg: $text;
+
     WizardProgress {
         layout: horizontal;
         align: center middle;
@@ -273,9 +278,10 @@ class WizardProgress(Horizontal):
     }
     
     WizardProgress .step-number.active {
-        background: $primary;
-        color: $background;
-        text-style: bold;
+        background: $ds-focus-bg;
+        color: $ds-focus-fg;
+        border: round $ds-focus-accent;
+        text-style: bold underline;
     }
     
     WizardProgress .step-number.complete {
@@ -288,8 +294,8 @@ class WizardProgress(Horizontal):
     }
     
     WizardProgress .step-title.active {
-        text-style: bold;
-        color: $primary;
+        color: $ds-focus-fg;
+        text-style: bold underline;
     }
     
     WizardProgress .step-connector {

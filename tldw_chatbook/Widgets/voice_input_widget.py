@@ -123,6 +123,7 @@ class VoiceInputWidget(Widget):
     
     # Widget state
     state = reactive(DictationState.IDLE)
+    is_voice_recording = reactive(False)
     audio_level = reactive(0.0)
     current_transcript = reactive("")
     error_message = reactive("")
@@ -278,10 +279,10 @@ class VoiceInputWidget(Widget):
                 self._initialize_dictation_service()
                 
             if not self.dictation_service:
-                self.app.call_from_thread(self._set_error, "Voice input not initialized")
+                self._call_from_worker_or_now(self._set_error, "Voice input not initialized")
                 return
             # Clear previous state
-            self.app.call_from_thread(self._clear_state)
+            self._call_from_worker_or_now(self._clear_state)
             
             # Set device if selected
             if self.selected_device_id is not None:
@@ -297,20 +298,20 @@ class VoiceInputWidget(Widget):
             )
             
             if success:
-                self.app.call_from_thread(self._set_state, DictationState.LISTENING)
+                self._call_from_worker_or_now(self._set_state, DictationState.LISTENING)
                 self.post_message(DictationStartedEvent(
                     provider=self.transcription_provider,
                     model=self.transcription_model
                 ))
                 
                 # Start audio level monitoring
-                self.app.call_from_thread(self._start_level_monitoring)
+                self._call_from_worker_or_now(self._start_level_monitoring)
             else:
-                self.app.call_from_thread(self._set_error, "Failed to start recording")
+                self._call_from_worker_or_now(self._set_error, "Failed to start recording")
         
         except Exception as e:
             logger.error(f"Failed to start recording: {e}")
-            self.app.call_from_thread(self._set_error, f"Recording error: {str(e)}")
+            self._call_from_worker_or_now(self._set_error, f"Recording error: {str(e)}")
     
     @work(exclusive=True, thread=True)
     def stop_recording(self):
@@ -326,8 +327,8 @@ class VoiceInputWidget(Widget):
             result = self.dictation_service.stop_dictation()
             
             # Update state
-            self.app.call_from_thread(self._set_state, DictationState.IDLE)
-            self.app.call_from_thread(self._set_audio_level, 0.0)
+            self._call_from_worker_or_now(self._set_state, DictationState.IDLE)
+            self._call_from_worker_or_now(self._set_audio_level, 0.0)
             
             # Send final transcript
             if result.transcript:
@@ -340,11 +341,11 @@ class VoiceInputWidget(Widget):
             
             # Clear transcript preview
             if self.show_transcript_preview:
-                self.app.call_from_thread(self._update_preview, self.placeholder)
+                self._call_from_worker_or_now(self._update_preview, self.placeholder)
         
         except Exception as e:
             logger.error(f"Failed to stop recording: {e}")
-            self.app.call_from_thread(self._set_error, f"Stop error: {str(e)}")
+            self._call_from_worker_or_now(self._set_error, f"Stop error: {str(e)}")
     
     def pause_recording(self):
         """Pause recording."""
@@ -361,19 +362,20 @@ class VoiceInputWidget(Widget):
     def _on_partial_transcript(self, text: str):
         """Handle partial transcript update."""
         self.current_transcript = text
-        self.app.call_from_thread(self._update_transcript_preview)
+        self._call_from_worker_or_now(self._update_transcript_preview)
         self.post_message(PartialTranscriptEvent(text))
         self.post_message(VoiceInputMessage(text, is_final=False))
     
     def _on_final_transcript(self, text: str):
         """Handle final transcript segment."""
         self.post_message(FinalTranscriptEvent(text, 0))
+        self.post_message(VoiceInputMessage(text, is_final=True))
     
     def _on_state_change(self, new_state: str):
         """Handle dictation state change."""
         old_state = self.state
         self.state = new_state
-        self.app.call_from_thread(self._update_ui_state)
+        self._call_from_worker_or_now(self._update_ui_state)
     
     def _on_error(self, error: Exception):
         """Handle dictation error."""
@@ -452,7 +454,7 @@ class VoiceInputWidget(Widget):
         """Monitor and update audio levels."""
         while self.state == DictationState.LISTENING:
             if self.dictation_service:
-                level = self.dictation_service.get_audio_level()
+                level = self._coerce_audio_level(self.dictation_service.get_audio_level())
                 self.audio_level = level
                 self._update_level_display(level)
                 self.post_message(AudioLevelUpdateEvent(level))
@@ -461,10 +463,34 @@ class VoiceInputWidget(Widget):
     
     def _update_level_display(self, level: float):
         """Update audio level visual indicator."""
-        level_bar = self.query_one("#audio-level-bar", Static)
-        # Update width based on level (0.0 to 1.0)
-        width_percent = int(level * 100)
-        level_bar.styles.width = f"{width_percent}%"
+        coerced_level = self._coerce_audio_level(level)
+        self.audio_level = coerced_level
+        try:
+            level_bar = self.query_one("#audio-level-bar", Static)
+            # Update width based on level (0.0 to 1.0)
+            width_percent = int(coerced_level * 100)
+            level_bar.styles.width = f"{width_percent}%"
+        except Exception:
+            # Widget may be exercised before Textual composes its children.
+            pass
+
+    def _call_from_worker_or_now(self, callback, *args):
+        """Run a UI callback from worker threads or directly when already on the app thread."""
+        try:
+            return self.app.call_from_thread(callback, *args)
+        except RuntimeError as exc:
+            if "must run in a different thread" not in str(exc):
+                raise
+            return callback(*args)
+
+    @staticmethod
+    def _coerce_audio_level(level) -> float:
+        """Normalize audio level values from real or mocked dictation services."""
+        try:
+            numeric = float(level)
+        except (TypeError, ValueError):
+            numeric = 0.0
+        return max(0.0, min(1.0, numeric))
     
     def watch_error_message(self, error: str):
         """React to error message changes."""
@@ -550,6 +576,9 @@ class VoiceInputWidget(Widget):
     
     def _update_ui_state(self):
         """Update UI based on current state."""
+        self.is_voice_recording = self.state == DictationState.LISTENING
+        if self.state == DictationState.ERROR and not self.error_message:
+            self.error_message = "Voice input error"
         try:
             # Update button
             button = self.query_one("#record-button", Button)

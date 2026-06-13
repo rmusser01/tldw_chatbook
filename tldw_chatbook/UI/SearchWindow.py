@@ -13,10 +13,18 @@ from textual.widgets import Static, Button, Input, Markdown, Select, Checkbox, L
 # Third-Party Libraries
 from typing import TYPE_CHECKING, Optional, Tuple, List, Union, Dict, Any
 import asyncio
+import inspect
 from loguru import logger
 from pathlib import Path
 
+from ..Chat.chat_handoff_messages import (
+    USE_IN_CHAT_UNAVAILABLE_RECOVERY,
+    build_handoff_policy_blocking_message,
+)
+from ..Chat.chat_handoff_models import ChatHandoffPayload
 from ..Notes.Notes_Library import NotesInteropService
+from .Views.RAGSearch.search_handoff import build_search_chat_handoff_payload
+from .Views.RAGSearch.search_result import SearchResult
 
 # Configure logger with context
 logger = logger.bind(module="SearchWindow")
@@ -76,8 +84,10 @@ SEARCH_NAV_EMBEDDINGS_MANAGE = "search-nav-embeddings-manage"
 # UI Constant for "Local Server" provider display name
 LOCAL_SERVER_PROVIDER_DISPLAY_NAME = "Local OpenAI-Compliant Server"
 LOCAL_SERVER_PROVIDER_INTERNAL_ID = "local_openai_compliant"  # Internal ID to distinguish
-
-
+WEB_SEARCH_DEPENDENCY_RECOVERY = (
+    'Web Search requires optional dependencies. Install them with pip install -e ".[websearch]" '
+    "and restart Chatbook."
+)
 class SearchWindow(Container):
     """
     Container for the Search Tab's UI, featuring a vertical tab bar and content areas.
@@ -93,6 +103,7 @@ class SearchWindow(Container):
     def __init__(self, app_instance: 'TldwCli', **kwargs):
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        self.web_search_results: List[Dict[str, Any]] = []
 
     async def on_mount(self) -> None:
         """Called when the window is first mounted."""
@@ -191,7 +202,13 @@ class SearchWindow(Container):
             if WEB_SEARCH_AVAILABLE:
                 yield Button("Web Search", id=SEARCH_NAV_WEB_SEARCH, classes="search-nav-button")
             else:
-                yield Button("Web Search", id="search-nav-web-search-disabled", classes="search-nav-button disabled")
+                yield Button(
+                    "Web Search",
+                    id="search-nav-web-search-disabled",
+                    classes="search-nav-button disabled",
+                    disabled=True,
+                    tooltip=WEB_SEARCH_DEPENDENCY_RECOVERY,
+                )
             # Add Embeddings navigation buttons
             yield Button("Create Embeddings", id=SEARCH_NAV_EMBEDDINGS_CREATE, classes="search-nav-button")
             yield Button("Manage Embeddings", id=SEARCH_NAV_EMBEDDINGS_MANAGE, classes="search-nav-button")
@@ -233,11 +250,16 @@ class SearchWindow(Container):
                     with VerticalScroll():
                         yield Input(placeholder="Enter search query...", id="web-search-input")
                         yield Button("Search", id="web-search-button", classes="search-action-button")
-                        yield VerticalScroll(Markdown("", id="web-search-results"))
+                        yield VerticalScroll(id="web-search-results-list")
             else:
                 with Container(id=SEARCH_VIEW_WEB_SEARCH, classes="search-view-area"):
                     with VerticalScroll():
-                        yield Markdown("### Web Search/Scraping Is Not Currently Installed\n\n...")
+                        yield Markdown(
+                            "### Web Search requires optional dependencies\n\n"
+                            "Install the Web Search extra and restart Chatbook:\n\n"
+                            '```bash\npip install -e ".[websearch]"\n```\n\n'
+                            "RAG search, saved collections, and embeddings remain available from the other Search sections."
+                        )
                         
             # Embeddings views
             # Create Embeddings View - Now using new SearchEmbeddingsWindow
@@ -313,7 +335,115 @@ class SearchWindow(Container):
             return str(base_path)  # Main ChaChaNotes DB
         return "Unknown DB Type"
 
+    def _authoritative_runtime_backend(self) -> str:
+        get_source = getattr(self.app_instance, "get_authoritative_runtime_source", None)
+        backend = get_source() if callable(get_source) else "local"
+        backend = str(backend or "local").strip().lower()
+        return backend if backend in {"local", "server"} else "local"
+
+    def _build_search_chat_handoff_payload(self, result: Dict[str, Any]):
+        return build_search_chat_handoff_payload(
+            dict(result),
+            runtime_backend=self._authoritative_runtime_backend(),
+        )
+
+    @staticmethod
+    def _web_handoff_runtime_action_id(payload: ChatHandoffPayload) -> str | None:
+        if payload.source != "search-web":
+            return None
+        if payload.source_owner != "server" and payload.source_selector_state != "server":
+            return None
+        return "research.search.providers.launch.server"
+
+    def _web_handoff_policy_blocking_message(self, payload: ChatHandoffPayload) -> str:
+        action_id = self._web_handoff_runtime_action_id(payload)
+        return build_handoff_policy_blocking_message(
+            self.app_instance,
+            action_id=action_id,
+            fallback_message="This Web Search action is blocked by runtime policy.",
+        )
+
+    def _normalize_web_search_results(self, raw_results: Any, query: str) -> List[Dict[str, Any]]:
+        if isinstance(raw_results, dict) and "web_search_results_dict" in raw_results:
+            raw_results = raw_results.get("web_search_results_dict", {}).get("results", [])
+        elif isinstance(raw_results, dict):
+            raw_results = raw_results.get("results", [])
+
+        normalized: List[Dict[str, Any]] = []
+        for result in raw_results or []:
+            if not isinstance(result, dict):
+                continue
+            url = result.get("url") or result.get("link") or result.get("href") or ""
+            normalized.append(
+                {
+                    "title": result.get("title") or result.get("name") or url or "Web Result",
+                    "content": result.get("snippet") or result.get("content") or result.get("description") or "",
+                    "source": "web",
+                    "score": result.get("score", 0.5),
+                    "metadata": {
+                        "url": url,
+                        "displayUrl": result.get("displayUrl") or result.get("display_url") or url,
+                        "query": query,
+                    },
+                }
+            )
+        return normalized
+
+    async def _render_web_search_result_cards(self) -> None:
+        results_list = self.query_one("#web-search-results-list")
+        await results_list.remove_children()
+        for index, result in enumerate(self.web_search_results):
+            await results_list.mount(SearchResult(result, index))
+
     # --- EVENT HANDLERS (New and Refactored) ---
+
+
+    @on(Button.Pressed, "#web-search-button")
+    async def handle_web_search_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        query = self.query_one("#web-search-input", Input).value.strip()
+        if not query:
+            self.app_instance.notify("Enter a web search query.", severity="warning")
+            return
+        if generate_and_search is None:
+            self.app_instance.notify("Web Search is not available.", severity="warning")
+            return
+
+        search_params = {
+            "engine": get_cli_setting("search", "web_search_engine", "google"),
+            "content_country": "US",
+            "search_lang": "en",
+            "output_lang": "en",
+            "result_count": 10,
+            "subquery_generation": False,
+        }
+        try:
+            raw_results = generate_and_search(query, search_params)
+            if inspect.isawaitable(raw_results):
+                raw_results = await raw_results
+            self.web_search_results = self._normalize_web_search_results(raw_results, query)
+            await self._render_web_search_result_cards()
+            self.app_instance.notify(
+                f"Web Search completed: {len(self.web_search_results)} results found",
+                severity="information",
+            )
+        except Exception as exc:
+            logger.error(f"Web Search failed: {exc}", exc_info=True)
+            self.app_instance.notify(f"Web Search failed: {exc}", severity="error")
+
+    @on(SearchResult.UseInChatRequested)
+    def handle_search_result_use_in_chat(self, event: SearchResult.UseInChatRequested) -> None:
+        event.stop()
+        payload = self._build_search_chat_handoff_payload(event.result)
+        policy_message = self._web_handoff_policy_blocking_message(payload)
+        if policy_message:
+            self.app_instance.notify(policy_message, severity="warning")
+            return
+        open_chat = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not callable(open_chat):
+            self.app_instance.notify(USE_IN_CHAT_UNAVAILABLE_RECOVERY, severity="warning")
+            return
+        open_chat(payload)
 
 
     @on(Button.Pressed, ".search-nav-button")

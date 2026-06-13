@@ -273,7 +273,7 @@ class ChatEventHandler:
         This should ideally come from reactive state, but for compatibility
         we'll gather it from the current settings.
         """
-        from tldw_chatbook.config import get_cli_setting
+        from tldw_chatbook.config import get_chat_defaults_streaming, get_cli_setting
         
         config = {
             'provider': get_cli_setting('chat_defaults', 'provider', 'openai'),
@@ -281,7 +281,7 @@ class ChatEventHandler:
             'temperature': get_cli_setting('chat_defaults', 'temperature', 0.7),
             'max_tokens': get_cli_setting('chat_defaults', 'max_tokens', 4096),
             'system_prompt': get_cli_setting('chat_defaults', 'system_prompt', ''),
-            'streaming': get_cli_setting('chat_defaults', 'enable_streaming', True),
+            'streaming': get_chat_defaults_streaming(default=True),
             'extra_params': {}
         }
         

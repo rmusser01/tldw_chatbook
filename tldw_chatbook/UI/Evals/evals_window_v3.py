@@ -14,7 +14,7 @@ from textual.screen import Screen
 from loguru import logger
 
 from .navigation import EvalNavigationScreen, NavigateToEvalScreen
-from .screens import QuickTestScreen
+from .screens import EvaluationBrowserScreen, QuickTestScreen
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -89,11 +89,11 @@ class EvalsWindowV3(Container):
         screen_map = {
             "eval_home": lambda: EvalNavigationScreen(self.app_instance),
             "quick_test": lambda: QuickTestScreen(self.app_instance),
+            "tasks": lambda: EvaluationBrowserScreen(self.app_instance, view_mode="manage"),
+            "results": lambda: EvaluationBrowserScreen(self.app_instance, view_mode="results"),
             # Add more screens as they're implemented:
             # "comparison": lambda: ComparisonScreen(self.app_instance),
             # "batch_eval": lambda: BatchEvalScreen(self.app_instance),
-            # "results": lambda: ResultsBrowserScreen(self.app_instance),
-            # "tasks": lambda: TaskManagerScreen(self.app_instance),
             # "models": lambda: ModelManagerScreen(self.app_instance),
         }
         

@@ -443,7 +443,9 @@ class EmbeddingServiceStateMachine(RuleBasedStateMachine):
     
     def __init__(self):
         super().__init__()
-        self.vector_store = InMemoryVectorStore()
+        # This state machine checks lifecycle consistency, not collection eviction.
+        # Keep the cap above Hypothesis' step count so tracked collections remain valid.
+        self.vector_store = InMemoryVectorStore(max_collections=1000)
         self.service = None
         self.collections = set()
         self.documents = {}  # collection -> list of doc ids
@@ -463,8 +465,6 @@ class EmbeddingServiceStateMachine(RuleBasedStateMachine):
             # Keep the mock alive
             self._mock_factory = mock_factory
             self._mock_instance = mock_instance
-    
-    collections_bundle = Bundle('collections')
     
     @rule(
         texts=text_batch(),
@@ -494,29 +494,33 @@ class EmbeddingServiceStateMachine(RuleBasedStateMachine):
         if collection_name not in self.documents:
             self.documents[collection_name] = []
         self.documents[collection_name].extend(doc_ids)
-        
-        return collection_name
     
-    @rule(collection_name=collections_bundle)
-    def search_collection(self, collection_name):
+    @rule(data=st.data())
+    def search_collection(self, data):
         """Search in an existing collection"""
+        if not self.collections:
+            return
+        collection_name = data.draw(st.sampled_from(sorted(self.collections)))
         query_embeddings = self.service.create_embeddings(["search query"])
         results = self.vector_store.search(
             collection_name,
-            query_embeddings.tolist(),
-            n_results=5
+            query_embeddings[0],
+            top_k=5
         )
         
         assert results is not None
-        assert "ids" in results
+        assert isinstance(results, list)
     
-    @rule(collection_name=collections_bundle)
-    def delete_collection(self, collection_name):
+    @rule(data=st.data())
+    def delete_collection(self, data):
         """Delete a collection"""
+        if not self.collections:
+            return
+        collection_name = data.draw(st.sampled_from(sorted(self.collections)))
         success = self.vector_store.delete_collection(collection_name)
         assert success
         
-        self.collections.remove(collection_name)
+        self.collections.discard(collection_name)
         if collection_name in self.documents:
             del self.documents[collection_name]
     

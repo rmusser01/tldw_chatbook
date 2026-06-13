@@ -29,13 +29,14 @@
     height: 3;
 }
 .tools-nav-pane .ts-nav-button:hover {
-    background: $accent 50%;
+    background: $surface-lighten-1;
+    color: $text;
 }
 
 .tools-nav-pane .ts-nav-button.active-nav {
-    background: $accent;
-    color: $text;
-    text-style: bold;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .tools-content-pane {

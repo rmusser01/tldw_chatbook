@@ -4,6 +4,7 @@
 import pytest
 import base64
 import io
+import json
 from unittest.mock import patch, MagicMock
 #
 # 3rd-party Libraries
@@ -58,11 +59,75 @@ def db_instance(db_path, client_id):
 
 # --- Helper Functions ---
 
+DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
+DUMMY_ANTHROPIC_API_KEY = "DUMMY_ANTHROPIC_API_KEY"
+
+
 def create_base64_image():
     """Creates a dummy 1x1 png and returns its base64 string."""
     img_bytes = io.BytesIO()
     Image.new('RGB', (1, 1)).save(img_bytes, format='PNG')
     return base64.b64encode(img_bytes.getvalue()).decode('utf-8')
+
+
+class _CapturedSession:
+    """Small requests.Session stand-in that records the outbound JSON payload."""
+
+    def __init__(self, captured, response_data):
+        self._captured = captured
+        self._response_data = response_data
+        self.closed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc_info):
+        self.close()
+        return False
+
+    def mount(self, *_args, **_kwargs):
+        return None
+
+    def close(self):
+        self.closed = True
+        return None
+
+    def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+        self._captured.update(
+            {
+                "url": url,
+                "headers": headers,
+                "json": json,
+                "stream": stream,
+                "timeout": timeout,
+            }
+        )
+        return _FakeProviderResponse(self._response_data, session=self)
+
+
+class _FakeProviderResponse:
+    status_code = 200
+    text = "{}"
+
+    def __init__(self, response_data, session=None):
+        self._response_data = response_data
+        self._session = session
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self._response_data
+
+    def iter_lines(self, decode_unicode=False):
+        if self._session is not None and self._session.closed:
+            raise requests.exceptions.ConnectionError("session closed before stream consumption")
+        lines = self._response_data if isinstance(self._response_data, list) else []
+        for line in lines:
+            yield line if decode_unicode else line.encode("utf-8")
+
+    def close(self):
+        return None
 
 
 # --- Test Classes ---
@@ -87,6 +152,50 @@ class TestChatApiCall:
         assert kwargs['input_data'][0]['content'] == "test"  # Mapped to 'input_data' for openai
         assert kwargs['model'] == "gpt-4"
         assert response == "OpenAI response"
+
+    def test_openai_generation_reasoning_params_are_mapped(self, mock_handlers, mocker):
+        mock_openai_handler = mocker.MagicMock(return_value="OpenAI response")
+        mock_openai_handler.__name__ = "mock_openai_handler"
+        mock_handlers.get.return_value = mock_openai_handler
+
+        chat_api_call(
+            api_endpoint="openai",
+            messages_payload=[{"role": "user", "content": "test"}],
+            model="o3",
+            seed=123,
+            presence_penalty=0.2,
+            frequency_penalty=0.3,
+            reasoning_effort="high",
+            reasoning_summary="auto",
+            verbosity="medium",
+        )
+
+        kwargs = mock_openai_handler.call_args.kwargs
+        assert kwargs["model"] == "o3"
+        assert kwargs["seed"] == 123
+        assert kwargs["presence_penalty"] == 0.2
+        assert kwargs["frequency_penalty"] == 0.3
+        assert kwargs["reasoning_effort"] == "high"
+        assert kwargs["reasoning_summary"] == "auto"
+        assert kwargs["verbosity"] == "medium"
+
+    def test_anthropic_thinking_params_are_mapped(self, mock_handlers, mocker):
+        mock_anthropic_handler = mocker.MagicMock(return_value="Anthropic response")
+        mock_anthropic_handler.__name__ = "mock_anthropic_handler"
+        mock_handlers.get.return_value = mock_anthropic_handler
+
+        chat_api_call(
+            api_endpoint="anthropic",
+            messages_payload=[{"role": "user", "content": "test"}],
+            model="claude-sonnet-4-20250514",
+            thinking_effort="high",
+            thinking_budget_tokens=4096,
+        )
+
+        kwargs = mock_anthropic_handler.call_args.kwargs
+        assert kwargs["model"] == "claude-sonnet-4-20250514"
+        assert kwargs["thinking_effort"] == "high"
+        assert kwargs["thinking_budget_tokens"] == 4096
 
     def test_unsupported_endpoint_raises_error(self, mock_handlers):
         mock_handlers.get.return_value = None
@@ -200,25 +309,256 @@ class TestChatFunction:
         assert adapted_payload[2]['content'] == "Hello"
 
 
+@pytest.mark.unit
+class TestProviderRequestPayloads:
+    def test_openai_reasoning_uses_responses_api_and_normalizes_output(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        response_data = {
+            "id": "resp_test",
+            "created_at": 123,
+            "model": "o3",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "reasoned answer"}],
+                }
+            ],
+            "usage": {"input_tokens": 5, "output_tokens": 6, "total_tokens": 11},
+        }
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, response_data),
+        )
+
+        response = LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model="o3",
+            streaming=False,
+            temp=0.3,
+            maxp=0.8,
+            max_tokens=512,
+            reasoning_effort="high",
+            reasoning_summary="auto",
+            verbosity="medium",
+        )
+
+        assert captured["url"] == "https://api.openai.test/v1/responses"
+        assert captured["json"]["input"] == [{"role": "user", "content": "test"}]
+        assert "messages" not in captured["json"]
+        assert captured["json"]["reasoning"] == {"effort": "high", "summary": "auto"}
+        assert captured["json"]["text"] == {"verbosity": "medium"}
+        assert captured["json"]["max_output_tokens"] == 512
+        assert response["choices"][0]["message"]["content"] == "reasoned answer"
+        assert response["usage"] == {"input_tokens": 5, "output_tokens": 6, "total_tokens": 11}
+
+    def test_openai_reasoning_stream_normalizes_responses_events(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        response_events = [
+            "data: "
+            + json.dumps({"type": "response.output_text.delta", "delta": "streamed answer"}),
+            "data: " + json.dumps({"type": "response.completed"}),
+        ]
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, response_events),
+        )
+
+        stream = LLM_API_Calls.chat_with_openai(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_OPENAI_API_KEY,
+            model="o3",
+            streaming=True,
+            reasoning_effort="low",
+        )
+
+        chunks = list(stream)
+        combined = "".join(chunks)
+
+        assert captured["url"] == "https://api.openai.test/v1/responses"
+        assert captured["stream"] is True
+        assert "chat.completion.chunk" in combined
+        assert "streamed answer" in combined
+        assert "response.output_text.delta" not in combined
+        assert chunks[-1] == "data: [DONE]\n\n"
+
+    def test_anthropic_thinking_omits_incompatible_sampling_params(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-4-20250514",
+                    "content": [{"type": "text", "text": "thinking answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_ANTHROPIC_API_KEY,
+            model="claude-sonnet-4-20250514",
+            streaming=False,
+            temp=0.2,
+            topp=0.8,
+            topk=40,
+            max_tokens=4096,
+            thinking_budget_tokens=1024,
+        )
+
+        assert captured["json"]["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+        assert "temperature" not in captured["json"]
+        assert "top_p" not in captured["json"]
+        assert "top_k" not in captured["json"]
+
+    def test_anthropic_thinking_effort_maps_to_budget_tokens(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-4-20250514",
+                    "content": [{"type": "text", "text": "thinking answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        response = LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_ANTHROPIC_API_KEY,
+            model="claude-sonnet-4-20250514",
+            streaming=False,
+            max_tokens=12000,
+            thinking_effort="high",
+        )
+
+        assert captured["url"] == "https://api.anthropic.test/v1/messages"
+        assert captured["json"]["thinking"] == {"type": "enabled", "budget_tokens": 8192}
+        assert captured["json"]["max_tokens"] == 12000
+        assert response["choices"][0]["message"]["content"] == "thinking answer"
+
+    def test_anthropic_latest_opus_uses_adaptive_thinking_effort(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-opus-4-7",
+                    "content": [{"type": "text", "text": "adaptive answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_ANTHROPIC_API_KEY,
+            model="claude-opus-4-7",
+            streaming=False,
+            max_tokens=12000,
+            thinking_effort="xhigh",
+            thinking_budget_tokens=4096,
+        )
+
+        assert captured["json"]["thinking"] == {"type": "adaptive", "effort": "xhigh"}
+
+    def test_anthropic_current_opus_uses_adaptive_thinking_effort(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-opus-4-8",
+                    "content": [{"type": "text", "text": "adaptive answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_ANTHROPIC_API_KEY,
+            model="claude-opus-4-8",
+            streaming=False,
+            max_tokens=12000,
+            thinking_effort="high",
+        )
+
+        assert captured["json"]["thinking"] == {"type": "adaptive", "effort": "high"}
+
+
 @pytest.mark.integration
 class TestChatHistorySaving:
     def test_save_chat_history_to_db_new_conversation(self, db_instance: CharactersRAGDB):
-        # Create default character first
-        default_char_id = db_instance.add_character_card({
-            "name": "Default Character",
-            "description": "Default character for general conversations",
-            "system_prompt": "You are a helpful assistant.",
-            "tags": ["default"],
-            "creator_notes": ""
-        })
-        
         # The history format is now OpenAI's message objects
         chatbot_history = [
             {"role": "user", "content": "Hello there"},
             {"role": "assistant", "content": "General Kenobi"}
         ]
 
-        # Uses default character
         conv_id, status = save_chat_history_to_db_wrapper(
             db=db_instance,
             chatbot_history=chatbot_history,
@@ -236,18 +576,11 @@ class TestChatHistorySaving:
         assert messages[1]['sender'] == 'assistant'
 
         conv_details = db_instance.get_conversation_by_id(conv_id)
-        assert conv_details['character_id'] == default_char_id  # Default character
+        assert conv_details['character_id'] is None
+        assert conv_details['assistant_kind'] is None
+        assert conv_details['title'] == "New Chat"
 
     def test_save_chat_history_with_image(self, db_instance: CharactersRAGDB):
-        # Create default character first
-        db_instance.add_character_card({
-            "name": "Default Character",
-            "description": "Default character for general conversations",
-            "system_prompt": "You are a helpful assistant.",
-            "tags": ["default"],
-            "creator_notes": ""
-        })
-        
         b64_img = create_base64_image()
         chatbot_history = [
             {"role": "user", "content": [
@@ -267,14 +600,70 @@ class TestChatHistorySaving:
         assert messages[0]['image_mime_type'] == "image/png"
         assert messages[1]['image_data'] is None
 
+    def test_save_character_chat_history_uses_canonical_character_id_as_assistant_id(self, db_instance: CharactersRAGDB):
+        character_id = db_instance.add_character_card({"name": "Canonical Saver"})
+
+        conv_id, status = save_chat_history_to_db_wrapper(
+            db=db_instance,
+            chatbot_history=[
+                {"role": "user", "content": "Hello there"},
+                {"role": "assistant", "content": "General Kenobi"},
+            ],
+            conversation_id=None,
+            media_content_for_char_assoc=None,
+            character_name_for_chat="Canonical Saver",
+        )
+
+        assert "success" in status.lower()
+        assert conv_id is not None
+
+        conv_details = db_instance.get_conversation_by_id(conv_id)
+        assert conv_details["assistant_kind"] == "character"
+        assert conv_details["assistant_id"] == str(character_id)
+        assert conv_details["title"] == "Chat with Canonical Saver"
+
     def test_resave_chat_history(self, db_instance: CharactersRAGDB):
         char_id = db_instance.add_character_card({"name": "Resaver"})
-        initial_history = [{"role": "user", "content": "First message"}]
+        initial_history = [
+            {
+                "id": "msg-user-1",
+                "role": "user",
+                "content": "First message",
+            },
+            {
+                "id": "msg-assistant-1",
+                "role": "assistant",
+                "content": "Initial reply",
+                "parent_message_id": "msg-user-1",
+                "feedback": "liked",
+            },
+        ]
         conv_id, _ = save_chat_history_to_db_wrapper(db_instance, initial_history, None, None, "Resaver")
 
+        db_instance.create_message_variant(
+            original_message_id="msg-assistant-1",
+            variant_content="Variant reply",
+            is_selected=True,
+        )
+
+        before_messages = {
+            message["id"]: message
+            for message in db_instance.get_messages_for_conversation(conv_id)
+        }
+
         updated_history = [
-            {"role": "user", "content": "New first message"},
-            {"role": "assistant", "content": "New reply"}
+            {
+                "id": "msg-user-1",
+                "role": "user",
+                "content": "New first message",
+            },
+            {
+                "id": "msg-assistant-1",
+                "role": "assistant",
+                "content": "New reply",
+                "parent_message_id": "msg-user-1",
+                "feedback": "liked",
+            },
         ]
 
         # Resave with same conv_id
@@ -282,9 +671,205 @@ class TestChatHistorySaving:
         assert "success" in status.lower()
         assert resave_id == conv_id
 
-        messages = db_instance.get_messages_for_conversation(conv_id)
-        assert len(messages) == 2
-        assert messages[0]['content'] == "New first message"
+        messages = {
+            message["id"]: message
+            for message in db_instance.get_messages_for_conversation(conv_id)
+        }
+        assert set(messages) == set(before_messages)
+        assert messages["msg-user-1"]["content"] == "New first message"
+        assert messages["msg-assistant-1"]["content"] == "New reply"
+        assert messages["msg-assistant-1"]["parent_message_id"] == before_messages["msg-assistant-1"]["parent_message_id"]
+        assert messages["msg-assistant-1"]["feedback"] == before_messages["msg-assistant-1"]["feedback"]
+        assert messages["msg-assistant-1"]["variant_of"] == before_messages["msg-assistant-1"]["variant_of"]
+        assert messages["msg-assistant-1"]["variant_number"] == before_messages["msg-assistant-1"]["variant_number"]
+        assert messages["msg-assistant-1"]["is_selected_variant"] == before_messages["msg-assistant-1"]["is_selected_variant"]
+        assert messages["msg-assistant-1"]["total_variants"] == before_messages["msg-assistant-1"]["total_variants"]
+
+    def test_resave_chat_history_preserves_backend_while_normalizing_stale_identity_metadata(self, db_instance: CharactersRAGDB):
+        char_id = db_instance.add_character_card({"name": "Resaver"})
+        conversation_id = db_instance.add_conversation(
+            {
+                "character_id": char_id,
+                "assistant_kind": "character",
+                "assistant_id": "Resaver",
+                "runtime_backend": "server",
+                "discovery_owner": "general_chat",
+                "discovery_entity_id": "legacy.display.name",
+                "title": "Chat with Resaver",
+                "client_id": db_instance.client_id,
+            }
+        )
+
+        resave_id, status = save_chat_history_to_db_wrapper(
+            db_instance,
+            [
+                {"role": "user", "content": "New first message"},
+                {"role": "assistant", "content": "New reply"},
+            ],
+            conversation_id,
+            None,
+            "Resaver",
+        )
+
+        assert "success" in status.lower()
+        assert resave_id == conversation_id
+
+        updated_conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert updated_conversation["assistant_kind"] == "character"
+        assert updated_conversation["assistant_id"] == str(char_id)
+        assert updated_conversation["runtime_backend"] == "server"
+        assert updated_conversation["discovery_owner"] == "ccp_character"
+        assert updated_conversation["discovery_entity_id"] == str(char_id)
+        assert updated_conversation["title"] == "Chat with Resaver"
+
+    def test_resave_chat_history_rejects_generic_context_for_character_conversation(self, db_instance: CharactersRAGDB):
+        db_instance.add_character_card({"name": "Resaver"})
+        conversation_id, status = save_chat_history_to_db_wrapper(
+            db_instance,
+            [{"role": "user", "content": "Bound message"}],
+            None,
+            None,
+            "Resaver",
+        )
+        assert "success" in status.lower()
+
+        resave_id, resave_status = save_chat_history_to_db_wrapper(
+            db_instance,
+            [{"role": "user", "content": "Generic overwrite attempt"}],
+            conversation_id,
+            None,
+            None,
+        )
+
+        assert resave_id == conversation_id
+        assert "mismatch" in resave_status.lower()
+        messages = db_instance.get_messages_for_conversation(conversation_id)
+        assert [message["content"] for message in messages] == ["Bound message"]
+
+    def test_resave_chat_history_rejects_character_context_for_generic_conversation(self, db_instance: CharactersRAGDB):
+        db_instance.add_character_card({"name": "Resaver"})
+        conversation_id, status = save_chat_history_to_db_wrapper(
+            db_instance,
+            [{"role": "user", "content": "Generic message"}],
+            None,
+            None,
+            None,
+        )
+        assert "success" in status.lower()
+
+        resave_id, resave_status = save_chat_history_to_db_wrapper(
+            db_instance,
+            [{"role": "user", "content": "Character overwrite attempt"}],
+            conversation_id,
+            None,
+            "Resaver",
+        )
+
+        assert resave_id == conversation_id
+        assert "mismatch" in resave_status.lower()
+        messages = db_instance.get_messages_for_conversation(conversation_id)
+        assert [message["content"] for message in messages] == ["Generic message"]
+
+    def test_save_chat_history_creates_persona_backed_conversation_when_metadata_is_explicit(self, db_instance: CharactersRAGDB):
+        conversation_id, status = save_chat_history_to_db_wrapper(
+            db=db_instance,
+            chatbot_history=[
+                {"role": "user", "content": "Hello persona"},
+                {"role": "assistant", "content": "Hello human"},
+            ],
+            conversation_id=None,
+            media_content_for_char_assoc=None,
+            character_name_for_chat=None,
+            assistant_kind="persona",
+            assistant_id="persona.local.alice",
+            persona_memory_mode="read_write",
+            runtime_backend="server",
+            discovery_owner="ccp_persona",
+            discovery_entity_id="persona.local.alice",
+        )
+
+        assert "success" in status.lower()
+        assert conversation_id is not None
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["character_id"] is None
+        assert conversation["assistant_kind"] == "persona"
+        assert conversation["assistant_id"] == "persona.local.alice"
+        assert conversation["persona_memory_mode"] == "read_write"
+        assert conversation["runtime_backend"] == "server"
+        assert conversation["discovery_owner"] == "ccp_persona"
+        assert conversation["discovery_entity_id"] == "persona.local.alice"
+        assert conversation["title"] == "Chat with persona.local.alice"
+
+    def test_resave_chat_history_preserves_existing_persona_metadata(self, db_instance: CharactersRAGDB):
+        conversation_id = db_instance.add_conversation(
+            {
+                "assistant_kind": "persona",
+                "assistant_id": "persona.local.alice",
+                "persona_memory_mode": "read_only",
+                "runtime_backend": "server",
+                "discovery_owner": "ccp_persona",
+                "discovery_entity_id": "persona.local.alice",
+                "title": "Chat with persona.local.alice",
+                "client_id": db_instance.client_id,
+            }
+        )
+
+        resave_id, status = save_chat_history_to_db_wrapper(
+            db=db_instance,
+            chatbot_history=[
+                {"role": "user", "content": "Persona conversation"},
+                {"role": "assistant", "content": "Persona reply"},
+            ],
+            conversation_id=conversation_id,
+            media_content_for_char_assoc=None,
+            character_name_for_chat=None,
+        )
+
+        assert "success" in status.lower()
+        assert resave_id == conversation_id
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["assistant_kind"] == "persona"
+        assert conversation["assistant_id"] == "persona.local.alice"
+        assert conversation["persona_memory_mode"] == "read_only"
+        assert conversation["runtime_backend"] == "server"
+        assert conversation["discovery_owner"] == "ccp_persona"
+        assert conversation["discovery_entity_id"] == "persona.local.alice"
+
+    def test_resave_generic_chat_history_preserves_existing_runtime_and_scope_metadata(self, db_instance: CharactersRAGDB):
+        conversation_id = db_instance.add_conversation(
+            {
+                "title": "Workspace Generic",
+                "runtime_backend": "server",
+                "discovery_owner": "general_chat",
+                "scope_type": "workspace",
+                "workspace_id": "ws-1",
+                "client_id": db_instance.client_id,
+            }
+        )
+
+        resave_id, status = save_chat_history_to_db_wrapper(
+            db=db_instance,
+            chatbot_history=[
+                {"role": "user", "content": "Workspace conversation"},
+                {"role": "assistant", "content": "Workspace reply"},
+            ],
+            conversation_id=conversation_id,
+            media_content_for_char_assoc=None,
+            character_name_for_chat=None,
+        )
+
+        assert "success" in status.lower()
+        assert resave_id == conversation_id
+
+        conversation = db_instance.get_conversation_by_id(conversation_id)
+        assert conversation["assistant_kind"] is None
+        assert conversation["assistant_id"] is None
+        assert conversation["runtime_backend"] == "server"
+        assert conversation["discovery_owner"] == "general_chat"
+        assert conversation["scope_type"] == "workspace"
+        assert conversation["workspace_id"] == "ws-1"
 
 
 @pytest.mark.integration

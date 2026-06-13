@@ -131,7 +131,12 @@ class QuickSyncSection(Container):
                 placeholder="Select folder to sync...",
                 id="sync-folder-input"
             )
-            yield Button("Browse", id="browse-folder-btn", variant="default")
+            yield Button(
+                "Browse",
+                id="browse-folder-btn",
+                variant="default",
+                tooltip="Choose the folder to sync with Notes.",
+            )
         
         # Sync settings
         with Horizontal(classes="sync-settings-row"):
@@ -179,6 +184,9 @@ class SyncProgressSection(Container):
     
     SyncProgressSection.active {
         display: block;
+        background: $surface;
+        border: solid $surface-lighten-1;
+        color: $text;
     }
     
     .progress-header {
@@ -214,8 +222,10 @@ class SyncProgressSection(Container):
     def update_progress(self, current: int, total: int, status: str = None):
         """Update progress display."""
         bar = self.query_one("#sync-progress-bar", ProgressBar)
+        if total > 0 and bar.total != total:
+            bar.total = total
         bar.progress = current
-        
+
         if status:
             self.query_one("#progress-status", Static).update(status)
     

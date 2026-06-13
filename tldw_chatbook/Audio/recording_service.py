@@ -11,6 +11,7 @@ import queue
 import time
 import wave
 import tempfile
+from types import SimpleNamespace
 from typing import Optional, Callable, List, Dict, Any, Tuple
 from pathlib import Path
 from contextlib import contextmanager
@@ -35,6 +36,7 @@ try:
     PYAUDIO_AVAILABLE = True
     logger.info("PyAudio backend available")
 except ImportError:
+    pyaudio = SimpleNamespace(PyAudio=None, paInt16=8)
     logger.warning("PyAudio not available. Install with: pip install pyaudio")
 
 try:
@@ -42,6 +44,11 @@ try:
     SOUNDDEVICE_AVAILABLE = True
     logger.info("Sounddevice backend available")
 except ImportError:
+    sd = SimpleNamespace(
+        InputStream=None,
+        query_devices=lambda: [],
+        default=SimpleNamespace(device=(None, None)),
+    )
     logger.warning("Sounddevice not available. Install with: pip install sounddevice")
 
 # Import VAD if available
@@ -51,6 +58,7 @@ try:
     VAD_AVAILABLE = True
     logger.info("WebRTC VAD available for voice activity detection")
 except ImportError:
+    webrtcvad = SimpleNamespace(Vad=None)
     logger.warning("WebRTC VAD not available. Install with: pip install webrtcvad")
 
 
@@ -136,12 +144,15 @@ class AudioRecordingService:
         # Recording state
         self.is_recording = False
         self.audio_queue = queue.Queue()
+        self.audio_buffer: List[bytes] = []
         self.recording_thread = None
         self.callback = None
+        self.save_file = None
         
         # Device info
         self.current_device_id = None
         self.device_info = None
+        self._last_devices: List[Dict[str, Any]] = []
         
         # VAD setup
         self.vad = None
@@ -192,6 +203,14 @@ class AudioRecordingService:
             if self.backend == 'pyaudio':
                 if not self.pyaudio_instance:
                     self.pyaudio_instance = pyaudio.PyAudio()
+
+                default_input_index = None
+                try:
+                    default_info = self.pyaudio_instance.get_default_input_device_info()
+                    if isinstance(default_info, dict):
+                        default_input_index = default_info.get('index')
+                except Exception as exc:
+                    logger.debug(f"Could not determine default PyAudio input device: {exc}")
                 
                 for i in range(self.pyaudio_instance.get_device_count()):
                     info = self.pyaudio_instance.get_device_info_by_index(i)
@@ -201,7 +220,7 @@ class AudioRecordingService:
                             'name': info['name'],
                             'channels': info['maxInputChannels'],
                             'sample_rate': int(info['defaultSampleRate']),
-                            'is_default': i == self.pyaudio_instance.get_default_input_device_info()['index']
+                            'is_default': i == default_input_index
                         })
             
             elif self.backend == 'sounddevice':
@@ -217,6 +236,11 @@ class AudioRecordingService:
         
         except Exception as e:
             logger.error(f"Error getting audio devices: {e}")
+            if self._last_devices:
+                return list(self._last_devices)
+        
+        if devices:
+            self._last_devices = list(devices)
         
         return devices
     
@@ -271,7 +295,7 @@ class AudioRecordingService:
             return False
         
         try:
-            self.callback = callback
+            self.callback = callback if callback is not None else self.callback
             self.save_file = save_to_file
             self.audio_buffer = []
             self.is_recording = True
@@ -325,13 +349,18 @@ class AudioRecordingService:
                 try:
                     # Read audio chunk
                     data = self.stream.read(self.chunk_size, exception_on_overflow=False)
+                    if not isinstance(data, (bytes, bytearray)):
+                        logger.error(f"Audio backend returned invalid chunk type: {type(data).__name__}")
+                        self.is_recording = False
+                        break
                     
                     # Process chunk
-                    self._process_audio_chunk(data)
+                    self._process_audio_chunk(bytes(data))
                     
                 except Exception as e:
                     logger.error(f"Error reading audio: {e}")
-                    time.sleep(0.01)
+                    self.is_recording = False
+                    break
         
         finally:
             if self.stream:
@@ -388,7 +417,7 @@ class AudioRecordingService:
             frame_size = int(self.sample_rate * frame_duration_ms / 1000) * 2  # 2 bytes per sample
             
             # Process in VAD-compatible frames
-            for i in range(0, len(chunk) - frame_size, frame_size):
+            for i in range(0, len(chunk) - frame_size + 1, frame_size):
                 frame = chunk[i:i + frame_size]
                 if self.vad.is_speech(frame, self.sample_rate):
                     self._handle_audio_chunk(frame)
@@ -418,7 +447,7 @@ class AudioRecordingService:
         Returns:
             Recorded audio data as bytes, or None if not recording
         """
-        if not self.is_recording:
+        if not self.is_recording and not getattr(self, "audio_buffer", None):
             logger.warning("Not currently recording")
             return None
         
@@ -477,27 +506,19 @@ class AudioRecordingService:
             if not recent_chunks:
                 return 0.0
             
-            # Re-queue chunks
-            for chunk in recent_chunks:
-                self.audio_queue.put(chunk)
-            
-            # Calculate RMS
+            # Calculate peak level for responsive UI metering.
             combined_audio = b''.join(recent_chunks)
             if NUMPY_AVAILABLE and np is not None:
-                audio_data = np.frombuffer(combined_audio, dtype=np.int16)
-                rms = np.sqrt(np.mean(audio_data**2))
+                audio_data = np.frombuffer(combined_audio, dtype=np.int16).astype(np.float64)
+                peak = np.max(np.abs(audio_data)) if audio_data.size else 0
             else:
-                # Fallback: manual RMS calculation
+                # Fallback: manual peak calculation
                 import struct
                 samples = struct.unpack(f'{len(combined_audio)//2}h', combined_audio)
-                if samples:
-                    sum_squares = sum(s * s for s in samples)
-                    rms = (sum_squares / len(samples)) ** 0.5
-                else:
-                    rms = 0
+                peak = max((abs(sample) for sample in samples), default=0)
             
             # Normalize (16-bit max is 32767)
-            level = min(1.0, rms / 32767.0)
+            level = min(1.0, peak / 32767.0)
             
             return level
             
@@ -527,10 +548,10 @@ class AudioRecordingService:
     
     def __del__(self):
         """Cleanup on deletion."""
-        if self.is_recording:
+        if getattr(self, "is_recording", False):
             self.stop_recording()
         
-        if self.backend == 'pyaudio' and self.pyaudio_instance:
+        if getattr(self, "backend", None) == 'pyaudio' and getattr(self, "pyaudio_instance", None):
             try:
                 self.pyaudio_instance.terminate()
             except:
