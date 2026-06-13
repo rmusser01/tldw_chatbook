@@ -212,6 +212,9 @@ def build_console_provider_options(
 ) -> list[ConsoleSettingsOption]:
     """Return sorted Console-sendable provider options plus configured providers."""
     provider_keys = sorted({key for key in (provider_config_key(provider) for provider in providers_models) if key})
+    supported_provider_keys = supported_console_provider_readiness_keys(
+        CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
+    )
     provider_keys = sorted(
         {
             *provider_keys,
@@ -223,7 +226,15 @@ def build_console_provider_options(
             ),
         }
     )
-    return [ConsoleSettingsOption(label=provider_key, value=provider_key) for provider_key in provider_keys]
+    return [
+        ConsoleSettingsOption(
+            label=provider_key
+            if provider_key in supported_provider_keys
+            else f"{provider_key} (WIP)",
+            value=provider_key,
+        )
+        for provider_key in provider_keys
+    ]
 
 
 def build_console_model_options(
