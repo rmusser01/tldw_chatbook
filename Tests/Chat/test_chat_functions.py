@@ -64,6 +64,8 @@ def db_instance(db_path, client_id):
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 DUMMY_ANTHROPIC_API_KEY = "DUMMY_ANTHROPIC_API_KEY"
+DUMMY_HUGGINGFACE_API_KEY = "DUMMY_HUGGINGFACE_API_KEY"
+DUMMY_HUGGINGFACE_SECRET_VALUE = "DUMMY_HUGGINGFACE_SECRET_VALUE"
 
 
 def test_huggingface_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
@@ -81,7 +83,7 @@ def test_huggingface_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
 
     chat_functions_module.chat_api_call(
         api_endpoint="huggingface",
-        api_key="hf-key",
+        api_key=DUMMY_HUGGINGFACE_API_KEY,
         messages_payload=[{"role": "user", "content": "hello"}],
         model="org/model",
         max_tokens=12,
@@ -306,7 +308,7 @@ class TestChatFunction:
             media_content=None,
             selected_parts=[],
             api_endpoint="openai",
-            api_key="sk-123",
+            api_key=DUMMY_OPENAI_API_KEY,
             model="gpt-4",
             temperature=0.7,
             custom_prompt="Be brief."
@@ -336,7 +338,7 @@ class TestChatFunction:
             media_content={"summary": "This is a summary."},
             selected_parts=["summary"],
             api_endpoint="openai",
-            api_key="sk-123",
+            api_key=DUMMY_OPENAI_API_KEY,
             model="gpt-4-vision-preview",
             temperature=0.5,
             current_image_input={'base64_data': b64_img, 'mime_type': 'image/png'},
@@ -368,7 +370,7 @@ class TestChatFunction:
             media_content=None,
             selected_parts=[],
             api_endpoint="deepseek",  # The endpoint that needs adaptation
-            api_key="sk-123",
+            api_key=DUMMY_OPENAI_API_KEY,
             model="deepseek-chat",
             temperature=0.7,
             custom_prompt=None,
@@ -504,7 +506,7 @@ class TestProviderRequestPayloads:
 
         response = LLM_API_Calls.chat_with_huggingface(
             input_data=[{"role": "user", "content": "test"}],
-            api_key="hf-key",
+            api_key=DUMMY_HUGGINGFACE_API_KEY,
             model="openai/gpt-oss-120b",
             streaming=False,
             max_tokens=8,
@@ -549,15 +551,15 @@ class TestProviderRequestPayloads:
 
         LLM_API_Calls.chat_with_huggingface(
             input_data=[{"role": "user", "content": "test"}],
-            api_key="hf-secret-value",
+            api_key=DUMMY_HUGGINGFACE_SECRET_VALUE,
             model="openai/gpt-oss-120b",
             streaming=False,
             max_tokens=8,
         )
 
         combined_debug = "\n".join(debug_messages)
-        assert "hf-secret-value" not in combined_debug
-        assert "Bearer hf-secret-value" not in combined_debug
+        assert DUMMY_HUGGINGFACE_SECRET_VALUE not in combined_debug
+        assert f"Bearer {DUMMY_HUGGINGFACE_SECRET_VALUE}" not in combined_debug
 
     def test_anthropic_thinking_omits_incompatible_sampling_params(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls

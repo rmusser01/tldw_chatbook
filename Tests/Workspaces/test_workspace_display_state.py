@@ -17,6 +17,7 @@ from tldw_chatbook.Workspaces import (
     WorkspaceSyncStatus,
     WorkspaceTransferPolicy,
 )
+from tldw_chatbook.Workspaces.models import WorkspaceMembership
 from tldw_chatbook.Workspaces import display_state
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceConversationRow,
@@ -339,6 +340,41 @@ def test_console_workspace_state_exposes_handoff_transfer_policy_rows(
     assert rows_by_id["artifact-1"].handoff_label == "Handoff: local-only"
     assert rows_by_id["artifact-1"].portable is False
     assert "not portable" in rows_by_id["artifact-1"].detail
+
+
+def test_console_workspace_state_preserves_handoff_rows_from_membership_iterator() -> None:
+    class GeneratorMembershipRegistry:
+        def list_workspace_memberships(self, workspace_id: str):
+            assert workspace_id == "ws-a"
+            return (
+                membership
+                for membership in (
+                    WorkspaceMembership(
+                        workspace_id="ws-a",
+                        item_type="conversation",
+                        item_id="conv-alpha-1234",
+                        role="workspace-thread",
+                        title="Chat 1",
+                        transfer_policy=WorkspaceTransferPolicy.REFERENCE,
+                    ),
+                    WorkspaceMembership(
+                        workspace_id="ws-a",
+                        item_type="conversation",
+                        item_id="conv-beta-5678",
+                        role="workspace-thread",
+                        title="Chat 1",
+                        transfer_policy=WorkspaceTransferPolicy.REFERENCE,
+                    ),
+                )
+            )
+
+    rows = display_state._handoff_rows_from_memberships(
+        GeneratorMembershipRegistry(),
+        WorkspaceRecord(workspace_id="ws-a", name="Research Sprint", active=True),
+    )
+
+    assert [row.item_id for row in rows] == ["conv-alpha-1234", "conv-beta-5678"]
+    assert [row.title for row in rows] == ["Chat 1 [conv-alp]", "Chat 1 [conv-bet]"]
 
 
 def test_console_workspace_state_exposes_acp_task_run_handoff_readiness_and_audit(

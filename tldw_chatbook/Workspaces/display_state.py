@@ -549,9 +549,10 @@ def _handoff_rows_from_memberships(
             exc_info=True,
         )
         return ()
-    duplicate_titles = _duplicate_membership_titles(tuple(memberships or ()))
+    memberships_seq = tuple(memberships or ())
+    duplicate_titles = _duplicate_membership_titles(memberships_seq)
     rows: list[ConsoleWorkspaceHandoffRow] = []
-    for membership in memberships or ():
+    for membership in memberships_seq:
         rows.append(_handoff_row_from_membership(membership, duplicate_titles))
     return tuple(rows)
 

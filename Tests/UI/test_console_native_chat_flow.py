@@ -23,6 +23,9 @@ from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 
 
+DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
+
+
 class _ReadyResolutionGateway:
     async def resolve_for_send(self, selection):
         return SimpleNamespace(
@@ -240,7 +243,7 @@ async def test_console_native_generic_provider_send_renders_completed_message(mo
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         gateway = console._ensure_console_provider_gateway()
-        app.app_config["api_settings"] = {"openai": {"api_key": "sk-current"}}
+        app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -250,7 +253,7 @@ async def test_console_native_generic_provider_send_renders_completed_message(mo
         assert isinstance(gateway, ConsoleProviderGateway)
         assert captured_kwargs
         assert captured_kwargs[-1]["api_endpoint"] == "openai"
-        assert captured_kwargs[-1]["api_key"] == "sk-current"
+        assert captured_kwargs[-1]["api_key"] == DUMMY_OPENAI_API_KEY
         assert console._ensure_console_chat_controller().run_state.status is ConsoleRunStatus.COMPLETED
         store = console._ensure_console_chat_store()
         messages = store.messages_for_session(store.active_session_id)
@@ -280,7 +283,7 @@ async def test_console_native_send_button_click_dispatches_message(monkeypatch):
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        app.app_config["api_settings"] = {"openai": {"api_key": "sk-current"}}
+        app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("click send")
 

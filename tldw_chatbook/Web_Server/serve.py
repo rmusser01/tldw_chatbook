@@ -30,6 +30,13 @@ _TEXTUAL_SERVE_FIRST_BYTE_HOOK = (
 _TEXTUAL_SERVE_WRITE_CALLBACK_HOOK = (
     "this.terminal.write(t,(()=>{this.bufferedBytes-=t.length}))"
 )
+_TEXTUAL_SERVE_REQUIRED_VIEWPORT_HOOKS = (
+    _TEXTUAL_SERVE_RESIZE_HOOK,
+    _TEXTUAL_SERVE_CANVAS_RENDERERS,
+    _TEXTUAL_SERVE_WRITE_CALLBACK_HOOK,
+    _TEXTUAL_SERVE_LOADED_HOOK,
+    _TEXTUAL_SERVE_FIRST_BYTE_HOOK,
+)
 _CHATBOOK_VIEWPORT_PATCH_MARKER = "this._chatbookViewportResize"
 _CHATBOOK_DEFAULT_WEB_FONT_SIZE = 12
 _CHATBOOK_MIN_WEB_FONT_SIZE = 6
@@ -75,10 +82,7 @@ def patch_textual_serve_viewport_js(source: str) -> str:
     """Patch textual-serve's browser resize hook to repaint after viewport changes."""
     if _CHATBOOK_VIEWPORT_PATCH_MARKER in source:
         return source
-    if (
-        _TEXTUAL_SERVE_RESIZE_HOOK not in source
-        or _TEXTUAL_SERVE_CANVAS_RENDERERS not in source
-    ):
+    if any(hook not in source for hook in _TEXTUAL_SERVE_REQUIRED_VIEWPORT_HOOKS):
         return source
 
     patched = source.replace(
@@ -100,7 +104,9 @@ def patch_textual_serve_viewport_js(source: str) -> str:
         "this._chatbookViewportAfterWrite=()=>{"
         "clearTimeout(this._chatbookViewportAfterWriteTimer);"
         "this._chatbookViewportAfterWriteTimer=setTimeout(this._chatbookTerminalRepaint,50);"
-        "requestAnimationFrame(this._chatbookTerminalRepaint)"
+        "cancelAnimationFrame(this._chatbookViewportAfterWriteRaf);"
+        "this._chatbookViewportAfterWriteRaf=requestAnimationFrame("
+        "this._chatbookTerminalRepaint);"
         "};"
         "this._chatbookViewportResize=()=>{"
         "this._chatbookViewportRepaint();"

@@ -3330,7 +3330,7 @@ class ChatScreen(BaseAppScreen):
                         exclusive=True,
                     )
 
-            self.app.push_screen(
+            await self.app.push_screen(
                 ConsoleSaveAsModal(
                     destinations=destinations,
                 ),
