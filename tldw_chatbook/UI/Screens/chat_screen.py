@@ -100,6 +100,7 @@ from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
 )
+from ...Notes.notes_scope_service import ScopeType
 from ...Constants import TAB_SETTINGS
 from ...Utils.chat_diagnostics import ChatDiagnostics
 from ...Utils.console_background_effects import (
@@ -3320,10 +3321,20 @@ class ChatScreen(BaseAppScreen):
             return True
 
         if action_id == "save-as":
-            await self.app_instance.push_screen(
+            destinations = self._console_save_as_destinations(message)
+
+            def _apply_save_as(destination: str | None) -> None:
+                if destination == "Note":
+                    self.run_worker(
+                        self._save_console_message_as_note(message_id),
+                        exclusive=True,
+                    )
+
+            self.app.push_screen(
                 ConsoleSaveAsModal(
-                    destinations=self._console_message_action_service.save_as_destinations(message)
-                )
+                    destinations=destinations,
+                ),
+                callback=_apply_save_as,
             )
             self._last_console_action = ConsoleActionResult(
                 action_id=action_id,
@@ -3374,6 +3385,66 @@ class ChatScreen(BaseAppScreen):
         severity = "information" if result.status in {"completed", "wip"} else "warning"
         self.app_instance.notify(result.visible_copy, severity=severity)
         return True
+
+    def _console_save_as_destinations(self, message: Any) -> list[Any]:
+        """Return Save-as destinations available in the current app runtime."""
+        _ = message
+        available_destinations: set[str] = set()
+        notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
+        if callable(getattr(notes_scope_service, "save_note", None)):
+            available_destinations.add("Note")
+        return ConsoleMessageActionService(
+            available_save_destinations=available_destinations,
+        ).save_as_destinations(message)
+
+    async def _save_console_message_as_note(self, message_id: str) -> None:
+        """Persist one selected Console message as a local Note."""
+        notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
+        save_note = getattr(notes_scope_service, "save_note", None)
+        if not callable(save_note):
+            self.app_instance.notify(
+                "Save as Note is unavailable: Notes service is not ready.",
+                severity="warning",
+            )
+            return
+
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+
+        content = (
+            message.variants.current.content
+            if message.variants is not None
+            else message.content
+        )
+        result = save_note(
+            scope=ScopeType.LOCAL_NOTE.value,
+            title="Console message",
+            content=content,
+            note_id=None,
+            version=None,
+            user_id=getattr(self.app_instance, "current_user", None) or "default_user",
+            workspace_id=None,
+            keywords=["console"],
+        )
+        if inspect.isawaitable(result):
+            result = await result
+        if not result:
+            self.app_instance.notify("Save as Note failed.", severity="error")
+            return
+        self._last_console_action = ConsoleActionResult(
+            action_id="save-as-note",
+            status="completed",
+            visible_copy="Saved message as Note.",
+            target_message_id=message_id,
+            target_content=content,
+        )
+        self.app_instance.notify("Saved message as Note.", severity="information")
 
     async def _open_console_message_edit_modal(self, *, message_id: str, content: str) -> None:
         """Open the dedicated transcript edit modal for one Console message."""
@@ -3641,7 +3712,7 @@ class ChatScreen(BaseAppScreen):
             return
         if not self._should_capture_console_input(composer):
             return
-        if event.key in {"backspace", "ctrl+h"}:
+        if event.key in {"backspace", "ctrl+h", "delete"}:
             composer.delete_left()
             event.stop()
             event.prevent_default()
@@ -4620,7 +4691,10 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-new-chat-tab":
             event.stop()
             self._ensure_console_chat_controller().new_session(
-                settings=self._default_console_session_settings(),
+                settings=(
+                    self._active_console_session_settings()
+                    or self._default_console_session_settings()
+                ),
             )
             await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)

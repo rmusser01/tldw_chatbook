@@ -521,14 +521,16 @@ def _conversation_rows_from_memberships(
         return ()
     if not memberships:
         return ()
+    conversation_memberships = tuple(
+        membership for membership in memberships if membership.item_type == "conversation"
+    )
+    duplicate_titles = _duplicate_membership_titles(conversation_memberships)
     rows: list[ConsoleWorkspaceConversationRow] = []
-    for membership in memberships:
-        if membership.item_type != "conversation":
-            continue
+    for membership in conversation_memberships:
         rows.append(
             ConsoleWorkspaceConversationRow(
                 conversation_id=membership.item_id,
-                title=membership.title or membership.item_id,
+                title=_membership_display_title(membership, duplicate_titles),
                 status=membership.role,
             )
         )
@@ -547,14 +549,16 @@ def _handoff_rows_from_memberships(
             exc_info=True,
         )
         return ()
+    duplicate_titles = _duplicate_membership_titles(tuple(memberships or ()))
     rows: list[ConsoleWorkspaceHandoffRow] = []
     for membership in memberships or ():
-        rows.append(_handoff_row_from_membership(membership))
+        rows.append(_handoff_row_from_membership(membership, duplicate_titles))
     return tuple(rows)
 
 
 def _handoff_row_from_membership(
     membership: WorkspaceMembership,
+    duplicate_titles: set[str] | None = None,
 ) -> ConsoleWorkspaceHandoffRow:
     policy = membership.transfer_policy
     label = f"Handoff: {policy.value}"
@@ -576,12 +580,37 @@ def _handoff_row_from_membership(
     return ConsoleWorkspaceHandoffRow(
         item_type=membership.item_type,
         item_id=membership.item_id,
-        title=membership.title or membership.item_id,
+        title=_membership_display_title(membership, duplicate_titles or set()),
         transfer_policy=policy,
         handoff_label=label,
         portable=portable,
         detail=details[policy],
     )
+
+
+def _duplicate_membership_titles(
+    memberships: Iterable[WorkspaceMembership],
+) -> set[str]:
+    counts: dict[str, int] = {}
+    for membership in memberships:
+        title = _membership_base_title(membership)
+        counts[title] = counts.get(title, 0) + 1
+    return {title for title, count in counts.items() if count > 1}
+
+
+def _membership_display_title(
+    membership: WorkspaceMembership,
+    duplicate_titles: set[str],
+) -> str:
+    title = _membership_base_title(membership)
+    if title not in duplicate_titles:
+        return title
+    short_id = str(membership.item_id or "").strip()[:8]
+    return f"{title} [{short_id}]" if short_id else title
+
+
+def _membership_base_title(membership: WorkspaceMembership) -> str:
+    return str(membership.title or membership.item_id).strip()
 
 
 def _library_source_rows_without_workspace(

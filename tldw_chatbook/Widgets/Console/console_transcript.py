@@ -326,12 +326,14 @@ class ConsoleTranscript(VerticalScroll):
         previous_widget: Widget | None = None
         for index, row in enumerate(rows):
             widget = self._row_widgets.get(row.key)
+            row_was_mounted = False
             if widget is None:
                 widget = self._build_row_widget(row, track=True)
                 if previous_widget is None:
                     await self.mount(widget, before=0 if self.children else None)
                 else:
                     await self.mount(widget, after=previous_widget)
+                row_was_mounted = True
                 self._row_widgets[row.key] = widget
                 self._row_signatures[row.key] = row.signature
             elif self._row_signatures.get(row.key) != row.signature:
@@ -345,13 +347,15 @@ class ConsoleTranscript(VerticalScroll):
                         await self.mount(widget, before=0 if self.children else None)
                     else:
                         await self.mount(widget, after=previous_widget)
+                    row_was_mounted = True
                     self._row_widgets[row.key] = widget
                     self._row_signatures[row.key] = row.signature
 
-            if previous_widget is None:
-                self.move_child(widget, before=0)
-            else:
-                self.move_child(widget, after=previous_widget)
+            if not row_was_mounted:
+                if previous_widget is None:
+                    self.move_child(widget, before=0)
+                else:
+                    self.move_child(widget, after=previous_widget)
             previous_widget = widget
 
     def _build_row_widget(self, row: _TranscriptRow, *, track: bool) -> Widget:

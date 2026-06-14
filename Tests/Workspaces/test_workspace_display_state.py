@@ -248,6 +248,46 @@ def test_console_workspace_state_derives_conversation_rows_from_memberships(
     assert state.conversation_rows[0].selected is True
 
 
+def test_console_workspace_state_disambiguates_duplicate_conversation_titles(
+    tmp_path: Path,
+) -> None:
+    service = _registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Research Sprint")
+    service.set_active_workspace("ws-a")
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="conv-alpha-1234",
+        role="workspace-thread",
+        title="Chat 1",
+        transfer_policy=WorkspaceTransferPolicy.REFERENCE,
+    )
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="conv-beta-5678",
+        role="workspace-thread",
+        title="Chat 1",
+        transfer_policy=WorkspaceTransferPolicy.REFERENCE,
+    )
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation="conv-beta-5678",
+    )
+
+    conversation_titles = [row.title for row in state.conversation_rows]
+    assert conversation_titles == [
+        "Chat 1 [conv-alp]",
+        "Chat 1 [conv-bet]",
+    ]
+    assert [row.selected for row in state.conversation_rows] == [False, True]
+
+    handoff_titles_by_id = {row.item_id: row.title for row in state.handoff_rows}
+    assert handoff_titles_by_id["conv-alpha-1234"] == "Chat 1 [conv-alp]"
+    assert handoff_titles_by_id["conv-beta-5678"] == "Chat 1 [conv-bet]"
+
+
 def test_console_workspace_state_exposes_handoff_transfer_policy_rows(
     tmp_path: Path,
 ) -> None:

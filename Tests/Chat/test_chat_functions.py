@@ -5,6 +5,7 @@ import pytest
 import base64
 import io
 import json
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 #
 # 3rd-party Libraries
@@ -13,6 +14,8 @@ from PIL import Image
 #
 # Local Imports
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError, InputError
+import tldw_chatbook.Chat.Chat_Functions as chat_functions_module
+import tldw_chatbook.LLM_Calls.LLM_API_Calls as llm_api_calls_module
 from tldw_chatbook.Chat.Chat_Functions import (
     chat_api_call,
     chat,
@@ -61,6 +64,81 @@ def db_instance(db_path, client_id):
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 DUMMY_ANTHROPIC_API_KEY = "DUMMY_ANTHROPIC_API_KEY"
+
+
+def test_huggingface_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
+    captured_kwargs = {}
+
+    def fake_huggingface_handler(**kwargs):
+        captured_kwargs.update(kwargs)
+        return "OK"
+
+    monkeypatch.setitem(
+        chat_functions_module.API_CALL_HANDLERS,
+        "huggingface",
+        fake_huggingface_handler,
+    )
+
+    chat_functions_module.chat_api_call(
+        api_endpoint="huggingface",
+        api_key="hf-key",
+        messages_payload=[{"role": "user", "content": "hello"}],
+        model="org/model",
+        max_tokens=12,
+    )
+
+    assert captured_kwargs["max_tokens"] == 12
+    assert "max_new_tokens" not in captured_kwargs
+
+
+def test_chat_api_call_does_not_log_api_key_fragments(monkeypatch):
+    captured_logs = []
+    sink_id = chat_functions_module.logger.add(
+        lambda message: captured_logs.append(str(message)),
+        level="DEBUG",
+    )
+
+    def fake_openai_handler(**_kwargs):
+        return "OK"
+
+    monkeypatch.setitem(
+        chat_functions_module.API_CALL_HANDLERS,
+        "openai",
+        fake_openai_handler,
+    )
+
+    secret = "prefix-secret-middle-secret-suffix"
+    try:
+        chat_functions_module.chat_api_call(
+            api_endpoint="openai",
+            api_key=secret,
+            messages_payload=[{"role": "user", "content": "hello"}],
+            model="gpt-test",
+        )
+    finally:
+        chat_functions_module.logger.remove(sink_id)
+
+    rendered_logs = "".join(captured_logs)
+    assert secret not in rendered_logs
+    assert secret[:6] not in rendered_logs
+    assert secret[-6:] not in rendered_logs
+
+
+def test_chat_provider_adapters_do_not_log_api_key_fragments():
+    modules = [
+        chat_functions_module,
+        llm_api_calls_module,
+    ]
+    suspicious_lines = []
+    for module in modules:
+        source_path = Path(module.__file__)
+        for line_number, line in enumerate(source_path.read_text().splitlines(), start=1):
+            if "API Key" not in line:
+                continue
+            if "..." in line or "[:" in line or "log_key" in line:
+                suspicious_lines.append(f"{source_path.name}:{line_number}: {line.strip()}")
+
+    assert suspicious_lines == []
 
 
 def create_base64_image():
@@ -398,6 +476,88 @@ class TestProviderRequestPayloads:
         assert "streamed answer" in combined
         assert "response.output_text.delta" not in combined
         assert chunks[-1] == "data: [DONE]\n\n"
+
+    def test_huggingface_v1_base_url_uses_chat_completions_path_once(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        response_data = {
+            "id": "hf_test",
+            "choices": [{"message": {"content": "OK"}}],
+        }
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "huggingface_api": {
+                    "api_base_url": "https://router.huggingface.co/v1",
+                    "api_timeout": 30,
+                    "api_retries": 0,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, response_data),
+        )
+
+        response = LLM_API_Calls.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="hf-key",
+            model="openai/gpt-oss-120b",
+            streaming=False,
+            max_tokens=8,
+        )
+
+        assert captured["url"] == "https://router.huggingface.co/v1/chat/completions"
+        assert captured["json"]["model"] == "openai/gpt-oss-120b"
+        assert captured["json"]["max_tokens"] == 8
+        assert response == response_data
+
+    def test_huggingface_debug_logs_do_not_include_api_key(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        debug_messages = []
+        response_data = {
+            "id": "hf_test",
+            "choices": [{"message": {"content": "OK"}}],
+        }
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "huggingface_api": {
+                    "api_base_url": "https://router.huggingface.co/v1",
+                    "api_chat_path": "chat/completions",
+                    "api_timeout": 30,
+                    "api_retries": 0,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, response_data),
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.logger,
+            "debug",
+            lambda message, *args, **kwargs: debug_messages.append(str(message)),
+        )
+
+        LLM_API_Calls.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="hf-secret-value",
+            model="openai/gpt-oss-120b",
+            streaming=False,
+            max_tokens=8,
+        )
+
+        combined_debug = "\n".join(debug_messages)
+        assert "hf-secret-value" not in combined_debug
+        assert "Bearer hf-secret-value" not in combined_debug
 
     def test_anthropic_thinking_omits_incompatible_sampling_params(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls

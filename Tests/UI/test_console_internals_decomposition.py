@@ -899,6 +899,33 @@ async def test_console_collapsed_paste_backspace_deletes_whole_chunk():
 
 
 @pytest.mark.asyncio
+async def test_console_collapsed_paste_delete_key_deletes_whole_chunk():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        prefix = "literal prefix "
+        pasted_text = "delete key paste " * 10
+
+        composer.insert_text(prefix)
+        composer.insert_pasted_text(pasted_text)
+        composer.focus()
+        await pilot.press("delete")
+        await pilot.pause(0.1)
+
+        visible_plain = visible_draft.renderable.plain
+        assert composer.draft_text() == prefix
+        assert visible_plain == prefix
+        assert pasted_text not in composer.draft_text()
+        assert "Pasted Text:" not in visible_plain
+
+
+@pytest.mark.asyncio
 async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1865,7 +1892,7 @@ async def test_console_empty_transcript_uses_compact_ready_state():
 
 
 @pytest.mark.asyncio
-async def test_console_session_tab_strip_uses_symbolic_controls_with_tooltips():
+async def test_console_session_tab_strip_uses_readable_new_tab_control_with_tooltips():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1877,9 +1904,9 @@ async def test_console_session_tab_strip_uses_symbolic_controls_with_tooltips():
         new_tab = console.query_one("#console-new-chat-tab", Button)
         close_buttons = list(console.query(".console-session-close-button"))
 
-        assert str(new_tab.label) == "+"
+        assert str(new_tab.label) == "New tab"
         assert new_tab.tooltip == "New Console tab"
-        assert new_tab.region.width >= 3
+        assert new_tab.region.width >= 12
         assert close_buttons
         for close_button in close_buttons:
             assert str(close_button.label) == "x"

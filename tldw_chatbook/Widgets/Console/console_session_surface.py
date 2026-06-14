@@ -20,7 +20,7 @@ from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
 CONSOLE_CLOSE_TAB_BUTTON_HEIGHT = 1
-CONSOLE_NEW_TAB_BUTTON_WIDTH = 3
+CONSOLE_NEW_TAB_BUTTON_WIDTH = 12
 CONSOLE_NEW_TAB_BUTTON_HEIGHT = 1
 CONSOLE_SESSION_TAB_DISPLAY_CHARS = 19
 CONSOLE_SESSION_TAB_WIDTH = 21
@@ -74,7 +74,7 @@ class ConsoleSessionSurface(Vertical):
 
     def _build_new_tab_button(self) -> Button:
         """Return the compact symbolic Console new-session control."""
-        button = Button("+", id="console-new-chat-tab", compact=True)
+        button = Button("New tab", id="console-new-chat-tab", compact=True)
         button.tooltip = "New Console tab"
         button.styles.width = CONSOLE_NEW_TAB_BUTTON_WIDTH
         button.styles.min_width = CONSOLE_NEW_TAB_BUTTON_WIDTH

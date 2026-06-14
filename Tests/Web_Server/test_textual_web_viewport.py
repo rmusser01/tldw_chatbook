@@ -92,9 +92,48 @@ def test_textual_serve_resize_patch_forces_full_terminal_repaint():
     assert "ResizeObserver" in patched
     assert "this.terminal.refresh(0,this.terminal.rows-1)" in patched
     assert "this.terminal.clearTextureAtlas" in patched
+    assert "this.sendSize&&this.sendSize()" in patched
     assert "new p.WebglAddon" not in patched
     assert "new m.CanvasAddon" not in patched
+    assert "this.webglAddon=null,this.canvasAddon=null," in patched
     assert patched != upstream
+
+
+def test_textual_serve_resize_patch_repaints_after_connection_and_first_byte():
+    upstream = (
+        "before this.webglAddon=new p.WebglAddon,this.terminal.loadAddon(this.webglAddon),"
+        "this.canvasAddon=new m.CanvasAddon,this.terminal.loadAddon(this.canvasAddon),"
+        "window.onresize=()=>{this.fit()} "
+        'document.querySelector("body").classList.add("-loaded") '
+        't.length>10&&document.querySelector("body").classList.add("-first-byte") after'
+    )
+
+    patched = serve.patch_textual_serve_viewport_js(upstream)
+
+    assert 'document.querySelector("body").classList.add("-loaded"),this._chatbookViewportResize()' in patched
+    assert (
+        't.length>10&&(document.querySelector("body").classList.add("-first-byte"),'
+        'this._chatbookViewportResize())'
+    ) in patched
+
+
+def test_textual_serve_resize_patch_repaints_after_terminal_writes():
+    upstream = (
+        "before this.webglAddon=new p.WebglAddon,this.terminal.loadAddon(this.webglAddon),"
+        "this.canvasAddon=new m.CanvasAddon,this.terminal.loadAddon(this.canvasAddon),"
+        "window.onresize=()=>{this.fit()} "
+        "this.terminal.write(t,(()=>{this.bufferedBytes-=t.length})) "
+        't.length>10&&document.querySelector("body").classList.add("-first-byte") after'
+    )
+
+    patched = serve.patch_textual_serve_viewport_js(upstream)
+
+    assert "this._chatbookTerminalRepaint" in patched
+    assert "this._chatbookViewportAfterWrite" in patched
+    assert (
+        "this.terminal.write(t,(()=>{this.bufferedBytes-=t.length,"
+        "this._chatbookViewportAfterWrite&&this._chatbookViewportAfterWrite()}))"
+    ) in patched
 
 
 def test_textual_serve_resize_patch_fails_closed_when_upstream_changes():

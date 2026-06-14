@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual import on
@@ -258,6 +258,37 @@ async def test_console_native_generic_provider_send_renders_completed_message(mo
             message for message in messages if message.role is ConsoleMessageRole.ASSISTANT
         ]
         assert assistant_messages[-1].status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_console_native_send_button_click_dispatches_message(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {}
+    captured_kwargs = []
+
+    def fake_chat_api_call(**_kwargs):
+        captured_kwargs.append(_kwargs)
+        return "click provider response"
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.Chat_Functions.chat_api_call",
+        fake_chat_api_call,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        app.app_config["api_settings"] = {"openai": {"api_key": "sk-current"}}
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("click send")
+
+        await pilot.click("#console-send-message")
+        await _wait_for_text(console, pilot, "click provider response")
+
+        assert captured_kwargs
+        assert composer.draft_text() == ""
 
 
 @pytest.mark.asyncio
@@ -1074,6 +1105,31 @@ async def test_console_add_api_key_recovery_tolerates_missing_session_settings()
 
 
 @pytest.mark.asyncio
+async def test_console_assistant_message_click_exposes_selected_actions():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
+
+        await pilot.click(f"#console-message-{message.id}")
+        await _wait_for_selector(console, pilot, f"#console-message-action-regenerate-{message.id}")
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        assert transcript.selected_message_id == message.id
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_copy_action_uses_app_clipboard():
     app = _build_test_app()
     app.copy_to_clipboard = Mock()
@@ -1375,9 +1431,53 @@ async def test_console_selected_message_save_as_action_opens_modal():
         await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
 
         await pilot.click(f"#console-message-action-save-as-{message.id}")
-        await _wait_for_selector(app, pilot, "#console-save-as-modal")
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
 
     assert console._last_console_action.action_id == "save-as"
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_save_as_note_creates_note_from_message():
+    app = _build_test_app()
+    app.notes_scope_service = SimpleNamespace(
+        save_note=AsyncMock(return_value={"id": "note-1", "title": "Console message", "content": "answer"})
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
+
+        await pilot.click(f"#console-message-action-save-as-{message.id}")
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-note")
+        await pilot.click("#console-save-as-destination-note")
+        await pilot.pause()
+
+    app.notes_scope_service.save_note.assert_awaited_once_with(
+        scope="local_note",
+        title="Console message",
+        content="answer",
+        note_id=None,
+        version=None,
+        user_id="default_user",
+        workspace_id=None,
+        keywords=["console"],
+    )
+    assert console._last_console_action.action_id == "save-as-note"
+    assert console._last_console_action.visible_copy == "Saved message as Note."
 
 
 @pytest.mark.asyncio

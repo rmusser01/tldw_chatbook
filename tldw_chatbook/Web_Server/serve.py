@@ -23,6 +23,13 @@ _TEXTUAL_SERVE_CANVAS_RENDERERS = (
     "this.webglAddon=new p.WebglAddon,this.terminal.loadAddon(this.webglAddon),"
     "this.canvasAddon=new m.CanvasAddon,this.terminal.loadAddon(this.canvasAddon),"
 )
+_TEXTUAL_SERVE_LOADED_HOOK = 'document.querySelector("body").classList.add("-loaded")'
+_TEXTUAL_SERVE_FIRST_BYTE_HOOK = (
+    't.length>10&&document.querySelector("body").classList.add("-first-byte")'
+)
+_TEXTUAL_SERVE_WRITE_CALLBACK_HOOK = (
+    "this.terminal.write(t,(()=>{this.bufferedBytes-=t.length}))"
+)
 _CHATBOOK_VIEWPORT_PATCH_MARKER = "this._chatbookViewportResize"
 _CHATBOOK_DEFAULT_WEB_FONT_SIZE = 12
 _CHATBOOK_MIN_WEB_FONT_SIZE = 6
@@ -81,10 +88,19 @@ def patch_textual_serve_viewport_js(source: str) -> str:
     )
 
     resize_replacement = (
-        "this._chatbookViewportRepaint=()=>{"
-        "this.fit();"
+        "this._chatbookTerminalRepaint=()=>{"
         "try{this.terminal.clearTextureAtlas&&this.terminal.clearTextureAtlas()}catch(e){}"
         "try{this.terminal.refresh(0,this.terminal.rows-1)}catch(e){}"
+        "};"
+        "this._chatbookViewportRepaint=()=>{"
+        "this.fit();"
+        "try{this.sendSize&&this.sendSize()}catch(e){}"
+        "this._chatbookTerminalRepaint();"
+        "};"
+        "this._chatbookViewportAfterWrite=()=>{"
+        "clearTimeout(this._chatbookViewportAfterWriteTimer);"
+        "this._chatbookViewportAfterWriteTimer=setTimeout(this._chatbookTerminalRepaint,50);"
+        "requestAnimationFrame(this._chatbookTerminalRepaint)"
         "};"
         "this._chatbookViewportResize=()=>{"
         "this._chatbookViewportRepaint();"
@@ -95,7 +111,28 @@ def patch_textual_serve_viewport_js(source: str) -> str:
         "window.addEventListener(\"resize\",this._chatbookViewportResize);"
         "try{new ResizeObserver(this._chatbookViewportResize).observe(this.element)}catch(e){}"
     )
-    return patched.replace(_TEXTUAL_SERVE_RESIZE_HOOK, resize_replacement, 1)
+    patched = patched.replace(_TEXTUAL_SERVE_RESIZE_HOOK, resize_replacement, 1)
+    patched = patched.replace(
+        _TEXTUAL_SERVE_WRITE_CALLBACK_HOOK,
+        (
+            "this.terminal.write(t,(()=>{this.bufferedBytes-=t.length,"
+            "this._chatbookViewportAfterWrite&&this._chatbookViewportAfterWrite()}))"
+        ),
+        1,
+    )
+    patched = patched.replace(
+        _TEXTUAL_SERVE_LOADED_HOOK,
+        f"{_TEXTUAL_SERVE_LOADED_HOOK},this._chatbookViewportResize()",
+        1,
+    )
+    return patched.replace(
+        _TEXTUAL_SERVE_FIRST_BYTE_HOOK,
+        (
+            f"t.length>10&&({_TEXTUAL_SERVE_LOADED_HOOK.replace('-loaded', '-first-byte')},"
+            "this._chatbookViewportResize())"
+        ),
+        1,
+    )
 
 
 class ChatbookWebServerMixin:

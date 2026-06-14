@@ -844,7 +844,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         # --- Configurations migrated from load_and_log_configs ---
         "anthropic_api": {
             'api_key': anthropic_api_key,
-            'model': api_section_legacy.get('anthropic_model', 'claude-3-5-sonnet-20240620'),
+            'model': api_section_legacy.get('anthropic_model', 'claude-sonnet-4-20250514'),
             'streaming': api_section_legacy.get("anthropic_streaming", False),
             'temperature': api_section_legacy.get('anthropic_temperature', 0.7),
             'top_p': api_section_legacy.get('anthropic_top_p', 0.95),
@@ -856,7 +856,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         },
         "cohere_api": {
             'api_key': cohere_api_key,
-            'model': api_section_legacy.get('cohere_model', 'command-r-plus'),
+            'model': api_section_legacy.get('cohere_model', 'command-a-03-2025'),
             'streaming': api_section_legacy.get('cohere_streaming', False),
             'temperature': api_section_legacy.get('cohere_temperature', 0.7),
             'max_p': api_section_legacy.get('cohere_max_p', 0.95), # Note: check param name, Cohere might use 'p' or 'top_p'
@@ -880,7 +880,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         },
         "google_generative_api": { # Renamed to avoid confusion with Google Search API
             'api_key': google_api_key,
-            'model': api_section_legacy.get('google_model', 'gemini-2.5-pro'),
+            'model': api_section_legacy.get('google_model', 'gemini-2.5-flash'),
             'streaming': api_section_legacy.get('google_streaming', False),
             'temperature': api_section_legacy.get('google_temperature', 0.7),
             'top_p': api_section_legacy.get('google_top_p', 0.95),
@@ -892,7 +892,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         },
         "groq_api": {
             'api_key': groq_api_key,
-            'model': api_section_legacy.get('groq_model', 'llama3-70b-8192'),
+            'model': api_section_legacy.get('groq_model', 'llama-3.3-70b-versatile'),
             'streaming': api_section_legacy.get('groq_streaming', False),
             'temperature': api_section_legacy.get('groq_temperature', 0.7),
             'top_p': api_section_legacy.get('groq_top_p', 0.95),
@@ -903,10 +903,11 @@ def load_settings(force_reload: bool = False) -> Dict:
         },
         "huggingface_api": {
             'api_key': huggingface_api_key,
-            'huggingface_use_router_url_format': api_section_legacy.get('huggingface_use_router_url_format', False),
-            'huggingface_router_base_url': api_section_legacy.get('huggingface_router_base_url', 'https://router.huggingface.co/hf-inference'),
-            'api_base_url': api_section_legacy.get('huggingface_api_base_url', 'https://router.huggingface.co/hf-inference/models'), # Redundant if router_base_url is used for construction
-            'model': api_section_legacy.get('huggingface_model', '/Qwen/Qwen3-235B-A22B'),
+            'use_router_url_format': api_section_legacy.get('huggingface_use_router_url_format', False),
+            'router_base_url': api_section_legacy.get('huggingface_router_base_url', 'https://router.huggingface.co/hf-inference'),
+            'api_base_url': api_section_legacy.get('huggingface_api_base_url', 'https://router.huggingface.co/v1'),
+            'api_chat_path': api_section_legacy.get('huggingface_api_chat_path', 'chat/completions'),
+            'model': api_section_legacy.get('huggingface_model', 'openai/gpt-oss-120b'),
             'streaming': api_section_legacy.get('huggingface_streaming', False),
             'temperature': api_section_legacy.get('huggingface_temperature', 0.7),
             'top_p': api_section_legacy.get('huggingface_top_p', 0.95),
@@ -1416,9 +1417,9 @@ API_MODELS_BY_PROVIDER = {
     "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
     "Groq": ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatile", "llama-3.1-8b-instant",
              "llama3-70b-8192", "llama3-70b-8192", "llama3-8b-8192",],
-    "Google": ["gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash",
+    "Google": ["gemini-2.5-flash", "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash",
                "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ],
-    "HuggingFace": ["meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",],
+    "HuggingFace": ["openai/gpt-oss-120b", "meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",],
     "MistralAI": ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502",
                   "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411",
                   "devstral-small-2505", "mistral-small-2503", ],
@@ -1597,8 +1598,8 @@ Anthropic = ["claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-7-s
 Cohere = ["command-a-03-2025", "command-r7b-12-2024", "command-r-plus-04-2024", "command-r-plus", "command-r-08-2024", "command-r-03-2024", "command", "command-nightly", "command-light", "command-light-nightly"]
 DeepSeek = ["deepseek-chat", "deepseek-reasoner"]
 Groq = ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-70b-8192", "llama3-70b-8192", "llama3-8b-8192",]
-Google = ["gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ]
-HuggingFace = ["meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",]
+Google = ["gemini-2.5-flash", "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ]
+HuggingFace = ["openai/gpt-oss-120b", "meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",]
 MistralAI = ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502", "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411", "devstral-small-2505", "mistral-small-2503", ]
 Moonshot = ["kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview", "moonshot-v1-128k-vision-preview", "kimi-k2-0711-preview"]
 OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
@@ -1639,7 +1640,7 @@ local_mlx_lm = ["None"]
     [api_settings.anthropic]
     api_key_env_var = "ANTHROPIC_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "claude-3-haiku-20240307"
+    model = "claude-sonnet-4-20250514"
     temperature = 0.7
     top_p = 1.0 # Anthropic uses top_p (represented as topp in UI)
     top_k = 0 # Anthropic specific, 0 or -1 usually disables it
@@ -1652,7 +1653,7 @@ local_mlx_lm = ["None"]
     [api_settings.cohere]
     api_key_env_var = "COHERE_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "command-r-plus"
+    model = "command-a-03-2025"
     temperature = 0.3
     top_p = 0.75 # Cohere uses 'p' (represented as topp in UI)
     top_k = 0 # Cohere uses 'k'
@@ -1677,7 +1678,7 @@ local_mlx_lm = ["None"]
     [api_settings.groq]
     api_key_env_var = "GROQ_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "llama3-70b-8192"
+    model = "llama-3.3-70b-versatile"
     temperature = 0.7
     top_p = 1.0 # Groq uses top_p (represented as maxp in UI)
     max_tokens = 8192
@@ -1689,7 +1690,7 @@ local_mlx_lm = ["None"]
     [api_settings.google]
     api_key_env_var = "GOOGLE_API_KEY"
     api_key = "<API_KEY_HERE>"
-    model = "gemini-1.5-pro-latest"
+    model = "gemini-2.5-flash"
     temperature = 0.7
     top_p = 0.9 # Google uses topP (represented as topp in UI)
     top_k = 100 # Google uses topK
@@ -1702,7 +1703,9 @@ local_mlx_lm = ["None"]
     [api_settings.huggingface]
     api_key_env_var = "HUGGINGFACE_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+    model = "openai/gpt-oss-120b"
+    api_base_url = "https://router.huggingface.co/v1"
+    api_chat_path = "chat/completions"
     temperature = 0.7
     top_p = 1.0 # HF Inference API uses top_p
     top_k = 50  # HF Inference API uses top_k
