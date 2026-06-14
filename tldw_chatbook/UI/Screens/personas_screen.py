@@ -1257,10 +1257,9 @@ class PersonasScreen(BaseAppScreen):
     #
     # Dialog flows run in workers (push_screen_wait requires one); the
     # path-based methods below them are dialog-free so tests can call them
-    # directly. Sync DB/file work runs via asyncio.to_thread rather than a
-    # @work(thread=True) worker (the pattern saves use) because import and
-    # export need their result awaited inline for the follow-up
-    # selection/notification steps.
+    # directly. Sync DB/file work runs via asyncio.to_thread instead of a
+    # threaded Textual worker because import and export need their result
+    # awaited inline for the follow-up selection/notification steps.
 
     async def _open_import_dialog(self) -> None:
         """Continuation for the guarded import action: launch the dialog worker."""
@@ -1658,30 +1657,30 @@ class PersonasScreen(BaseAppScreen):
             # editing state instead of duplicating the error detail.
             self.query_one(PersonasInspectorPane).show_validation_editing()
             return
-        # Snapshot UI-thread state here; the worker thread must not read it.
+        # Snapshot UI-thread state here; the background persistence call must
+        # not read mutable screen state.
         self._save_character_worker(data, self.state.selected_entity_id, self._edit_mode)
 
-    @work(thread=True, exclusive=True, group="personas-save")
-    def _save_character_worker(self, data: dict, selected_id: str | None, edit_mode: str) -> None:
+    @work(exclusive=True, group="personas-save")
+    async def _save_character_worker(self, data: dict, selected_id: str | None, edit_mode: str) -> None:
         """Persist via the legacy module-level helpers off the UI thread."""
         try:
-            if edit_mode == "create" or not selected_id:
-                saved_id = ccp_character_handler.create_character(data)
-                if not saved_id:
-                    raise RuntimeError("Character creation returned no id.")
-            else:
+            def persist_character() -> str:
+                if edit_mode == "create" or not selected_id:
+                    created_id = ccp_character_handler.create_character(data)
+                    if not created_id:
+                        raise RuntimeError("Character creation returned no id.")
+                    return str(created_id)
                 if not ccp_character_handler.update_character(selected_id, data):
                     raise RuntimeError(f"Character update failed for id {selected_id}.")
-                saved_id = selected_id
+                return str(selected_id)
+
+            saved_id = await asyncio.to_thread(persist_character)
         except Exception as exc:
             logger.error(f"Error saving character: {exc}", exc_info=True)
-            self.app.call_from_thread(
-                self._notify, f"Save failed: {exc}", "error"
-            )
+            self._notify(f"Save failed: {exc}", "error")
             return
-        self.app.call_from_thread(
-            self._after_character_save, str(saved_id), str(data.get("name") or "")
-        )
+        await self._after_character_save(saved_id, str(data.get("name") or ""))
 
     async def _after_character_save(self, saved_id: str, submitted_name: str = "") -> None:
         if not self.is_mounted or self.state.active_mode != "characters":

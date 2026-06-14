@@ -15,7 +15,6 @@ from textual.widgets import Button, Input, Static
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     RaisingLibraryNotesScopeService,
-    RaisingPersonasScopeService,
     RaisingSkillsScopeService,
     RaisingWatchlistsScopeService,
     StaticLibraryConversationScopeService,
@@ -260,12 +259,6 @@ async def test_optional_dependency_missing_state_exposes_owner_and_setup_action(
             "library-error",
         ),
         (
-            "personas",
-            "#personas-attach-to-console",
-            "Personas service unavailable; retry Personas later.",
-            "personas-error",
-        ),
-        (
             "watchlists_collections",
             "#wc-attach-to-console",
             "Watchlists services unavailable; retry Watchlists later.",
@@ -292,9 +285,6 @@ async def test_service_unavailable_states_disable_false_console_handoffs(
         app.media_reading_scope_service = StaticLibraryMediaScopeService([])
         app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
         wait_for_snapshot = _wait_for_library_snapshot
-    elif setup == "personas-error":
-        app.character_persona_scope_service = RaisingPersonasScopeService()
-        wait_for_snapshot = _wait_for_personas_snapshot
     elif setup == "wc-error":
         app.watchlist_scope_service = RaisingWatchlistsScopeService()
         app.collections_feeds_scope_service = StaticReadItLaterScopeService([])
@@ -317,3 +307,17 @@ async def test_service_unavailable_states_disable_false_console_handoffs(
         assert "unavailable" in str(button.tooltip).lower()
 
 
+@pytest.mark.asyncio
+async def test_personas_default_state_disables_false_console_handoff() -> None:
+    """Personas starts local-first; Console attach stays blocked until selection."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+        button = screen.query_one("#personas-attach-to-console", Button)
+
+        visible_text = _visible_text(screen)
+        assert "Console: Blocked - select an item" in visible_text
+        assert button.disabled is True
