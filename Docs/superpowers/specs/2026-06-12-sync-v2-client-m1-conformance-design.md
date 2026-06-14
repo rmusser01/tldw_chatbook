@@ -1,7 +1,7 @@
 # Sync v2 Client — M1 Contract Conformance Design
 
 Date: 2026-06-12
-Status: Draft (pending user spec review)
+Status: Approved (user spec review complete 2026-06-14)
 ADR: `backlog/decisions/008-sync-v2-client-m1-contract-alignment.md`
 Server contract: `tldw_server2` `Docs/API/Sync_V2_M1.md` @ commit `992e89a037244e5e5cdf58ad47245c89866e373f`
 
@@ -198,9 +198,9 @@ tombstones, conflicts) → apply.
   the client survives shim removal; verify `/profile/bootstrap` does not fail-closed on
   encryption attestation before P2 (server `_default_encryption` reports `ready: True`,
   but the real bootstrap path must be confirmed).
-- **Open decision (recorded, adjustable):** migrate to `/profile/bootstrap` vs keep the
-  current `/datasets/enroll`+`/devices/register` flow. Recommendation: `/profile/bootstrap`
-  (durable M1 flow); the enroll/register endpoints may be transition-only.
+- **Decided (2026-06-14):** the client migrates to `/profile/bootstrap` (durable M1 flow);
+  the current `/datasets/enroll`+`/devices/register` methods are parked as transition-only.
+  Phase split P3–P5 stays separate (one PR each).
 - **chat.message edits:** M1 has only `append`/`tombstone` for messages. Editing/
   regenerating a message must be modeled as tombstone-old + append-new (or deferred);
   decide in P3.
