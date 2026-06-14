@@ -191,6 +191,7 @@ PROVIDER_PARAM_MAP = {
         'streaming': 'streaming',
         'maxp': 'maxp',
         'model':'model', # Groq also uses top_p, handled by chat_with_groq
+        'max_tokens': 'max_tokens',
         'logit_bias': 'logit_bias',
         'presence_penalty': 'presence_penalty',
         'frequency_penalty': 'frequency_penalty',

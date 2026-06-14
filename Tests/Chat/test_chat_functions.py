@@ -93,6 +93,30 @@ def test_huggingface_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
     assert "max_new_tokens" not in captured_kwargs
 
 
+def test_groq_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
+    captured_kwargs = {}
+
+    def fake_groq_handler(**kwargs):
+        captured_kwargs.update(kwargs)
+        return "OK"
+
+    monkeypatch.setitem(
+        chat_functions_module.API_CALL_HANDLERS,
+        "groq",
+        fake_groq_handler,
+    )
+
+    chat_functions_module.chat_api_call(
+        api_endpoint="groq",
+        api_key=DUMMY_OPENAI_API_KEY,
+        messages_payload=[{"role": "user", "content": "hello"}],
+        model="llama-3.1-8b-instant",
+        max_tokens=12,
+    )
+
+    assert captured_kwargs["max_tokens"] == 12
+
+
 def test_chat_api_call_does_not_log_api_key_fragments(monkeypatch):
     captured_logs = []
     sink_id = chat_functions_module.logger.add(
