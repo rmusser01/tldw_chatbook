@@ -509,3 +509,20 @@ async def test_sync_v2_client_gets_profile(monkeypatch):
     assert resp.profile_bootstrapped is False
     assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/sync/profile")
     assert mocked.await_args_list[0].kwargs["params"]["device_id"] == "dev_1"
+
+
+@pytest.mark.asyncio
+async def test_sync_v2_client_gets_profile_without_device_id(monkeypatch):
+    from tldw_chatbook.tldw_api import SyncV2ProfileResponse
+
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={"profile_bootstrapped": False, "user_id": "user_123", "server_cursor": 0}
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    resp = await client.get_sync_v2_profile()
+
+    assert isinstance(resp, SyncV2ProfileResponse)
+    # No device_id known yet -> must NOT send a literal empty device_id query param.
+    assert mocked.await_args_list[0].kwargs["params"] is None

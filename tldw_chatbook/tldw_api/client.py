@@ -14809,7 +14809,7 @@ class TLDWAPIClient:
         response = await self._request(
             "GET",
             "/api/v1/sync/profile",
-            params={"device_id": device_id},
+            params={"device_id": device_id} if device_id is not None else None,
         )
         return SyncV2ProfileResponse.model_validate(response)
 
