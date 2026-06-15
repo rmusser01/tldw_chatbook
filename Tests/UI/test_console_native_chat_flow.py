@@ -1191,6 +1191,34 @@ async def test_console_assistant_message_click_exposes_selected_actions():
 
 
 @pytest.mark.asyncio
+async def test_console_transcript_wraps_long_message_content_without_horizontal_overflow():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    long_answer = " ".join(["wrapped assistant response segment"] * 180)
+
+    async with host.run_test(size=(92, 32)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=long_answer,
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
+
+        row = console.query_one(f"#console-message-{message.id}", Static)
+
+        assert row.region.width <= transcript.region.width
+        assert transcript.virtual_size.width <= transcript.region.width
+        assert row.region.height > 2
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_copy_action_uses_app_clipboard():
     app = _build_test_app()
     app.copy_to_clipboard = Mock()
@@ -1609,6 +1637,8 @@ async def test_console_continue_action_streams_new_message_from_selected_turn():
         assert messages[-1].role is ConsoleMessageRole.ASSISTANT
         assert messages[-1].content == "hello"
         assert messages[-1].id != source.id
+        assert transcript.selected_message_id is None
+        assert not list(console.query(f"#console-message-actions-{source.id}"))
 
 
 @pytest.mark.asyncio

@@ -3095,6 +3095,15 @@ class ChatScreen(BaseAppScreen):
                     ),
                 )
             )
+
+    def _clear_native_console_message_selection(self) -> None:
+        """Dismiss contextual message actions when an action changes the transcript flow."""
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            return
+        transcript.selected_message_id = None
+        self._last_native_transcript_refresh_key = None
         self._sync_console_transcript_guidance()
 
     def _native_run_status_copy(self) -> str:
@@ -3575,6 +3584,8 @@ class ChatScreen(BaseAppScreen):
         result = await controller.continue_from_message(message_id)
         if result.visible_copy and not result.accepted:
             self.app_instance.notify(result.visible_copy, severity="warning")
+        if result.accepted:
+            self._clear_native_console_message_selection()
         await self._sync_native_console_chat_ui()
 
     async def _regenerate_console_message(
