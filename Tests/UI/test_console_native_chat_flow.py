@@ -189,6 +189,21 @@ def _console_workspace_conversation_texts(console) -> list[str]:
     return [_widget_text(row) for row in rows]
 
 
+def _console_workspace_conversation_row_id_for_session(console, session_id: str) -> str:
+    target_conversation_id = f"native:{session_id}"
+    for row in console.query(".console-workspace-conversation-row"):
+        if getattr(row, "conversation_id", None) == target_conversation_id:
+            return str(row.id)
+    rows = [
+        (getattr(row, "id", ""), getattr(row, "conversation_id", None), _widget_text(row))
+        for row in console.query(".console-workspace-conversation-row")
+    ]
+    raise AssertionError(
+        f"Workspace conversation row for {target_conversation_id!r} not found. "
+        f"Rows: {rows!r}"
+    )
+
+
 async def _wait_for_workspace_conversation_text(
     console,
     pilot,
@@ -1794,19 +1809,15 @@ async def test_console_workspace_conversation_row_switches_native_session():
         await pilot.click("#console-new-chat-tab")
         second = store.active_session_id
         assert second != first.id
-        row_texts = await _wait_for_workspace_conversation_text(
+        await _wait_for_workspace_conversation_text(
             console,
             pilot,
             "Chat 1",
             selected=False,
         )
-        chat_one_index = next(
-            index
-            for index, text in enumerate(row_texts)
-            if "Chat 1" in text and not text.startswith("> ")
-        )
+        first_row_id = _console_workspace_conversation_row_id_for_session(console, first.id)
 
-        await pilot.click(f"#console-workspace-conversation-{chat_one_index}")
+        await pilot.click(f"#{first_row_id}")
         await pilot.pause()
 
         assert store.active_session_id == first.id
