@@ -1199,6 +1199,27 @@ class ChatScreen(BaseAppScreen):
             return str(conversation_id) if conversation_id else None
         return self._current_console_conversation_id()
 
+    def _console_session_id_for_workspace_conversation(
+        self,
+        conversation_id: str,
+    ) -> str | None:
+        """Return an open Console session id for a workspace conversation row."""
+        target = str(conversation_id or "").strip()
+        if not target:
+            return None
+        store = self._console_chat_store
+        if store is None:
+            return None
+        if target.startswith("native:"):
+            session_id = target.removeprefix("native:")
+            if any(session.id == session_id for session in store.sessions()):
+                return session_id
+            return None
+        for session in store.sessions():
+            if str(session.persisted_conversation_id or "") == target:
+                return session.id
+        return None
+
     def _build_console_workspace_context_state(
         self,
         session_data: Optional[ChatSessionData] = None,
@@ -4765,6 +4786,23 @@ class ChatScreen(BaseAppScreen):
                 ),
             )
             await self._sync_native_console_chat_ui()
+            self._focus_console_composer_if_needed(force=True)
+            return
+        if button_id and button_id.startswith("console-workspace-conversation-"):
+            event.stop()
+            conversation_id = str(getattr(event.button, "conversation_id", "") or "")
+            session_id = self._console_session_id_for_workspace_conversation(conversation_id)
+            if session_id is None:
+                self.app_instance.notify(
+                    "Open this workspace conversation from Library before switching here.",
+                    severity="warning",
+                )
+                return
+            controller = self._ensure_console_chat_controller()
+            if controller.store.active_session_id != session_id:
+                self._set_active_workspace_for_console_session(session_id)
+                controller.switch_session(session_id)
+                await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)
             return
         if button_id and button_id.startswith("console-close-session-tab-"):

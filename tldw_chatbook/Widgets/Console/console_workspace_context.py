@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Static
@@ -26,6 +27,25 @@ class ConsoleWorkspaceContextTray(Vertical):
     @staticmethod
     def _static(text: str, *, id: str, classes: str = "") -> Static:
         return Static(str(text), id=id, classes=classes, markup=False)
+
+    @staticmethod
+    def _conversation_button(
+        text: str,
+        *,
+        id: str,
+        conversation_id: str,
+    ) -> Button:
+        button = Button(
+            Text(str(text)),
+            id=id,
+            classes="console-workspace-conversation-row",
+            compact=True,
+        )
+        button.conversation_id = conversation_id
+        button.tooltip = f"Switch to {text.lstrip('> ').strip()}"
+        button.styles.height = 1
+        button.styles.min_height = 1
+        return button
 
     def compose(self) -> ComposeResult:
         yield self._static(
@@ -71,10 +91,10 @@ class ConsoleWorkspaceContextTray(Vertical):
                 for index, row in enumerate(self.state.conversation_rows):
                     marker = "> " if row.selected else "  "
                     status = f" [{row.status}]" if row.status else ""
-                    yield self._static(
+                    yield self._conversation_button(
                         f"{marker}{row.title}{status}",
                         id=f"console-workspace-conversation-{index}",
-                        classes="console-workspace-conversation-row",
+                        conversation_id=row.conversation_id,
                     )
             else:
                 yield self._static(

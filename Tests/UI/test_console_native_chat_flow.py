@@ -176,9 +176,17 @@ def _static_plain_text(widget: Static) -> str:
     return getattr(renderable, "plain", str(renderable))
 
 
+def _widget_text(widget) -> str:
+    if hasattr(widget, "renderable"):
+        renderable = widget.renderable
+        return getattr(renderable, "plain", str(renderable))
+    label = getattr(widget, "label", "")
+    return getattr(label, "plain", str(label))
+
+
 def _console_workspace_conversation_texts(console) -> list[str]:
     rows = console.query(".console-workspace-conversation-row")
-    return [getattr(row.renderable, "plain", str(row.renderable)) for row in rows]
+    return [_widget_text(row) for row in rows]
 
 
 async def _wait_for_workspace_conversation_text(
@@ -884,8 +892,8 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         await _wait_for_text(console, pilot, "accepted")
         await _wait_for_selector(console, pilot, "#console-workspace-conversation-0")
 
-        row = console.query_one("#console-workspace-conversation-0", Static)
-        row_text = getattr(row.renderable, "plain", str(row.renderable))
+        row = console.query_one("#console-workspace-conversation-0")
+        row_text = _widget_text(row)
         assert row_text.startswith("> ")
         assert "Chat 1" in row_text
         assert "workspace-thread" in row_text
@@ -1769,6 +1777,46 @@ async def test_console_new_chat_tab_promotes_active_native_session_in_workspace_
         )
         assert "Chat 2" in row_texts[0]
         assert row_texts[0].startswith("> ")
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_row_switches_native_session():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Chat 1",
+            selected=False,
+        )
+        chat_one_index = next(
+            index
+            for index, text in enumerate(row_texts)
+            if "Chat 1" in text and not text.startswith("> ")
+        )
+
+        await pilot.click(f"#console-workspace-conversation-{chat_one_index}")
+        await pilot.pause()
+
+        assert store.active_session_id == first.id
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Chat 1",
+            selected=True,
+        )
+        assert any(text.startswith("> ") and "Chat 1" in text for text in row_texts)
 
 
 @pytest.mark.asyncio
