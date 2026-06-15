@@ -62,7 +62,11 @@ class ConsoleWorkspaceContextTray(Vertical):
             id="console-workspace-conversations-title",
             classes="destination-section",
         )
-        with Vertical(id="console-workspace-conversations"):
+        conversation_count = max(1, len(self.state.conversation_rows))
+        conversation_list = Vertical(id="console-workspace-conversations")
+        conversation_list.styles.height = conversation_count
+        conversation_list.styles.min_height = conversation_count
+        with conversation_list:
             if self.state.conversation_rows:
                 for index, row in enumerate(self.state.conversation_rows):
                     marker = "> " if row.selected else "  "

@@ -128,6 +128,7 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Workspaces.display_state import (
+    ConsoleWorkspaceConversationRow,
     ConsoleWorkspaceContextState,
     build_console_workspace_state,
 )
@@ -1202,9 +1203,10 @@ class ChatScreen(BaseAppScreen):
         self,
         session_data: Optional[ChatSessionData] = None,
     ) -> ConsoleWorkspaceContextState:
-        return build_console_workspace_state(
+        current_conversation = self._current_console_conversation_id(session_data)
+        state = build_console_workspace_state(
             registry_service=getattr(self.app_instance, "workspace_registry_service", None),
-            current_conversation=self._current_console_conversation_id(session_data),
+            current_conversation=current_conversation,
             server_adapter_state=getattr(
                 self.app_instance,
                 "workspace_server_adapter_state",
@@ -1216,6 +1218,61 @@ class ChatScreen(BaseAppScreen):
                 None,
             ),
         )
+        return self._with_native_console_session_rows(state)
+
+    def _with_native_console_session_rows(
+        self,
+        state: ConsoleWorkspaceContextState,
+    ) -> ConsoleWorkspaceContextState:
+        """Include active native Console sessions in the workspace rail.
+
+        The workspace registry only knows about conversations after durable
+        persistence links them. Native Console sessions are still user-visible
+        conversations and need to remain reachable from the rail while they are
+        open, including before the first persisted message exists.
+        """
+        store = self._console_chat_store
+        if store is None:
+            return state
+
+        active_workspace_id = str(store.workspace_context.active_workspace_id or "").strip()
+        active_session_id = store.active_session_id
+        rows = list(state.conversation_rows)
+        existing_ids = {str(row.conversation_id) for row in rows}
+        native_rows: list[ConsoleWorkspaceConversationRow] = []
+        for session in store.sessions():
+            session_workspace_id = str(session.workspace_id or "").strip()
+            selected = session.id == active_session_id
+            if (
+                active_workspace_id
+                and active_workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
+                and session_workspace_id != active_workspace_id
+                and not selected
+            ):
+                continue
+
+            conversation_id = (
+                str(session.persisted_conversation_id)
+                if session.persisted_conversation_id
+                else f"native:{session.id}"
+            )
+            if conversation_id in existing_ids:
+                continue
+
+            native_rows.append(
+                ConsoleWorkspaceConversationRow(
+                    conversation_id=conversation_id,
+                    title=session.title,
+                    status="active" if selected else "open",
+                    selected=selected,
+                )
+            )
+            existing_ids.add(conversation_id)
+
+        if not native_rows:
+            return state
+        native_rows.sort(key=lambda row: 0 if row.selected else 1)
+        return replace(state, conversation_rows=tuple(native_rows + rows))
 
     def _console_config(self) -> dict[str, Any]:
         """Return mutable Console app config, initializing the section if needed."""

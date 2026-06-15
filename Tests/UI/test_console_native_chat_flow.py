@@ -176,6 +176,33 @@ def _static_plain_text(widget: Static) -> str:
     return getattr(renderable, "plain", str(renderable))
 
 
+def _console_workspace_conversation_texts(console) -> list[str]:
+    rows = console.query(".console-workspace-conversation-row")
+    return [getattr(row.renderable, "plain", str(row.renderable)) for row in rows]
+
+
+async def _wait_for_workspace_conversation_text(
+    console,
+    pilot,
+    expected: str,
+    *,
+    selected: bool | None = None,
+    attempts: int = 40,
+) -> list[str]:
+    for _ in range(attempts):
+        row_texts = _console_workspace_conversation_texts(console)
+        for text in row_texts:
+            if expected not in text:
+                continue
+            if selected is None or text.startswith("> ") == selected:
+                return row_texts
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"Workspace conversation {expected!r} not found. "
+        f"Rows: {_console_workspace_conversation_texts(console)!r}"
+    )
+
+
 async def _wait_for_console_rename_modal(host: ConsoleHarness, pilot):
     for _ in range(40):
         if (
@@ -844,7 +871,9 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        assert len(console.query("#console-workspace-empty-conversations")) == 1
+        row_texts = _console_workspace_conversation_texts(console)
+        assert any("Chat 1" in text for text in row_texts)
+        assert len(console.query("#console-workspace-empty-conversations")) == 0
         store = console._ensure_console_chat_store()
         store.persistence = WorkspaceLinkingPersistence(app.workspace_registry_service)
         _select_llamacpp_console(console)
@@ -1638,6 +1667,111 @@ async def test_console_native_tab_strip_creates_and_switches_sessions():
 
         assert store.active_session_id == first.id
         assert "Chat 1" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    service.link_membership(
+        active_workspace.workspace_id,
+        item_type="conversation",
+        item_id="persisted-chat-1",
+        role="workspace-thread",
+        title="Chat 1",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        first.persisted_conversation_id = "persisted-chat-1"
+        await console._sync_native_console_chat_ui()
+
+        assert any("Chat 1" in text for text in _console_workspace_conversation_texts(console))
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+
+        row_texts = _console_workspace_conversation_texts(console)
+        assert any("Chat 1" in text for text in row_texts)
+        assert any("Chat 2" in text for text in row_texts)
+        assert any(text.startswith("> ") and "Chat 2" in text for text in row_texts)
+
+
+@pytest.mark.asyncio
+async def test_console_new_chat_tab_promotes_active_native_session_in_workspace_rail():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    for index in range(5):
+        service.link_membership(
+            active_workspace.workspace_id,
+            item_type="conversation",
+            item_id=f"persisted-chat-{index}",
+            role="workspace-thread",
+            title=f"Older chat {index + 1}",
+        )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Chat 2",
+            selected=True,
+        )
+        assert "Chat 2" in row_texts[0]
+        assert row_texts[0].startswith("> ")
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_rail_keeps_active_native_session_visible_when_scope_is_global():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    service.link_membership(
+        active_workspace.workspace_id,
+        item_type="conversation",
+        item_id="persisted-chat-1",
+        role="workspace-thread",
+        title="Chat 1",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1", workspace_id="global")
+        first.persisted_conversation_id = "persisted-chat-1"
+        second = store.create_session(title="Chat 2", workspace_id="global")
+        await console._sync_native_console_chat_ui()
+
+        assert store.active_session_id == second.id
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Chat 2",
+            selected=True,
+        )
+        assert any("Chat 1" in text for text in row_texts), row_texts
 
 
 @pytest.mark.asyncio
