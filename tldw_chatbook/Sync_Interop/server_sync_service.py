@@ -189,7 +189,11 @@ class ServerSyncService:
         requested_domains = domains or ["notes", "chat", "workspaces", "source_cache", "media"]
         capabilities = await client.get_sync_v2_capabilities()
         capabilities_record = self._dump(capabilities)
-        supported_domains = set(capabilities_record.get("supported_domains", []))
+        # M1 schema: model_dump() produces "domains"; fall back to "supported_domains"
+        # for raw-dict responses (e.g. from test stubs that pre-date M1).
+        supported_domains = set(
+            capabilities_record.get("domains", capabilities_record.get("supported_domains", []))
+        )
         sync_domains = [domain for domain in requested_domains if domain in supported_domains]
         if not sync_domains:
             raise ValueError("Server does not advertise any requested Sync v2 domains.")
@@ -203,7 +207,7 @@ class ServerSyncService:
                 supported_domains=sync_domains,
                 capabilities={
                     "dry_run": True,
-                    "protocol_version": 2,
+                    "protocol_version": "sync-v2-m1",
                 },
             )
         )

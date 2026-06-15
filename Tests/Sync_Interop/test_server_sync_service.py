@@ -101,10 +101,16 @@ class FakeSyncClient:
     async def get_sync_v2_capabilities(self):
         self.calls.append(("get_sync_v2_capabilities",))
         return {
-            "protocol_version": 2,
-            "min_supported_protocol_version": 2,
-            "supported_domains": ["notes", "chat", "workspaces", "source_cache", "media"],
-            "supported_operations": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
+            "protocol_version": "sync-v2-m1",
+            "min_supported_protocol_version": "sync-v2-m1",
+            "domains": ["notes", "chat", "workspaces", "source_cache", "media"],
+            "operations": {
+                "notes": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
+                "chat": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
+                "workspaces": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
+                "source_cache": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
+                "media": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
+            },
             "encryption_policies": ["client_private_v1"],
             "max_batch_size": 100,
             "max_envelope_payload_bytes": 262144,
