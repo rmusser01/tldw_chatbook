@@ -19,9 +19,15 @@ class NotesM1SyncAdapter:
         object_id = envelope.object_id or envelope.entity_id
         cursor = envelope.server_cursor or 0
         revision = envelope.object_revision or 0
+        payload_hash = envelope.payload_hash or ""
         existing = notes_mirror.get(dataset_id, object_id)
-        if existing is not None and existing.object_revision == revision and existing.object_hash == envelope.payload_hash:
-            return {"status": "noop", "object_id": object_id}
+        if existing is not None:
+            if existing.object_revision > revision:
+                # Stale envelope (older revision than local) — drop, do not overwrite.
+                return {"status": "noop", "object_id": object_id}
+            if existing.object_revision == revision and existing.object_hash == payload_hash:
+                # Exact duplicate already applied.
+                return {"status": "noop", "object_id": object_id}
 
         if envelope.operation == "tombstone" or envelope.deleted:
             local_store.soft_delete_note(object_id, object_revision=revision)
@@ -29,6 +35,6 @@ class NotesM1SyncAdapter:
             local_store.upsert_note(object_id, dict(envelope.payload), object_revision=revision)
         notes_mirror.record(
             dataset_id, object_id,
-            object_revision=revision, object_hash=envelope.payload_hash, server_cursor=cursor,
+            object_revision=revision, object_hash=payload_hash, server_cursor=cursor,
         )
         return {"status": "applied", "object_id": object_id}

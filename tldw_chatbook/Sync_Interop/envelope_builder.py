@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any, Literal, Mapping
 
 from tldw_chatbook.Sync_Interop.crypto import encrypt_sync_payload
@@ -36,7 +37,10 @@ class SyncEnvelopeBuilder:
         return self._notes_note_envelope(note_id=note_id, operation="upsert", payload=payload, deleted=False)
 
     def build_notes_note_tombstone(self, *, note_id: str, deleted_at: str | None = None) -> SyncV2Envelope:
-        payload = {"deleted_at": deleted_at or "", "reason": "user_deleted"}
+        payload = {
+            "deleted_at": deleted_at or datetime.now(timezone.utc).isoformat(),
+            "reason": "user_deleted",
+        }
         return self._notes_note_envelope(note_id=note_id, operation="tombstone", payload=payload, deleted=True)
 
     def _notes_note_envelope(self, *, note_id: str, operation: str, payload: dict[str, Any], deleted: bool) -> SyncV2Envelope:

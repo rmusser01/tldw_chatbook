@@ -73,3 +73,37 @@ def test_apply_notes_tombstone_soft_deletes():
     )
     applier.apply(env)
     assert store.get("n1")["deleted"] is True
+
+
+def test_apply_drops_stale_older_revision_envelope():
+    from tldw_chatbook.tldw_api import SyncV2Envelope
+    store = InMemoryNotesStore()
+    mirror = NotesMirror(":memory:")
+    mirror.record("ds_1", "n1", object_revision=5, object_hash="sha256:newer", server_cursor=50)
+    applier = SyncEnvelopeApplier(local_store=store, notes_mirror=mirror, dataset_id="ds_1")
+    stale = SyncV2Envelope(
+        client_envelope_id="c", dataset_id="ds_1", domain="notes.note", object_id="n1",
+        operation="upsert", adapter_version=1, payload={"title": "OLD", "content": "OLD"},
+        payload_hash="sha256:older", object_revision=3, server_cursor=30,
+    )
+    result = applier.apply(stale)
+    assert result["status"] == "noop"
+    assert store.upsert_calls == 0
+    # mirror not rolled back
+    assert mirror.get("ds_1", "n1").object_revision == 5
+
+
+def test_apply_tombstone_reapply_is_noop():
+    from tldw_chatbook.tldw_api import SyncV2Envelope
+    store = InMemoryNotesStore()
+    mirror = NotesMirror(":memory:")
+    applier = SyncEnvelopeApplier(local_store=store, notes_mirror=mirror, dataset_id="ds_1")
+    env = SyncV2Envelope(
+        client_envelope_id="c", dataset_id="ds_1", domain="notes.note", object_id="n1",
+        operation="tombstone", adapter_version=1, deleted=True, payload={"deleted_at": "t"},
+        payload_hash="sha256:t", object_revision=2, server_cursor=11,
+    )
+    applier.apply(env)
+    before = store.delete_calls
+    applier.apply(env)  # re-apply
+    assert store.delete_calls == before  # no second soft-delete
