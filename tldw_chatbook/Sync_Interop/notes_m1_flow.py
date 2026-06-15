@@ -36,8 +36,8 @@ class NotesM1SyncFlow:
         return {
             "accepted": len(response.accepted),
             "idempotent": len(getattr(response, "idempotent", []) or []),
-            "rejected": len(response.rejected),
-            "conflicts": len(response.conflicts),
+            "rejected": len(getattr(response, "rejected", []) or []),
+            "conflicts": len(getattr(response, "conflicts", []) or []),
             "apply_errors": len(getattr(response, "apply_errors", []) or []),
             "next_cursor": response.next_cursor,
         }
@@ -47,12 +47,22 @@ class NotesM1SyncFlow:
             dataset_id=self.dataset_id, device_id=self.device_id, cursor=str(cursor), domains=["notes.note"],
         )
         applier = SyncEnvelopeApplier(local_store=self.local_store, notes_mirror=self.mirror, dataset_id=self.dataset_id)
-        applied = 0
+        applied = noop = conflicts = 0
         for env in response.envelopes:
-            result = applier.apply(env)
-            if result.get("status") == "applied":
+            status = applier.apply(env).get("status")
+            if status == "applied":
                 applied += 1
-        return {"applied": applied, "next_cursor": response.next_cursor, "has_more": response.has_more}
+            elif status == "noop":
+                noop += 1
+            else:
+                conflicts += 1
+        return {
+            "applied": applied,
+            "noop": noop,
+            "conflicts": conflicts,
+            "next_cursor": response.next_cursor,
+            "has_more": response.has_more,
+        }
 
     @staticmethod
     def _hash_for(envelopes: list[SyncV2Envelope], client_envelope_id: str) -> str:
