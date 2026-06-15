@@ -1,6 +1,11 @@
 """P1: client parses the live M1 server's capability/profile payloads."""
 
-from tldw_chatbook.tldw_api import SyncV2CapabilitiesResponse
+from tldw_chatbook.tldw_api import (
+    SyncV2CapabilitiesResponse,
+    SyncV2ProfileBootstrapRequest,
+    SyncV2ProfileBootstrapResponse,
+    SyncV2ProfileResponse,
+)
 
 # Captured verbatim from the live codex/sync-v2-m1-next server @ 992e89a03.
 LIVE_CAPABILITIES = {
@@ -58,12 +63,6 @@ def test_capabilities_coerces_legacy_int_protocol_version():
     assert caps.protocol_version == "sync-v2-m1"
     assert caps.min_supported_protocol_version == "sync-v2-m1"
 
-
-from tldw_chatbook.tldw_api import (
-    SyncV2ProfileBootstrapRequest,
-    SyncV2ProfileBootstrapResponse,
-    SyncV2ProfileResponse,
-)
 
 # Shape mirrors tldw_server2 Sync_V2_M1.md POST /profile/bootstrap response.
 LIVE_BOOTSTRAP_RESPONSE = {

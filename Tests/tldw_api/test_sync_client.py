@@ -141,10 +141,13 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
     mocked = AsyncMock(
         side_effect=[
             {
-                "protocol_version": 2,
-                "min_supported_protocol_version": 2,
-                "supported_domains": ["notes", "chat", "workspaces", "source_cache", "media"],
-                "supported_operations": ["upsert", "delete", "link", "unlink", "resolve_conflict"],
+                "protocol_version": "sync-v2-m1",
+                "min_supported_protocol_version": "sync-v2-m1",
+                "domains": ["notes.note", "chat.conversation", "chat.message"],
+                "operations": {
+                    "notes.note": ["upsert", "tombstone"],
+                    "chat.message": ["append", "tombstone"],
+                },
                 "encryption_policies": ["client_private_v1", "server_trusted", "shared_workspace_v1"],
                 "max_batch_size": 100,
                 "max_envelope_payload_bytes": 262144,
@@ -153,10 +156,10 @@ async def test_sync_v2_client_routes_protocol_endpoints(monkeypatch):
             {
                 "device_id": "device-1",
                 "server_capabilities": {
-                    "protocol_version": 2,
-                    "min_supported_protocol_version": 2,
-                    "supported_domains": ["notes"],
-                    "supported_operations": ["upsert"],
+                    "protocol_version": "sync-v2-m1",
+                    "min_supported_protocol_version": "sync-v2-m1",
+                    "domains": ["notes.note"],
+                    "operations": {"notes.note": ["upsert", "tombstone"]},
                     "encryption_policies": ["client_private_v1"],
                     "max_batch_size": 100,
                     "max_envelope_payload_bytes": 262144,

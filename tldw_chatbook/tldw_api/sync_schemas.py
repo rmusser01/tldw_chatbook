@@ -189,7 +189,7 @@ class SyncV2CapabilitiesResponse(BaseModel):
     supports_attachments: bool = False
     compatibility_flags: dict[str, bool] = Field(default_factory=dict)
     server_time: str | None = None
-    warnings: list[dict[str, str]] = Field(default_factory=list)
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
 
     @field_validator("protocol_version", "min_supported_protocol_version", mode="before")
     @classmethod
@@ -266,7 +266,7 @@ class SyncV2ProfileResponse(BaseModel):
     server_cursor: int = Field(0, ge=0)
     capabilities: SyncV2CapabilitiesResponse = Field(default_factory=SyncV2CapabilitiesResponse)
     domain_status: list[SyncV2ProfileDomainStatus] = Field(default_factory=list)
-    warnings: list[dict[str, str]] = Field(default_factory=list)
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="ignore")
 
@@ -285,6 +285,7 @@ class SyncV2ProfileBootstrapRequest(BaseModel):
             "notes.note", "chat.conversation", "chat.message", "attachment.ref",
         ]
     )
+    model_config = ConfigDict(extra="ignore")
 
 
 class SyncV2ProfileBootstrapResponse(SyncV2ProfileResponse):
