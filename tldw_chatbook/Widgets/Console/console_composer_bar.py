@@ -260,7 +260,7 @@ class ConsoleComposerBar(Horizontal):
         elif has_draft:
             send_button.tooltip = "Send the active Console session draft."
         else:
-            send_button.tooltip = "Type a message before sending."
+            send_button.tooltip = None
         send_button.set_class(send_ready, "console-action-primary")
         send_button.set_class(not send_ready, "console-action-subdued")
         send_button.set_class(not send_ready, "console-action-disabled")

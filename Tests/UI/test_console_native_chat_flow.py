@@ -295,6 +295,35 @@ async def test_console_native_send_button_click_dispatches_message(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_console_successful_send_does_not_leave_empty_send_tooltip(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
+
+    def fake_chat_api_call(**_kwargs):
+        return "sent response"
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.Chat_Functions.chat_api_call",
+        fake_chat_api_call,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("send once")
+
+        await pilot.click("#console-send-message")
+        await _wait_for_text(console, pilot, "sent response")
+
+        send_button = console.query_one("#console-send-message", Button)
+        assert composer.draft_text() == ""
+        assert send_button.tooltip != "Type a message before sending."
+
+
+@pytest.mark.asyncio
 async def test_console_native_missing_key_blocks_before_clearing_generic_draft():
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
