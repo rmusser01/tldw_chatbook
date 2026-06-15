@@ -481,9 +481,16 @@ class SyncV2PushRequest(BaseModel):
 
 class SyncV2PushAcceptedEnvelope(BaseModel):
     client_envelope_id: str
-    server_sequence: int = Field(..., ge=0)
+    envelope_id: str | None = None
+    server_sequence: int | None = Field(None, ge=0, validation_alias=AliasChoices("server_sequence", "server_cursor"))
     domain: SyncV2Domain | None = None
     entity_id: str | None = None
+    object_id: str | None = Field(None, validation_alias=AliasChoices("object_id", "entity_id"))
+    object_revision: int | None = Field(None, ge=0)
+    apply_status: str | None = None
+    server_cursor: int | None = Field(None, ge=0, validation_alias=AliasChoices("server_cursor", "server_sequence"))
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
 
 class SyncV2PushRejectedEnvelope(BaseModel):
@@ -502,12 +509,25 @@ class SyncV2PushConflictEnvelope(BaseModel):
     message: str | None = None
 
 
+class SyncV2ApplyError(BaseModel):
+    client_envelope_id: str | None = None
+    object_id: str | None = None
+    domain: str | None = None
+    error_code: str | None = None
+    message: str | None = None
+    model_config = ConfigDict(extra="ignore")
+
+
 class SyncV2PushResponse(BaseModel):
     dataset_id: str
     accepted: list[SyncV2PushAcceptedEnvelope] = Field(default_factory=list)
     rejected: list[SyncV2PushRejectedEnvelope] = Field(default_factory=list)
     conflicts: list[SyncV2PushConflictEnvelope] = Field(default_factory=list)
     next_cursor: str | None = None
+    server_cursor: int | None = Field(None, ge=0)
+    idempotent: list[SyncV2PushAcceptedEnvelope] = Field(default_factory=list)
+    apply_errors: list[SyncV2ApplyError] = Field(default_factory=list)
+    model_config = ConfigDict(extra="ignore")
 
 
 class SyncV2PullResponse(BaseModel):
@@ -515,6 +535,8 @@ class SyncV2PullResponse(BaseModel):
     envelopes: list[SyncV2Envelope] = Field(default_factory=list)
     next_cursor: str | None = None
     has_more: bool = False
+    from_cursor: int | None = Field(None, ge=0)
+    model_config = ConfigDict(extra="ignore")
 
 
 class SyncV2AttachmentUploadRequest(BaseModel):
