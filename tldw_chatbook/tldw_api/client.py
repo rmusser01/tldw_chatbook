@@ -415,6 +415,9 @@ from .sync_schemas import (
     SyncV2KeyRecoveryBundleListResponse,
     SyncV2KeyRecoveryBundleRequest,
     SyncV2KeyRecoveryBundleResponse,
+    SyncV2ProfileBootstrapRequest,
+    SyncV2ProfileBootstrapResponse,
+    SyncV2ProfileResponse,
     SyncV2PullResponse,
     SyncV2PushRequest,
     SyncV2PushResponse,
@@ -14785,6 +14788,57 @@ class TLDWAPIClient:
 
         response = await self._request("GET", "/api/v1/sync/capabilities")
         return SyncV2CapabilitiesResponse.model_validate(response)
+
+    async def get_sync_v2_profile(
+        self,
+        *,
+        device_id: str | None = None,
+    ) -> SyncV2ProfileResponse:
+        """Fetch the current Sync v2 profile/status without creating sync state.
+
+        Args:
+            device_id: Existing client device ID, when known.
+
+        Returns:
+            Parsed profile response (capabilities, device/dataset status, cursor).
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request(
+            "GET",
+            "/api/v1/sync/profile",
+            params={"device_id": device_id},
+        )
+        return SyncV2ProfileResponse.model_validate(response)
+
+    async def bootstrap_sync_v2_profile(
+        self,
+        request_data: SyncV2ProfileBootstrapRequest,
+    ) -> SyncV2ProfileBootstrapResponse:
+        """Idempotently bootstrap server-connected Chatbook sync for the user.
+
+        Registers/refreshes the device and creates/returns the default personal dataset.
+        With an omitted device_id, the server assigns one; callers must persist the
+        returned device_id/dataset_id before pushing (persisted in P2).
+
+        Args:
+            request_data: Bootstrap request (mode, device name, requested domains).
+
+        Returns:
+            Parsed bootstrap response including assigned device_id and dataset_id.
+
+        Raises:
+            Exception: Propagates request failures and response validation errors.
+        """
+
+        response = await self._request(
+            "POST",
+            "/api/v1/sync/profile/bootstrap",
+            json_data=request_data.model_dump(mode="json"),
+        )
+        return SyncV2ProfileBootstrapResponse.model_validate(response)
 
     async def register_sync_v2_device(
         self,

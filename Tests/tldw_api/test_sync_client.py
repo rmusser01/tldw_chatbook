@@ -458,3 +458,54 @@ async def test_sync_v2_client_lists_and_resolves_conflicts(monkeypatch):
         "resolved_by_device_id": "device-1",
         "notes": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_sync_v2_client_bootstraps_profile(monkeypatch):
+    from tldw_chatbook.tldw_api import (
+        SyncV2ProfileBootstrapRequest,
+        SyncV2ProfileBootstrapResponse,
+    )
+
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={
+            "created": True,
+            "profile_bootstrapped": True,
+            "user_id": "user_123",
+            "active_dataset_id": "ds_1",
+            "device": {"device_id": "dev_1", "registered": True},
+            "dataset": {"dataset_id": "ds_1", "scope": "personal", "default_personal": True},
+            "server_cursor": 0,
+            "capabilities": {"protocol_version": "sync-v2-m1"},
+        }
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    resp = await client.bootstrap_sync_v2_profile(
+        SyncV2ProfileBootstrapRequest(device_name="Test Device")
+    )
+
+    assert isinstance(resp, SyncV2ProfileBootstrapResponse)
+    assert resp.device.device_id == "dev_1"
+    assert resp.dataset.dataset_id == "ds_1"
+    assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/sync/profile/bootstrap")
+    assert mocked.await_args_list[0].kwargs["json_data"]["mode"] == "offline_sync"
+
+
+@pytest.mark.asyncio
+async def test_sync_v2_client_gets_profile(monkeypatch):
+    from tldw_chatbook.tldw_api import SyncV2ProfileResponse
+
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(
+        return_value={"profile_bootstrapped": False, "user_id": "user_123", "server_cursor": 0}
+    )
+    monkeypatch.setattr(client, "_request", mocked)
+
+    resp = await client.get_sync_v2_profile(device_id="dev_1")
+
+    assert isinstance(resp, SyncV2ProfileResponse)
+    assert resp.profile_bootstrapped is False
+    assert mocked.await_args_list[0].args[:2] == ("GET", "/api/v1/sync/profile")
+    assert mocked.await_args_list[0].kwargs["params"]["device_id"] == "dev_1"
