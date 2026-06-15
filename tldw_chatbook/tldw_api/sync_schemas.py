@@ -95,9 +95,15 @@ SyncTransportResponse = dict[str, Any]
 
 
 SyncV2Domain = str
-SyncV2Operation = Literal["upsert", "delete", "link", "unlink", "resolve_conflict"]
+SyncV2Operation = Literal[
+    "upsert", "delete", "link", "unlink", "resolve_conflict",
+    "append", "tombstone",
+]
 SyncV2DatasetScope = Literal["personal", "workspace"]
-SyncV2EncryptionPolicy = Literal["client_private_v1", "server_trusted", "shared_workspace_v1"]
+SyncV2EncryptionPolicy = Literal[
+    "client_private_v1", "server_trusted", "shared_workspace_v1",
+    "server_trusted_v1", "passphrase_wrapped_v1", "device_wrapped_v1",
+]
 SyncV2ConflictStatus = Literal["unresolved", "resolved", "dismissed"]
 SyncV2ConflictResolutionAction = Literal["accept_local", "accept_remote", "merge", "dismiss"]
 
@@ -107,11 +113,17 @@ SYNC_V2_DOMAINS: list[SyncV2Domain] = [
     "chat.message",
     "attachment.ref",
 ]
-SYNC_V2_OPERATIONS: list[SyncV2Operation] = ["upsert", "delete", "link", "unlink", "resolve_conflict"]
+SYNC_V2_OPERATIONS: list[SyncV2Operation] = [
+    "upsert", "delete", "link", "unlink", "resolve_conflict",
+    "append", "tombstone",
+]
 SYNC_V2_ENCRYPTION_POLICIES: list[SyncV2EncryptionPolicy] = [
     "client_private_v1",
     "server_trusted",
     "shared_workspace_v1",
+    "server_trusted_v1",
+    "passphrase_wrapped_v1",
+    "device_wrapped_v1",
 ]
 
 _PRIVATE_CLEAR_PAYLOAD_ALLOWED_KEYS = {
@@ -368,29 +380,46 @@ class SyncV2DatasetEnrollResponse(BaseModel):
 class SyncV2Envelope(BaseModel):
     """Protocol envelope exchanged by Chatbook and tldw_server Sync v2."""
 
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
     client_envelope_id: str
     dataset_id: str
     domain: SyncV2Domain
-    entity_id: str
+    entity_id: str | None = None
+    object_id: str | None = None
+    parent_id: str | None = None
     operation: SyncV2Operation
-    adapter_version: int = Field(..., ge=1)
+    adapter_version: int = Field(1, ge=1)
+    schema_version: int = Field(1, ge=1)
     device_id: str | None = None
+    client_profile_id: str | None = None
     stable_key: str | None = None
     client_timestamp: str | None = None
+    created_at_client: str | None = None
     server_timestamp: str | None = None
+    received_at_server: str | None = None
     server_sequence: int | None = Field(None, ge=0)
+    server_cursor: int | None = Field(None, ge=0)
+    client_sequence: int | None = Field(None, ge=0)
     base_version: str | int | None = None
     entity_version: str | int | None = None
+    object_revision: int | None = Field(None, ge=0)
+    base_server_cursor: int | None = Field(None, ge=0)
+    base_object_revision: int | None = Field(None, ge=0)
+    base_object_hash: str | None = None
+    deleted: bool = False
     dependencies: list[dict[str, Any]] = Field(default_factory=list)
     routing_metadata: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
     payload_ciphertext: str | None = None
     payload_clear: dict[str, Any] = Field(default_factory=dict)
     payload_hash: str
     payload_size_bytes: int | None = Field(None, ge=0)
     encryption_policy: SyncV2EncryptionPolicy = "client_private_v1"
+    encryption_metadata: dict[str, Any] = Field(default_factory=dict)
     status: str | None = None
 
-    @field_validator("routing_metadata", "payload_clear", mode="before")
+    @field_validator("routing_metadata", "payload_clear", "payload", "encryption_metadata", mode="before")
     @classmethod
     def _default_object_maps(cls, value: Any) -> dict[str, Any]:
         return _normalize_object_map(value)
@@ -401,6 +430,22 @@ class SyncV2Envelope(BaseModel):
         if value is None:
             return []
         return value
+
+    @model_validator(mode="after")
+    def _sync_m1_aliases(self) -> "SyncV2Envelope":
+        if self.object_id is None and self.entity_id is not None:
+            self.object_id = self.entity_id
+        if self.entity_id is None and self.object_id is not None:
+            self.entity_id = self.object_id
+        if not self.payload and self.payload_clear:
+            self.payload = dict(self.payload_clear)
+        if not self.payload_clear and self.payload:
+            self.payload_clear = dict(self.payload)
+        # M1 fine-grained domains (e.g. "notes.note") use server_trusted_v1 by default;
+        # only apply when the caller did not explicitly choose client_private_v1.
+        if "." in self.domain and self.encryption_policy == "client_private_v1":
+            self.encryption_policy = "server_trusted_v1"
+        return self
 
     @model_validator(mode="after")
     def _reject_clear_private_payload(self) -> "SyncV2Envelope":
