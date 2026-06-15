@@ -526,3 +526,19 @@ async def test_sync_v2_client_gets_profile_without_device_id(monkeypatch):
     assert isinstance(resp, SyncV2ProfileResponse)
     # No device_id known yet -> must NOT send a literal empty device_id query param.
     assert mocked.await_args_list[0].kwargs["params"] is None
+
+
+@pytest.mark.asyncio
+async def test_pull_sync_v2_omits_none_query_params(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    mocked = AsyncMock(return_value={"dataset_id": "ds_1", "envelopes": [], "next_cursor": None, "has_more": False})
+    monkeypatch.setattr(client, "_request", mocked)
+
+    await client.pull_sync_v2_envelopes(dataset_id="ds_1", device_id="dev_1", cursor="0", domains=["notes.note"])
+
+    params = mocked.await_args_list[0].kwargs["params"]
+    assert "page_size" not in params  # None must be omitted, not sent as empty string
+    assert params["cursor"] == "0"
+    assert params["domain"] == ["notes.note"]
+    assert params["include_own_changes"] is False
+    assert params["dataset_id"] == "ds_1"

@@ -14935,18 +14935,19 @@ class TLDWAPIClient:
             Exception: Propagates request failures and response validation errors.
         """
 
-        response = await self._request(
-            "GET",
-            "/api/v1/sync/pull",
-            params={
-                "dataset_id": dataset_id,
-                "device_id": device_id,
-                "cursor": cursor,
-                "domain": domains,
-                "page_size": page_size,
-                "include_own_changes": include_own_changes,
-            },
-        )
+        params: dict[str, Any] = {
+            "dataset_id": dataset_id,
+            "device_id": device_id,
+            "include_own_changes": include_own_changes,
+        }
+        if cursor is not None:
+            params["cursor"] = cursor
+        if domains is not None:
+            params["domain"] = domains
+        if page_size is not None:
+            params["page_size"] = page_size
+
+        response = await self._request("GET", "/api/v1/sync/pull", params=params)
         return SyncV2PullResponse.model_validate(response)
 
     async def get_sync_v2_restore_manifest(
