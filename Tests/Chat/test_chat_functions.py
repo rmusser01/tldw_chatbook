@@ -301,6 +301,23 @@ class TestChatApiCall:
         assert kwargs["thinking_effort"] == "high"
         assert kwargs["thinking_budget_tokens"] == 4096
 
+    def test_huggingface_max_tokens_maps_to_supported_handler_kwarg(self, mock_handlers, mocker):
+        mock_huggingface_handler = mocker.MagicMock(return_value="HuggingFace response")
+        mock_huggingface_handler.__name__ = "mock_huggingface_handler"
+        mock_handlers.get.return_value = mock_huggingface_handler
+
+        chat_api_call(
+            api_endpoint="huggingface",
+            messages_payload=[{"role": "user", "content": "test"}],
+            model="openai/gpt-oss-120b",
+            max_tokens=16,
+        )
+
+        kwargs = mock_huggingface_handler.call_args.kwargs
+        assert kwargs["model"] == "openai/gpt-oss-120b"
+        assert kwargs["max_tokens"] == 16
+        assert "max_new_tokens" not in kwargs
+
     def test_unsupported_endpoint_raises_error(self, mock_handlers):
         mock_handlers.get.return_value = None
         with pytest.raises(ValueError, match="Unsupported API endpoint: unsupported"):
@@ -734,6 +751,45 @@ class TestProviderRequestPayloads:
         )
 
         assert captured["json"]["thinking"] == {"type": "adaptive", "effort": "high"}
+
+    def test_huggingface_legacy_router_base_uses_openai_compatible_router_url(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "huggingface_api": {
+                    "api_base_url": "https://router.huggingface.co/hf-inference/models",
+                    "streaming": False,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+                },
+            ),
+        )
+
+        response = LLM_API_Calls.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="hf_test",
+            model="/openai/gpt-oss-120b",
+            streaming=False,
+            max_tokens=64,
+        )
+
+        assert captured["url"] == "https://router.huggingface.co/v1/chat/completions"
+        assert captured["json"]["max_tokens"] == 64
+        assert response["choices"][0]["message"]["content"] == "OK"
 
 
 @pytest.mark.integration
