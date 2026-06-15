@@ -65,3 +65,21 @@ def test_legacy_client_private_envelope_still_valid():
     )
     assert env.encryption_policy == "client_private_v1"
     assert env.operation == "upsert"
+
+
+def test_explicit_client_private_policy_preserved_on_dotted_domain():
+    env = SyncV2Envelope(
+        client_envelope_id="c", dataset_id="ds", domain="notes.note",
+        object_id="o", operation="upsert", adapter_version=1, payload_hash="sha256:x",
+        payload_clear={}, encryption_policy="client_private_v1", payload_ciphertext="abc",
+    )
+    assert env.encryption_policy == "client_private_v1"
+
+
+def test_dotted_domain_defaults_to_server_trusted_when_policy_unset():
+    env = SyncV2Envelope(
+        client_envelope_id="c", dataset_id="ds", domain="notes.note",
+        object_id="o", operation="upsert", adapter_version=1, payload_hash="sha256:x",
+        payload={"title": "T", "content": "B"},
+    )
+    assert env.encryption_policy == "server_trusted_v1"

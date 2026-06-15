@@ -441,9 +441,12 @@ class SyncV2Envelope(BaseModel):
             self.payload = dict(self.payload_clear)
         if not self.payload_clear and self.payload:
             self.payload_clear = dict(self.payload)
-        # M1 fine-grained domains (e.g. "notes.note") use server_trusted_v1 by default;
-        # only apply when the caller did not explicitly choose client_private_v1.
-        if "." in self.domain and self.encryption_policy == "client_private_v1":
+        # M1 fine-grained domains default to server_trusted_v1, but only when the
+        # caller did not explicitly choose a policy (explicit client_private_v1 is honored).
+        if (
+            "." in self.domain
+            and "encryption_policy" not in self.model_fields_set
+        ):
             self.encryption_policy = "server_trusted_v1"
         return self
 
