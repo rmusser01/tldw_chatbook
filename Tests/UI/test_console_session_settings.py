@@ -1478,6 +1478,45 @@ async def test_console_settings_modal_preserves_missing_registry_model_for_curre
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_allows_manual_model_when_registry_has_stale_options() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="anthropic", model="claude-3-haiku-20240307")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"anthropic": ["claude-3-haiku-20240307"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        custom_button = app.screen.query_one("#console-settings-model-custom", Button)
+        assert model_select.display is True
+        assert model_input.display is False
+        assert custom_button.display is True
+
+        await pilot.click("#console-settings-model-custom")
+        await pilot.pause()
+
+        assert model_select.display is False
+        assert model_input.display is True
+        assert model_input.disabled is False
+        model_input.value = "claude-haiku-4-5-20251001"
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "anthropic"
+    assert app.saved_settings.model == "claude-haiku-4-5-20251001"
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_provider_change_uses_configured_provider_model() -> None:
     app = ModalHarness()
     app.app_config["api_settings"]["llama_cpp"] = {

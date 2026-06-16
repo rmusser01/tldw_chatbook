@@ -771,7 +771,7 @@ def chat_with_anthropic(
     if system_prompt is not None: data["system"] = system_prompt # Anthropic uses 'system' at the top level
     if thinking_config is None:
         if current_temp is not None: data["temperature"] = current_temp
-        if current_top_p is not None: data["top_p"] = current_top_p
+        elif current_top_p is not None: data["top_p"] = current_top_p
         if current_top_k is not None: data["top_k"] = current_top_k
     elif any(value is not None for value in (current_temp, current_top_p, current_top_k)):
         logger.warning(

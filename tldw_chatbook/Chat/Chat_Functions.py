@@ -848,7 +848,7 @@ def chat_api_call(
 
         # Log safely first
         try:
-            logger.error("%s. Details: %s", log_message_base, error_text[:500], exc_info=False)
+            logger.opt(exception=False).error("{}. Details: {}", log_message_base, error_text[:500])
         except Exception as log_e:
             logger.error(f"Error during logging HTTPError details: {log_e}")
 
@@ -878,9 +878,12 @@ def chat_api_call(
         # This catches cases where the handler itself has already processed an error
         # (e.g. non-HTTP error, or it decided to raise a specific Chat*Error type)
         # and raises one of our custom exceptions.
-        logger.error(
-            f"Handler for {endpoint_lower} directly raised: {type(e_chat_direct).__name__} - {e_chat_direct.message}",
-            exc_info=True if e_chat_direct.status_code >= 500 else False)
+        logger.opt(exception=e_chat_direct.status_code >= 500).error(
+            "Handler for {} directly raised: {} - {}",
+            endpoint_lower,
+            type(e_chat_direct).__name__,
+            e_chat_direct.message,
+        )
         raise e_chat_direct  # Re-raise the specific error
     except (ValueError, TypeError, KeyError) as e:
         logger.error(f"Value/Type/Key error during chat API call setup for {endpoint_lower}: {e}", exc_info=True)

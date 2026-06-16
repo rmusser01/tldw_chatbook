@@ -323,6 +323,25 @@ class TestChatApiCall:
         assert kwargs["max_tokens"] == 16
         assert "max_new_tokens" not in kwargs
 
+    def test_provider_json_error_body_is_not_masked_by_dispatcher_logging(self, mock_handlers, mocker):
+        provider_error = ChatBadRequestError(
+            provider="anthropic",
+            message='Bad request (404). Detail: {"type":"error","error":{"type":"not_found_error"}}',
+        )
+        mock_handler = mocker.MagicMock(side_effect=provider_error)
+        mock_handler.__name__ = "mock_handler"
+        mock_handlers.get.return_value = mock_handler
+
+        with pytest.raises(ChatBadRequestError) as exc_info:
+            chat_api_call(
+                "anthropic",
+                messages_payload=[{"role": "user", "content": "test"}],
+                api_key=DUMMY_ANTHROPIC_API_KEY,
+            )
+
+        assert exc_info.value is provider_error
+        assert '{"type":"error"' in exc_info.value.message
+
     def test_unsupported_endpoint_raises_error(self, mock_handlers):
         mock_handlers.get.return_value = None
         with pytest.raises(ValueError, match="Unsupported API endpoint: unsupported"):
@@ -647,6 +666,45 @@ class TestProviderRequestPayloads:
         assert "temperature" not in captured["json"]
         assert "top_p" not in captured["json"]
         assert "top_k" not in captured["json"]
+
+    def test_anthropic_modern_models_do_not_send_temperature_and_top_p_together(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-haiku-4-5-20251001",
+                    "content": [{"type": "text", "text": "modern answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_ANTHROPIC_API_KEY,
+            model="claude-haiku-4-5-20251001",
+            streaming=False,
+            temp=0.6,
+            topp=0.95,
+            topk=50,
+            max_tokens=64,
+        )
+
+        assert captured["json"]["temperature"] == 0.6
+        assert "top_p" not in captured["json"]
+        assert captured["json"]["top_k"] == 50
 
     def test_anthropic_thinking_effort_maps_to_budget_tokens(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
