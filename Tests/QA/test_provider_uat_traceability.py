@@ -29,6 +29,7 @@ def test_provider_uat_traceability_report_exists_and_discloses_gap() -> None:
 
 
 def test_provider_uat_traceability_task_points_to_existing_report() -> None:
+    assert (REPO_ROOT / TASK_123).exists()
     task = _text(TASK_123)
 
     assert TRACEABILITY_REPORT.as_posix() in task
