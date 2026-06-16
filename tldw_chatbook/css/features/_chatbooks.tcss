@@ -44,7 +44,7 @@ ChatbooksWindow {
     color: $text;
 }
 
-#chatbooks-list ListItem.--highlight {
+#chatbooks-list ListItem.-highlight {
     background: $surface;
     color: $text;
     text-style: bold underline;
