@@ -94,14 +94,19 @@ class ServerChangesResponse(BaseModel):
 SyncTransportResponse = dict[str, Any]
 
 
-SyncV2Domain = Literal["notes", "chat", "workspaces", "source_cache", "media"]
+SyncV2Domain = str
 SyncV2Operation = Literal["upsert", "delete", "link", "unlink", "resolve_conflict"]
 SyncV2DatasetScope = Literal["personal", "workspace"]
 SyncV2EncryptionPolicy = Literal["client_private_v1", "server_trusted", "shared_workspace_v1"]
 SyncV2ConflictStatus = Literal["unresolved", "resolved", "dismissed"]
 SyncV2ConflictResolutionAction = Literal["accept_local", "accept_remote", "merge", "dismiss"]
 
-SYNC_V2_DOMAINS: list[SyncV2Domain] = ["notes", "chat", "workspaces", "source_cache", "media"]
+SYNC_V2_DOMAINS: list[SyncV2Domain] = [
+    "notes.note",
+    "chat.conversation",
+    "chat.message",
+    "attachment.ref",
+]
 SYNC_V2_OPERATIONS: list[SyncV2Operation] = ["upsert", "delete", "link", "unlink", "resolve_conflict"]
 SYNC_V2_ENCRYPTION_POLICIES: list[SyncV2EncryptionPolicy] = [
     "client_private_v1",
@@ -160,21 +165,150 @@ def _find_disallowed_private_clear_payload_key(value: dict[str, Any]) -> str | N
 
 
 class SyncV2CapabilitiesResponse(BaseModel):
-    """Server-supported Sync v2 protocol capabilities."""
+    """Server-supported Sync v2 protocol capabilities (M1 shape).
 
-    protocol_version: int = Field(2, ge=2)
-    min_supported_protocol_version: int = Field(2, ge=2)
-    supported_domains: list[SyncV2Domain] = Field(default_factory=lambda: list(SYNC_V2_DOMAINS))
-    supported_operations: list[SyncV2Operation] = Field(default_factory=lambda: list(SYNC_V2_OPERATIONS))
-    encryption_policies: list[SyncV2EncryptionPolicy] = Field(default_factory=lambda: list(SYNC_V2_ENCRYPTION_POLICIES))
+    Domain/operation/policy fields are typed loosely so the client can read whatever
+    the server advertises without coupling to the envelope vocabulary (which is
+    conformed in P2).
+    """
+
+    protocol_version: str = "sync-v2-m1"
+    min_supported_protocol_version: str = "sync-v2-m1"
+    domains: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("domains", "supported_domains"),
+    )
+    operations: dict[str, list[str]] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("operations", "supported_operations"),
+    )
+    encryption: dict[str, Any] = Field(default_factory=dict)
+    encryption_policies: list[str] = Field(default_factory=list)
+    blob_transfer: dict[str, Any] = Field(default_factory=dict)
+    quota: dict[str, Any] = Field(default_factory=dict)
     max_batch_size: int = Field(100, ge=1)
     max_envelope_payload_bytes: int = Field(262_144, ge=1)
     max_attachment_bytes: int = Field(1_048_576, ge=1)
     supports_restore_manifest: bool = True
     supports_conflicts: bool = True
-    supports_attachments: bool = True
+    supports_attachments: bool = False
     compatibility_flags: dict[str, bool] = Field(default_factory=dict)
     server_time: str | None = None
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_capability_payload(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        supported_operations = value.get("supported_operations")
+        if "operations" not in value and isinstance(supported_operations, list):
+            normalized = dict(value)
+            normalized["operations"] = {"*": supported_operations}
+            return normalized
+        return value
+
+    @field_validator("protocol_version", "min_supported_protocol_version", mode="before")
+    @classmethod
+    def _coerce_protocol_version(cls, value: Any) -> str:
+        if value in (None, 2, "2"):
+            return "sync-v2-m1"
+        return str(value)
+
+    @property
+    def supported_domains(self) -> list[str]:
+        """Back-compat alias for pre-M1 readers."""
+        return self.domains
+
+    @property
+    def supported_operations(self) -> list[str]:
+        """Back-compat: flattened, de-duplicated operation names across all domains."""
+        return sorted({op for ops in self.operations.values() for op in ops})
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+
+class SyncV2ProfileDeviceStatus(BaseModel):
+    """Device registration status in a Sync v2 profile response."""
+
+    device_id: str | None = None
+    registered: bool = False
+    client_profile_id: str | None = None
+    last_seen_at: str | None = None
+    mode: str | None = None
+    client_type: str | None = None
+    client_version: str | None = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class SyncV2ProfileDatasetStatus(BaseModel):
+    """Default personal dataset metadata in a Sync v2 profile response."""
+
+    dataset_id: str
+    scope: str = "personal"
+    default_personal: bool = False
+    client_family: str | None = None
+    domains: list[str] = Field(default_factory=list)
+    created_at: str | None = None
+    updated_at: str | None = None
+    encryption_policy: str = "server_trusted_v1"
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class SyncV2ProfileDomainStatus(BaseModel):
+    """Per-domain Sync v2 status summary."""
+
+    domain: str
+    last_server_cursor: int = Field(0, ge=0)
+    envelope_count: int = Field(0, ge=0)
+    pending_apply_count: int = Field(0, ge=0)
+    unresolved_conflicts: int = Field(0, ge=0)
+    last_apply_status: str | None = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class SyncV2ProfileResponse(BaseModel):
+    """Read-only Sync v2 M1 profile/status response."""
+
+    protocol_version: str = "sync-v2-m1"
+    min_supported_protocol_version: str = "sync-v2-m1"
+    profile_bootstrapped: bool = False
+    user_id: str | None = None
+    active_dataset_id: str | None = None
+    device: SyncV2ProfileDeviceStatus | None = None
+    dataset: SyncV2ProfileDatasetStatus | None = None
+    server_cursor: int = Field(0, ge=0)
+    capabilities: SyncV2CapabilitiesResponse = Field(default_factory=SyncV2CapabilitiesResponse)
+    domain_status: list[SyncV2ProfileDomainStatus] = Field(default_factory=list)
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class SyncV2ProfileBootstrapRequest(BaseModel):
+    """Request to bootstrap a server-connected Chatbook profile (POST /profile/bootstrap)."""
+
+    client_family: str = "chatbook"
+    mode: Literal["server_frontend", "offline_sync"] = "offline_sync"
+    device_id: str | None = None
+    device_name: str | None = None
+    client_profile_id: str | None = None
+    client_instance: dict[str, Any] = Field(default_factory=dict)
+    requested_domains: list[str] = Field(
+        default_factory=lambda: [
+            "notes.note", "chat.conversation", "chat.message", "attachment.ref",
+        ]
+    )
+    model_config = ConfigDict(extra="ignore")
+
+
+class SyncV2ProfileBootstrapResponse(SyncV2ProfileResponse):
+    """Response from explicit profile bootstrap."""
+
+    created: bool = False
 
 
 class SyncV2DeviceRegisterRequest(BaseModel):
