@@ -152,6 +152,33 @@ async def test_console_workspace_context_renders_active_workspace() -> None:
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_conversation_list_expands_for_multiple_rows() -> None:
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Research Sprint")
+    service.set_active_workspace("ws-a")
+    for index in range(3):
+        service.link_membership(
+            "ws-a",
+            item_type="conversation",
+            item_id=f"conv-{index}",
+            role="workspace-thread",
+            title=f"Planning thread {index + 1}",
+        )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+
+        conversation_list = console.query_one("#console-workspace-conversations")
+        rows = list(console.query(".console-workspace-conversation-row"))
+
+        assert len(rows) >= 3
+        assert conversation_list.region.height >= len(rows)
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_context_renders_server_readiness_handoff_and_acp_contracts() -> None:
     app = _build_test_app()
     app.workspace_server_adapter_state = ConsoleWorkspaceServerAdapterState(

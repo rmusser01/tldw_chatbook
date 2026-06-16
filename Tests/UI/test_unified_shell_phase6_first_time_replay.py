@@ -155,7 +155,12 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                     "nav-personas",
                     "personas",
                     "PersonasScreen",
-                    ("Personas", "Behavior, characters, prompts, lore", "Attach to Console"),
+                    (
+                        "Personas",
+                        "Behavior profiles for chat and agents",
+                        "characters, personas, prompts, dictionaries, and lore",
+                        "Attach to Console",
+                    ),
                 ),
                 (
                     "nav-skills",
@@ -174,5 +179,4 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                 screen_text = _screen_text(app)
                 for copy in required_copy:
                     assert copy in screen_text
-
 

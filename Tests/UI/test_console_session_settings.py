@@ -28,6 +28,7 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettings
 from tldw_chatbook.Widgets.Console import console_settings_summary as settings_summary_module
 from tldw_chatbook.Widgets.Console.console_settings_summary import ConsoleSettingsSummary
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
+from tldw_chatbook.config import API_MODELS_BY_PROVIDER, DEFAULT_CONFIG_FROM_TOML
 
 
 class SummaryHarness(App[None]):
@@ -98,6 +99,29 @@ def _summary_text(console) -> str:
         for widget in summary.query(Static)
         if widget.display and hasattr(widget, "renderable")
     )
+
+
+def test_groq_console_default_uses_current_catalog_model() -> None:
+    groq_settings = DEFAULT_CONFIG_FROM_TOML["api_settings"]["groq"]
+
+    assert groq_settings["model"] == "llama-3.3-70b-versatile"
+    assert groq_settings["model"] in API_MODELS_BY_PROVIDER["Groq"]
+    assert groq_settings["model"] not in {"llama3-70b-8192", "llama3-8b-8192"}
+
+
+def test_console_remote_defaults_use_smoke_verified_models() -> None:
+    expected_defaults = {
+        "anthropic": ("Anthropic", "claude-sonnet-4-20250514"),
+        "cohere": ("Cohere", "command-a-03-2025"),
+        "google": ("Google", "gemini-2.5-flash"),
+        "huggingface": ("HuggingFace", "openai/gpt-oss-120b"),
+    }
+
+    for config_key, (catalog_key, expected_model) in expected_defaults.items():
+        provider_settings = DEFAULT_CONFIG_FROM_TOML["api_settings"][config_key]
+
+        assert provider_settings["model"] == expected_model
+        assert expected_model in API_MODELS_BY_PROVIDER[catalog_key]
 
 
 async def _wait_for_console_settings_modal(host: ConsoleHarness, pilot):
@@ -2397,6 +2421,48 @@ async def test_console_new_native_tab_receives_default_settings_snapshot() -> No
         assert settings is not None
         assert settings.provider == "llama_cpp"
         assert settings.model == "configured-model"
+
+
+@pytest.mark.asyncio
+async def test_console_new_native_tab_inherits_active_session_settings_snapshot() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "openai"
+    app.chat_api_model_value = "gpt-4.1"
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {"api_key": "test-key", "model": "gpt-4.1"},
+        "local_llamacpp": {
+            "api_url": "http://127.0.0.1:9099",
+            "model": "local-model",
+        },
+    }
+    app.providers_models = {
+        "openai": ["gpt-4.1"],
+        "local_llamacpp": ["local-model"],
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-new-chat-tab")
+        store = console._ensure_console_chat_store()
+        first_id = store.ensure_session().id
+        active_settings = ConsoleSessionSettings(
+            provider="local_llamacpp",
+            model="local-model",
+            base_url="http://127.0.0.1:9099",
+            temperature=0.2,
+            top_p=0.8,
+            streaming=False,
+        )
+        store.replace_session_settings(first_id, active_settings)
+        await console._sync_native_console_chat_ui()
+
+        second_id = await _press_new_console_tab(console, store, pilot)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        assert second_id != first_id
+        assert store.session_settings(second_id) == active_settings
 
 
 @pytest.mark.asyncio

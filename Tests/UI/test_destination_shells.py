@@ -392,6 +392,7 @@ async def _wait_for_personas_snapshot(screen, pilot, *, timeout: float = 2.0) ->
         "#personas-empty-state",
         "#personas-characters-summary",
         "#personas-profiles-summary",
+        "#personas-readiness-console",
     )
     while time.monotonic() < deadline:
         terminal_state_visible = any(screen.query(selector) for selector in terminal_selectors)

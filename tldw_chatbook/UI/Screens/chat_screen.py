@@ -100,6 +100,7 @@ from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
 )
+from ...Notes.notes_scope_service import ScopeType
 from ...Constants import TAB_SETTINGS
 from ...Utils.chat_diagnostics import ChatDiagnostics
 from ...Utils.console_background_effects import (
@@ -127,6 +128,7 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Workspaces.display_state import (
+    ConsoleWorkspaceConversationRow,
     ConsoleWorkspaceContextState,
     build_console_workspace_state,
 )
@@ -1197,13 +1199,35 @@ class ChatScreen(BaseAppScreen):
             return str(conversation_id) if conversation_id else None
         return self._current_console_conversation_id()
 
+    def _console_session_id_for_workspace_conversation(
+        self,
+        conversation_id: str,
+    ) -> str | None:
+        """Return an open Console session id for a workspace conversation row."""
+        target = str(conversation_id or "").strip()
+        if not target:
+            return None
+        store = self._console_chat_store
+        if store is None:
+            return None
+        if target.startswith("native:"):
+            session_id = target.removeprefix("native:")
+            if any(session.id == session_id for session in store.sessions()):
+                return session_id
+            return None
+        for session in store.sessions():
+            if str(session.persisted_conversation_id or "") == target:
+                return session.id
+        return None
+
     def _build_console_workspace_context_state(
         self,
         session_data: Optional[ChatSessionData] = None,
     ) -> ConsoleWorkspaceContextState:
-        return build_console_workspace_state(
+        current_conversation = self._current_console_conversation_id(session_data)
+        state = build_console_workspace_state(
             registry_service=getattr(self.app_instance, "workspace_registry_service", None),
-            current_conversation=self._current_console_conversation_id(session_data),
+            current_conversation=current_conversation,
             server_adapter_state=getattr(
                 self.app_instance,
                 "workspace_server_adapter_state",
@@ -1215,6 +1239,61 @@ class ChatScreen(BaseAppScreen):
                 None,
             ),
         )
+        return self._with_native_console_session_rows(state)
+
+    def _with_native_console_session_rows(
+        self,
+        state: ConsoleWorkspaceContextState,
+    ) -> ConsoleWorkspaceContextState:
+        """Include active native Console sessions in the workspace rail.
+
+        The workspace registry only knows about conversations after durable
+        persistence links them. Native Console sessions are still user-visible
+        conversations and need to remain reachable from the rail while they are
+        open, including before the first persisted message exists.
+        """
+        store = self._console_chat_store
+        if store is None:
+            return state
+
+        active_workspace_id = str(store.workspace_context.active_workspace_id or "").strip()
+        active_session_id = store.active_session_id
+        rows = list(state.conversation_rows)
+        existing_ids = {str(row.conversation_id) for row in rows}
+        native_rows: list[ConsoleWorkspaceConversationRow] = []
+        for session in store.sessions():
+            session_workspace_id = str(session.workspace_id or "").strip()
+            selected = session.id == active_session_id
+            if (
+                active_workspace_id
+                and active_workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
+                and session_workspace_id != active_workspace_id
+                and not selected
+            ):
+                continue
+
+            conversation_id = (
+                str(session.persisted_conversation_id)
+                if session.persisted_conversation_id
+                else f"native:{session.id}"
+            )
+            if conversation_id in existing_ids:
+                continue
+
+            native_rows.append(
+                ConsoleWorkspaceConversationRow(
+                    conversation_id=conversation_id,
+                    title=session.title,
+                    status="active" if selected else "open",
+                    selected=selected,
+                )
+            )
+            existing_ids.add(conversation_id)
+
+        if not native_rows:
+            return state
+        native_rows.sort(key=lambda row: 0 if row.selected else 1)
+        return replace(state, conversation_rows=tuple(native_rows + rows))
 
     def _console_config(self) -> dict[str, Any]:
         """Return mutable Console app config, initializing the section if needed."""
@@ -3037,6 +3116,15 @@ class ChatScreen(BaseAppScreen):
                     ),
                 )
             )
+
+    def _clear_native_console_message_selection(self) -> None:
+        """Dismiss contextual message actions when an action changes the transcript flow."""
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            return
+        transcript.selected_message_id = None
+        self._last_native_transcript_refresh_key = None
         self._sync_console_transcript_guidance()
 
     def _native_run_status_copy(self) -> str:
@@ -3320,10 +3408,20 @@ class ChatScreen(BaseAppScreen):
             return True
 
         if action_id == "save-as":
-            await self.app_instance.push_screen(
+            destinations = self._console_save_as_destinations(message)
+
+            def _apply_save_as(destination: str | None) -> None:
+                if destination == "Note":
+                    self.run_worker(
+                        self._save_console_message_as_note(message_id),
+                        exclusive=True,
+                    )
+
+            await self.app.push_screen(
                 ConsoleSaveAsModal(
-                    destinations=self._console_message_action_service.save_as_destinations(message)
-                )
+                    destinations=destinations,
+                ),
+                callback=_apply_save_as,
             )
             self._last_console_action = ConsoleActionResult(
                 action_id=action_id,
@@ -3374,6 +3472,66 @@ class ChatScreen(BaseAppScreen):
         severity = "information" if result.status in {"completed", "wip"} else "warning"
         self.app_instance.notify(result.visible_copy, severity=severity)
         return True
+
+    def _console_save_as_destinations(self, message: Any) -> list[Any]:
+        """Return Save-as destinations available in the current app runtime."""
+        _ = message
+        available_destinations: set[str] = set()
+        notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
+        if callable(getattr(notes_scope_service, "save_note", None)):
+            available_destinations.add("Note")
+        return ConsoleMessageActionService(
+            available_save_destinations=available_destinations,
+        ).save_as_destinations(message)
+
+    async def _save_console_message_as_note(self, message_id: str) -> None:
+        """Persist one selected Console message as a local Note."""
+        notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
+        save_note = getattr(notes_scope_service, "save_note", None)
+        if not callable(save_note):
+            self.app_instance.notify(
+                "Save as Note is unavailable: Notes service is not ready.",
+                severity="warning",
+            )
+            return
+
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+
+        content = (
+            message.variants.current.content
+            if message.variants is not None
+            else message.content
+        )
+        result = save_note(
+            scope=ScopeType.LOCAL_NOTE.value,
+            title="Console message",
+            content=content,
+            note_id=None,
+            version=None,
+            user_id=getattr(self.app_instance, "current_user", None) or "default_user",
+            workspace_id=None,
+            keywords=["console"],
+        )
+        if inspect.isawaitable(result):
+            result = await result
+        if not result:
+            self.app_instance.notify("Save as Note failed.", severity="error")
+            return
+        self._last_console_action = ConsoleActionResult(
+            action_id="save-as-note",
+            status="completed",
+            visible_copy="Saved message as Note.",
+            target_message_id=message_id,
+            target_content=content,
+        )
+        self.app_instance.notify("Saved message as Note.", severity="information")
 
     async def _open_console_message_edit_modal(self, *, message_id: str, content: str) -> None:
         """Open the dedicated transcript edit modal for one Console message."""
@@ -3447,6 +3605,8 @@ class ChatScreen(BaseAppScreen):
         result = await controller.continue_from_message(message_id)
         if result.visible_copy and not result.accepted:
             self.app_instance.notify(result.visible_copy, severity="warning")
+        if result.accepted:
+            self._clear_native_console_message_selection()
         await self._sync_native_console_chat_ui()
 
     async def _regenerate_console_message(
@@ -3641,7 +3801,7 @@ class ChatScreen(BaseAppScreen):
             return
         if not self._should_capture_console_input(composer):
             return
-        if event.key in {"backspace", "ctrl+h"}:
+        if event.key in {"backspace", "ctrl+h", "delete"}:
             composer.delete_left()
             event.stop()
             event.prevent_default()
@@ -4620,9 +4780,29 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-new-chat-tab":
             event.stop()
             self._ensure_console_chat_controller().new_session(
-                settings=self._default_console_session_settings(),
+                settings=(
+                    self._active_console_session_settings()
+                    or self._default_console_session_settings()
+                ),
             )
             await self._sync_native_console_chat_ui()
+            self._focus_console_composer_if_needed(force=True)
+            return
+        if button_id and button_id.startswith("console-workspace-conversation-"):
+            event.stop()
+            conversation_id = str(getattr(event.button, "conversation_id", "") or "")
+            session_id = self._console_session_id_for_workspace_conversation(conversation_id)
+            if session_id is None:
+                self.app_instance.notify(
+                    "Open this workspace conversation from Library before switching here.",
+                    severity="warning",
+                )
+                return
+            controller = self._ensure_console_chat_controller()
+            if controller.store.active_session_id != session_id:
+                self._set_active_workspace_for_console_session(session_id)
+                controller.switch_session(session_id)
+                await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)
             return
         if button_id and button_id.startswith("console-close-session-tab-"):

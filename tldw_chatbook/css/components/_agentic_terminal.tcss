@@ -618,6 +618,17 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     min-height: 8;
 }
 
+#console-workspace-conversations,
+#console-workspace-handoff-rows {
+    height: auto;
+    min-height: 0;
+}
+
+.console-workspace-conversation-row {
+    height: auto;
+    min-height: 1;
+}
+
 #console-left-rail {
     height: 100%;
     min-height: 0;

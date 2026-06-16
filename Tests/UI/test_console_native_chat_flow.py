@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual import on
@@ -21,6 +21,9 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
+
+
+DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 
 
 class _ReadyResolutionGateway:
@@ -173,6 +176,56 @@ def _static_plain_text(widget: Static) -> str:
     return getattr(renderable, "plain", str(renderable))
 
 
+def _widget_text(widget) -> str:
+    if hasattr(widget, "renderable"):
+        renderable = widget.renderable
+        return getattr(renderable, "plain", str(renderable))
+    label = getattr(widget, "label", "")
+    return getattr(label, "plain", str(label))
+
+
+def _console_workspace_conversation_texts(console) -> list[str]:
+    rows = console.query(".console-workspace-conversation-row")
+    return [_widget_text(row) for row in rows]
+
+
+def _console_workspace_conversation_row_id_for_session(console, session_id: str) -> str:
+    target_conversation_id = f"native:{session_id}"
+    for row in console.query(".console-workspace-conversation-row"):
+        if getattr(row, "conversation_id", None) == target_conversation_id:
+            return str(row.id)
+    rows = [
+        (getattr(row, "id", ""), getattr(row, "conversation_id", None), _widget_text(row))
+        for row in console.query(".console-workspace-conversation-row")
+    ]
+    raise AssertionError(
+        f"Workspace conversation row for {target_conversation_id!r} not found. "
+        f"Rows: {rows!r}"
+    )
+
+
+async def _wait_for_workspace_conversation_text(
+    console,
+    pilot,
+    expected: str,
+    *,
+    selected: bool | None = None,
+    attempts: int = 40,
+) -> list[str]:
+    for _ in range(attempts):
+        row_texts = _console_workspace_conversation_texts(console)
+        for text in row_texts:
+            if expected not in text:
+                continue
+            if selected is None or text.startswith("> ") == selected:
+                return row_texts
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"Workspace conversation {expected!r} not found. "
+        f"Rows: {_console_workspace_conversation_texts(console)!r}"
+    )
+
+
 async def _wait_for_console_rename_modal(host: ConsoleHarness, pilot):
     for _ in range(40):
         if (
@@ -240,7 +293,7 @@ async def test_console_native_generic_provider_send_renders_completed_message(mo
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         gateway = console._ensure_console_provider_gateway()
-        app.app_config["api_settings"] = {"openai": {"api_key": "sk-current"}}
+        app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -250,7 +303,7 @@ async def test_console_native_generic_provider_send_renders_completed_message(mo
         assert isinstance(gateway, ConsoleProviderGateway)
         assert captured_kwargs
         assert captured_kwargs[-1]["api_endpoint"] == "openai"
-        assert captured_kwargs[-1]["api_key"] == "sk-current"
+        assert captured_kwargs[-1]["api_key"] == DUMMY_OPENAI_API_KEY
         assert console._ensure_console_chat_controller().run_state.status is ConsoleRunStatus.COMPLETED
         store = console._ensure_console_chat_store()
         messages = store.messages_for_session(store.active_session_id)
@@ -258,6 +311,66 @@ async def test_console_native_generic_provider_send_renders_completed_message(mo
             message for message in messages if message.role is ConsoleMessageRole.ASSISTANT
         ]
         assert assistant_messages[-1].status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_console_native_send_button_click_dispatches_message(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {}
+    captured_kwargs = []
+
+    def fake_chat_api_call(**_kwargs):
+        captured_kwargs.append(_kwargs)
+        return "click provider response"
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.Chat_Functions.chat_api_call",
+        fake_chat_api_call,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("click send")
+
+        await pilot.click("#console-send-message")
+        await _wait_for_text(console, pilot, "click provider response")
+
+        assert captured_kwargs
+        assert composer.draft_text() == ""
+
+
+@pytest.mark.asyncio
+async def test_console_successful_send_does_not_leave_empty_send_tooltip(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
+
+    def fake_chat_api_call(**_kwargs):
+        return "sent response"
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.Chat_Functions.chat_api_call",
+        fake_chat_api_call,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("send once")
+
+        await pilot.click("#console-send-message")
+        await _wait_for_text(console, pilot, "sent response")
+
+        send_button = console.query_one("#console-send-message", Button)
+        assert composer.draft_text() == ""
+        assert send_button.tooltip != "Type a message before sending."
 
 
 @pytest.mark.asyncio
@@ -781,7 +894,9 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        assert len(console.query("#console-workspace-empty-conversations")) == 1
+        row_texts = _console_workspace_conversation_texts(console)
+        assert any("Chat 1" in text for text in row_texts)
+        assert len(console.query("#console-workspace-empty-conversations")) == 0
         store = console._ensure_console_chat_store()
         store.persistence = WorkspaceLinkingPersistence(app.workspace_registry_service)
         _select_llamacpp_console(console)
@@ -792,8 +907,8 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         await _wait_for_text(console, pilot, "accepted")
         await _wait_for_selector(console, pilot, "#console-workspace-conversation-0")
 
-        row = console.query_one("#console-workspace-conversation-0", Static)
-        row_text = getattr(row.renderable, "plain", str(row.renderable))
+        row = console.query_one("#console-workspace-conversation-0")
+        row_text = _widget_text(row)
         assert row_text.startswith("> ")
         assert "Chat 1" in row_text
         assert "workspace-thread" in row_text
@@ -1071,6 +1186,59 @@ async def test_console_add_api_key_recovery_tolerates_missing_session_settings()
             "provider": "huggingface",
             "model": "meta-llama/test-model",
         }
+
+
+@pytest.mark.asyncio
+async def test_console_assistant_message_click_exposes_selected_actions():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
+
+        await pilot.click(f"#console-message-{message.id}")
+        await _wait_for_selector(console, pilot, f"#console-message-action-regenerate-{message.id}")
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        assert transcript.selected_message_id == message.id
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_wraps_long_message_content_without_horizontal_overflow():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    long_answer = " ".join(["wrapped assistant response segment"] * 180)
+
+    async with host.run_test(size=(92, 32)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content=long_answer,
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
+
+        row = console.query_one(f"#console-message-{message.id}", Static)
+
+        assert row.region.width <= transcript.region.width
+        assert transcript.virtual_size.width <= transcript.region.width
+        assert row.region.height > 2
 
 
 @pytest.mark.asyncio
@@ -1375,9 +1543,53 @@ async def test_console_selected_message_save_as_action_opens_modal():
         await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
 
         await pilot.click(f"#console-message-action-save-as-{message.id}")
-        await _wait_for_selector(app, pilot, "#console-save-as-modal")
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
 
     assert console._last_console_action.action_id == "save-as"
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_save_as_note_creates_note_from_message():
+    app = _build_test_app()
+    app.notes_scope_service = SimpleNamespace(
+        save_note=AsyncMock(return_value={"id": "note-1", "title": "Console message", "content": "answer"})
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
+
+        await pilot.click(f"#console-message-action-save-as-{message.id}")
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-destination-note")
+        await pilot.click("#console-save-as-destination-note")
+        await pilot.pause()
+
+    app.notes_scope_service.save_note.assert_awaited_once_with(
+        scope="local_note",
+        title="Console message",
+        content="answer",
+        note_id=None,
+        version=None,
+        user_id="default_user",
+        workspace_id=None,
+        keywords=["console"],
+    )
+    assert console._last_console_action.action_id == "save-as-note"
+    assert console._last_console_action.visible_copy == "Saved message as Note."
 
 
 @pytest.mark.asyncio
@@ -1448,6 +1660,8 @@ async def test_console_continue_action_streams_new_message_from_selected_turn():
         assert messages[-1].role is ConsoleMessageRole.ASSISTANT
         assert messages[-1].content == "hello"
         assert messages[-1].id != source.id
+        assert transcript.selected_message_id is None
+        assert not list(console.query(f"#console-message-actions-{source.id}"))
 
 
 @pytest.mark.asyncio
@@ -1506,6 +1720,147 @@ async def test_console_native_tab_strip_creates_and_switches_sessions():
 
         assert store.active_session_id == first.id
         assert "Chat 1" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    service.link_membership(
+        active_workspace.workspace_id,
+        item_type="conversation",
+        item_id="persisted-chat-1",
+        role="workspace-thread",
+        title="Chat 1",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        first.persisted_conversation_id = "persisted-chat-1"
+        await console._sync_native_console_chat_ui()
+
+        assert any("Chat 1" in text for text in _console_workspace_conversation_texts(console))
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+
+        row_texts = _console_workspace_conversation_texts(console)
+        assert any("Chat 1" in text for text in row_texts)
+        assert any("Chat 2" in text for text in row_texts)
+        assert any(text.startswith("> ") and "Chat 2" in text for text in row_texts)
+
+
+@pytest.mark.asyncio
+async def test_console_new_chat_tab_promotes_active_native_session_in_workspace_rail():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    for index in range(5):
+        service.link_membership(
+            active_workspace.workspace_id,
+            item_type="conversation",
+            item_id=f"persisted-chat-{index}",
+            role="workspace-thread",
+            title=f"Older chat {index + 1}",
+        )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Chat 2",
+            selected=True,
+        )
+        assert "Chat 2" in row_texts[0]
+        assert row_texts[0].startswith("> ")
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_row_switches_native_session():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Chat 1",
+            selected=False,
+        )
+        first_row_id = _console_workspace_conversation_row_id_for_session(console, first.id)
+
+        await pilot.click(f"#{first_row_id}")
+        await pilot.pause()
+
+        assert store.active_session_id == first.id
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Chat 1",
+            selected=True,
+        )
+        assert any(text.startswith("> ") and "Chat 1" in text for text in row_texts)
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_rail_keeps_active_native_session_visible_when_scope_is_global():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    service.link_membership(
+        active_workspace.workspace_id,
+        item_type="conversation",
+        item_id="persisted-chat-1",
+        role="workspace-thread",
+        title="Chat 1",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1", workspace_id="global")
+        first.persisted_conversation_id = "persisted-chat-1"
+        second = store.create_session(title="Chat 2", workspace_id="global")
+        await console._sync_native_console_chat_ui()
+
+        assert store.active_session_id == second.id
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Chat 2",
+            selected=True,
+        )
+        assert any("Chat 1" in text for text in row_texts), row_texts
 
 
 @pytest.mark.asyncio

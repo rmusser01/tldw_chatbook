@@ -191,6 +191,7 @@ PROVIDER_PARAM_MAP = {
         'streaming': 'streaming',
         'maxp': 'maxp',
         'model':'model', # Groq also uses top_p, handled by chat_with_groq
+        'max_tokens': 'max_tokens',
         'logit_bias': 'logit_bias',
         'presence_penalty': 'presence_penalty',
         'frequency_penalty': 'frequency_penalty',
@@ -291,7 +292,7 @@ PROVIDER_PARAM_MAP = {
         'system_message': 'system_message',
         'streaming': 'streaming',
         'model':'model',
-        'max_tokens': 'max_new_tokens',  # Common for TGI
+        'max_tokens': 'max_tokens',
         'topp': 'top_p',
         'topk': 'top_k',
         'seed': 'seed',
@@ -810,8 +811,8 @@ def chat_api_call(
         if generic_param_name == 'prompt' and endpoint_lower == 'cohere':
              pass # Specific handling for Cohere's prompt is assumed to be within chat_with_cohere
 
-    if call_kwargs.get(params_map.get('api_key', 'api_key')) and isinstance(call_kwargs.get(params_map.get('api_key', 'api_key')), str) and len(call_kwargs.get(params_map.get('api_key', 'api_key'))) > 8:
-         logger.info(f"Debug - Chat API Call - API Key: {call_kwargs[params_map.get('api_key', 'api_key')][:4]}...{call_kwargs[params_map.get('api_key', 'api_key')][-4:]}")
+    if call_kwargs.get(params_map.get('api_key', 'api_key')):
+         logger.info("Debug - Chat API Call - API key provided.")
 
     # Add provider_name to kwargs only for handlers that support it
     # Some local providers use this for dynamic configuration loading
@@ -1174,7 +1175,7 @@ def chat(
             logging.debug(f"  Msg {i}: Role: {msg_p['role']}, Content: [{', '.join(content_log)}]")
 
         logging.debug(f"Debug - Chat Function - Temperature: {temperature}")
-        logging.debug(f"Debug - Chat Function - API Key: {api_key[:10] if api_key else 'None'}")
+        logging.debug("Debug - Chat Function - API key provided: %s", bool(api_key))
         logging.debug(f"Debug - Chat Function - Prompt: {custom_prompt}")
 
         #####################################################################
