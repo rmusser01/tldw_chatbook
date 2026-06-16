@@ -194,8 +194,8 @@ def assert_embeddings_focus_and_active_contracts(text: str) -> None:
         assert "text-style: bold underline;" in block
 
     for selector in (
-        "#embeddings-model-list ModelListItem.--highlight",
-        "#embeddings-collection-list CollectionListItem.--highlight",
+        "#embeddings-model-list ModelListItem.-highlight",
+        "#embeddings-collection-list CollectionListItem.-highlight",
     ):
         block = css_block(text, selector)
         assert_readable_selected_state_contract(block)
@@ -1322,31 +1322,31 @@ def test_native_listview_row_states_follow_shared_contracts():
     text = LISTS.read_text(encoding="utf-8")
     assert "height: auto;" in css_block(text, "ListView ListItem")
     assert_native_row_hover_state_contract(css_block(text, "ListView ListItem:hover"))
-    assert_native_row_selected_state_contract(css_block(text, "ListView ListItem.--highlight"))
+    assert_native_row_selected_state_contract(css_block(text, "ListView ListItem.-highlight"))
 
 
 def test_bundled_native_listview_row_states_keep_effective_contracts():
     text = BUNDLE.read_text(encoding="utf-8")
     assert len(css_blocks(text, "ListView ListItem:hover")) == 1
-    assert len(css_blocks(text, "ListView ListItem.--highlight")) == 1
+    assert len(css_blocks(text, "ListView ListItem.-highlight")) == 1
     assert "height: auto;" in css_blocks(text, "ListView ListItem")[-1]
     assert_native_row_hover_state_contract(css_blocks(text, "ListView ListItem:hover")[-1])
-    assert_native_row_selected_state_contract(css_blocks(text, "ListView ListItem.--highlight")[-1])
+    assert_native_row_selected_state_contract(css_blocks(text, "ListView ListItem.-highlight")[-1])
 
     assert_native_row_hover_state_contract(css_block(text, "#chatbooks-list ListItem:hover"))
     for selector in (
-        "#chatbooks-list ListItem.--highlight",
-        "ConfigSearchResult.--highlight",
+        "#chatbooks-list ListItem.-highlight",
+        "ConfigSearchResult.-highlight",
     ):
         assert_native_row_selected_state_contract(css_block(text, selector))
 
-    assert css_blocks(text, "ConfigSearchResult ListItem.--highlight") == []
+    assert css_blocks(text, "ConfigSearchResult ListItem.-highlight") == []
 
 
 def test_config_search_result_highlight_targets_rendered_list_item():
     text = CONFIG_SEARCH.read_text(encoding="utf-8")
-    assert css_blocks(text, "ConfigSearchResult ListItem.--highlight") == []
-    assert_native_row_selected_state_contract(css_block(text, "ConfigSearchResult.--highlight"))
+    assert css_blocks(text, "ConfigSearchResult ListItem.-highlight") == []
+    assert_native_row_selected_state_contract(css_block(text, "ConfigSearchResult.-highlight"))
 
 
 def test_native_datatable_row_states_follow_shared_contracts():

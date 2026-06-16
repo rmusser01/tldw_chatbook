@@ -18,18 +18,22 @@ EXPECTED_HIGHLIGHT_SELECTORS = (
 )
 
 
-def _non_personas_tcss_files() -> list[Path]:
+def _non_personas_css_files() -> list[Path]:
     return sorted(
         path
-        for path in CSS_ROOT.rglob("*.tcss")
-        if "personas" not in path.as_posix() and path.name != GENERATED_CSS.name
+        for pattern in ("*.tcss", "*.css")
+        for path in CSS_ROOT.rglob(pattern)
+        if "personas" not in path.as_posix() and path != GENERATED_CSS
     )
 
 
 def test_non_personas_source_uses_textual_highlight_selector() -> None:
+    files = _non_personas_css_files()
+    assert files, "No CSS source files were found to scan."
+
     offenders = [
         str(path.relative_to(REPO_ROOT))
-        for path in _non_personas_tcss_files()
+        for path in files
         if ".--highlight" in path.read_text(encoding="utf-8")
     ]
 

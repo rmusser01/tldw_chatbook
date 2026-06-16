@@ -37,10 +37,10 @@ Reason: This is a stylesheet selector bugfix that preserves existing UI architec
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Added a QA regression that rejects dead `.--highlight` selectors in non-personas TCSS source files and in the generated bundle. Updated the affected shared list, embeddings, Chatbooks, and config search selectors to Textual's `.-highlight` form, then regenerated `tldw_chatbook/css/tldw_cli_modular.tcss`.
+Added a QA regression that rejects dead `.--highlight` selectors in non-personas CSS/TCSS source files and in the generated bundle. Updated the affected shared list, embeddings, Chatbooks, and config search selectors to Textual's `.-highlight` form, then regenerated `tldw_chatbook/css/tldw_cli_modular.tcss`. Updated existing UI focus contract tests to assert the corrected selector spelling.
 
 Verification:
-- `python -m pytest -q Tests/QA/test_textual_highlight_selectors.py --tb=short`
+- `python -m pytest -q Tests/QA/test_textual_highlight_selectors.py Tests/UI/test_non_obscuring_focus_contract.py::test_native_listview_row_states_follow_shared_contracts Tests/UI/test_non_obscuring_focus_contract.py::test_bundled_native_listview_row_states_keep_effective_contracts Tests/UI/test_non_obscuring_focus_contract.py::test_config_search_result_highlight_targets_rendered_list_item --tb=short`
 - `git diff --check`
-- `rg -n "\\.--highlight" tldw_chatbook/css --glob '*.tcss'`
+- `rg -n "\\.--highlight" tldw_chatbook/css --glob '*.tcss' --glob '*.css'`
 <!-- SECTION:NOTES:END -->
