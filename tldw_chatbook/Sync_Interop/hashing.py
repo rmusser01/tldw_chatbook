@@ -18,6 +18,12 @@ def canonical_payload_hash(payload: Mapping[str, Any]) -> str:
     """Return ``sha256:<hex>`` over the canonical JSON encoding of ``payload``.
 
     Canonical form: UTF-8 JSON with sorted keys and compact separators.
+
+    Args:
+        payload: JSON-compatible payload mapping to hash.
+
+    Returns:
+        Versioned SHA-256 digest string in ``sha256:<hex>`` format.
     """
     encoded = json.dumps(dict(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"

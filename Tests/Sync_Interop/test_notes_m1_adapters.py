@@ -1,3 +1,5 @@
+import pytest
+
 from tldw_chatbook.Sync_Interop.notes_local_store import InMemoryNotesStore
 from tldw_chatbook.Sync_Interop.notes_mirror import NotesMirror
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
@@ -58,6 +60,64 @@ def test_apply_notes_upsert_creates_local_note_and_updates_mirror():
     result2 = applier.apply(env)
     assert result2["status"] in {"applied", "noop"}
     assert store.upsert_calls == 1
+
+
+def test_apply_notes_upsert_requires_mirror_and_dataset_id():
+    from tldw_chatbook.tldw_api import SyncV2Envelope
+
+    store = InMemoryNotesStore()
+    applier = SyncEnvelopeApplier(local_store=store)
+    env = SyncV2Envelope(
+        client_envelope_id="c", dataset_id="ds_1", domain="notes.note", object_id="n1",
+        operation="upsert", adapter_version=1, payload={"title": "T", "content": "B"},
+        payload_hash="sha256:cur", object_revision=1, server_cursor=10,
+    )
+
+    with pytest.raises(ValueError, match="notes_mirror and dataset_id"):
+        applier.apply(env)
+
+
+def test_apply_notes_upsert_rejects_missing_required_payload_fields():
+    from tldw_chatbook.tldw_api import SyncV2Envelope
+
+    store = InMemoryNotesStore()
+    mirror = NotesMirror(":memory:")
+    applier = SyncEnvelopeApplier(local_store=store, notes_mirror=mirror, dataset_id="ds_1")
+    env = SyncV2Envelope(
+        client_envelope_id="c", dataset_id="ds_1", domain="notes.note", object_id="n1",
+        operation="upsert", adapter_version=1, payload={"content": "B"},
+        payload_hash="sha256:cur", object_revision=1, server_cursor=10,
+    )
+
+    result = applier.apply(env)
+
+    assert result["status"] == "conflict"
+    assert result["conflict"]["conflict_type"] == "invalid_notes_payload"
+    assert store.get("n1") is None
+    assert mirror.get("ds_1", "n1") is None
+
+
+def test_apply_notes_upsert_sanitizes_payload_before_store():
+    from tldw_chatbook.tldw_api import SyncV2Envelope
+
+    store = InMemoryNotesStore()
+    mirror = NotesMirror(":memory:")
+    applier = SyncEnvelopeApplier(local_store=store, notes_mirror=mirror, dataset_id="ds_1")
+    env = SyncV2Envelope(
+        client_envelope_id="c", dataset_id="ds_1", domain="notes.note", object_id="n1",
+        operation="upsert", adapter_version=1,
+        payload={"title": "T\x00", "content": "<script>alert(1)</script>\x00safe"},
+        payload_hash="sha256:cur", object_revision=1, server_cursor=10,
+    )
+
+    result = applier.apply(env)
+
+    assert result["status"] == "applied"
+    assert store.get("n1") == {
+        "title": "T",
+        "content": "&lt;script&gt;alert(1)&lt;/script&gt;safe",
+        "deleted": False,
+    }
 
 
 def test_apply_notes_tombstone_soft_deletes():

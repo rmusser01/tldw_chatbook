@@ -1,3 +1,5 @@
+import pytest
+
 from tldw_chatbook.Sync_Interop.notes_mirror import NotesMirror, MirrorRecord
 
 
@@ -24,3 +26,8 @@ def test_mirror_scopes_by_dataset():
     m = NotesMirror(":memory:")
     m.record("ds1", "n", object_revision=1, object_hash="h", server_cursor=1)
     assert m.get("ds2", "n") is None
+
+
+def test_mirror_rejects_parent_traversal_db_path(tmp_path):
+    with pytest.raises(ValueError):
+        NotesMirror(tmp_path / ".." / "outside.db")

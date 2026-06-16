@@ -56,6 +56,12 @@ class SyncEnvelopeApplier:
                 dataset_id=self.dataset_id,
                 record_conflict=self._record_conflict,
             )
+        if self.dataset_key is None:
+            return self._record_conflict(
+                envelope,
+                conflict_type="missing_dataset_key",
+                message="dataset_key is required to apply encrypted Sync v2 envelopes.",
+            )
         return adapter.apply(
             envelope,
             dataset_key=self.dataset_key,

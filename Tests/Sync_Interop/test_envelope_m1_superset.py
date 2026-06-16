@@ -1,5 +1,7 @@
 """P2: SyncV2Envelope supports the M1 superset additively (legacy still works)."""
 
+import pytest
+
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
@@ -83,3 +85,12 @@ def test_dotted_domain_defaults_to_server_trusted_when_policy_unset():
         payload={"title": "T", "content": "B"},
     )
     assert env.encryption_policy == "server_trusted_v1"
+
+
+def test_envelope_requires_entity_id_or_object_id():
+    with pytest.raises(ValueError, match="entity_id or object_id"):
+        SyncV2Envelope(
+            client_envelope_id="c", dataset_id="ds", domain="notes.note",
+            operation="upsert", adapter_version=1, payload_hash="sha256:x",
+            payload={"title": "T", "content": "B"},
+        )

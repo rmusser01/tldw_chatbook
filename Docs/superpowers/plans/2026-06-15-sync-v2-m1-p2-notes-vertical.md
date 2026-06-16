@@ -16,10 +16,11 @@
 
 **Server launch for live tasks** (Task 7) — the M1 server fail-closes bootstrap (412) without attestation:
 ```bash
+: "${SINGLE_USER_API_KEY:?Set SINGLE_USER_API_KEY before starting the M1 server}"
 d=~/Documents/GitHub/tldw_server2/.worktrees/sync-v2-m1-next
 PY=~/Documents/GitHub/tldw_server2/.venv/bin/python
 cd "$d" && PYTHONPATH="$d" AUTH_MODE=single_user \
-  SINGLE_USER_API_KEY='THIS-IS-A-SECURE-KEY-123-FAKE-KEY' TLDW_API_PORT=8076 \
+  SINGLE_USER_API_KEY="$SINGLE_USER_API_KEY" TLDW_API_PORT=8076 \
   SYNC_V2_SERVER_TRUSTED_ENABLED=true SYNC_V2_AT_REST_ENCRYPTION_MODE=managed_storage \
   nohup "$PY" -m uvicorn tldw_Server_API.app.main:app --host 127.0.0.1 --port 8076 \
   > /tmp/syncqa-v2/server.log 2>&1 &
@@ -954,7 +955,7 @@ git commit -m "Sync v2 P2: NotesM1SyncFlow push/pull/apply orchestration"
 - [ ] **Step 2: Write the round-trip script** `/tmp/syncqa-v2/p2_roundtrip.py`:
 
 ```python
-import asyncio, sys, uuid
+import asyncio, os, sys, uuid
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 from tldw_chatbook.tldw_api import SyncV2ProfileBootstrapRequest
 from tldw_chatbook.Sync_Interop.notes_mirror import NotesMirror
@@ -962,7 +963,7 @@ from tldw_chatbook.Sync_Interop.notes_local_store import InMemoryNotesStore
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.notes_m1_flow import NotesM1SyncFlow
 
-BASE, KEY = "http://127.0.0.1:8076", "THIS-IS-A-SECURE-KEY-123-FAKE-KEY"
+BASE, KEY = "http://127.0.0.1:8076", os.environ["SINGLE_USER_API_KEY"]
 
 
 async def main():

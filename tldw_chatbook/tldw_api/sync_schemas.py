@@ -437,6 +437,8 @@ class SyncV2Envelope(BaseModel):
             self.object_id = self.entity_id
         if self.entity_id is None and self.object_id is not None:
             self.entity_id = self.object_id
+        if self.object_id is None and self.entity_id is None:
+            raise ValueError("SyncV2Envelope requires entity_id or object_id")
         if not self.payload and self.payload_clear:
             self.payload = dict(self.payload_clear)
         if not self.payload_clear and self.payload:
