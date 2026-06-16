@@ -11,22 +11,33 @@ from tldw_chatbook.Sync_Interop.domain_adapters import (
     SourceCacheSyncAdapter,
     WorkspacesSyncAdapter,
 )
+from tldw_chatbook.Sync_Interop.domain_adapters.notes_m1 import NotesM1SyncAdapter
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
 class SyncEnvelopeApplier:
     """Route Sync v2 envelopes to small local domain adapters."""
 
-    def __init__(self, *, dataset_key: bytes, local_store: Any) -> None:
+    def __init__(
+        self,
+        *,
+        local_store: Any,
+        dataset_key: bytes | None = None,
+        notes_mirror: Any = None,
+        dataset_id: str | None = None,
+    ) -> None:
         self.dataset_key = dataset_key
         self.local_store = local_store
+        self.notes_mirror = notes_mirror
+        self.dataset_id = dataset_id
         self.conflicts: list[dict[str, Any]] = []
-        self._adapters = {
+        self._adapters: dict[str, Any] = {
             "notes": NotesSyncAdapter(),
             "chat": ChatSyncAdapter(),
             "workspaces": WorkspacesSyncAdapter(),
             "source_cache": SourceCacheSyncAdapter(),
             "media": MediaSyncAdapter(),
+            "notes.note": NotesM1SyncAdapter(),
         }
 
     def apply(self, envelope: SyncV2Envelope) -> dict[str, Any]:
@@ -36,6 +47,20 @@ class SyncEnvelopeApplier:
                 envelope,
                 conflict_type="unsupported_domain",
                 message=f"Unsupported Sync v2 domain: {envelope.domain}",
+            )
+        if isinstance(adapter, NotesM1SyncAdapter):
+            return adapter.apply(
+                envelope,
+                local_store=self.local_store,
+                notes_mirror=self.notes_mirror,
+                dataset_id=self.dataset_id,
+                record_conflict=self._record_conflict,
+            )
+        if self.dataset_key is None:
+            return self._record_conflict(
+                envelope,
+                conflict_type="missing_dataset_key",
+                message="dataset_key is required to apply encrypted Sync v2 envelopes.",
             )
         return adapter.apply(
             envelope,
