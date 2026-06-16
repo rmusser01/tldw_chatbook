@@ -1463,7 +1463,7 @@ Button.notes-mode-chip {
 #acp-list-pane {
     width: 2fr;
     min-width: 30;
-    border: solid #6f6f6f;
+    border: solid $ds-grid-line;
     padding: 1;
 }
 
@@ -1472,7 +1472,7 @@ Button.notes-mode-chip {
 #acp-detail-pane {
     width: 4fr;
     min-width: 52;
-    border: solid #6f6f6f;
+    border: solid $ds-grid-line;
     padding: 1;
 }
 
@@ -1481,7 +1481,7 @@ Button.notes-mode-chip {
 #acp-inspector-pane {
     width: 2fr;
     min-width: 34;
-    border: solid #6f6f6f;
+    border: solid $ds-grid-line;
     padding: 1;
 }
 
