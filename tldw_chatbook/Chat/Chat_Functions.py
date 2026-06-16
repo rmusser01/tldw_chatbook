@@ -878,7 +878,8 @@ def chat_api_call(
         # This catches cases where the handler itself has already processed an error
         # (e.g. non-HTTP error, or it decided to raise a specific Chat*Error type)
         # and raises one of our custom exceptions.
-        logger.opt(exception=e_chat_direct.status_code >= 500).error(
+        status_code = getattr(e_chat_direct, "status_code", 0)
+        logger.opt(exception=isinstance(status_code, int) and status_code >= 500).error(
             "Handler for {} directly raised: {} - {}",
             endpoint_lower,
             type(e_chat_direct).__name__,

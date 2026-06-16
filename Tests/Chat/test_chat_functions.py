@@ -324,15 +324,21 @@ class TestChatApiCall:
         assert "max_new_tokens" not in kwargs
 
     def test_provider_json_error_body_is_not_masked_by_dispatcher_logging(self, mock_handlers, mocker):
-        provider_error = ChatBadRequestError(
-            provider="anthropic",
-            message='Bad request (404). Detail: {"type":"error","error":{"type":"not_found_error"}}',
-        )
+        class LegacyProviderError(ChatAPIError):
+            def __init__(self):
+                Exception.__init__(
+                    self,
+                    'Bad request (404). Detail: {"type":"error","error":{"type":"not_found_error"}}',
+                )
+                self.provider = "anthropic"
+                self.message = str(self)
+
+        provider_error = LegacyProviderError()
         mock_handler = mocker.MagicMock(side_effect=provider_error)
         mock_handler.__name__ = "mock_handler"
         mock_handlers.get.return_value = mock_handler
 
-        with pytest.raises(ChatBadRequestError) as exc_info:
+        with pytest.raises(LegacyProviderError) as exc_info:
             chat_api_call(
                 "anthropic",
                 messages_payload=[{"role": "user", "content": "test"}],
@@ -671,6 +677,7 @@ class TestProviderRequestPayloads:
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
         captured = {}
+        warnings = []
         monkeypatch.setattr(
             LLM_API_Calls,
             "load_settings",
@@ -690,6 +697,7 @@ class TestProviderRequestPayloads:
                 },
             ),
         )
+        monkeypatch.setattr(LLM_API_Calls.logger, "warning", lambda message, *args, **kwargs: warnings.append(str(message)))
 
         LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
@@ -705,6 +713,48 @@ class TestProviderRequestPayloads:
         assert captured["json"]["temperature"] == 0.6
         assert "top_p" not in captured["json"]
         assert captured["json"]["top_k"] == 50
+        assert any("top_p" in warning and "temperature" in warning for warning in warnings)
+
+    def test_anthropic_explicit_top_p_omits_default_temperature(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "anthropic_api": {
+                    "api_base_url": "https://api.anthropic.test/v1",
+                    "temperature": 0.7,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-haiku-4-5-20251001",
+                    "content": [{"type": "text", "text": "top-p answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_ANTHROPIC_API_KEY,
+            model="claude-haiku-4-5-20251001",
+            streaming=False,
+            topp=0.91,
+            max_tokens=64,
+        )
+
+        assert captured["json"]["top_p"] == 0.91
+        assert "temperature" not in captured["json"]
 
     def test_anthropic_thinking_effort_maps_to_budget_tokens(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls

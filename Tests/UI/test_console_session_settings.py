@@ -1517,6 +1517,48 @@ async def test_console_settings_modal_allows_manual_model_when_registry_has_stal
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_refreshes_readiness_after_returning_to_model_list() -> None:
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+                focus_model=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        await pilot.click("#console-settings-model-custom")
+        await pilot.pause()
+
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        readiness = app.screen.query_one("#console-settings-readiness", Static)
+        provider_model_section = app.screen.query_one("#console-settings-provider-model-section")
+        model_input.value = ""
+        app.screen._sync_readiness_display()
+        await pilot.pause()
+
+        assert "Choose a model to enable sending." in str(readiness.renderable)
+        assert provider_model_section.has_class("console-settings-primary-section") is True
+
+        app.screen._toggle_manual_model_input()
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        assert model_select.display is True
+        assert model_select.value == "model-a"
+        assert str(readiness.renderable) == "llama_cpp is ready. No API key is required."
+        assert provider_model_section.has_class("console-settings-primary-section") is False
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_provider_change_uses_configured_provider_model() -> None:
     app = ModalHarness()
     app.app_config["api_settings"]["llama_cpp"] = {

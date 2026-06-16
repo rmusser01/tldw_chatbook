@@ -33,6 +33,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
 MODAL_LABEL_WIDTH = 16
+MODEL_CUSTOM_BUTTON_WIDTH = 18
 
 
 class ConsoleSettingsInput(Input):
@@ -162,9 +163,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                             id="console-settings-model-custom",
                             disabled=not has_model_options,
                         )
-                        model_custom.styles.width = 18
-                        model_custom.styles.min_width = 18
-                        model_custom.styles.max_width = 18
+                        model_custom.styles.width = MODEL_CUSTOM_BUTTON_WIDTH
+                        model_custom.styles.min_width = MODEL_CUSTOM_BUTTON_WIDTH
+                        model_custom.styles.max_width = MODEL_CUSTOM_BUTTON_WIDTH
                         model_custom.display = has_model_options
                         yield model_custom
                     with Horizontal(classes="console-settings-modal-row"):
@@ -431,6 +432,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             provider = str(self.query_one("#console-settings-provider", Select).value or "")
             current_model = normalize_console_model_value(model_input.value)
             self._sync_model_controls(provider, current_model)
+            self._sync_readiness_display()
             model_select.focus()
             return
 
