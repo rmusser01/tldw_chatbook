@@ -93,6 +93,11 @@ def test_huggingface_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
     assert "max_new_tokens" not in captured_kwargs
 
 
+def test_huggingface_router_chat_url_rejects_missing_or_non_string_base():
+    assert llm_api_calls_module._huggingface_router_chat_url(None) is None
+    assert llm_api_calls_module._huggingface_router_chat_url(443) is None
+
+
 def test_groq_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
     captured_kwargs = {}
 

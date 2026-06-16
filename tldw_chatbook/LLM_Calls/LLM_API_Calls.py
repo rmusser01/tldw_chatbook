@@ -116,6 +116,7 @@ def _huggingface_router_chat_url(base_url: Any) -> Optional[str]:
         return None
     return f"{parsed.scheme}://{parsed.netloc}/v1/chat/completions"
 
+
 def extract_text_from_segments(segments):
     logger.debug(f"Segments received: {segments}")
     logger.debug(f"Type of segments: {type(segments)}")
