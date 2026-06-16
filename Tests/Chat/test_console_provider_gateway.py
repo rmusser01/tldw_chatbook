@@ -966,6 +966,27 @@ def test_normalize_generic_provider_response_dict_precedence() -> None:
     assert list(ConsoleProviderGateway.normalize_provider_response({"generated_text": "generated"})) == ["generated"]
 
 
+def test_normalize_google_gemini_candidates_response() -> None:
+    payload = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [{"text": "OK"}],
+                    "role": "model",
+                },
+                "finishReason": "STOP",
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 5,
+            "candidatesTokenCount": 1,
+            "totalTokenCount": 6,
+        },
+    }
+
+    assert list(ConsoleProviderGateway.normalize_provider_response(payload)) == ["OK"]
+
+
 def test_safe_provider_error_copy_redacts_secret_like_values() -> None:
     copy = safe_provider_error_copy(
         "openai",

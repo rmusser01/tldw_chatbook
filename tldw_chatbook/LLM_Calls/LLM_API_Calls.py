@@ -25,6 +25,7 @@
 import json
 import time
 from typing import List, Any, Optional, Tuple, Dict, Union
+from urllib.parse import urlparse
 #
 # Import 3rd-Party Libraries
 import requests
@@ -37,6 +38,7 @@ from tldw_chatbook.Chat.Chat_Deps import ChatAPIError, ChatAuthenticationError, 
     ChatBadRequestError, ChatProviderError, ChatConfigurationError
 from tldw_chatbook.config import load_settings, settings
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.input_validation import validate_url
 #
 #######################################################################################################################
 # Provider Parameter Support Documentation
@@ -73,6 +75,47 @@ def _safe_cast(value: Any, cast_to: type, default: Any = None) -> Any:
     except (ValueError, TypeError):
         logger.warning(f"Could not cast '{value}' to {cast_to}. Using default: {default}")
         return default
+
+
+def _optional_config_string(value: Any, default: str = "") -> str:
+    """Return a stripped config string, or a safe default for empty values.
+
+    Args:
+        value: Raw configuration value.
+        default: Value to use when the raw value is missing or empty.
+
+    Returns:
+        A stripped string suitable for URL/path construction.
+    """
+    if value is None:
+        return default
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or default
+    return str(value).strip() or default
+
+
+def _huggingface_router_chat_url(base_url: Any) -> Optional[str]:
+    """Return the OpenAI-compatible HuggingFace router chat URL.
+
+    Args:
+        base_url: Raw HuggingFace router base URL from configuration.
+
+    Returns:
+        Normalized ``/v1/chat/completions`` URL for HuggingFace router bases,
+        or ``None`` when the URL is invalid or points to another host.
+    """
+    stripped_base_url = _optional_config_string(base_url)
+    if not stripped_base_url:
+        return None
+    candidate = stripped_base_url if "://" in stripped_base_url else f"https://{stripped_base_url}"
+    if not validate_url(candidate):
+        return None
+    parsed = urlparse(candidate)
+    if (parsed.hostname or "").lower() != "router.huggingface.co":
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}/v1/chat/completions"
+
 
 def extract_text_from_segments(segments):
     logger.debug(f"Segments received: {segments}")
@@ -1978,6 +2021,7 @@ def chat_with_huggingface(
     if not final_model_for_payload:
         raise ChatConfigurationError(provider="huggingface",
                                      message="HuggingFace model ID is required (must be passed as 'model' or configured).")
+    final_model_for_payload = str(final_model_for_payload).strip().strip("/")
     logger.info(f"HuggingFace: Using model_id for payload: {final_model_for_payload}")
 
     # --- URL Construction ---
@@ -1988,33 +2032,48 @@ def chat_with_huggingface(
             hf_config.get('huggingface_use_router_url_format', "False"),
         )
     ).lower()
+    model_path_part = final_model_for_payload.strip('/')
 
     if use_router_url_format_str == "true":
         # This format explicitly puts the model in the URL path.
         # User must ensure router_base_url and model_id result in a valid endpoint.
-        router_base = hf_config.get(
-            'router_base_url',
-            hf_config.get('huggingface_router_base_url', 'https://router.huggingface.co/hf-inference'),
+        router_base = _optional_config_string(
+            hf_config.get(
+                'router_base_url',
+                hf_config.get('huggingface_router_base_url'),
+            ),
+            default='https://router.huggingface.co/hf-inference',
         ).rstrip('/')
-        model_path_part = final_model_for_payload.strip('/')
-        chat_path = hf_config.get('api_chat_path', 'v1/chat/completions').lstrip('/')
+        chat_path = _optional_config_string(hf_config.get('api_chat_path'), 'v1/chat/completions').lstrip('/')
         # Constructs URL like: {router_base}/models/{model_path_part}/{chat_path}
-        api_url = f"{router_base}/models/{model_path_part}/{chat_path}"
+        router_chat_url = _huggingface_router_chat_url(router_base)
+        if router_chat_url:
+            api_url = router_chat_url
+        elif router_base.endswith('/models'):
+            api_url = f"{router_base}/{model_path_part}/{chat_path}"
+        else:
+            api_url = f"{router_base}/models/{model_path_part}/{chat_path}"
         logger.info(f"HuggingFace: Using explicit 'use_router_url_format=true'. Target URL: {api_url}")
     else: # use_router_url_format is false, standard URL construction
-        configured_api_base_url = hf_config.get('api_base_url')
+        configured_api_base_url = _optional_config_string(hf_config.get('api_base_url'))
         # Default chat path can be just "chat/completions" if base_url includes /v1, or "v1/chat/completions" if not.
         # Let's make the default api_chat_path more flexible.
         # If using the public HF API, base is /v1 and path is chat/completions.
-        configured_api_base = (configured_api_base_url or '').rstrip('/')
+        configured_api_base = configured_api_base_url.rstrip('/')
         default_chat_path = 'chat/completions' if configured_api_base.endswith('/v1') else 'v1/chat/completions'
-        chat_completions_path = hf_config.get('api_chat_path', default_chat_path).lstrip('/')
+        chat_completions_path = _optional_config_string(hf_config.get('api_chat_path'), default_chat_path).lstrip('/')
 
         if configured_api_base_url:
             # If api_base_url is configured, use it directly and append the chat_completions_path.
             # The model is expected to be in the payload.
             # If the endpoint needs the model_id in the path, configured_api_base_url should include it fully.
-            api_url = f"{configured_api_base_url.rstrip('/')}/{chat_completions_path}"
+            router_chat_url = _huggingface_router_chat_url(configured_api_base)
+            if router_chat_url:
+                api_url = router_chat_url
+            elif configured_api_base.endswith('/models'):
+                api_url = f"{configured_api_base}/{model_path_part}/{chat_completions_path}"
+            else:
+                api_url = f"{configured_api_base}/{chat_completions_path}"
             logger.info(f"HuggingFace: Using configured 'api_base_url' ('{configured_api_base_url}') and 'api_chat_path' ('{chat_completions_path}'). Target URL: {api_url}. Model is in payload.")
         else:
             # Fallback if no api_base_url is configured.

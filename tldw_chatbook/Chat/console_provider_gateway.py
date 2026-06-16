@@ -999,6 +999,25 @@ def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
             if isinstance(text, str):
                 return text
 
+    candidates = item.get("candidates")
+    if isinstance(candidates, list) and candidates:
+        first_candidate = candidates[0]
+        if isinstance(first_candidate, Mapping):
+            content = first_candidate.get("content")
+            if isinstance(content, Mapping):
+                parts = content.get("parts")
+                if isinstance(parts, list):
+                    text_parts = [
+                        part["text"]
+                        for part in parts
+                        if isinstance(part, Mapping) and isinstance(part.get("text"), str)
+                    ]
+                    if text_parts:
+                        return "".join(text_parts)
+            text = first_candidate.get("text")
+            if isinstance(text, str):
+                return text
+
     message = item.get("message")
     if isinstance(message, Mapping) and isinstance(message.get("content"), str):
         return message["content"]

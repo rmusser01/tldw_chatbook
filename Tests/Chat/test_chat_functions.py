@@ -93,6 +93,11 @@ def test_huggingface_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
     assert "max_new_tokens" not in captured_kwargs
 
 
+def test_huggingface_router_chat_url_rejects_missing_or_non_string_base():
+    assert llm_api_calls_module._huggingface_router_chat_url(None) is None
+    assert llm_api_calls_module._huggingface_router_chat_url(443) is None
+
+
 def test_groq_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
     captured_kwargs = {}
 
@@ -300,6 +305,23 @@ class TestChatApiCall:
         assert kwargs["model"] == "claude-sonnet-4-20250514"
         assert kwargs["thinking_effort"] == "high"
         assert kwargs["thinking_budget_tokens"] == 4096
+
+    def test_huggingface_max_tokens_maps_to_supported_handler_kwarg(self, mock_handlers, mocker):
+        mock_huggingface_handler = mocker.MagicMock(return_value="HuggingFace response")
+        mock_huggingface_handler.__name__ = "mock_huggingface_handler"
+        mock_handlers.get.return_value = mock_huggingface_handler
+
+        chat_api_call(
+            api_endpoint="huggingface",
+            messages_payload=[{"role": "user", "content": "test"}],
+            model="openai/gpt-oss-120b",
+            max_tokens=16,
+        )
+
+        kwargs = mock_huggingface_handler.call_args.kwargs
+        assert kwargs["model"] == "openai/gpt-oss-120b"
+        assert kwargs["max_tokens"] == 16
+        assert "max_new_tokens" not in kwargs
 
     def test_unsupported_endpoint_raises_error(self, mock_handlers):
         mock_handlers.get.return_value = None
@@ -734,6 +756,120 @@ class TestProviderRequestPayloads:
         )
 
         assert captured["json"]["thinking"] == {"type": "adaptive", "effort": "high"}
+
+    def test_huggingface_legacy_router_base_uses_openai_compatible_router_url(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "huggingface_api": {
+                    "api_base_url": "https://router.huggingface.co/hf-inference/models",
+                    "streaming": False,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+                },
+            ),
+        )
+
+        response = LLM_API_Calls.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="hf_test",
+            model="/openai/gpt-oss-120b",
+            streaming=False,
+            max_tokens=64,
+        )
+
+        assert captured["url"] == "https://router.huggingface.co/v1/chat/completions"
+        assert captured["json"]["max_tokens"] == 64
+        assert response["choices"][0]["message"]["content"] == "OK"
+
+    def test_huggingface_router_base_with_case_and_port_normalizes(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "huggingface_api": {
+                    "api_base_url": "https://ROUTER.HUGGINGFACE.CO:443/hf-inference/models",
+                    "streaming": False,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="hf_test",
+            model="openai/gpt-oss-120b",
+            streaming=False,
+            max_tokens=64,
+        )
+
+        assert captured["url"] == "https://ROUTER.HUGGINGFACE.CO:443/v1/chat/completions"
+
+    def test_huggingface_none_router_base_uses_safe_default(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "huggingface_api": {
+                    "use_router_url_format": True,
+                    "router_base_url": None,
+                    "streaming": False,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="hf_test",
+            model="openai/gpt-oss-120b",
+            streaming=False,
+            max_tokens=64,
+        )
+
+        assert captured["url"] == "https://router.huggingface.co/v1/chat/completions"
 
 
 @pytest.mark.integration
