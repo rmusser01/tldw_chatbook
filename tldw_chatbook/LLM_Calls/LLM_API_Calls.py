@@ -707,7 +707,8 @@ def chat_with_anthropic(
     logger.debug("Anthropic: API key provided.")
 
     current_model = model or anthropic_config.get('model', 'claude-3-haiku-20240307')
-    current_temp = temp if temp is not None else float(anthropic_config.get('temperature', 0.7))
+    default_temperature = float(anthropic_config.get('temperature', 0.7))
+    current_temp = temp if temp is not None else default_temperature
     current_top_p = topp
     current_top_k = topk
     current_streaming_cfg = anthropic_config.get('streaming', False)
@@ -770,10 +771,18 @@ def chat_with_anthropic(
     }
     if system_prompt is not None: data["system"] = system_prompt # Anthropic uses 'system' at the top level
     if thinking_config is None:
-        if current_temp is not None: data["temperature"] = current_temp
-        if current_top_p is not None: data["top_p"] = current_top_p
+        if temp is not None:
+            data["temperature"] = current_temp
+            if current_top_p is not None:
+                logger.warning(
+                    "Anthropic: both temperature and top_p were provided; sending temperature and dropping top_p."
+                )
+        elif current_top_p is not None:
+            data["top_p"] = current_top_p
+        else:
+            data["temperature"] = current_temp
         if current_top_k is not None: data["top_k"] = current_top_k
-    elif any(value is not None for value in (current_temp, current_top_p, current_top_k)):
+    elif any(value is not None for value in (temp, current_top_p, current_top_k)):
         logger.warning(
             "Anthropic: omitting temperature/top_p/top_k because thinking is enabled."
         )

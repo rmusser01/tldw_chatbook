@@ -32,6 +32,8 @@ from tldw_chatbook.Chat.console_session_settings import (
 
 
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
+MODAL_LABEL_WIDTH = 16
+MODEL_CUSTOM_BUTTON_WIDTH = 18
 
 
 class ConsoleSettingsInput(Input):
@@ -121,7 +123,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 ):
                     yield Static("Provider and model", classes="destination-section")
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Provider", classes="console-settings-modal-label")
+                        yield self._modal_label("Provider")
                         yield Select(
                             provider_options,
                             value=self._settings.provider,
@@ -130,7 +132,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Model", classes="console-settings-modal-label")
+                        yield self._modal_label("Model")
                         model_select = Select(
                             model_options or [("No configured models", "")],
                             value=selected_model or "",
@@ -139,6 +141,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                             disabled=not has_model_options,
                             classes="console-settings-control",
                         )
+                        model_select.styles.width = "1fr"
+                        model_select.styles.min_width = 0
                         model_select.display = has_model_options
                         yield model_select
                         model_input = ConsoleSettingsInput(
@@ -148,10 +152,24 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                             disabled=has_model_options,
                             classes="console-settings-control",
                         )
+                        model_input.styles.width = "1fr"
+                        model_input.styles.min_width = 0
                         model_input.display = not has_model_options
                         yield model_input
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Base URL", classes="console-settings-modal-label")
+                        yield self._modal_label("")
+                        model_custom = Button(
+                            "Custom model",
+                            id="console-settings-model-custom",
+                            disabled=not has_model_options,
+                        )
+                        model_custom.styles.width = MODEL_CUSTOM_BUTTON_WIDTH
+                        model_custom.styles.min_width = MODEL_CUSTOM_BUTTON_WIDTH
+                        model_custom.styles.max_width = MODEL_CUSTOM_BUTTON_WIDTH
+                        model_custom.display = has_model_options
+                        yield model_custom
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Base URL")
                         base_url_input = ConsoleSettingsInput(
                             value=base_url or "",
                             id="console-settings-base-url",
@@ -164,42 +182,42 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 with Vertical(classes="console-settings-modal-section"):
                     yield Static("Sampling", classes="destination-section")
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Temperature", classes="console-settings-modal-label")
+                        yield self._modal_label("Temperature")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.temperature),
                             id="console-settings-temperature",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Top P", classes="console-settings-modal-label")
+                        yield self._modal_label("Top P")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.top_p),
                             id="console-settings-top-p",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Min P", classes="console-settings-modal-label")
+                        yield self._modal_label("Min P")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.min_p),
                             id="console-settings-min-p",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Top K", classes="console-settings-modal-label")
+                        yield self._modal_label("Top K")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.top_k),
                             id="console-settings-top-k",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Max tokens", classes="console-settings-modal-label")
+                        yield self._modal_label("Max tokens")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.max_tokens),
                             id="console-settings-max-tokens",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Streaming", classes="console-settings-modal-label")
+                        yield self._modal_label("Streaming")
                         yield Checkbox(
                             value=self._settings.streaming,
                             id="console-settings-streaming",
@@ -288,6 +306,13 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             classes += " console-settings-primary-section"
         return classes
 
+    def _modal_label(self, text: str) -> Static:
+        label = Static(text, classes="console-settings-modal-label")
+        label.styles.width = MODAL_LABEL_WIDTH
+        label.styles.min_width = MODAL_LABEL_WIDTH
+        label.styles.max_width = MODAL_LABEL_WIDTH
+        return label
+
     def action_dismiss(self) -> None:
         self.dismiss(None)
 
@@ -329,6 +354,11 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _model_input_changed(self, event: Input.Changed) -> None:
         self._sync_readiness_display()
 
+    @on(Button.Pressed, "#console-settings-model-custom")
+    def _model_custom_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._toggle_manual_model_input()
+
     def _sync_readiness_display(self) -> None:
         draft = self._build_draft()
         readiness = build_console_settings_readiness(draft, app_config=self._app_config)
@@ -363,6 +393,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _sync_model_controls(self, provider: str, current_model: str | None) -> None:
         model_select = self.query_one("#console-settings-model-select", Select)
         model_input = self.query_one("#console-settings-model-input", Input)
+        model_custom = self.query_one("#console-settings-model-custom", Button)
         current_model = normalize_console_model_value(current_model)
         model_options = self._model_select_options(provider, current_model)
         if model_options:
@@ -375,6 +406,9 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             model_input.disabled = True
             model_input.display = False
             model_input.value = selected
+            model_custom.label = "Custom model"
+            model_custom.disabled = False
+            model_custom.display = True
             return
 
         fallback = current_model or ""
@@ -385,6 +419,31 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         model_input.value = fallback
         model_input.disabled = False
         model_input.display = True
+        model_custom.label = "Custom model"
+        model_custom.disabled = True
+        model_custom.display = False
+
+    def _toggle_manual_model_input(self) -> None:
+        model_select = self.query_one("#console-settings-model-select", Select)
+        model_input = self.query_one("#console-settings-model-input", Input)
+        model_custom = self.query_one("#console-settings-model-custom", Button)
+
+        if model_input.display:
+            provider = str(self.query_one("#console-settings-provider", Select).value or "")
+            current_model = normalize_console_model_value(model_input.value)
+            self._sync_model_controls(provider, current_model)
+            self._sync_readiness_display()
+            model_select.focus()
+            return
+
+        model_input.value = normalize_console_model_value(model_select.value) or ""
+        model_select.display = False
+        model_select.disabled = True
+        model_input.display = True
+        model_input.disabled = False
+        model_custom.label = "Model list"
+        model_input.focus()
+        self._sync_readiness_display()
 
     def _focus_model_control(self) -> None:
         model_select = self.query_one("#console-settings-model-select", Select)
