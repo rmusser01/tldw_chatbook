@@ -94,14 +94,19 @@ class ServerChangesResponse(BaseModel):
 SyncTransportResponse = dict[str, Any]
 
 
-SyncV2Domain = Literal["notes", "chat", "workspaces", "source_cache", "media"]
+SyncV2Domain = str
 SyncV2Operation = Literal["upsert", "delete", "link", "unlink", "resolve_conflict"]
 SyncV2DatasetScope = Literal["personal", "workspace"]
 SyncV2EncryptionPolicy = Literal["client_private_v1", "server_trusted", "shared_workspace_v1"]
 SyncV2ConflictStatus = Literal["unresolved", "resolved", "dismissed"]
 SyncV2ConflictResolutionAction = Literal["accept_local", "accept_remote", "merge", "dismiss"]
 
-SYNC_V2_DOMAINS: list[SyncV2Domain] = ["notes", "chat", "workspaces", "source_cache", "media"]
+SYNC_V2_DOMAINS: list[SyncV2Domain] = [
+    "notes.note",
+    "chat.conversation",
+    "chat.message",
+    "attachment.ref",
+]
 SYNC_V2_OPERATIONS: list[SyncV2Operation] = ["upsert", "delete", "link", "unlink", "resolve_conflict"]
 SYNC_V2_ENCRYPTION_POLICIES: list[SyncV2EncryptionPolicy] = [
     "client_private_v1",
@@ -190,6 +195,18 @@ class SyncV2CapabilitiesResponse(BaseModel):
     compatibility_flags: dict[str, bool] = Field(default_factory=dict)
     server_time: str | None = None
     warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_capability_payload(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        supported_operations = value.get("supported_operations")
+        if "operations" not in value and isinstance(supported_operations, list):
+            normalized = dict(value)
+            normalized["operations"] = {"*": supported_operations}
+            return normalized
+        return value
 
     @field_validator("protocol_version", "min_supported_protocol_version", mode="before")
     @classmethod

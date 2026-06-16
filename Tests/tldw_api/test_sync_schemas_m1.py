@@ -56,6 +56,20 @@ def test_capabilities_back_compat_properties():
     assert "append" in caps.supported_operations
 
 
+def test_capabilities_parses_legacy_flat_supported_operations():
+    caps = SyncV2CapabilitiesResponse.model_validate(
+        {
+            "protocol_version": 2,
+            "supported_domains": ["notes", "chat"],
+            "supported_operations": ["upsert", "delete", "resolve_conflict"],
+        }
+    )
+
+    assert caps.domains == ["notes", "chat"]
+    assert caps.operations == {"*": ["upsert", "delete", "resolve_conflict"]}
+    assert caps.supported_operations == ["delete", "resolve_conflict", "upsert"]
+
+
 def test_capabilities_coerces_legacy_int_protocol_version():
     caps = SyncV2CapabilitiesResponse.model_validate(
         {"protocol_version": 2, "min_supported_protocol_version": 2}

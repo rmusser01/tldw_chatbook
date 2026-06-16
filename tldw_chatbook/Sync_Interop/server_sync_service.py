@@ -107,6 +107,26 @@ class ServerSyncService:
         return response
 
     @staticmethod
+    def _select_advertised_domains(
+        requested_domains: list[str],
+        supported_domains: list[str],
+    ) -> list[str]:
+        selected: list[str] = []
+        supported = [str(domain) for domain in supported_domains if str(domain).strip()]
+        supported_set = set(supported)
+        for requested_domain in requested_domains:
+            requested = str(requested_domain).strip()
+            if not requested:
+                continue
+            matches = [requested] if requested in supported_set else []
+            prefix = f"{requested}."
+            matches.extend(domain for domain in supported if domain.startswith(prefix))
+            for domain in matches:
+                if domain not in selected:
+                    selected.append(domain)
+        return selected
+
+    @staticmethod
     def _coerce_payload(request_data: ClientChangesPayload | Mapping[str, Any]) -> ClientChangesPayload:
         if isinstance(request_data, ClientChangesPayload):
             return request_data
@@ -191,10 +211,8 @@ class ServerSyncService:
         capabilities_record = self._dump(capabilities)
         # M1 schema: model_dump() produces "domains"; fall back to "supported_domains"
         # for raw-dict responses (e.g. from test stubs that pre-date M1).
-        supported_domains = set(
-            capabilities_record.get("domains", capabilities_record.get("supported_domains", []))
-        )
-        sync_domains = [domain for domain in requested_domains if domain in supported_domains]
+        supported_domains = capabilities_record.get("domains") or capabilities_record.get("supported_domains") or []
+        sync_domains = self._select_advertised_domains(requested_domains, supported_domains)
         if not sync_domains:
             raise ValueError("Server does not advertise any requested Sync v2 domains.")
 

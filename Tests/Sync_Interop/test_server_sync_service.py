@@ -71,10 +71,11 @@ def _sync_v2_envelope(
 
 
 class FakeSyncClient:
-    def __init__(self, *, push_response=None, pull_response=None):
+    def __init__(self, *, push_response=None, pull_response=None, capabilities_response=None):
         self.calls = []
         self.push_response = push_response
         self.pull_response = pull_response
+        self.capabilities_response = capabilities_response
 
     async def send_sync_changes(self, request_data):
         self.calls.append(("send_sync_changes", request_data.model_dump(mode="json")))
@@ -100,6 +101,8 @@ class FakeSyncClient:
 
     async def get_sync_v2_capabilities(self):
         self.calls.append(("get_sync_v2_capabilities",))
+        if self.capabilities_response is not None:
+            return self.capabilities_response
         return {
             "protocol_version": "sync-v2-m1",
             "min_supported_protocol_version": "sync-v2-m1",
@@ -287,6 +290,64 @@ async def test_server_sync_service_routes_transport_with_policy_actions():
         "sync.changes.launch.server",
         "sync.changes.observe.server",
     ]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_dry_run_maps_coarse_requests_to_m1_dotted_domains(tmp_path):
+    client = FakeSyncClient(
+        capabilities_response={
+            "protocol_version": "sync-v2-m1",
+            "domains": ["notes.note", "chat.conversation", "chat.message", "attachment.ref"],
+            "operations": {
+                "notes.note": ["upsert", "tombstone"],
+                "chat.conversation": ["upsert", "tombstone"],
+                "chat.message": ["append", "tombstone"],
+                "attachment.ref": ["upsert", "tombstone"],
+            },
+        }
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    await service.run_v2_dry_run(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        display_name="Laptop",
+        domains=["notes", "chat"],
+    )
+
+    register_call = next(call for call in client.calls if call[0] == "register_sync_v2_device")
+    assert register_call[1]["supported_domains"] == [
+        "notes.note",
+        "chat.conversation",
+        "chat.message",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_sync_service_dry_run_falls_back_when_domains_value_is_none(tmp_path):
+    client = FakeSyncClient(
+        capabilities_response={
+            "protocol_version": "sync-v2-m1",
+            "domains": None,
+            "supported_domains": ["notes.note"],
+            "operations": {"notes.note": ["upsert"]},
+        }
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    service = ServerSyncService(client=client, state_repository=repo)
+
+    await service.run_v2_dry_run(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        display_name="Laptop",
+        domains=["notes"],
+    )
+
+    register_call = next(call for call in client.calls if call[0] == "register_sync_v2_device")
+    assert register_call[1]["supported_domains"] == ["notes.note"]
 
 
 @pytest.mark.asyncio

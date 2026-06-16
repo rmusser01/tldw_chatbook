@@ -26,17 +26,18 @@ verified live against `:8076` (not fail-closed on attestation).
 The live server is the pinned `tldw_server2` worktree. To (re)launch it on `:8076`:
 
 ```bash
+: "${SINGLE_USER_API_KEY:?Set SINGLE_USER_API_KEY before starting the M1 server}"
 d=~/Documents/GitHub/tldw_server2/.worktrees/sync-v2-m1-next
 PY=~/Documents/GitHub/tldw_server2/.venv/bin/python
 cd "$d" && PYTHONPATH="$d" AUTH_MODE=single_user \
-  SINGLE_USER_API_KEY='THIS-IS-A-SECURE-KEY-123-FAKE-KEY' TLDW_API_PORT=8076 \
+  SINGLE_USER_API_KEY="$SINGLE_USER_API_KEY" TLDW_API_PORT=8076 \
   nohup "$PY" -m uvicorn tldw_Server_API.app.main:app --host 127.0.0.1 --port 8076 \
   > /tmp/syncqa-v2/server.log 2>&1 &
 ```
 
 Wait for readiness:
 ```bash
-curl -s -m 5 -H "X-API-KEY: THIS-IS-A-SECURE-KEY-123-FAKE-KEY" \
+curl -s -m 5 -H "X-API-KEY: $SINGLE_USER_API_KEY" \
   http://127.0.0.1:8076/api/v1/sync/capabilities | head -c 80
 ```
 Expected: a JSON body starting `{"protocol_version": "sync-v2-m1"...`.
@@ -676,12 +677,13 @@ Create `/tmp/syncqa-v2/p1_check.py`:
 
 ```python
 import asyncio
+import os
 import sys
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 from tldw_chatbook.tldw_api import SyncV2ProfileBootstrapRequest
 
 BASE = "http://127.0.0.1:8076"
-KEY = "THIS-IS-A-SECURE-KEY-123-FAKE-KEY"
+KEY = os.environ["SINGLE_USER_API_KEY"]
 
 
 async def main():
