@@ -970,8 +970,8 @@ class ChatbookExportManagementWindow(ModalScreen):
         dialog = ConfirmationDialog(
             title="Delete Chatbook",
             message=f"Are you sure you want to delete '{chatbook['name']}'?\n\nThis action cannot be undone.",
-            confirm_text="Delete",
-            cancel_text="Cancel"
+            confirm_label="Delete",
+            cancel_label="Cancel"
         )
         
         result = await self.app_instance.push_screen(dialog, wait_for_dismiss=True)
