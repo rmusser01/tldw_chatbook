@@ -177,6 +177,32 @@ def _derive_tab_title(tab_state: TabState) -> str:
     )
 
 
+def _character_session_identity_from_handoff(
+    payload: ChatHandoffPayload,
+) -> tuple[int, str, str] | None:
+    """Return character session identity for Personas Start Chat handoffs."""
+    metadata = payload.metadata or {}
+    if (
+        str(metadata.get("intent") or "").strip() != "start_chat"
+        or str(metadata.get("selected_kind") or "").strip() != "character"
+    ):
+        return None
+
+    character_id_text = str(metadata.get("selected_record_id") or "").strip()
+    if not character_id_text:
+        target_id = str(metadata.get("selected_target_id") or "").strip()
+        match = re.search(r"(?:^|:)character:(\d+)$", target_id)
+        if match:
+            character_id_text = match.group(1)
+    if not character_id_text.isdecimal():
+        return None
+
+    character_id = int(character_id_text)
+    character_name = str(metadata.get("selected_name") or payload.title or "").strip()
+    assistant_id = str(character_id)
+    return character_id, character_name, assistant_id
+
+
 def _source_mentions_rag(source: Any) -> bool:
     """Return whether a source label explicitly includes a RAG token.
 
@@ -2887,14 +2913,29 @@ class ChatScreen(BaseAppScreen):
     def _session_data_for_handoff(self, payload: ChatHandoffPayload) -> ChatSessionData:
         title_item_type = payload.item_type.replace("-", " ").title()
         scope_type = payload.scope_type or "global"
+        character_identity = _character_session_identity_from_handoff(payload)
+        character_id = None
+        character_name = None
+        assistant_kind = None
+        assistant_id = None
+        discovery_owner = payload.discovery_owner
+        if character_identity is not None:
+            character_id, character_name, assistant_id = character_identity
+            assistant_kind = "character"
+            if discovery_owner == "general_chat" and payload.source == "personas":
+                discovery_owner = "personas"
         return ChatSessionData(
             tab_id=uuid.uuid4().hex[:8],
             title=f"{title_item_type}: {payload.title}",
             conversation_id=None,
             is_ephemeral=True,
             runtime_backend=payload.runtime_backend,
-            discovery_owner=payload.discovery_owner,
+            discovery_owner=discovery_owner,
             discovery_entity_id=payload.discovery_entity_id or payload.source_id,
+            character_id=character_id,
+            character_name=character_name,
+            assistant_kind=assistant_kind,
+            assistant_id=assistant_id,
             scope_type=scope_type,
             workspace_id=payload.workspace_id if scope_type == "workspace" else None,
             handoff_payload=payload,
