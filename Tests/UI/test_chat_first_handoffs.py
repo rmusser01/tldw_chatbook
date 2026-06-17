@@ -167,6 +167,34 @@ def test_chat_screen_handoff_session_data_uses_unique_valid_tab_ids():
     assert first.tab_id != second.tab_id
 
 
+def test_chat_screen_start_chat_handoff_binds_character_session_identity():
+    payload = ChatHandoffPayload(
+        source="personas",
+        item_type="character-card",
+        title="Detective Sam (character)",
+        body="Name: Detective Sam\nDescription: Methodical investigator",
+        source_id="1",
+        suggested_prompt="Respond as Detective Sam.",
+        metadata={
+            "intent": "start_chat",
+            "selected_kind": "character",
+            "selected_record_id": "1",
+            "selected_name": "Detective Sam",
+            "selected_target_id": "local:character:1",
+        },
+    )
+    screen = ChatScreen(Mock())
+
+    session_data = screen._session_data_for_handoff(payload)
+
+    assert session_data.character_id == 1
+    assert session_data.character_name == "Detective Sam"
+    assert session_data.assistant_kind == "character"
+    assert session_data.assistant_id == "1"
+    assert session_data.discovery_owner == "personas"
+    assert session_data.discovery_entity_id == "1"
+
+
 @pytest.mark.asyncio
 async def test_chat_screen_pending_handoff_consumer_is_reentrant_safe():
     payload = ChatHandoffPayload(
