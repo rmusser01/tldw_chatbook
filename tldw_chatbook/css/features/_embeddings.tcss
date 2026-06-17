@@ -933,8 +933,8 @@ CollectionListItem:hover {
     background: $panel-lighten-1;
 }
 
-#embeddings-model-list ModelListItem.--highlight,
-#embeddings-collection-list CollectionListItem.--highlight {
+#embeddings-model-list ModelListItem.-highlight,
+#embeddings-collection-list CollectionListItem.-highlight {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;

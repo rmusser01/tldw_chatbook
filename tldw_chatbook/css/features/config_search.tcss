@@ -86,7 +86,7 @@
 }
 
 /* Highlight matches in search results */
-ConfigSearchResult.--highlight {
+ConfigSearchResult.-highlight {
     background: $surface;
     color: $text;
     text-style: bold underline;
