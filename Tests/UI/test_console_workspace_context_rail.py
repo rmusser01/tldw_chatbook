@@ -26,11 +26,14 @@ from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceServerAdapter
 
 
 def _visible_text(screen) -> str:
-    return " ".join(
-        getattr(widget.renderable, "plain", str(widget.renderable))
-        for widget in screen.query(Static)
-        if widget.display and hasattr(widget, "renderable")
-    )
+    visible_chunks: list[str] = []
+    for widget in screen.query(Static):
+        if widget.display and hasattr(widget, "renderable"):
+            visible_chunks.append(getattr(widget.renderable, "plain", str(widget.renderable)))
+    for button in screen.query(Button):
+        if button.display:
+            visible_chunks.append(str(button.label))
+    return " ".join(visible_chunks)
 
 
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
