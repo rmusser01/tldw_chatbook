@@ -64,6 +64,8 @@ class PersonasInspectorPane(Vertical):
         self._has_selection = False
         self._is_unsaved = False
         self._selected_kind: str | None = None
+        self._console_actions_enabled = False
+        self._console_action_block_reason = "select an item"
         self._conversation_lookup: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
@@ -120,6 +122,7 @@ class PersonasInspectorPane(Vertical):
         self._has_selection = False
         self._is_unsaved = False
         self._selected_kind = None
+        self.set_console_actions_enabled(False, reason="select an item")
         self.query_one("#personas-selected-name", Static).update("Selected: none")
         self.query_one("#personas-selected-kind", Static).update("Type: -")
         self.query_one("#personas-selected-authority", Static).update("Authority: Local")
@@ -129,6 +132,22 @@ class PersonasInspectorPane(Vertical):
 
     def set_unsaved(self, is_unsaved: bool) -> None:
         self._is_unsaved = is_unsaved
+        self._apply_action_state()
+
+    def set_console_actions_enabled(
+        self,
+        enabled: bool,
+        *,
+        reason: str | None = None,
+    ) -> None:
+        """Set Attach/Start availability from the screen-owned Console gate.
+
+        Selection, export, and delete state stay local to the inspector, but
+        Console action availability must be pushed by ``PersonasScreen`` so
+        the visible buttons, readiness copy, and shortcuts cannot diverge.
+        """
+        self._console_actions_enabled = bool(enabled)
+        self._console_action_block_reason = "" if enabled else (reason or "unavailable")
         self._apply_action_state()
 
     def show_validation(self, errors: tuple[str, ...]) -> None:
@@ -207,25 +226,31 @@ class PersonasInspectorPane(Vertical):
         selected = self._has_selection
         unsaved = self._is_unsaved
         readiness = self.query_one("#personas-readiness-console", Static)
-        if not selected:
-            readiness.update("Console: Blocked - select an item")
-        elif unsaved:
-            readiness.update("Console: Blocked - unsaved edits")
-        else:
+        if self._console_actions_enabled:
             readiness.update("Console: Ready")
-        enabled = selected and not unsaved
-        tooltip = _UNSAVED_TOOLTIP if (selected and unsaved) else None
-        for button_id in (
-            "#personas-attach-to-console",
-            "#personas-start-chat",
-            "#personas-export-json",
-        ):
+        else:
+            reason = self._console_action_block_reason or "unavailable"
+            readiness.update(f"Console: Blocked - {reason}")
+        export_enabled = selected and not unsaved
+        export_tooltip = _UNSAVED_TOOLTIP if (selected and unsaved) else None
+        console_tooltip = None
+        if not self._console_actions_enabled:
+            console_tooltip = (
+                _UNSAVED_TOOLTIP
+                if selected and unsaved
+                else f"Console action blocked: {self._console_action_block_reason}"
+            )
+        for button_id in ("#personas-attach-to-console", "#personas-start-chat"):
             button = self.query_one(button_id, Button)
-            button.disabled = not enabled
-            button.tooltip = tooltip
+            button.disabled = not self._console_actions_enabled
+            button.tooltip = console_tooltip
+        for button_id in ("#personas-export-json",):
+            button = self.query_one(button_id, Button)
+            button.disabled = not export_enabled
+            button.tooltip = export_tooltip
         png_button = self.query_one("#personas-export-png", Button)
-        png_button.disabled = not (enabled and self._selected_kind == "character")
-        png_button.tooltip = tooltip
+        png_button.disabled = not (export_enabled and self._selected_kind == "character")
+        png_button.tooltip = export_tooltip
         self.query_one("#personas-delete", Button).disabled = not selected
 
     @on(ListView.Selected, "#personas-conversations-list")

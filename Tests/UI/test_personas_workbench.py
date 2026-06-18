@@ -1639,6 +1639,25 @@ class TestConsoleActions:
             await pilot.pause()
         app.open_chat_with_handoff.assert_not_called()
 
+    async def test_screen_gate_controls_visible_console_actions_after_selection(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            assert screen.query_one("#personas-attach-to-console", Button).disabled is False
+
+            screen._console_action_allowed = lambda: False
+            screen._console_action_block_reason = lambda: "prompts are not attachable"
+            screen._register_footer_shortcuts()
+            await pilot.pause()
+
+            assert screen.query_one("#personas-attach-to-console", Button).disabled is True
+            assert screen.query_one("#personas-start-chat", Button).disabled is True
+            assert "Console: Blocked - prompts are not attachable" in str(
+                screen.query_one("#personas-readiness-console", Static).renderable
+            )
+
     async def test_attach_blocked_with_unsaved_edits(
         self, mock_app_instance, stub_characters, stub_conversations
     ):

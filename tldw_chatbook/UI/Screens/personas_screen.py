@@ -744,6 +744,28 @@ class PersonasScreen(BaseAppScreen):
             and not self.state.has_unsaved_changes
         )
 
+    def _console_action_block_reason(self) -> str:
+        """Human-readable reason for a blocked screen-owned Console action."""
+        if self.state.has_unsaved_changes:
+            return "unsaved edits"
+        if not self.state.selected_entity_id:
+            return "select an item"
+        if self.state.selected_entity_kind not in ("character", "persona_profile"):
+            return "select a character or persona"
+        return "unavailable"
+
+    def _sync_inspector_console_actions(self) -> None:
+        """Push the single screen-owned Console gate into the inspector pane."""
+        try:
+            inspector = self.query_one(PersonasInspectorPane)
+        except QueryError:
+            return
+        allowed = self._console_action_allowed()
+        inspector.set_console_actions_enabled(
+            allowed,
+            reason=None if allowed else self._console_action_block_reason(),
+        )
+
     async def _selection_handoff_body(self) -> str | None:
         """Readable card summary for the selected item, or ``None`` when stale."""
         kind = self.state.selected_entity_kind
@@ -2129,6 +2151,7 @@ class PersonasScreen(BaseAppScreen):
         # editing/selection state, which are also the transitions the live
         # header reflects; refresh the title here so the two stay in lockstep.
         self._update_title()
+        self._sync_inspector_console_actions()
         try:
             footer = self.app.query_one("AppFooterStatus")
         except QueryError:
