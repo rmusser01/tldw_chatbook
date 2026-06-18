@@ -4,7 +4,7 @@ title: Unify Console-action gating between Personas screen and inspector pane
 status: Done
 assignee: []
 created_date: '2026-06-11 04:54'
-updated_date: '2026-06-18 14:31'
+updated_date: '2026-06-18 15:00'
 labels: []
 dependencies: []
 ---
@@ -42,6 +42,10 @@ Implemented a single screen-owned Console action gate for Personas attach/start 
 Added regressions covering the new inspector ownership boundary and a mounted PersonasScreen guard that forces the screen gate false after selection and verifies the visible Attach/Start buttons plus readiness copy follow the screen-owned state.
 
 Verification: python -m pytest -q Tests/UI/test_personas_inspector_pane.py Tests/UI/test_personas_workbench.py Tests/UI/test_personas_workbench_foundation.py --tb=short -> 142 passed. git diff --check -> passed.
+
+PR review follow-up: pushed the screen-owned Console gate immediately after selection/save state mutations and before subsequent async loading/rendering work, preventing a transient inspector state where a valid selected item rendered with blocked Attach/Start actions. Added mounted timing regressions for character selection, character save reload, and profile save row rendering. Added Google-style docstring sections requested by review.
+
+Review verification: python -m pytest -q Tests/UI/test_personas_workbench.py::TestConsoleActions::test_selection_pushes_console_gate_before_async_followup Tests/UI/test_personas_workbench.py::TestConsoleActions::test_character_save_pushes_console_gate_before_reload Tests/UI/test_personas_workbench.py::TestConsoleActions::test_profile_save_pushes_console_gate_before_row_render --tb=short -> 3 passed. python -m pytest -q Tests/UI/test_personas_inspector_pane.py Tests/UI/test_personas_workbench.py Tests/UI/test_personas_workbench_foundation.py --tb=short -> 145 passed.
 
 ADR required: no; bounded UI enablement ownership correction only.
 <!-- SECTION:NOTES:END -->

@@ -610,6 +610,7 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_selection(name=entity_name, kind="character", authority="Local")
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        self._sync_inspector_console_actions()
         # Drop any previous character's rows immediately and show a loading
         # placeholder; the worker fills the panel in once the listing returns
         # (or replaces the placeholder with the empty-state copy).
@@ -647,6 +648,7 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_selection(name=entity_name, kind="persona_profile", authority="Local")
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        self._sync_inspector_console_actions()
         # Persona profiles have no conversation linkage in the local data.
         self.conversations.reset()
         await inspector.show_conversations(())
@@ -745,7 +747,11 @@ class PersonasScreen(BaseAppScreen):
         )
 
     def _console_action_block_reason(self) -> str:
-        """Human-readable reason for a blocked screen-owned Console action."""
+        """Return a readable reason for a blocked screen-owned Console action.
+
+        Returns:
+            Human-readable block reason suitable for inspector readiness copy.
+        """
         if self.state.has_unsaved_changes:
             return "unsaved edits"
         if not self.state.selected_entity_id:
@@ -1725,6 +1731,7 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_selection(name=name, kind="character", authority="Local")
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        self._sync_inspector_console_actions()
         self.query_one(PersonasLibraryPane).mark_active_row("character", saved_id)
         if record is not None:
             await self.character_handler.load_character(saved_id)
@@ -1824,6 +1831,7 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_selection(name=name, kind="persona_profile", authority="Local")
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        self._sync_inspector_console_actions()
         await self._render_profile_rows()
         self.query_one(PersonaProfileCardWidget).show_persona(saved)
         self._show_center("#ccp-persona-card-view")

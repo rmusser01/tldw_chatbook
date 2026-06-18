@@ -15,6 +15,9 @@ from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, Shortcu
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import PersonaActionRequested
+from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
+    PersonasInspectorPane,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     EditPersonaRequested,
     PersonaProfileSaveRequested,
@@ -1657,6 +1660,88 @@ class TestConsoleActions:
             assert "Console: Blocked - prompts are not attachable" in str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
+
+    async def test_selection_pushes_console_gate_before_async_followup(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        """Selection should not render as blocked before follow-up work completes."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            inspector = screen.query_one(PersonasInspectorPane)
+
+            observed_enabled: list[bool] = []
+            original_loading = inspector.show_conversations_loading
+
+            async def assert_gate_synced_before_loading():
+                observed_enabled.append(
+                    not screen.query_one("#personas-attach-to-console", Button).disabled
+                )
+                return await original_loading()
+
+            monkeypatch.setattr(
+                inspector,
+                "show_conversations_loading",
+                assert_gate_synced_before_loading,
+            )
+
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+        assert observed_enabled == [True]
+
+    async def test_character_save_pushes_console_gate_before_reload(
+        self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
+    ):
+        """Save completion should expose valid Console actions before reload awaits."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+
+            observed_enabled: list[bool] = []
+
+            async def observe_load(_character_id):
+                observed_enabled.append(
+                    not screen.query_one("#personas-attach-to-console", Button).disabled
+                )
+
+            monkeypatch.setattr(screen.character_handler, "load_character", observe_load)
+
+            await screen._after_character_save("1", "Detective Sam")
+            await pilot.pause()
+
+        assert observed_enabled == [True]
+
+    async def test_profile_save_pushes_console_gate_before_row_render(
+        self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service, monkeypatch
+    ):
+        """Profile save completion should not wait for row rendering to sync gates."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-mode-personas")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            observed_enabled: list[bool] = []
+
+            async def observe_render_rows():
+                observed_enabled.append(
+                    not screen.query_one("#personas-attach-to-console", Button).disabled
+                )
+
+            monkeypatch.setattr(screen, "_render_profile_rows", observe_render_rows)
+
+            await screen._after_profile_save({"id": "p-1", "name": "Archivist"})
+            await pilot.pause()
+
+        assert observed_enabled == [True]
 
     async def test_attach_blocked_with_unsaved_edits(
         self, mock_app_instance, stub_characters, stub_conversations

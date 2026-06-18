@@ -145,6 +145,10 @@ class PersonasInspectorPane(Vertical):
         Selection, export, and delete state stay local to the inspector, but
         Console action availability must be pushed by ``PersonasScreen`` so
         the visible buttons, readiness copy, and shortcuts cannot diverge.
+
+        Args:
+            enabled: Whether Console actions are currently available.
+            reason: Optional user-facing reason shown when actions are blocked.
         """
         self._console_actions_enabled = bool(enabled)
         self._console_action_block_reason = "" if enabled else (reason or "unavailable")
