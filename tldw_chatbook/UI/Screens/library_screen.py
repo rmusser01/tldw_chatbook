@@ -1204,6 +1204,24 @@ class LibraryScreen(BaseAppScreen):
     def _invalidate_library_workspace_depth_state(self) -> None:
         self._library_workspace_depth_state_cache = None
 
+    def _next_local_workspace_identity(self) -> tuple[str, str]:
+        """Return a collision-free local workspace id and display name."""
+        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        existing_workspaces = (
+            tuple(registry_service.list_workspaces())
+            if registry_service is not None
+            else ()
+        )
+        existing_ids = {workspace.workspace_id for workspace in existing_workspaces}
+        existing_names = {workspace.name for workspace in existing_workspaces}
+        index = 1
+        while True:
+            workspace_id = f"workspace-local-{index}"
+            workspace_name = f"Workspace {index}"
+            if workspace_id not in existing_ids and workspace_name not in existing_names:
+                return workspace_id, workspace_name
+            index += 1
+
     def _library_workspace_depth_state(
         self,
         *,
@@ -1215,6 +1233,17 @@ class LibraryScreen(BaseAppScreen):
                 source_records=self._workspace_source_records(),
             )
         return self._library_workspace_depth_state_cache
+
+    def _library_workspace_scope_label(
+        self,
+        workspace_depth_state: LibraryWorkspaceDepthState,
+    ) -> Text:
+        """Return the left-rail workspace scope copy for the active Library mode."""
+        return Text.from_markup(
+            "Active workspace: "
+            f"{escape_markup(workspace_depth_state.workspace_name)}\n"
+            "Browse/search: all workspaces"
+        )
 
     def _source_study_context(self) -> StudyScopeContext | None:
         if not self._has_local_sources():
@@ -1612,6 +1641,20 @@ class LibraryScreen(BaseAppScreen):
         if self._active_mode == "workspaces":
             widgets: list[Any] = [
                 Static("Workspace actions", classes="destination-section"),
+                Button(
+                    "Create local workspace",
+                    id="library-create-local-workspace",
+                    classes="library-source-action",
+                    tooltip=(
+                        "Create a local-only workspace and make it active. "
+                        "Server sync and ACP handoff remain WIP."
+                    ),
+                ),
+                Static(
+                    "Server sync: WIP/unavailable. Local workspace selection is active.",
+                    id="library-workspace-create-local-copy",
+                    classes="ds-recovery-callout",
+                ),
             ]
             if workspace_depth_state.context_handoff_enabled:
                 widgets.append(
@@ -1964,11 +2007,7 @@ class LibraryScreen(BaseAppScreen):
                     )
                     yield from self._source_module_action_widgets()
                     yield Static(
-                        Text.from_markup(
-                            "Active workspace: "
-                            f"{escape_markup(workspace_depth_state.workspace_name)}\n"
-                            "Browse/search: all workspaces"
-                        ),
+                        self._library_workspace_scope_label(workspace_depth_state),
                         id="library-workspace-scope",
                     )
 
@@ -2183,6 +2222,9 @@ class LibraryScreen(BaseAppScreen):
                 buttons[0].set_class(button_id == active_source_action_id, "is-active")
         self._sync_source_module_actions()
         workspace_depth_state = self._library_workspace_depth_state(refresh=True)
+        self.query_one("#library-workspace-scope", Static).update(
+            self._library_workspace_scope_label(workspace_depth_state)
+        )
         await self._sync_local_snapshot_region(workspace_depth_state)
         await self._sync_search_rag_panel(workspace_depth_state=workspace_depth_state)
         await self._sync_collections_panel(refresh_snapshot=True)
@@ -3160,6 +3202,36 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-workspace-import-sources")
     def open_workspace_import_sources(self) -> None:
         self.post_message(NavigateToScreen("ingest"))
+
+    @on(Button.Pressed, "#library-create-local-workspace")
+    async def create_local_workspace(self, event: Button.Pressed) -> None:
+        event.stop()
+        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry_service is None:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Workspace registry is not ready.", severity="warning")
+            return
+        try:
+            workspace_id, workspace_name = self._next_local_workspace_identity()
+            registry_service.create_workspace(
+                workspace_id=workspace_id,
+                name=workspace_name,
+                description="Local workspace created from Library.",
+            )
+            registry_service.set_active_workspace(workspace_id)
+        except Exception:
+            logger.warning("Failed to create local Library workspace", exc_info=True)
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Local workspace could not be created.", severity="error")
+            return
+
+        self._invalidate_library_workspace_depth_state()
+        await self._refresh_active_mode_widgets()
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(f"Created local workspace {workspace_name}.", severity="information")
 
     @on(Button.Pressed, "#library-open-search")
     async def open_search_mode(self, event: Button.Pressed) -> None:

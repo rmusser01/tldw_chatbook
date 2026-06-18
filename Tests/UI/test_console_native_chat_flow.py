@@ -1758,6 +1758,39 @@ async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_rail_new_conversation_creates_default_workspace_session():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _wait_for_selector(console, pilot, "#console-new-workspace-conversation")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        console.query_one("#console-new-workspace-conversation", Button).press()
+        await pilot.pause()
+
+        active_session = store.switch_session(store.active_session_id)
+        assert active_session.id != first.id
+        assert active_session.workspace_id == service.get_active_workspace().workspace_id
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            active_session.title,
+            selected=True,
+        )
+        assert any("Chat 2" in text for text in row_texts)
+        assert all(
+            "Workspace conversation creation lands in a later slice" not in text
+            for text in row_texts
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_new_chat_tab_promotes_active_native_session_in_workspace_rail():
     app = _build_test_app()
     service = app.workspace_registry_service

@@ -4782,6 +4782,25 @@ class ChatScreen(BaseAppScreen):
             await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)
             return
+        if button_id == "console-new-workspace-conversation":
+            event.stop()
+            selection = self._sync_console_chat_core_state()
+            workspace_id = str(selection.workspace_context.active_workspace_id or "").strip()
+            if not workspace_id or workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
+                self.app_instance.notify(
+                    "Select a workspace before creating a workspace conversation.",
+                    severity="warning",
+                )
+                return
+            self._ensure_console_chat_controller().new_session(
+                settings=(
+                    self._active_console_session_settings()
+                    or self._default_console_session_settings()
+                ),
+            )
+            await self._sync_native_console_chat_ui()
+            self._focus_console_composer_if_needed(force=True)
+            return
         if button_id and button_id.startswith("console-workspace-conversation-"):
             event.stop()
             conversation_id = str(getattr(event.button, "conversation_id", "") or "")
