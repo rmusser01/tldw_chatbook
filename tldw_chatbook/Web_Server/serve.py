@@ -14,7 +14,11 @@ from urllib.parse import urlparse, urlunparse
 from loguru import logger
 
 from ..Utils.input_validation import validate_number_range
-from ..Utils.optional_deps import DEPENDENCIES_AVAILABLE, require_dependency
+from ..Utils.optional_deps import (
+    DEPENDENCIES_AVAILABLE,
+    check_web_server_deps,
+    require_dependency,
+)
 from ..config import get_cli_setting
 
 
@@ -235,8 +239,22 @@ def build_chatbook_web_server_class(textual_serve_server_class: type) -> type:
 
 
 def check_web_server_available() -> bool:
-    """Check if web server dependencies are available."""
-    return DEPENDENCIES_AVAILABLE.get('web', False)
+    """Check if web server dependencies are available.
+
+    Returns:
+        True when textual-web dependencies are available, otherwise False.
+    """
+    if DEPENDENCIES_AVAILABLE.get('web', False):
+        return True
+    try:
+        return check_web_server_deps()
+    except Exception as exc:
+        logger.warning(
+            f"Web server dependency probe failed. Web mode is unavailable. Reason: {exc}"
+        )
+        DEPENDENCIES_AVAILABLE['web'] = False
+        DEPENDENCIES_AVAILABLE['textual_serve'] = False
+        return False
 
 
 def create_server(
