@@ -58,11 +58,29 @@ def test_console_workspace_state_explains_no_active_workspace(tmp_path: Path) ->
     assert state.workspace_label == "Workspace: Default"
     assert state.authority_label == "Authority: local-only"
     assert state.change_workspace_enabled is False
-    assert state.new_conversation_enabled is False
+    assert state.new_conversation_enabled is True
+    assert state.new_conversation_recovery == ""
     assert state.runtime_label == "Runtime: none, file tools disabled"
     assert state.recovery_copy == ""
     assert state.server_readiness_label == "Server: local fallback"
     assert service.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
+
+
+def test_console_workspace_state_allows_default_conversation_in_fallback_state(
+    tmp_path: Path,
+) -> None:
+    service = _registry(tmp_path)
+
+    state = build_console_workspace_state(
+        registry_service=service,
+        current_conversation=None,
+    )
+
+    assert state.workspace_label == "Workspace: Local Default"
+    assert state.change_workspace_enabled is False
+    assert state.new_conversation_enabled is True
+    assert state.new_conversation_recovery == ""
+    assert state.recovery_copy == "Workspace switching: locked"
 
 
 def test_console_workspace_state_reports_active_workspace_and_runtime(tmp_path: Path) -> None:
@@ -104,8 +122,8 @@ def test_console_workspace_state_reports_active_workspace_and_runtime(tmp_path: 
     assert state.conversation_rows[0].title == "Planning thread"
     assert state.conversation_rows[0].selected is True
     assert state.change_workspace_enabled is False
-    assert state.new_conversation_enabled is False
-    assert "later slice" in state.new_conversation_recovery.lower()
+    assert state.new_conversation_enabled is True
+    assert state.new_conversation_recovery == ""
 
 
 def test_console_workspace_state_enables_switching_with_multiple_workspaces(

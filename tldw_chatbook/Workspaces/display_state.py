@@ -263,8 +263,8 @@ def build_console_workspace_state(
             change_workspace_recovery=(
                 "" if can_switch else "Create a workspace in Library > Workspaces before switching."
             ),
-            new_conversation_enabled=False,
-            new_conversation_recovery="Conversation creation is read-only until workspace selection is wired.",
+            new_conversation_enabled=True,
+            new_conversation_recovery="",
             recovery_copy=(
                 "" if can_switch else "Workspace switching: locked"
             ),
@@ -308,8 +308,8 @@ def build_console_workspace_state(
         change_workspace_recovery=(
             "" if can_switch else "Add another workspace before switching."
         ),
-        new_conversation_enabled=False,
-        new_conversation_recovery="Workspace conversation creation lands in a later slice.",
+        new_conversation_enabled=True,
+        new_conversation_recovery="",
         recovery_copy=(
             ""
             if can_switch or is_default_workspace

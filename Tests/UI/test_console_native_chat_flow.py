@@ -525,6 +525,20 @@ def test_console_provider_selection_reads_local_llamacpp_configured_model():
     assert selection.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
 
 
+def test_console_provider_selection_restores_default_workspace_when_none_active():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    with service.db.transaction() as conn:
+        conn.execute("UPDATE workspace_records SET active = 0")
+    assert service.get_active_workspace() is None
+    screen = ChatScreen(app)
+
+    selection = screen._build_console_provider_selection()
+
+    assert selection.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
+    assert service.get_active_workspace().workspace_id == DEFAULT_WORKSPACE_ID
+
+
 def test_console_configured_llamacpp_override_wins_over_provider_api_url():
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -1755,6 +1769,39 @@ async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
         assert any("Chat 1" in text for text in row_texts)
         assert any("Chat 2" in text for text in row_texts)
         assert any(text.startswith("> ") and "Chat 2" in text for text in row_texts)
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_rail_new_conversation_creates_default_workspace_session():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _wait_for_selector(console, pilot, "#console-new-workspace-conversation")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        console.query_one("#console-new-workspace-conversation", Button).press()
+        await pilot.pause()
+
+        active_session = store.switch_session(store.active_session_id)
+        assert active_session.id != first.id
+        assert active_session.workspace_id == service.get_active_workspace().workspace_id
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            active_session.title,
+            selected=True,
+        )
+        assert any("Chat 2" in text for text in row_texts)
+        assert all(
+            "Workspace conversation creation lands in a later slice" not in text
+            for text in row_texts
+        )
 
 
 @pytest.mark.asyncio

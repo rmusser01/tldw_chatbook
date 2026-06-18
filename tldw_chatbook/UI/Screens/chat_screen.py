@@ -750,7 +750,16 @@ class ChatScreen(BaseAppScreen):
         registry_service = getattr(self.app_instance, "workspace_registry_service", None)
         if registry_service is not None:
             try:
-                active_workspace = registry_service.get_active_workspace()
+                ensure_default_workspace = getattr(
+                    registry_service,
+                    "ensure_default_workspace",
+                    None,
+                )
+                active_workspace = (
+                    ensure_default_workspace()
+                    if callable(ensure_default_workspace)
+                    else registry_service.get_active_workspace()
+                )
                 candidate = getattr(active_workspace, "workspace_id", None)
                 if candidate:
                     workspace_id = str(candidate)
@@ -4773,6 +4782,25 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-new-chat-tab":
             event.stop()
+            self._ensure_console_chat_controller().new_session(
+                settings=(
+                    self._active_console_session_settings()
+                    or self._default_console_session_settings()
+                ),
+            )
+            await self._sync_native_console_chat_ui()
+            self._focus_console_composer_if_needed(force=True)
+            return
+        if button_id == "console-new-workspace-conversation":
+            event.stop()
+            selection = self._sync_console_chat_core_state()
+            workspace_id = str(selection.workspace_context.active_workspace_id or "").strip()
+            if not workspace_id or workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
+                self.app_instance.notify(
+                    "Select a workspace before creating a workspace conversation.",
+                    severity="warning",
+                )
+                return
             self._ensure_console_chat_controller().new_session(
                 settings=(
                     self._active_console_session_settings()

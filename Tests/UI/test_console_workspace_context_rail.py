@@ -89,7 +89,8 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         assert conversations_title.region.y > workspace_context.region.y
         assert len(console.query("#console-workspace-recovery")) == 0
         assert len(console.query("#console-change-workspace")) == 0
-        assert len(console.query("#console-new-workspace-conversation")) == 0
+        new_conversation = console.query_one("#console-new-workspace-conversation", Button)
+        assert new_conversation.disabled is False
         text = _visible_text(console)
         assert "Staged Context" in text
         assert "Convos & Workspaces" in text
@@ -101,7 +102,25 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         assert "until workspace selection is wired" not in text
         assert "read-only" not in text
         assert "Change workspace" not in text
-        assert "New conversation" not in text
+        assert "New conversation" in text
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_context_exposes_new_conversation_for_default_workspace() -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+
+        new_conversation = console.query_one("#console-new-workspace-conversation", Button)
+        assert new_conversation.disabled is False
+
+        text = _visible_text(console)
+        assert "New conversation" in text
+        assert "Runtime: none, file tools disabled" in text
+        assert "Workspace conversation creation lands in a later slice" not in text
 
 
 @pytest.mark.asyncio
