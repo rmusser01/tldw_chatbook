@@ -180,7 +180,16 @@ def _derive_tab_title(tab_state: TabState) -> str:
 def _character_session_identity_from_handoff(
     payload: ChatHandoffPayload,
 ) -> tuple[int, str, str] | None:
-    """Return character session identity for Personas Start Chat handoffs."""
+    """Return character session identity for Personas Start Chat handoffs.
+
+    Args:
+        payload: Handoff payload staged by a source screen.
+
+    Returns:
+        A tuple of `(character_id, character_name, assistant_id)` when the
+        payload represents a Personas character Start Chat handoff; otherwise
+        `None`.
+    """
     metadata = payload.metadata or {}
     if (
         str(metadata.get("intent") or "").strip() != "start_chat"
@@ -188,7 +197,8 @@ def _character_session_identity_from_handoff(
     ):
         return None
 
-    character_id_text = str(metadata.get("selected_record_id") or "").strip()
+    raw_record_id = metadata.get("selected_record_id")
+    character_id_text = "" if raw_record_id is None else str(raw_record_id).strip()
     if not character_id_text:
         target_id = str(metadata.get("selected_target_id") or "").strip()
         match = re.search(r"(?:^|:)character:(\d+)$", target_id)
@@ -2428,15 +2438,6 @@ class ChatScreen(BaseAppScreen):
                             variant=self._staged_context_frame_variant(staged_context_state),
                         )
 
-                        settings_summary = ConsoleSettingsSummary(
-                            self._build_console_settings_summary_state(),
-                            id="console-settings-summary",
-                            classes="console-left-rail-section console-settings-summary",
-                        )
-                        settings_summary.styles.width = "100%"
-                        settings_summary.styles.min_width = 0
-                        yield self._frame_console_region(settings_summary, variant="quiet")
-
                         workspace_context_tray = ConsoleWorkspaceContextTray(
                             workspace_context_state,
                             id="console-workspace-context",
@@ -2450,6 +2451,15 @@ class ChatScreen(BaseAppScreen):
                             workspace_context_tray,
                             variant=self._workspace_context_frame_variant(workspace_context_state),
                         )
+
+                        settings_summary = ConsoleSettingsSummary(
+                            self._build_console_settings_summary_state(),
+                            id="console-settings-summary",
+                            classes="console-left-rail-section console-settings-summary",
+                        )
+                        settings_summary.styles.width = "100%"
+                        settings_summary.styles.min_width = 0
+                        yield self._frame_console_region(settings_summary, variant="quiet")
 
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"
@@ -2923,7 +2933,7 @@ class ChatScreen(BaseAppScreen):
             character_id, character_name, assistant_id = character_identity
             assistant_kind = "character"
             if discovery_owner == "general_chat" and payload.source == "personas":
-                discovery_owner = "personas"
+                discovery_owner = "ccp_character"
         return ChatSessionData(
             tab_id=uuid.uuid4().hex[:8],
             title=f"{title_item_type}: {payload.title}",
