@@ -429,6 +429,17 @@ class ChatScreen(BaseAppScreen):
             callback=_apply_rename,
         )
 
+    async def _create_native_console_session_from_active_context(self) -> None:
+        """Create and focus a native Console session in the active workspace context."""
+        self._ensure_console_chat_controller().new_session(
+            settings=(
+                self._active_console_session_settings()
+                or self._default_console_session_settings()
+            ),
+        )
+        await self._sync_native_console_chat_ui()
+        self._focus_console_composer_if_needed(force=True)
+
     @on(Button.Pressed, "#console-change-workspace")
     def on_console_change_workspace(self, event: Button.Pressed) -> None:
         """Open the active Console workspace switcher."""
@@ -4824,14 +4835,11 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-new-chat-tab":
             event.stop()
-            self._ensure_console_chat_controller().new_session(
-                settings=(
-                    self._active_console_session_settings()
-                    or self._default_console_session_settings()
-                ),
-            )
-            await self._sync_native_console_chat_ui()
-            self._focus_console_composer_if_needed(force=True)
+            await self._create_native_console_session_from_active_context()
+            return
+        if button_id == "console-new-workspace-conversation":
+            event.stop()
+            await self._create_native_console_session_from_active_context()
             return
         if button_id and button_id.startswith("console-workspace-conversation-"):
             event.stop()

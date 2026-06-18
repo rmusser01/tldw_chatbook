@@ -89,7 +89,7 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         assert conversations_title.region.y > workspace_context.region.y
         assert len(console.query("#console-workspace-recovery")) == 0
         assert len(console.query("#console-change-workspace")) == 0
-        assert len(console.query("#console-new-workspace-conversation")) == 0
+        assert len(console.query("#console-new-workspace-conversation")) == 1
         text = _visible_text(console)
         assert "Staged Context" in text
         assert "Convos & Workspaces" in text
@@ -101,7 +101,7 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         assert "until workspace selection is wired" not in text
         assert "read-only" not in text
         assert "Change workspace" not in text
-        assert "New conversation" not in text
+        assert "New conversation" in text
 
 
 @pytest.mark.asyncio
@@ -152,6 +152,8 @@ async def test_console_workspace_context_renders_active_workspace() -> None:
         assert "Research Sprint" in text
         assert "Sync: dry-run only" in text
         assert "Planning thread" in text
+        assert len(console.query("#console-new-workspace-conversation")) == 1
+        assert "Workspace conversation creation lands in a later slice." not in text
 
 
 @pytest.mark.asyncio
