@@ -1208,7 +1208,7 @@ class LibraryScreen(BaseAppScreen):
         """Return a collision-free local workspace id and display name."""
         registry_service = getattr(self.app_instance, "workspace_registry_service", None)
         existing_workspaces = (
-            tuple(registry_service.list_workspaces())
+            tuple(registry_service.list_workspaces(include_archived=True))
             if registry_service is not None
             else ()
         )
@@ -3205,6 +3205,11 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-create-local-workspace")
     async def create_local_workspace(self, event: Button.Pressed) -> None:
+        """Create and activate a local-only Library workspace.
+
+        Args:
+            event: Button press event emitted by the Library Workspaces action.
+        """
         event.stop()
         registry_service = getattr(self.app_instance, "workspace_registry_service", None)
         if registry_service is None:

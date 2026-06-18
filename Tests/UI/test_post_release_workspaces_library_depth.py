@@ -205,6 +205,41 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
 
 
 @pytest.mark.asyncio
+async def test_library_workspaces_create_skips_archived_local_workspace_identity() -> None:
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(
+        workspace_id="workspace-local-1",
+        name="Workspace 1",
+    )
+    with service.db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE workspace_records
+            SET archived = 1
+            WHERE workspace_id = ?
+            """,
+            ("workspace-local-1",),
+        )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-workspaces", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
+
+        screen.query_one("#library-create-local-workspace", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
+
+        active_workspace = service.get_active_workspace()
+        assert active_workspace is not None
+        assert active_workspace.workspace_id == "workspace-local-2"
+        assert active_workspace.name == "Workspace 2"
+
+
+@pytest.mark.asyncio
 async def test_library_workspaces_rows_escape_markup_text() -> None:
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService(

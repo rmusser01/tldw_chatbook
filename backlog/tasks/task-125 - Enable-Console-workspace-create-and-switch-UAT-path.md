@@ -62,6 +62,10 @@ Review follow-up: the fallback state where the registry exists but no active wor
 
 Result: 39 passed, with existing dependency/deprecation warnings.
 
+Qodo follow-up: local workspace identity generation now considers archived workspace records so `workspace-local-N` IDs and `Workspace N` names are not reused after archival, and the new Library create handler has a Google-style docstring. Added a mounted regression for archived `workspace-local-1` and verified the focused suite again.
+
+Result: 40 passed, with existing dependency/deprecation warnings.
+
 Rendered CDP/Textual-web evidence captured:
 
 - `Docs/superpowers/qa/product-maturity/screen-qa/console/console-workspace-default-new-conversation-current.png`
