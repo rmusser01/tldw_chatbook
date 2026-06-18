@@ -263,10 +263,8 @@ def build_console_workspace_state(
             change_workspace_recovery=(
                 "" if can_switch else "Create a workspace in Library > Workspaces before switching."
             ),
-            new_conversation_enabled=can_switch,
-            new_conversation_recovery=(
-                "" if can_switch else "Create a workspace in Library > Workspaces before starting workspace chat."
-            ),
+            new_conversation_enabled=True,
+            new_conversation_recovery="",
             recovery_copy=(
                 "" if can_switch else "Workspace switching: locked"
             ),

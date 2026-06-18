@@ -525,6 +525,20 @@ def test_console_provider_selection_reads_local_llamacpp_configured_model():
     assert selection.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
 
 
+def test_console_provider_selection_restores_default_workspace_when_none_active():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    with service.db.transaction() as conn:
+        conn.execute("UPDATE workspace_records SET active = 0")
+    assert service.get_active_workspace() is None
+    screen = ChatScreen(app)
+
+    selection = screen._build_console_provider_selection()
+
+    assert selection.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
+    assert service.get_active_workspace().workspace_id == DEFAULT_WORKSPACE_ID
+
+
 def test_console_configured_llamacpp_override_wins_over_provider_api_url():
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"

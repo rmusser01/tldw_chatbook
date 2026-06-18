@@ -56,6 +56,12 @@ Added mounted regressions for Default workspace conversation creation, active wo
 
 Result: 19 passed, 1 dependency warning from `requests`.
 
+Review follow-up: the fallback state where the registry exists but no active workspace is selected now keeps Default conversation creation enabled, and Console provider/session selection restores the safe Default workspace before creating or sending a chat. Verified the follow-up with:
+
+`python -m pytest -q Tests/Workspaces/test_workspace_display_state.py Tests/UI/test_console_workspace_context_rail.py Tests/UI/test_console_native_chat_flow.py::test_console_provider_selection_reads_local_llamacpp_configured_model Tests/UI/test_console_native_chat_flow.py::test_console_provider_selection_restores_default_workspace_when_none_active Tests/UI/test_console_native_chat_flow.py::test_console_new_chat_tab_appears_in_workspace_conversation_rail Tests/UI/test_console_native_chat_flow.py::test_console_workspace_rail_new_conversation_creates_default_workspace_session Tests/UI/test_console_native_chat_flow.py::test_console_send_after_workspace_switch_persists_to_selected_workspace Tests/UI/test_console_native_chat_flow.py::test_console_workspace_switch_refreshes_visible_session_tabs Tests/UI/test_post_release_workspaces_library_depth.py --tb=short`
+
+Result: 39 passed, with existing dependency/deprecation warnings.
+
 Rendered CDP/Textual-web evidence captured:
 
 - `Docs/superpowers/qa/product-maturity/screen-qa/console/console-workspace-default-new-conversation-current.png`

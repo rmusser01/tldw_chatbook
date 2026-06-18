@@ -750,7 +750,16 @@ class ChatScreen(BaseAppScreen):
         registry_service = getattr(self.app_instance, "workspace_registry_service", None)
         if registry_service is not None:
             try:
-                active_workspace = registry_service.get_active_workspace()
+                ensure_default_workspace = getattr(
+                    registry_service,
+                    "ensure_default_workspace",
+                    None,
+                )
+                active_workspace = (
+                    ensure_default_workspace()
+                    if callable(ensure_default_workspace)
+                    else registry_service.get_active_workspace()
+                )
                 candidate = getattr(active_workspace, "workspace_id", None)
                 if candidate:
                     workspace_id = str(candidate)
