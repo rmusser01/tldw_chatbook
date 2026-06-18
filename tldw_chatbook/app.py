@@ -7254,8 +7254,8 @@ def main_cli_runner():
     # If --serve flag is provided, run as web server
     if args.serve:
         # Check if web server dependencies are available
-        from .Utils.optional_deps import DEPENDENCIES_AVAILABLE
-        if not DEPENDENCIES_AVAILABLE.get('web', False):
+        from .Web_Server.serve import check_web_server_available, run_web_server
+        if not check_web_server_available():
             loguru_logger.error("\n" + "="*60)
             loguru_logger.error("Web server feature is not available!")
             loguru_logger.error("="*60)
@@ -7266,9 +7266,7 @@ def main_cli_runner():
             loguru_logger.error("  pip install -e \".[web]\"")
             loguru_logger.error("\n" + "="*60 + "\n")
             return
-        
-        from .Web_Server.serve import run_web_server
-        
+
         loguru_logger.info("Starting tldw_chatbook in web server mode")
         run_web_server(
             host=args.host,
