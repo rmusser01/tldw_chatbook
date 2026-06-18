@@ -40,9 +40,13 @@ Reason: bounded Console handoff mapping bugfix; no storage, sync, runtime, or cr
 <!-- SECTION:NOTES:BEGIN -->
 Added a focused Console handoff regression for Personas `intent=start_chat` character payloads. `ChatScreen._session_data_for_handoff()` now binds character Start Chat handoffs into `ChatSessionData` with `character_id`, `character_name`, `assistant_kind="character"`, and `assistant_id`, while leaving generic/attach handoffs unchanged. This gives downstream Console tab title, persistence, and greeting machinery the character identity it expects.
 
+Review follow-up: mapped character-backed Personas handoffs to the persisted `ccp_character` discovery owner, preserved numeric character id `0`, and added docstrings for the new regression coverage. While triaging the PR CI report, fixed a Console rail layout regression where the Session Settings summary pushed the second native conversation row outside the left rail hit-test region; the rail now prioritizes Staged Context, then Convos & Workspaces, then Session Settings.
+
 Verification:
 - `python -m pytest -q Tests/UI/test_chat_first_handoffs.py::test_chat_screen_start_chat_handoff_binds_character_session_identity --tb=short`
 - `python -m pytest -q Tests/UI/test_chat_first_handoffs.py --tb=short`
 - `python -m pytest -q Tests/UI/test_personas_workbench.py::TestConsoleActions::test_start_chat_uses_real_mechanism --tb=short`
+- `python -m pytest -q Tests/UI/test_console_native_chat_flow.py::test_console_workspace_conversation_row_switches_native_session Tests/UI/test_destination_shells.py::test_settings_destination_uses_three_column_workbench_contract Tests/UI/test_settings_configuration_hub.py::test_settings_domain_category_renders_read_only_owner_contract Tests/UI/test_settings_configuration_hub.py::test_settings_overview_paste_summary_updates_after_toggle Tests/UI/test_chat_first_handoffs.py Tests/UI/test_personas_workbench.py::TestConsoleActions::test_start_chat_uses_real_mechanism --tb=short`
+- `python -m pytest -q Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_session_settings.py --tb=short`
 - `git diff --check`
 <!-- SECTION:NOTES:END -->

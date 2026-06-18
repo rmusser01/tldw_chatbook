@@ -168,6 +168,7 @@ def test_chat_screen_handoff_session_data_uses_unique_valid_tab_ids():
 
 
 def test_chat_screen_start_chat_handoff_binds_character_session_identity():
+    """Personas Start Chat should create character-bound Console sessions."""
     payload = ChatHandoffPayload(
         source="personas",
         item_type="character-card",
@@ -191,8 +192,35 @@ def test_chat_screen_start_chat_handoff_binds_character_session_identity():
     assert session_data.character_name == "Detective Sam"
     assert session_data.assistant_kind == "character"
     assert session_data.assistant_id == "1"
-    assert session_data.discovery_owner == "personas"
+    assert session_data.discovery_owner == "ccp_character"
     assert session_data.discovery_entity_id == "1"
+
+
+def test_chat_screen_start_chat_handoff_preserves_numeric_zero_character_id():
+    """Character handoff metadata should not treat integer zero as missing."""
+    payload = ChatHandoffPayload(
+        source="personas",
+        item_type="character-card",
+        title="Zero (character)",
+        body="Name: Zero",
+        source_id="0",
+        suggested_prompt="Respond as Zero.",
+        metadata={
+            "intent": "start_chat",
+            "selected_kind": "character",
+            "selected_record_id": 0,
+            "selected_name": "Zero",
+        },
+    )
+    screen = ChatScreen(Mock())
+
+    session_data = screen._session_data_for_handoff(payload)
+
+    assert session_data.character_id == 0
+    assert session_data.character_name == "Zero"
+    assert session_data.assistant_kind == "character"
+    assert session_data.assistant_id == "0"
+    assert session_data.discovery_owner == "ccp_character"
 
 
 @pytest.mark.asyncio
