@@ -213,7 +213,7 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
 
-        screen.query_one("#library-mode-workspaces", Button).press()
+        await pilot.click("#library-mode-workspaces")
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         await pilot.click("#library-create-local-workspace")
