@@ -2135,7 +2135,7 @@ async def test_console_left_rail_sections_use_available_space():
         assert staged_context.parent is body
         assert settings.parent is body
         assert workspace_context.parent is body
-        assert staged_context.region.y < settings.region.y < workspace_context.region.y
+        assert staged_context.region.y < workspace_context.region.y < settings.region.y
         assert settings.region.height <= 9
         assert workspace_context.region.height > settings.region.height
         assert staged_context.region.width == body.region.width

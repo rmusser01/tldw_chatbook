@@ -1966,7 +1966,7 @@ async def test_console_settings_modal_restores_freeform_model_after_provider_rou
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_renders_settings_below_staged_context() -> None:
+async def test_console_left_rail_prioritizes_workspace_context_before_settings() -> None:
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1978,7 +1978,7 @@ async def test_console_left_rail_renders_settings_below_staged_context() -> None
         settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
 
-        assert staged_context.region.y < settings.region.y < workspace_context.region.y
+        assert staged_context.region.y < workspace_context.region.y < settings.region.y
         assert settings.region.width == staged_context.region.width
 
 

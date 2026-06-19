@@ -177,6 +177,42 @@ def _derive_tab_title(tab_state: TabState) -> str:
     )
 
 
+def _character_session_identity_from_handoff(
+    payload: ChatHandoffPayload,
+) -> tuple[int, str, str] | None:
+    """Return character session identity for Personas Start Chat handoffs.
+
+    Args:
+        payload: Handoff payload staged by a source screen.
+
+    Returns:
+        A tuple of `(character_id, character_name, assistant_id)` when the
+        payload represents a Personas character Start Chat handoff; otherwise
+        `None`.
+    """
+    metadata = payload.metadata or {}
+    if (
+        str(metadata.get("intent") or "").strip() != "start_chat"
+        or str(metadata.get("selected_kind") or "").strip() != "character"
+    ):
+        return None
+
+    raw_record_id = metadata.get("selected_record_id")
+    character_id_text = "" if raw_record_id is None else str(raw_record_id).strip()
+    if not character_id_text:
+        target_id = str(metadata.get("selected_target_id") or "").strip()
+        match = re.search(r"(?:^|:)character:(\d+)$", target_id)
+        if match:
+            character_id_text = match.group(1)
+    if not character_id_text.isdecimal():
+        return None
+
+    character_id = int(character_id_text)
+    character_name = str(metadata.get("selected_name") or payload.title or "").strip()
+    assistant_id = str(character_id)
+    return character_id, character_name, assistant_id
+
+
 def _source_mentions_rag(source: Any) -> bool:
     """Return whether a source label explicitly includes a RAG token.
 
@@ -392,6 +428,17 @@ class ChatScreen(BaseAppScreen):
             ConsoleRenameSessionModal(title=session.title),
             callback=_apply_rename,
         )
+
+    async def _create_native_console_session_from_active_context(self) -> None:
+        """Create and focus a native Console session in the active workspace context."""
+        self._ensure_console_chat_controller().new_session(
+            settings=(
+                self._active_console_session_settings()
+                or self._default_console_session_settings()
+            ),
+        )
+        await self._sync_native_console_chat_ui()
+        self._focus_console_composer_if_needed(force=True)
 
     @on(Button.Pressed, "#console-change-workspace")
     def on_console_change_workspace(self, event: Button.Pressed) -> None:
@@ -2402,15 +2449,6 @@ class ChatScreen(BaseAppScreen):
                             variant=self._staged_context_frame_variant(staged_context_state),
                         )
 
-                        settings_summary = ConsoleSettingsSummary(
-                            self._build_console_settings_summary_state(),
-                            id="console-settings-summary",
-                            classes="console-left-rail-section console-settings-summary",
-                        )
-                        settings_summary.styles.width = "100%"
-                        settings_summary.styles.min_width = 0
-                        yield self._frame_console_region(settings_summary, variant="quiet")
-
                         workspace_context_tray = ConsoleWorkspaceContextTray(
                             workspace_context_state,
                             id="console-workspace-context",
@@ -2424,6 +2462,15 @@ class ChatScreen(BaseAppScreen):
                             workspace_context_tray,
                             variant=self._workspace_context_frame_variant(workspace_context_state),
                         )
+
+                        settings_summary = ConsoleSettingsSummary(
+                            self._build_console_settings_summary_state(),
+                            id="console-settings-summary",
+                            classes="console-left-rail-section console-settings-summary",
+                        )
+                        settings_summary.styles.width = "100%"
+                        settings_summary.styles.min_width = 0
+                        yield self._frame_console_region(settings_summary, variant="quiet")
 
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"
@@ -2887,14 +2934,29 @@ class ChatScreen(BaseAppScreen):
     def _session_data_for_handoff(self, payload: ChatHandoffPayload) -> ChatSessionData:
         title_item_type = payload.item_type.replace("-", " ").title()
         scope_type = payload.scope_type or "global"
+        character_identity = _character_session_identity_from_handoff(payload)
+        character_id = None
+        character_name = None
+        assistant_kind = None
+        assistant_id = None
+        discovery_owner = payload.discovery_owner
+        if character_identity is not None:
+            character_id, character_name, assistant_id = character_identity
+            assistant_kind = "character"
+            if discovery_owner == "general_chat" and payload.source == "personas":
+                discovery_owner = "ccp_character"
         return ChatSessionData(
             tab_id=uuid.uuid4().hex[:8],
             title=f"{title_item_type}: {payload.title}",
             conversation_id=None,
             is_ephemeral=True,
             runtime_backend=payload.runtime_backend,
-            discovery_owner=payload.discovery_owner,
+            discovery_owner=discovery_owner,
             discovery_entity_id=payload.discovery_entity_id or payload.source_id,
+            character_id=character_id,
+            character_name=character_name,
+            assistant_kind=assistant_kind,
+            assistant_id=assistant_id,
             scope_type=scope_type,
             workspace_id=payload.workspace_id if scope_type == "workspace" else None,
             handoff_payload=payload,
@@ -4782,33 +4844,11 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-new-chat-tab":
             event.stop()
-            self._ensure_console_chat_controller().new_session(
-                settings=(
-                    self._active_console_session_settings()
-                    or self._default_console_session_settings()
-                ),
-            )
-            await self._sync_native_console_chat_ui()
-            self._focus_console_composer_if_needed(force=True)
+            await self._create_native_console_session_from_active_context()
             return
         if button_id == "console-new-workspace-conversation":
             event.stop()
-            selection = self._sync_console_chat_core_state()
-            workspace_id = str(selection.workspace_context.active_workspace_id or "").strip()
-            if not workspace_id or workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
-                self.app_instance.notify(
-                    "Select a workspace before creating a workspace conversation.",
-                    severity="warning",
-                )
-                return
-            self._ensure_console_chat_controller().new_session(
-                settings=(
-                    self._active_console_session_settings()
-                    or self._default_console_session_settings()
-                ),
-            )
-            await self._sync_native_console_chat_ui()
-            self._focus_console_composer_if_needed(force=True)
+            await self._create_native_console_session_from_active_context()
             return
         if button_id and button_id.startswith("console-workspace-conversation-"):
             event.stop()

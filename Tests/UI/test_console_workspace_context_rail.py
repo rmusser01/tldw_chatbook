@@ -171,6 +171,8 @@ async def test_console_workspace_context_renders_active_workspace() -> None:
         assert "Research Sprint" in text
         assert "Sync: dry-run only" in text
         assert "Planning thread" in text
+        assert len(console.query("#console-new-workspace-conversation")) == 1
+        assert "Workspace conversation creation lands in a later slice." not in text
 
 
 @pytest.mark.asyncio

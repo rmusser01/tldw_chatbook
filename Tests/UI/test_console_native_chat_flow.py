@@ -1842,6 +1842,94 @@ async def test_console_new_chat_tab_promotes_active_native_session_in_workspace_
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_rail_new_conversation_creates_default_workspace_session():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    assert active_workspace is not None
+    assert active_workspace.workspace_id == DEFAULT_WORKSPACE_ID
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-new-workspace-conversation")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+
+        await pilot.click("#console-new-workspace-conversation")
+        second = store.active_session_id
+        assert second != first.id
+
+        active_session = next(
+            session for session in store.sessions() if session.id == second
+        )
+        assert active_session.workspace_id == DEFAULT_WORKSPACE_ID
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Chat 2",
+            selected=True,
+        )
+        assert any(text.startswith("> ") and "Chat 2" in text for text in row_texts)
+        assert "file tools disabled" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_rail_new_conversation_stays_scoped_to_active_workspace():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-new-workspace-conversation")
+        store = console._ensure_console_chat_store()
+        first_session_id = store.active_session_id
+
+        await pilot.click("#console-new-workspace-conversation")
+        session_id = store.active_session_id
+        assert session_id is not None
+        assert session_id != first_session_id
+        active_session = next(
+            session for session in store.sessions() if session.id == session_id
+        )
+        assert active_session.workspace_id == "ws-a"
+        active_title = active_session.title
+
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            active_title,
+            selected=True,
+        )
+        assert any(
+            text.startswith("> ") and active_title in text
+            for text in row_texts
+        )
+
+        console.query_one("#console-change-workspace", Button).press()
+        modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
+        switch_button = next(
+            button
+            for button in modal_screen.query(Button)
+            if str(button.label) == "Workspace B"
+        )
+        switch_button.press()
+        await _wait_for_console_screen(host, console, pilot)
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+
+        assert service.get_active_workspace().workspace_id == "ws-b"
+        assert all(
+            active_title not in row_text
+            for row_text in _console_workspace_conversation_texts(console)
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_conversation_row_switches_native_session():
     app = _build_test_app()
     host = ConsoleHarness(app)
