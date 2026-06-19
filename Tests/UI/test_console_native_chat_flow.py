@@ -1286,6 +1286,28 @@ async def test_console_selected_message_copy_action_uses_app_clipboard():
 
 
 @pytest.mark.asyncio
+async def test_console_clicking_rendered_message_shows_action_row():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
+
+        await pilot.click(f"#console-message-{message.id}")
+        await _wait_for_selector(console, pilot, f"#console-message-action-copy-{message.id}")
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_copy_action_works_from_keyboard():
     app = _build_test_app()
     app.copy_to_clipboard = Mock()
