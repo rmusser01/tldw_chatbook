@@ -206,6 +206,7 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
 
 @pytest.mark.asyncio
 async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
+    """Verify mouse clicks can create and activate a local workspace."""
     app = _build_test_app()
     host = DestinationHarness(app, "library")
 
