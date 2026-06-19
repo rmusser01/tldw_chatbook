@@ -205,6 +205,31 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
 
 
 @pytest.mark.asyncio
+async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
+    app = _build_test_app()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(140, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        screen.query_one("#library-mode-workspaces", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
+
+        await pilot.click("#library-create-local-workspace")
+        await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")
+
+        active_workspace = app.workspace_registry_service.get_active_workspace()
+        assert active_workspace is not None
+        assert active_workspace.workspace_id == "workspace-local-1"
+        assert active_workspace.name == "Workspace 1"
+
+        visible = _visible_text(screen)
+        assert "Active workspace: Workspace 1" in visible
+        assert "Active workspace: Local Default" not in visible
+
+
+@pytest.mark.asyncio
 async def test_library_workspaces_create_skips_archived_local_workspace_identity() -> None:
     app = _build_test_app()
     service = app.workspace_registry_service
