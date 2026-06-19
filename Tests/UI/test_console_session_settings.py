@@ -1453,6 +1453,45 @@ async def test_console_settings_modal_keyboard_selects_provider_and_refreshes_mo
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_tabs_to_model_select_after_provider_change() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+
+        provider_select.focus()
+        provider_select.value = "groq"
+        await pilot.pause()
+
+        assert model_select.disabled is False
+        assert model_select.display is True
+        assert model_select.value == "llama-3.3-70b-versatile"
+
+        await pilot.press("tab")
+        await _wait_for_focused_id(app, pilot, "console-settings-model-select")
+        await pilot.press("enter")
+
+        assert model_select.expanded is True
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_reopens_provider_select_after_input_edit() -> None:
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
