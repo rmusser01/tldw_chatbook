@@ -2,8 +2,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
+from textual.geometry import Region
 from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -24,7 +26,11 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens import provider_model_resolution
-from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    ConsoleSettingsInput,
+    ConsoleSettingsModal,
+    _settings_screen_region,
+)
 from tldw_chatbook.Widgets.Console import console_settings_summary as settings_summary_module
 from tldw_chatbook.Widgets.Console.console_settings_summary import ConsoleSettingsSummary
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
@@ -44,6 +50,23 @@ class SummaryHarness(App[None]):
 
     def compose(self) -> ComposeResult:
         yield ConsoleSettingsSummary(self.state)
+
+
+def test_console_settings_screen_region_prefers_absolute_region() -> None:
+    absolute_region = Region(10, 20, 30, 1)
+    widget = SimpleNamespace(
+        region=Region(1, 2, 30, 1),
+        screen_region=absolute_region,
+    )
+
+    assert _settings_screen_region(widget) == absolute_region
+
+
+def test_console_settings_screen_region_falls_back_to_mounted_region() -> None:
+    mounted_region = Region(3, 4, 30, 1)
+    widget = SimpleNamespace(region=mounted_region)
+
+    assert _settings_screen_region(widget) == mounted_region
 
 
 class ModalHarness(App[None]):
@@ -68,6 +91,12 @@ class ModalHarness(App[None]):
 
 
 class StyledModalHarness(ModalHarness):
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+    )
+
+
+class StyledConsoleHarness(ConsoleHarness):
     CSS_PATH = str(
         Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
     )
@@ -1449,6 +1478,331 @@ async def test_console_settings_modal_keyboard_selects_provider_and_refreshes_mo
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_tabs_to_model_select_after_provider_change() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+
+        provider_select.focus()
+        provider_select.value = "groq"
+        await pilot.pause()
+
+        assert model_select.disabled is False
+        assert model_select.display is True
+        assert model_select.value == "llama-3.3-70b-versatile"
+
+        await pilot.press("tab")
+        await _wait_for_focused_id(app, pilot, "console-settings-model-select")
+        await pilot.press("enter")
+
+        assert model_select.expanded is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_reopens_provider_select_after_input_edit() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_llamacpp": ["local-model"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        temperature = app.screen.query_one("#console-settings-temperature", Input)
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+
+        temperature.focus()
+        temperature.value = "0.22"
+        await pilot.pause()
+
+        provider_select.focus()
+        await pilot.press("enter")
+
+        assert provider_select.expanded is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_opens_provider_select_click_after_input_edit() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_llamacpp": ["local-model"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        temperature = app.screen.query_one("#console-settings-temperature", ConsoleSettingsInput)
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+
+        await pilot.click("#console-settings-temperature")
+        temperature.value = "0.72"
+        await pilot.pause()
+        await pilot.click("#console-settings-provider")
+
+        assert provider_select.expanded is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_opens_screen_routed_select_click_after_input_edit() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_llamacpp": ["local-model"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        temperature = app.screen.query_one("#console-settings-temperature", ConsoleSettingsInput)
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+
+        temperature.focus()
+        temperature.value = "0.72"
+        await pilot.pause()
+
+        provider_region = _settings_screen_region(provider_select)
+        click = events.Click(
+            app.screen,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=1,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=provider_region.x + provider_region.width - 1,
+            screen_y=provider_region.y,
+        )
+
+        app.screen.on_click(click)
+
+        assert provider_select.expanded is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_input_releases_mouse_capture_after_click_to_replace() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        temperature = app.screen.query_one("#console-settings-temperature", ConsoleSettingsInput)
+        temperature.capture_mouse()
+
+        assert app.mouse_captured is temperature
+
+        temperature.on_click()
+
+        assert app.mouse_captured is None
+        assert temperature.selected_text == temperature.value
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_opens_provider_select_from_redirected_input_click(monkeypatch) -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_llamacpp": ["local-model"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        temperature = app.screen.query_one("#console-settings-temperature", ConsoleSettingsInput)
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        temperature.capture_mouse()
+        temperature.value = "0.22"
+
+        provider_screen_region = provider_select.region.translate((10, 0))
+        monkeypatch.setattr(
+            Select,
+            "screen_region",
+            property(
+                lambda widget: provider_screen_region
+                if widget is provider_select
+                else widget.region
+            ),
+            raising=False,
+        )
+        click = events.Click(
+            temperature,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=1,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=provider_screen_region.x + provider_screen_region.width - 1,
+            screen_y=provider_screen_region.y,
+        )
+
+        temperature.on_click(click)
+
+        assert app.mouse_captured is None
+        assert provider_select.expanded is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_ignores_plain_select_click_without_redirected_input() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_llamacpp": ["local-model"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        provider_region = _settings_screen_region(provider_select)
+        click = events.Click(
+            provider_select,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=1,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=provider_region.x + provider_region.width - 1,
+            screen_y=provider_region.y,
+        )
+
+        app.screen.on_click(click)
+
+        assert app.mouse_captured is None
+        assert provider_select.expanded is False
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_ignores_screen_routed_select_click_without_input_focus() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_llamacpp": ["local-model"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        cancel_button = app.screen.query_one("#console-settings-cancel", Button)
+        cancel_button.focus()
+        await pilot.pause()
+        provider_region = _settings_screen_region(provider_select)
+        click = events.Click(
+            app.screen,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=1,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=provider_region.x + provider_region.width - 1,
+            screen_y=provider_region.y,
+        )
+
+        app.screen.on_click(click)
+
+        assert getattr(app.focused, "id", None) == "console-settings-cancel"
+        assert app.mouse_captured is None
+        assert provider_select.expanded is False
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_preserves_missing_registry_model_for_current_provider() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="openai", model="custom-openai-model")
@@ -2089,6 +2443,69 @@ async def test_console_settings_are_isolated_between_native_tabs() -> None:
         await _click_console_session_tab(console, store, pilot, second_id)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         assert console._build_console_provider_selection().provider == "openai"
+
+
+@pytest.mark.asyncio
+async def test_console_native_tab_click_switches_without_programmatic_fallback() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"]}
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-new-chat-tab")
+        store = console._ensure_console_chat_store()
+        first_id = store.ensure_session().id
+        second_id = await _press_new_console_tab(console, store, pilot)
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{first_id}")
+
+        first_tab = console.query_one(f"#console-session-tab-{first_id}", Button)
+        assert await pilot.click(first_tab, offset=(1, 0))
+        for _ in range(10):
+            if store.active_session_id == first_id:
+                break
+            await pilot.pause(0.05)
+
+        assert store.active_session_id == first_id
+        assert store.active_session_id != second_id
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_row_switches_native_tab() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"]}
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-new-chat-tab")
+        store = console._ensure_console_chat_store()
+        first_id = store.ensure_session().id
+        second_id = await _press_new_console_tab(console, store, pilot)
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-1")
+
+        first_conversation = console.query_one("#console-workspace-conversation-1", Button)
+        assert getattr(first_conversation, "conversation_id", None) == f"native:{first_id}"
+        assert await pilot.click(first_conversation, offset=(1, 0))
+        for _ in range(10):
+            if store.active_session_id == first_id:
+                break
+            await pilot.pause(0.05)
+
+        assert store.active_session_id == first_id
+        assert store.active_session_id != second_id
 
 
 @pytest.mark.asyncio

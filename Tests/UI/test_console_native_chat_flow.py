@@ -204,6 +204,38 @@ def _console_workspace_conversation_row_id_for_session(console, session_id: str)
     )
 
 
+async def _click_console_workspace_conversation_for_session(
+    console,
+    pilot,
+    store,
+    session_id: str,
+    *,
+    attempts: int = 20,
+) -> None:
+    """Click a workspace conversation row once Textual hit-testing is ready."""
+    row_id = _console_workspace_conversation_row_id_for_session(console, session_id)
+    for _ in range(attempts):
+        if await pilot.click(f"#{row_id}"):
+            for _ in range(10):
+                if store.active_session_id == session_id:
+                    return
+                await pilot.pause(0.05)
+        await pilot.pause(0.05)
+    rows = [
+        (
+            getattr(row, "id", ""),
+            getattr(row, "conversation_id", None),
+            getattr(row, "region", None),
+            _widget_text(row),
+        )
+        for row in console.query(".console-workspace-conversation-row")
+    ]
+    raise AssertionError(
+        f"Workspace conversation click did not activate {session_id!r}. "
+        f"active={store.active_session_id!r}; rows={rows!r}"
+    )
+
+
 async def _wait_for_workspace_conversation_text(
     console,
     pilot,
@@ -1286,6 +1318,28 @@ async def test_console_selected_message_copy_action_uses_app_clipboard():
 
 
 @pytest.mark.asyncio
+async def test_console_clicking_rendered_message_shows_action_row():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
+
+        await pilot.click(f"#console-message-{message.id}")
+        await _wait_for_selector(console, pilot, f"#console-message-action-copy-{message.id}")
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_copy_action_works_from_keyboard():
     app = _build_test_app()
     app.copy_to_clipboard = Mock()
@@ -1950,10 +2004,7 @@ async def test_console_workspace_conversation_row_switches_native_session():
             "Chat 1",
             selected=False,
         )
-        first_row_id = _console_workspace_conversation_row_id_for_session(console, first.id)
-
-        await pilot.click(f"#{first_row_id}")
-        await pilot.pause()
+        await _click_console_workspace_conversation_for_session(console, pilot, store, first.id)
 
         assert store.active_session_id == first.id
         row_texts = await _wait_for_workspace_conversation_text(

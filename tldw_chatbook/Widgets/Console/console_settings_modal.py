@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Any, Mapping
 
+from textual import events
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -36,8 +37,21 @@ MODAL_LABEL_WIDTH = 16
 MODEL_CUSTOM_BUTTON_WIDTH = 18
 
 
+def _settings_screen_region(widget: Any) -> Any:
+    """Return a mounted settings widget region in screen coordinates.
+
+    Args:
+        widget: Textual widget or test double with a mounted region.
+
+    Returns:
+        The widget's absolute screen region when the installed Textual version
+        exposes one; otherwise the mounted widget region used by this project.
+    """
+    return getattr(widget, "screen_region", None) or widget.region
+
+
 class ConsoleSettingsInput(Input):
-    """Input field with browser-friendly select-all behavior."""
+    """Input field with browser-safe focus handoff behavior."""
 
     BINDINGS = [
         (
@@ -50,13 +64,24 @@ class ConsoleSettingsInput(Input):
         Binding("ctrl+a,super+a", "select_all", "Select all", show=False),
     ]
 
-    def on_focus(self) -> None:
-        """Select the current value after click focus settles."""
-        self.call_after_refresh(self.select_all)
+    def on_click(self, event: events.Click | None = None) -> None:
+        """Avoid trapping later Select clicks after browser text editing.
 
-    def on_click(self) -> None:
-        """Keep click-to-replace reliable in textual-web."""
+        Args:
+            event: Optional click event to forward when Textual Web redirects a
+                select click through the focused input.
+        """
         self.select_all()
+        self.release_mouse()
+        if event is None:
+            return
+        handler = getattr(self.screen, "_open_select_from_redirected_settings_click", None)
+        if callable(handler):
+            handler(event)
+
+    def on_blur(self) -> None:
+        """Avoid trapping later Select clicks after browser text editing."""
+        self.release_mouse()
 
 
 class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
@@ -102,7 +127,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         readiness = build_console_settings_readiness(self._settings, app_config=self._app_config)
 
         with Vertical(id="console-settings-modal"):
-            yield Static("Console Settings", classes="console-transcript-action-row")
+            yield Static("Console Settings", classes="console-modal-header")
             yield Static(
                 self._readiness_detail(readiness.detail),
                 id="console-settings-readiness",
@@ -276,6 +301,48 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def on_mount(self) -> None:
         if self._focus_model:
             self._focus_model_control()
+
+    def on_click(self, event: events.Click) -> None:
+        """Recover select clicks redirected through focused Textual Web inputs.
+
+        Args:
+            event: Click event that may have been redirected from a focused
+                settings input.
+        """
+        self._open_select_from_redirected_settings_click(event)
+
+    def _open_select_from_redirected_settings_click(self, event: events.Click) -> None:
+        """Open a settings select when an input-held click lands on the select.
+
+        Args:
+            event: Click event to recover when Textual Web keeps routing clicks
+                through a focused settings input.
+        """
+        captured_widget = self.app.mouse_captured
+        click_origin = getattr(event, "widget", None)
+        focused_widget = self.app.focused
+        screen_routed_click = click_origin is self and isinstance(focused_widget, ConsoleSettingsInput)
+        if (
+            not isinstance(captured_widget, ConsoleSettingsInput)
+            and not isinstance(click_origin, ConsoleSettingsInput)
+            and not screen_routed_click
+        ):
+            return
+        if isinstance(captured_widget, ConsoleSettingsInput):
+            captured_widget.release_mouse()
+
+        if event.button != 1 or event.screen_x is None or event.screen_y is None:
+            return
+
+        for select in self.query(Select):
+            if select.disabled or not select.display:
+                continue
+            select_region = _settings_screen_region(select)
+            if select_region.contains(event.screen_x, event.screen_y):
+                select.focus()
+                select.action_show_overlay()
+                event.stop()
+                return
 
     def _has_selected_model(self) -> bool:
         try:

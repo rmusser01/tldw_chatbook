@@ -60,7 +60,7 @@ class ConsoleRenameSessionModal(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-rename-session-modal"):
-            yield Static("Rename Chat Tab", classes="console-transcript-action-row")
+            yield Static("Rename Chat Tab", classes="console-modal-header")
             yield Input(
                 value=self._title,
                 id="console-rename-session-title",

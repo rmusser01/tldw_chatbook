@@ -65,7 +65,7 @@ class ConsoleEditMessageModal(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-edit-message-modal"):
-            yield Static("Edit Message", classes="console-transcript-action-row")
+            yield Static("Edit Message", classes="console-modal-header")
             yield Static(
                 "Editing existing transcript message. This will not create a new prompt.",
                 id="console-edit-message-context",

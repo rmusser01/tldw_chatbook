@@ -130,6 +130,17 @@ async def _wait_for_settings_text(screen, pilot, expected_text: str, *, timeout:
     raise AssertionError(f"Timed out waiting for {expected_text!r}. Visible text: {_visible_text(screen)}")
 
 
+async def _wait_for_settings_search_focus(screen, pilot, *, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        search = screen.query_one("#settings-category-search", Input)
+        if search.has_focus:
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError("Timed out waiting for Settings category search focus")
+
+
 def test_effective_provider_model_prefers_console_overrides():
     app = _app(
         provider="OpenAI",
@@ -1129,11 +1140,13 @@ async def test_settings_domain_category_renders_read_only_owner_contract():
 
     async with host.run_test(size=(190, 55)) as pilot:
         screen = _active_destination_screen(host)
-        search = screen.query_one("#settings-category-search", Input)
-        search.value = "mcp"
-        search.focus()
+        await _wait_for_selector(screen, pilot, "#settings-category-search")
+        await pilot.press("/")
+        await _wait_for_settings_search_focus(screen, pilot)
+        await pilot.press(*"mcp")
+        await _wait_for_settings_text(screen, pilot, "Filter: mcp")
         await pilot.press("enter")
-        await pilot.click("#settings-category-mcp-defaults")
+        await _wait_for_settings_text(screen, pilot, "MCP Defaults")
         text = _visible_text(screen)
 
         assert "MCP Defaults" in text
@@ -1935,11 +1948,17 @@ async def test_settings_category_search_reports_ranked_matches_and_enter_target(
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.press("/")
         screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-category-search")
+        await pilot.press("/")
+        await _wait_for_settings_search_focus(screen, pilot)
 
         await pilot.press(*"priv")
-        await pilot.pause()
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Filter: priv | 2 matches | Enter opens Privacy & Security",
+        )
 
         visible_text = _visible_text(screen)
         assert "Filter: priv | 2 matches | Enter opens Privacy & Security" in visible_text

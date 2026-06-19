@@ -1704,7 +1704,7 @@ async def test_workflows_empty_state_reads_as_live_queue_with_recovery_path():
         ("mcp", "scoped tools"),
         ("acp", "Agent Client Protocol"),
         ("skills", "SKILL.md"),
-        ("settings", "global preferences"),
+        ("settings", "Global preferences"),
     ],
 )
 @pytest.mark.asyncio
@@ -1713,11 +1713,8 @@ async def test_protocol_and_settings_wrappers_have_distinct_boundaries(route, ex
     host = DestinationHarness(app, route)
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
-
-        visible_text = _visible_text(screen).lower()
-        assert expected_text.lower() in visible_text
+        await _wait_for_visible_text(screen, pilot, expected_text)
 
 
 @pytest.mark.parametrize(
@@ -2261,7 +2258,8 @@ async def test_settings_appearance_action_routes_to_customize_surface():
     host = DestinationHarness(app, "settings", seen_routes)
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-open-appearance")
         await pilot.click("#settings-open-appearance")
         await pilot.pause(0.1)
 

@@ -54,6 +54,13 @@ NOTES_TOOLBAR = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_toolbar.py"
 NOTES_EDITOR = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_editor_widget.py"
 NOTES_SYNC = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget.py"
 NOTES_SYNC_IMPROVED = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget_improved.py"
+CONSOLE_MODAL_FILES = (
+    ROOT / "tldw_chatbook/Widgets/Console/console_settings_modal.py",
+    ROOT / "tldw_chatbook/Widgets/Console/console_edit_message_modal.py",
+    ROOT / "tldw_chatbook/Widgets/Console/console_rename_session_modal.py",
+    ROOT / "tldw_chatbook/Widgets/Console/console_save_as_modal.py",
+    ROOT / "tldw_chatbook/Widgets/Console/console_workspace_switcher_modal.py",
+)
 
 BUNDLED_RESIDUAL_ACTIVE_SELECTED_CONTRACTS = (
     (LLM_MANAGEMENT, ".llm-nav-pane .llm-nav-button.-active"),
@@ -112,6 +119,29 @@ def css_block(text: str, selector: str) -> str:
     if blocks:
         return blocks[0]
     raise AssertionError(f"Missing CSS block for {selector}")
+
+
+def css_int_declaration(block: str, property_name: str) -> int:
+    """Return an integer declaration from a CSS rule body.
+
+    Args:
+        block: CSS rule body to inspect.
+        property_name: CSS property name whose integer value should be returned.
+
+    Returns:
+        The parsed integer value for the requested property.
+
+    Raises:
+        AssertionError: If the property is missing or not an integer declaration.
+    """
+    match = re.search(
+        rf"^\s*{re.escape(property_name)}\s*:\s*(?P<value>\d+)\s*;",
+        block,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError(f"Missing integer CSS declaration for {property_name}")
+    return int(match.group("value"))
 
 
 def bundled_css_module_paths() -> set[Path]:
@@ -521,6 +551,32 @@ def test_console_and_library_visible_offenders_do_not_obscure_labels():
         assert_non_obscuring_focus(block)
         assert "$ds-status-warning" not in block
         assert "$ds-status-error" not in block
+
+
+def test_console_selected_message_actions_keep_clickable_hit_targets():
+    for path in (AGENTIC, BUNDLE):
+        text = path.read_text(encoding="utf-8")
+        action_row = css_block(text, ".console-transcript-action-row")
+        action_button = css_block(text, ".console-transcript-action-button")
+
+        assert css_int_declaration(action_row, "height") >= 3
+        assert css_int_declaration(action_row, "min-height") >= 3
+        assert css_int_declaration(action_button, "height") >= 3
+        assert css_int_declaration(action_button, "min-height") >= 3
+        assert css_int_declaration(action_button, "min-width") >= 5
+
+
+def test_console_modal_headers_are_decoupled_from_transcript_action_rows():
+    for path in CONSOLE_MODAL_FILES:
+        text = path.read_text(encoding="utf-8")
+        assert 'classes="console-transcript-action-row"' not in text
+        assert "console-modal-header" in text
+
+    for path in (AGENTIC, BUNDLE):
+        text = path.read_text(encoding="utf-8")
+        modal_header = css_block(text, ".console-modal-header")
+        assert css_int_declaration(modal_header, "height") == 1
+        assert css_int_declaration(modal_header, "min-height") == 1
 
 
 def test_console_session_tab_active_state_uses_selected_contract():
