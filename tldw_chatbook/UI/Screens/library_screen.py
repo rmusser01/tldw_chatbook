@@ -1261,7 +1261,7 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _source_study_context(self) -> StudyScopeContext | None:
-        if not self._has_local_sources():
+        if not self._has_source_study_context():
             return None
         material_titles: list[str] = []
         for source_type in ("notes", "media", "conversations"):
@@ -1281,16 +1281,21 @@ class LibraryScreen(BaseAppScreen):
             material_titles.extend(self._source_sample_titles(source_type))
         return tuple(material_titles)
 
+    def _has_source_study_context(self) -> bool:
+        return self._has_local_sources()
+
     def _study_handoff_copy(self) -> dict[str, str]:
         mode = LIBRARY_STUDY_HANDOFF_MODES.get(
             self._active_mode,
             LIBRARY_STUDY_HANDOFF_MODES["study"],
         )
         titles = self._source_study_handoff_titles()
-        has_context = bool(titles)
+        has_context = self._has_source_study_context()
         action_label = mode["action_label"]
-        if has_context:
+        if has_context and titles:
             context_copy = f"Carries forward: {', '.join(titles)}"
+        elif has_context:
+            context_copy = "Carries forward: Library source snapshot (titles unavailable)"
         else:
             context_copy = "No Library source snapshot will be carried forward."
         return {

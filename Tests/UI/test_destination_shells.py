@@ -2293,10 +2293,10 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.1)
-        await pilot.click("#settings-category-console-behavior")
-        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-category-console-behavior")
+        await pilot.click("#settings-category-console-behavior")
+        await _wait_for_selector(screen, pilot, "#settings-console-collapse-large-pastes-toggle")
         toggle = screen.query_one(
             "#settings-console-collapse-large-pastes-toggle",
             Button,

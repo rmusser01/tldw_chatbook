@@ -59,6 +59,8 @@ Reason: this is a UI/handoff clarity slice under the existing TASK-89.1 Library 
 - Added Library mode-specific handoff detail panels for Study, Flashcards, and Quizzes so the center pane now explains the purpose, carried source snapshot, ownership boundary, WIP limits, and recovery path.
 - Kept Library as the source-preparation surface and preserved existing StudyScopeContext/open_study_screen routing instead of duplicating Study, Flashcards, or Quizzes internals.
 - Added mounted regressions for source-context handoff copy, empty/no-source recovery, keyboard activation, and mode-specific recovery copy.
+- PR review follow-up aligned the handoff-ready predicate used by copy and `StudyScopeContext` routing, including a total-only snapshot regression for counts without sampled titles.
+- Stabilized unrelated Settings UI tests that failed in the full PR UI suite by waiting for mounted selectors/focus before interacting.
 - Captured approved actual Textual-web/CDP screenshots:
   - `Docs/superpowers/qa/library-study-handoffs/library-study-handoff-seeded-cdp-2026-06-19.png`
   - `Docs/superpowers/qa/library-study-handoffs/library-flashcards-handoff-seeded-cdp-2026-06-19.png`
