@@ -74,9 +74,9 @@ LIBRARY_COLUMN_TITLES = {
     "import-export": ("Library Modules", "Import/Export Workflow", "Import/Export Inspector"),
     "workspaces": ("Workspace Sources", "Scope & Eligibility", "Handoff Rules"),
     "collections": ("Source Browser", "Source Detail / Search Results", "Inspector"),
-    "study": ("Source Browser", "Source Detail / Search Results", "Inspector"),
-    "flashcards": ("Source Browser", "Source Detail / Search Results", "Inspector"),
-    "quizzes": ("Source Browser", "Source Detail / Search Results", "Inspector"),
+    "study": ("Source Browser", "Study Handoff", "Inspector"),
+    "flashcards": ("Source Browser", "Flashcards Handoff", "Inspector"),
+    "quizzes": ("Source Browser", "Quizzes Handoff", "Inspector"),
 }
 LIBRARY_MODES = {
     "sources": {
@@ -147,6 +147,21 @@ LIBRARY_MODES = {
         "button_id": "library-mode-quizzes",
         "description": "Quizzes mode: generate or resume quizzes from Library sources.",
         "next_action": "Open Quizzes to test recall against the current source snapshot.",
+    },
+}
+
+LIBRARY_STUDY_HANDOFF_MODES = {
+    "study": {
+        "label": "Study",
+        "action_label": "Study Dashboard",
+    },
+    "flashcards": {
+        "label": "Flashcards",
+        "action_label": "Flashcards",
+    },
+    "quizzes": {
+        "label": "Quizzes",
+        "action_label": "Quizzes",
     },
 }
 
@@ -1260,6 +1275,47 @@ class LibraryScreen(BaseAppScreen):
             return_hint=MATERIAL_SOURCE_LIBRARY,
         )
 
+    def _source_study_handoff_titles(self) -> tuple[str, ...]:
+        material_titles: list[str] = []
+        for source_type in ("notes", "media", "conversations"):
+            material_titles.extend(self._source_sample_titles(source_type))
+        return tuple(material_titles)
+
+    def _study_handoff_copy(self) -> dict[str, str]:
+        mode = LIBRARY_STUDY_HANDOFF_MODES.get(
+            self._active_mode,
+            LIBRARY_STUDY_HANDOFF_MODES["study"],
+        )
+        titles = self._source_study_handoff_titles()
+        has_context = bool(titles)
+        action_label = mode["action_label"]
+        if has_context:
+            context_copy = f"Carries forward: {', '.join(titles)}"
+        else:
+            context_copy = "No Library source snapshot will be carried forward."
+        return {
+            "label": mode["label"],
+            "action_label": action_label,
+            "context": context_copy,
+            "owner": (
+                "Library prepares source context only; Study owns sessions, "
+                "generation, review, and attempts."
+            ),
+            "wip": (
+                "WIP: provider-backed generation and collection-scoped study "
+                "remain owned by later Study slices."
+            ),
+            "recovery": (
+                "Source snapshot is ready; open "
+                f"{action_label} to continue with this Library context."
+                if has_context
+                else (
+                    "Import sources or create notes first, or open "
+                    f"{action_label} globally without Library context."
+                )
+            ),
+        }
+
     def _status_label(self) -> str:
         if not self._library_loaded:
             return "Loading"
@@ -1629,6 +1685,45 @@ class LibraryScreen(BaseAppScreen):
             return "Action: Import sources or assign sources before staging."
         return "Action: Copy/link blocked sources before staging."
 
+    def _study_handoff_detail_widget(self) -> Vertical:
+        copy = self._study_handoff_copy()
+        recovery_classes = (
+            "ds-recovery-callout"
+            if self._has_local_sources()
+            else "ds-recovery-callout is-blocked"
+        )
+        return Vertical(
+            Static(
+                f"{copy['label']} handoff",
+                id="library-study-handoff-purpose",
+                classes="destination-section",
+            ),
+            Static(
+                f"Primary action: {copy['action_label']}",
+                id="library-study-handoff-primary-action",
+            ),
+            Static(
+                copy["context"],
+                id="library-study-handoff-context",
+            ),
+            Static(
+                copy["owner"],
+                id="library-study-handoff-owner",
+            ),
+            Static(
+                copy["wip"],
+                id="library-study-handoff-wip",
+                classes="ds-recovery-callout",
+            ),
+            Static(
+                copy["recovery"],
+                id="library-study-handoff-recovery",
+                classes=recovery_classes,
+            ),
+            id="library-study-handoff-detail",
+            classes="library-rag-region",
+        )
+
     def _library_action_widgets(
         self,
         *,
@@ -1865,6 +1960,66 @@ class LibraryScreen(BaseAppScreen):
             )
         if self._active_mode == "search":
             return ()
+        if self._active_mode in LIBRARY_STUDY_HANDOFF_MODES:
+            copy = self._study_handoff_copy()
+            active_action_id = {
+                "study": "library-open-study",
+                "flashcards": "library-open-flashcards",
+                "quizzes": "library-open-quizzes",
+            }[self._active_mode]
+            recovery_classes = (
+                "ds-recovery-callout"
+                if self._has_local_sources()
+                else "ds-recovery-callout is-blocked"
+            )
+
+            def action_classes(button_id: str) -> str:
+                classes = "library-source-action"
+                if button_id == active_action_id:
+                    classes = f"{classes} is-active"
+                return classes
+
+            return (
+                Static(
+                    f"{copy['label']} actions",
+                    id="library-study-actions-title",
+                    classes="destination-section",
+                ),
+                Static(
+                    (
+                        "Open with the current Library source snapshot."
+                        if self._has_local_sources()
+                        else "Open globally; no Library source snapshot is available."
+                    ),
+                    id="library-study-actions-summary",
+                    classes=recovery_classes,
+                ),
+                Button(
+                    "Study Dashboard",
+                    id="library-open-study",
+                    classes=action_classes("library-open-study"),
+                    tooltip="Open Study globally or with the current Library source snapshot.",
+                ),
+                Button(
+                    "Flashcards",
+                    id="library-open-flashcards",
+                    classes=action_classes("library-open-flashcards"),
+                    tooltip="Open Flashcards globally or with the current Library source snapshot.",
+                ),
+                Button(
+                    "Quizzes",
+                    id="library-open-quizzes",
+                    classes=action_classes("library-open-quizzes"),
+                    tooltip="Open Quizzes globally or with the current Library source snapshot.",
+                ),
+                Button(
+                    "Use in Console",
+                    id="library-use-in-console",
+                    classes="library-source-action",
+                    disabled=handoff_disabled,
+                    tooltip=handoff_tooltip,
+                ),
+            )
         return (
             Static("Knowledge workflow", classes="destination-section"),
             Static(
@@ -2044,6 +2199,8 @@ class LibraryScreen(BaseAppScreen):
                     )
                     active_mode_next_action.display = self._active_mode != "workspaces"
                     yield active_mode_next_action
+                    if self._active_mode in LIBRARY_STUDY_HANDOFF_MODES:
+                        yield self._study_handoff_detail_widget()
                     if search_rag_panel_state is not None:
                         yield LibrarySearchRagPanel(
                             search_rag_panel_state,
@@ -2226,6 +2383,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_workspace_scope_label(workspace_depth_state)
         )
         await self._sync_local_snapshot_region(workspace_depth_state)
+        await self._sync_study_handoff_detail()
         await self._sync_search_rag_panel(workspace_depth_state=workspace_depth_state)
         await self._sync_collections_panel(refresh_snapshot=True)
         await self._sync_workspaces_panel(workspace_depth_state)
@@ -2268,6 +2426,18 @@ class LibraryScreen(BaseAppScreen):
             after="#library-active-mode-next-action",
         )
         await self._sync_inspector_mode_region(panel_state)
+
+    async def _sync_study_handoff_detail(self) -> None:
+        mounted_widgets = list(self.query("#library-study-handoff-detail"))
+        for widget in mounted_widgets:
+            await widget.remove()
+        if self._active_mode not in LIBRARY_STUDY_HANDOFF_MODES:
+            return
+        detail = self.query_one("#library-source-detail", Vertical)
+        await detail.mount(
+            self._study_handoff_detail_widget(),
+            after="#library-active-mode-next-action",
+        )
 
     async def _sync_inspector_mode_region(
         self,
