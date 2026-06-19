@@ -5,6 +5,7 @@ import pytest
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
+from textual.geometry import Region
 from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -28,6 +29,7 @@ from tldw_chatbook.UI.Screens import provider_model_resolution
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsInput,
     ConsoleSettingsModal,
+    _settings_screen_region,
 )
 from tldw_chatbook.Widgets.Console import console_settings_summary as settings_summary_module
 from tldw_chatbook.Widgets.Console.console_settings_summary import ConsoleSettingsSummary
@@ -48,6 +50,23 @@ class SummaryHarness(App[None]):
 
     def compose(self) -> ComposeResult:
         yield ConsoleSettingsSummary(self.state)
+
+
+def test_console_settings_screen_region_prefers_absolute_region() -> None:
+    absolute_region = Region(10, 20, 30, 1)
+    widget = SimpleNamespace(
+        region=Region(1, 2, 30, 1),
+        screen_region=absolute_region,
+    )
+
+    assert _settings_screen_region(widget) == absolute_region
+
+
+def test_console_settings_screen_region_falls_back_to_mounted_region() -> None:
+    mounted_region = Region(3, 4, 30, 1)
+    widget = SimpleNamespace(region=mounted_region)
+
+    assert _settings_screen_region(widget) == mounted_region
 
 
 class ModalHarness(App[None]):
@@ -1591,7 +1610,7 @@ async def test_console_settings_modal_opens_screen_routed_select_click_after_inp
         temperature.value = "0.72"
         await pilot.pause()
 
-        provider_region = getattr(provider_select, "screen_region", provider_select.region)
+        provider_region = _settings_screen_region(provider_select)
         click = events.Click(
             app.screen,
             x=0,
@@ -1716,7 +1735,7 @@ async def test_console_settings_modal_ignores_plain_select_click_without_redirec
         await pilot.pause()
 
         provider_select = app.screen.query_one("#console-settings-provider", Select)
-        provider_region = provider_select.region
+        provider_region = _settings_screen_region(provider_select)
         click = events.Click(
             provider_select,
             x=0,
@@ -1761,7 +1780,7 @@ async def test_console_settings_modal_ignores_screen_routed_select_click_without
         cancel_button = app.screen.query_one("#console-settings-cancel", Button)
         cancel_button.focus()
         await pilot.pause()
-        provider_region = getattr(provider_select, "screen_region", provider_select.region)
+        provider_region = _settings_screen_region(provider_select)
         click = events.Click(
             app.screen,
             x=0,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Any, Mapping
 
 from textual import events
 from textual import on
@@ -35,6 +35,19 @@ from tldw_chatbook.Chat.console_session_settings import (
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
 MODAL_LABEL_WIDTH = 16
 MODEL_CUSTOM_BUTTON_WIDTH = 18
+
+
+def _settings_screen_region(widget: Any) -> Any:
+    """Return a mounted settings widget region in screen coordinates.
+
+    Args:
+        widget: Textual widget or test double with a mounted region.
+
+    Returns:
+        The widget's absolute screen region when the installed Textual version
+        exposes one; otherwise the mounted widget region used by this project.
+    """
+    return getattr(widget, "screen_region", None) or widget.region
 
 
 class ConsoleSettingsInput(Input):
@@ -324,7 +337,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         for select in self.query(Select):
             if select.disabled or not select.display:
                 continue
-            select_region = getattr(select, "screen_region", select.region)
+            select_region = _settings_screen_region(select)
             if select_region.contains(event.screen_x, event.screen_y):
                 select.focus()
                 select.action_show_overlay()
