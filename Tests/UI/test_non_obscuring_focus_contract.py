@@ -114,6 +114,17 @@ def css_block(text: str, selector: str) -> str:
     raise AssertionError(f"Missing CSS block for {selector}")
 
 
+def css_int_declaration(block: str, property_name: str) -> int:
+    match = re.search(
+        rf"^\s*{re.escape(property_name)}\s*:\s*(?P<value>\d+)\s*;",
+        block,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError(f"Missing integer CSS declaration for {property_name}")
+    return int(match.group("value"))
+
+
 def bundled_css_module_paths() -> set[Path]:
     """Return stylesheet module paths included by the generated app bundle."""
     return {
@@ -521,6 +532,19 @@ def test_console_and_library_visible_offenders_do_not_obscure_labels():
         assert_non_obscuring_focus(block)
         assert "$ds-status-warning" not in block
         assert "$ds-status-error" not in block
+
+
+def test_console_selected_message_actions_keep_clickable_hit_targets():
+    for path in (AGENTIC, BUNDLE):
+        text = path.read_text(encoding="utf-8")
+        action_row = css_block(text, ".console-transcript-action-row")
+        action_button = css_block(text, ".console-transcript-action-button")
+
+        assert css_int_declaration(action_row, "height") >= 3
+        assert css_int_declaration(action_row, "min-height") >= 3
+        assert css_int_declaration(action_button, "height") >= 3
+        assert css_int_declaration(action_button, "min-height") >= 3
+        assert css_int_declaration(action_button, "min-width") >= 5
 
 
 def test_console_session_tab_active_state_uses_selected_contract():

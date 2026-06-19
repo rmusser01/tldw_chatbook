@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Input, Select, Static
@@ -24,7 +25,10 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens import provider_model_resolution
-from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    ConsoleSettingsInput,
+    ConsoleSettingsModal,
+)
 from tldw_chatbook.Widgets.Console import console_settings_summary as settings_summary_module
 from tldw_chatbook.Widgets.Console.console_settings_summary import ConsoleSettingsSummary
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
@@ -1446,6 +1450,114 @@ async def test_console_settings_modal_keyboard_selects_provider_and_refreshes_mo
     assert app.saved_settings is not None
     assert app.saved_settings.provider == "local_llamacpp"
     assert app.saved_settings.model == "local-model"
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_reopens_provider_select_after_input_edit() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_llamacpp": ["local-model"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        temperature = app.screen.query_one("#console-settings-temperature", Input)
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+
+        temperature.focus()
+        temperature.value = "0.22"
+        await pilot.pause()
+
+        provider_select.focus()
+        await pilot.press("enter")
+
+        assert provider_select.expanded is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_input_releases_mouse_capture_after_click_to_replace() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        temperature = app.screen.query_one("#console-settings-temperature", ConsoleSettingsInput)
+        temperature.capture_mouse()
+
+        assert app.mouse_captured is temperature
+
+        temperature.on_click()
+
+        assert app.mouse_captured is None
+        assert temperature.selected_text == temperature.value
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_opens_provider_select_from_redirected_input_click() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_llamacpp": ["local-model"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        temperature = app.screen.query_one("#console-settings-temperature", ConsoleSettingsInput)
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        temperature.capture_mouse()
+        temperature.value = "0.22"
+
+        provider_region = provider_select.region
+        click = events.Click(
+            temperature,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=1,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=provider_region.x + provider_region.width - 1,
+            screen_y=provider_region.y,
+        )
+
+        temperature.on_click(click)
+
+        assert app.mouse_captured is None
+        assert provider_select.expanded is True
 
 
 @pytest.mark.asyncio
