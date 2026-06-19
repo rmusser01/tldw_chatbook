@@ -1693,6 +1693,52 @@ async def test_console_settings_modal_ignores_plain_select_click_without_redirec
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_ignores_screen_routed_select_click_without_input_focus() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_llamacpp": ["local-model"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        cancel_button = app.screen.query_one("#console-settings-cancel", Button)
+        cancel_button.focus()
+        await pilot.pause()
+        provider_region = getattr(provider_select, "screen_region", provider_select.region)
+        click = events.Click(
+            app.screen,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=1,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=provider_region.x + provider_region.width - 1,
+            screen_y=provider_region.y,
+        )
+
+        app.screen.on_click(click)
+
+        assert getattr(app.focused, "id", None) == "console-settings-cancel"
+        assert app.mouse_captured is None
+        assert provider_select.expanded is False
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_preserves_missing_registry_model_for_current_provider() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="openai", model="custom-openai-model")

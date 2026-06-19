@@ -307,7 +307,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         """
         captured_widget = self.app.mouse_captured
         click_origin = getattr(event, "widget", None)
-        screen_routed_click = click_origin is self
+        focused_widget = self.app.focused
+        screen_routed_click = click_origin is self and isinstance(focused_widget, ConsoleSettingsInput)
         if (
             not isinstance(captured_widget, ConsoleSettingsInput)
             and not isinstance(click_origin, ConsoleSettingsInput)
