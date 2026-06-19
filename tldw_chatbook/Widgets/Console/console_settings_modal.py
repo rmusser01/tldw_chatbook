@@ -52,7 +52,12 @@ class ConsoleSettingsInput(Input):
     ]
 
     def on_click(self, event: events.Click | None = None) -> None:
-        """Avoid trapping later Select clicks after browser text editing."""
+        """Avoid trapping later Select clicks after browser text editing.
+
+        Args:
+            event: Optional click event to forward when Textual Web redirects a
+                select click through the focused input.
+        """
         self.select_all()
         self.release_mouse()
         if event is None:
@@ -109,7 +114,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         readiness = build_console_settings_readiness(self._settings, app_config=self._app_config)
 
         with Vertical(id="console-settings-modal"):
-            yield Static("Console Settings", classes="console-transcript-action-row")
+            yield Static("Console Settings", classes="console-modal-header")
             yield Static(
                 self._readiness_detail(readiness.detail),
                 id="console-settings-readiness",
@@ -285,12 +290,28 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             self._focus_model_control()
 
     def on_click(self, event: events.Click) -> None:
-        """Recover select clicks redirected through focused Textual Web inputs."""
+        """Recover select clicks redirected through focused Textual Web inputs.
+
+        Args:
+            event: Click event that may have been redirected from a focused
+                settings input.
+        """
         self._open_select_from_redirected_settings_click(event)
 
     def _open_select_from_redirected_settings_click(self, event: events.Click) -> None:
-        """Open a settings select when an input-held click lands on the select."""
+        """Open a settings select when an input-held click lands on the select.
+
+        Args:
+            event: Click event to recover when Textual Web keeps routing clicks
+                through a focused settings input.
+        """
         captured_widget = self.app.mouse_captured
+        click_origin = getattr(event, "widget", None)
+        if (
+            not isinstance(captured_widget, ConsoleSettingsInput)
+            and not isinstance(click_origin, ConsoleSettingsInput)
+        ):
+            return
         if isinstance(captured_widget, ConsoleSettingsInput):
             captured_widget.release_mouse()
 

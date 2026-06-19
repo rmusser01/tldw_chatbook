@@ -82,7 +82,7 @@ class ConsoleWorkspaceSwitcherModal(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-workspace-switcher-modal"):
-            yield Static("Change Workspace", classes="console-transcript-action-row")
+            yield Static("Change Workspace", classes="console-modal-header")
             yield Static(
                 "Switching changes Console context only; Library and Notes stay globally visible.",
                 id="console-workspace-switcher-copy",

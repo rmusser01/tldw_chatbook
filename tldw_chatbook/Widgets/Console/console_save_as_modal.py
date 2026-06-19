@@ -47,7 +47,7 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-save-as-modal"):
-            yield Static("Save as...", classes="console-transcript-action-row")
+            yield Static("Save as...", classes="console-modal-header")
             if not any(destination.available for destination in self.destinations):
                 yield Static(
                     "No Save as destinations are wired for selected messages yet.",

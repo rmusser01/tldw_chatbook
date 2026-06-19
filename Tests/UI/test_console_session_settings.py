@@ -1571,6 +1571,48 @@ async def test_console_settings_modal_opens_provider_select_from_redirected_inpu
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_ignores_plain_select_click_without_redirected_input() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={
+                    "llama_cpp": ["model-a"],
+                    "local_llamacpp": ["local-model"],
+                },
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+
+        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        provider_region = provider_select.region
+        click = events.Click(
+            provider_select,
+            x=0,
+            y=0,
+            delta_x=0,
+            delta_y=0,
+            button=1,
+            shift=False,
+            meta=False,
+            ctrl=False,
+            screen_x=provider_region.x + provider_region.width - 1,
+            screen_y=provider_region.y,
+        )
+
+        app.screen.on_click(click)
+
+        assert app.mouse_captured is None
+        assert provider_select.expanded is False
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_preserves_missing_registry_model_for_current_provider() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="openai", model="custom-openai-model")
