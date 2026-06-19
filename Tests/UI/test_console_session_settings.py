@@ -77,6 +77,12 @@ class StyledModalHarness(ModalHarness):
     )
 
 
+class StyledConsoleHarness(ConsoleHarness):
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+    )
+
+
 class FakeConsoleModelDiscoveryScope:
     def __init__(self, entries: tuple[MergedModelEntry, ...]) -> None:
         self.entries = entries
@@ -2418,6 +2424,69 @@ async def test_console_settings_are_isolated_between_native_tabs() -> None:
         await _click_console_session_tab(console, store, pilot, second_id)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         assert console._build_console_provider_selection().provider == "openai"
+
+
+@pytest.mark.asyncio
+async def test_console_native_tab_click_switches_without_programmatic_fallback() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"]}
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-new-chat-tab")
+        store = console._ensure_console_chat_store()
+        first_id = store.ensure_session().id
+        second_id = await _press_new_console_tab(console, store, pilot)
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{first_id}")
+
+        first_tab = console.query_one(f"#console-session-tab-{first_id}", Button)
+        assert await pilot.click(first_tab, offset=(1, 0))
+        for _ in range(10):
+            if store.active_session_id == first_id:
+                break
+            await pilot.pause(0.05)
+
+        assert store.active_session_id == first_id
+        assert store.active_session_id != second_id
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_row_switches_native_tab() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+    }
+    app.providers_models = {"llama_cpp": ["model-a"]}
+    host = StyledConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-new-chat-tab")
+        store = console._ensure_console_chat_store()
+        first_id = store.ensure_session().id
+        second_id = await _press_new_console_tab(console, store, pilot)
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-1")
+
+        first_conversation = console.query_one("#console-workspace-conversation-1", Button)
+        assert getattr(first_conversation, "conversation_id", None) == f"native:{first_id}"
+        assert await pilot.click(first_conversation, offset=(1, 0))
+        for _ in range(10):
+            if store.active_session_id == first_id:
+                break
+            await pilot.pause(0.05)
+
+        assert store.active_session_id == first_id
+        assert store.active_session_id != second_id
 
 
 @pytest.mark.asyncio
