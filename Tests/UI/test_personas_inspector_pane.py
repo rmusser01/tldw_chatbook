@@ -79,7 +79,7 @@ async def test_conversation_rows_carry_subdued_class():
         assert row.has_class("console-action-subdued")
 
 
-async def test_show_selection_enables_actions_and_shows_authority():
+async def test_show_selection_enables_export_and_shows_authority():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
@@ -91,9 +91,11 @@ async def test_show_selection_enables_actions_and_shows_authority():
         assert "Authority: Local" in str(
             pilot.app.query_one("#personas-selected-authority", Static).renderable
         )
-        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
+        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
+        assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-export-png", Button).disabled is False
-        assert "Console: Ready" in str(
+        assert "Console: Blocked - select an item" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -108,12 +110,52 @@ async def test_persona_selection_disables_png_export():
         assert pilot.app.query_one("#personas-export-png", Button).disabled is True
 
 
+async def test_console_action_enablement_is_explicitly_screen_owned():
+    app = InspectorApp()
+    async with app.run_test() as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        pane.show_selection(name="Tutor", kind="character", authority="Local")
+        await pilot.pause()
+
+        # Selection/export state is inspector-local, but Console attach/start
+        # availability is pushed by PersonasScreen from _console_action_allowed().
+        assert pilot.app.query_one("#personas-export-json", Button).disabled is False
+        assert pilot.app.query_one("#personas-delete", Button).disabled is False
+        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
+        assert "Console: Blocked - select an item" in str(
+            pilot.app.query_one("#personas-readiness-console", Static).renderable
+        )
+
+        pane.set_console_actions_enabled(True)
+        await pilot.pause()
+
+        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
+        assert pilot.app.query_one("#personas-start-chat", Button).disabled is False
+        assert "Console: Ready" in str(
+            pilot.app.query_one("#personas-readiness-console", Static).renderable
+        )
+
+        pane.set_console_actions_enabled(False, reason="prompts are not attachable")
+        await pilot.pause()
+
+        assert pilot.app.query_one("#personas-export-json", Button).disabled is False
+        assert pilot.app.query_one("#personas-delete", Button).disabled is False
+        assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
+        assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
+        assert "Console: Blocked - prompts are not attachable" in str(
+            pilot.app.query_one("#personas-readiness-console", Static).renderable
+        )
+
+
 async def test_unsaved_disables_attach_and_export_with_reason():
     app = InspectorApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasInspectorPane)
         pane.show_selection(name="Tutor", kind="character", authority="Local")
+        pane.set_console_actions_enabled(True)
         pane.set_unsaved(True)
+        pane.set_console_actions_enabled(False, reason="unsaved edits")
         await pilot.pause()
         attach = pilot.app.query_one("#personas-attach-to-console", Button)
         assert attach.disabled is True
@@ -123,6 +165,7 @@ async def test_unsaved_disables_attach_and_export_with_reason():
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
         pane.set_unsaved(False)
+        pane.set_console_actions_enabled(True)
         await pilot.pause()
         assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
 
