@@ -256,6 +256,7 @@ class ConsoleChatController:
             session_id,
             before_message_id=message_id,
         )
+        self._ensure_user_continuation_instruction(provider_messages)
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
@@ -285,10 +286,7 @@ class ConsoleChatController:
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_through_message(session_id, message_id)
-        if provider_messages and provider_messages[-1].get("role") == ConsoleMessageRole.ASSISTANT.value:
-            provider_messages.append(
-                {"role": ConsoleMessageRole.USER.value, "content": CONSOLE_CONTINUE_INSTRUCTION}
-            )
+        self._ensure_user_continuation_instruction(provider_messages)
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -328,6 +326,7 @@ class ConsoleChatController:
             session_id,
             before_message_id=message_id,
         )
+        self._ensure_user_continuation_instruction(provider_messages)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Regenerating response."))
         chunks: list[str] = []
         try:
@@ -371,6 +370,18 @@ class ConsoleChatController:
             streaming=self.streaming,
             workspace_context=self.store.workspace_context,
         )
+
+    @staticmethod
+    def _ensure_user_continuation_instruction(
+        provider_messages: list[dict[str, str]],
+    ) -> None:
+        if (
+            provider_messages
+            and provider_messages[-1].get("role") == ConsoleMessageRole.ASSISTANT.value
+        ):
+            provider_messages.append(
+                {"role": ConsoleMessageRole.USER.value, "content": CONSOLE_CONTINUE_INSTRUCTION}
+            )
 
     @staticmethod
     def _validated_draft(draft: str) -> tuple[str, str | None]:

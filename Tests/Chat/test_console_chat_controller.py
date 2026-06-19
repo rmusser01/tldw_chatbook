@@ -668,6 +668,40 @@ async def test_retry_failed_message_records_retrying_then_streaming_transition()
 
 
 @pytest.mark.asyncio
+async def test_retry_failed_continuation_message_ends_provider_payload_with_user_instruction():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Prompt",
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Seed",
+    )
+    failed = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(failed.id, "Partial continuation")
+    store.mark_message_failed(failed.id)
+
+    result = await controller.retry_message(failed.id)
+
+    assert result.accepted is True
+    assert gateway.messages_seen == [
+        {"role": "user", "content": "Prompt"},
+        {"role": "assistant", "content": "Seed"},
+        {"role": "user", "content": "Continue and extend the selected message."},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_retry_keeps_failed_content_if_replacement_fails_before_first_chunk():
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=FailingStreamingGateway())
@@ -816,3 +850,35 @@ async def test_regenerate_message_streams_new_selected_variant():
     assert result.accepted is True
     assert updated.variants.current.content == "hello"
     assert updated.variants.can_go_previous is True
+
+
+@pytest.mark.asyncio
+async def test_regenerate_continuation_message_ends_provider_payload_with_user_instruction():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Prompt",
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Seed",
+    )
+    continuation = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Continuation",
+    )
+
+    result = await controller.regenerate_message(continuation.id)
+
+    assert result.accepted is True
+    assert gateway.messages_seen == [
+        {"role": "user", "content": "Prompt"},
+        {"role": "assistant", "content": "Seed"},
+        {"role": "user", "content": "Continue and extend the selected message."},
+    ]
