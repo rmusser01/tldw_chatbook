@@ -7,14 +7,18 @@ from unittest.mock import Mock
 
 import pytest
 from rich.text import Text
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
     StaticLibraryNotesScopeService,
+    _active_destination_screen,
     _build_test_app,
+    _visible_text,
+    _wait_for_library_snapshot,
+    _wait_for_selector,
 )
 from Tests.UI.test_study_dashboard import StudyDashboardTestApp, _build_app_instance
 from tldw_chatbook.UI.Screens.study_screen import StudyScreen
@@ -57,6 +61,22 @@ def _seed_library_sources(app) -> None:
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
         [{"title": "Planning Chat", "id": "chat-1"}]
     )
+
+
+class TotalOnlyLibraryNotesScopeService:
+    """Return a positive Library source total without sampled note records."""
+
+    async def list_notes(self, **kwargs: object) -> dict[str, object]:
+        """Return note totals with no sampled titles.
+
+        Args:
+            **kwargs: Ignored list options from the Library screen.
+
+        Returns:
+            A scope-service response with a positive total and empty items.
+        """
+
+        return {"items": [], "pagination": {"total": 2}}
 
 
 @pytest.mark.asyncio
@@ -105,6 +125,160 @@ async def test_library_empty_state_preserves_plain_study_section_routing() -> No
         await pilot.pause(0.1)
 
     app.open_study_screen.assert_called_once_with(initial_section="quizzes")
+
+
+@pytest.mark.parametrize(
+    ("mode_selector", "mode_label", "action_label"),
+    [
+        ("#library-mode-study", "Study", "Study Dashboard"),
+        ("#library-mode-flashcards", "Flashcards", "Flashcards"),
+        ("#library-mode-quizzes", "Quizzes", "Quizzes"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_library_study_related_modes_explain_handoff_context_and_wip(
+    mode_selector: str,
+    mode_label: str,
+    action_label: str,
+) -> None:
+    """Verify each study-related Library mode exposes source handoff state.
+
+    Args:
+        mode_selector: Stable selector for the mode chip under test.
+        mode_label: Visible destination label expected in the handoff title.
+        action_label: Visible primary action label expected for the mode.
+    """
+
+    app = _build_test_app()
+    _seed_library_sources(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        await pilot.click(mode_selector)
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-purpose")
+
+        detail_pane = screen.query_one("#library-source-detail")
+        assert detail_pane.query("#library-study-handoff-detail")
+
+        visible = _visible_text(screen)
+        assert f"{mode_label} handoff" in visible
+        assert f"Primary action: {action_label}" in visible
+        assert "Carries forward: Research Note, Transcript A, Planning Chat" in visible
+        assert (
+            "Library prepares source context only; Study owns sessions, "
+            "generation, review, and attempts."
+        ) in visible
+        assert (
+            "WIP: provider-backed generation and collection-scoped study "
+            "remain owned by later Study slices."
+        ) in visible
+        assert (
+            f"Source snapshot is ready; open {action_label} to continue "
+            "with this Library context."
+        ) in visible
+
+
+@pytest.mark.asyncio
+async def test_library_quizzes_mode_empty_state_explains_global_recovery_without_source_context() -> None:
+    """Verify Quizzes describes global fallback when Library has no sources."""
+
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.open_study_screen = Mock()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        await pilot.click("#library-mode-quizzes")
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-recovery")
+        visible = _visible_text(screen)
+
+        assert "No Library source snapshot will be carried forward." in visible
+        assert (
+            "Import sources or create notes first, or open Quizzes globally "
+            "without Library context."
+        ) in visible
+
+        await pilot.click("#library-open-quizzes")
+        await pilot.pause()
+
+    app.open_study_screen.assert_called_once_with(initial_section="quizzes")
+
+
+@pytest.mark.asyncio
+async def test_library_study_handoff_uses_counts_when_titles_are_unavailable() -> None:
+    """Verify total-only snapshots do not render misleading no-context copy."""
+
+    app = _build_test_app()
+    app.notes_scope_service = TotalOnlyLibraryNotesScopeService()
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.open_study_screen = Mock()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        await pilot.click("#library-mode-study")
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-context")
+        visible = _visible_text(screen)
+
+        assert "Carries forward: Library source snapshot (titles unavailable)" in visible
+        assert "No Library source snapshot will be carried forward." not in visible
+
+        await pilot.click("#library-open-study")
+        await pilot.pause()
+
+    app.open_study_screen.assert_called_once()
+    call = app.open_study_screen.call_args
+    assert call.kwargs["initial_section"] == "dashboard"
+    scope_context = call.args[0]
+    assert isinstance(scope_context, StudyScopeContext)
+    assert scope_context.material_titles == ()
+    assert "Notes: 2" in scope_context.material_summary
+
+
+@pytest.mark.asyncio
+async def test_library_flashcards_handoff_supports_keyboard_activation_with_source_context() -> None:
+    """Verify keyboard activation preserves Library source context."""
+
+    app = _build_test_app()
+    _seed_library_sources(app)
+    app.open_study_screen = Mock()
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        mode_button = screen.query_one("#library-mode-flashcards", Button)
+        mode_button.focus()
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-context")
+
+        action_button = screen.query_one("#library-open-flashcards", Button)
+        action_button.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+
+    app.open_study_screen.assert_called_once()
+    call = app.open_study_screen.call_args
+    assert call.kwargs["initial_section"] == "flashcards"
+    scope_context = call.args[0]
+    assert isinstance(scope_context, StudyScopeContext)
+    assert scope_context.material_titles == (
+        "Research Note",
+        "Transcript A",
+        "Planning Chat",
+    )
 
 
 @pytest.mark.asyncio

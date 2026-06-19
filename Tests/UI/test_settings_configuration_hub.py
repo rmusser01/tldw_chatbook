@@ -1923,20 +1923,27 @@ async def test_settings_category_search_filters_and_enter_opens_first_match():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.press("/")
         screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-category-search")
+
+        await pilot.press("/")
+        await _wait_for_settings_search_focus(screen, pilot)
         search = screen.query_one("#settings-category-search", Input)
 
         assert search.has_focus
 
         await pilot.press(*"priv")
-        await pilot.pause()
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Filter: priv | 2 matches | Enter opens Privacy & Security",
+        )
 
         assert screen.query_one("#settings-category-privacy-security").display
         assert not screen.query_one("#settings-category-providers-models").display
 
         await pilot.press("enter")
-        await pilot.pause()
+        await _wait_for_settings_text(screen, pilot, "Privacy posture")
 
         assert screen.active_category == SettingsCategoryId.PRIVACY_SECURITY.value
         assert "Privacy & Security" in _visible_text(screen)
@@ -2001,11 +2008,14 @@ async def test_settings_category_search_escape_clears_filter():
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.press("/")
         screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-category-search")
+
+        await pilot.press("/")
+        await _wait_for_settings_search_focus(screen, pilot)
 
         await pilot.press(*"zzz")
-        await pilot.pause()
+        await _wait_for_settings_text(screen, pilot, "No Settings categories match: zzz")
 
         assert "No Settings categories match" in _visible_text(screen)
         assert not any(button.display for button in screen.query(".settings-category-button"))
