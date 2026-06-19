@@ -816,3 +816,35 @@ async def test_regenerate_message_streams_new_selected_variant():
     assert result.accepted is True
     assert updated.variants.current.content == "hello"
     assert updated.variants.can_go_previous is True
+
+
+@pytest.mark.asyncio
+async def test_regenerate_continuation_message_ends_provider_payload_with_user_instruction():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Prompt",
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Seed",
+    )
+    continuation = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Continuation",
+    )
+
+    result = await controller.regenerate_message(continuation.id)
+
+    assert result.accepted is True
+    assert gateway.messages_seen == [
+        {"role": "user", "content": "Prompt"},
+        {"role": "assistant", "content": "Seed"},
+        {"role": "user", "content": "Continue and extend the selected message."},
+    ]

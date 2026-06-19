@@ -328,6 +328,10 @@ class ConsoleChatController:
             session_id,
             before_message_id=message_id,
         )
+        if provider_messages and provider_messages[-1].get("role") == ConsoleMessageRole.ASSISTANT.value:
+            provider_messages.append(
+                {"role": ConsoleMessageRole.USER.value, "content": CONSOLE_CONTINUE_INSTRUCTION}
+            )
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Regenerating response."))
         chunks: list[str] = []
         try:
