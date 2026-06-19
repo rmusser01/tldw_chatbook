@@ -1515,7 +1515,7 @@ async def test_console_settings_input_releases_mouse_capture_after_click_to_repl
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_opens_provider_select_from_redirected_input_click() -> None:
+async def test_console_settings_modal_opens_provider_select_from_redirected_input_click(monkeypatch) -> None:
     app = StyledModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -1539,7 +1539,17 @@ async def test_console_settings_modal_opens_provider_select_from_redirected_inpu
         temperature.capture_mouse()
         temperature.value = "0.22"
 
-        provider_region = provider_select.region
+        provider_screen_region = provider_select.region.translate((10, 0))
+        monkeypatch.setattr(
+            Select,
+            "screen_region",
+            property(
+                lambda widget: provider_screen_region
+                if widget is provider_select
+                else widget.region
+            ),
+            raising=False,
+        )
         click = events.Click(
             temperature,
             x=0,
@@ -1550,8 +1560,8 @@ async def test_console_settings_modal_opens_provider_select_from_redirected_inpu
             shift=False,
             meta=False,
             ctrl=False,
-            screen_x=provider_region.x + provider_region.width - 1,
-            screen_y=provider_region.y,
+            screen_x=provider_screen_region.x + provider_screen_region.width - 1,
+            screen_y=provider_screen_region.y,
         )
 
         temperature.on_click(click)

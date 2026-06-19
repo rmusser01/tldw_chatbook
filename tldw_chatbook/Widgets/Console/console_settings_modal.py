@@ -300,7 +300,8 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         for select in self.query(Select):
             if select.disabled or not select.display:
                 continue
-            if select.region.contains(event.screen_x, event.screen_y):
+            select_region = getattr(select, "screen_region", select.region)
+            if select_region.contains(event.screen_x, event.screen_y):
                 select.focus()
                 select.action_show_overlay()
                 event.stop()
