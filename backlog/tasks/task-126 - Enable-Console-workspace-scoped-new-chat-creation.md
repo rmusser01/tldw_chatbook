@@ -1,5 +1,5 @@
 ---
-id: TASK-125
+id: TASK-126
 title: Enable Console workspace-scoped new chat creation
 status: Done
 labels:
