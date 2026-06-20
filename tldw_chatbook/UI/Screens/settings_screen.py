@@ -7266,17 +7266,17 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-save-category")
     def handle_save_category(self, event: Button.Pressed) -> None:
         event.stop()
-        self.action_settings_save_category()
+        self.action_settings_save_category(allow_text_entry_focus=True)
 
     @on(Button.Pressed, "#settings-revert-category")
     def handle_revert_category(self, event: Button.Pressed) -> None:
         event.stop()
-        self.action_settings_revert_category()
+        self.action_settings_revert_category(allow_text_entry_focus=True)
 
     @on(Button.Pressed, "#settings-test-provider")
     def handle_test_provider(self, event: Button.Pressed) -> None:
         event.stop()
-        self.action_settings_test_category()
+        self.action_settings_test_category(allow_text_entry_focus=True)
 
     @on(Button.Pressed, "#settings-discover-provider-models")
     def handle_discover_provider_models(self, event: Button.Pressed) -> None:
@@ -7363,8 +7363,8 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._update_advanced_validation_status()
 
-    def action_settings_save_category(self) -> None:
-        if self._settings_text_entry_has_focus():
+    def action_settings_save_category(self, *, allow_text_entry_focus: bool = False) -> None:
+        if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
         if category not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
@@ -7745,8 +7745,8 @@ class SettingsScreen(BaseAppScreen):
 
         self.app.notify("This Settings category has no save action yet.", severity="warning")
 
-    def action_settings_revert_category(self) -> None:
-        if self._settings_text_entry_has_focus():
+    def action_settings_revert_category(self, *, allow_text_entry_focus: bool = False) -> None:
+        if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
         if not self._category_has_unsaved_changes(category):
@@ -7806,8 +7806,8 @@ class SettingsScreen(BaseAppScreen):
             self._update_draft_status_widgets(category)
         self.app.notify("Settings category changes reverted.", severity="information")
 
-    def action_settings_test_category(self) -> None:
-        if self._settings_text_entry_has_focus():
+    def action_settings_test_category(self, *, allow_text_entry_focus: bool = False) -> None:
+        if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
             self._provider_test_result = self._run_provider_readiness_test()

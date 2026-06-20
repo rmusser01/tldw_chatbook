@@ -2046,7 +2046,11 @@ async def test_settings_overview_paste_summary_updates_after_toggle(monkeypatch)
         await pilot.click("#settings-category-overview")
         screen = _active_destination_screen(host)
 
-        assert "Console paste collapse: Disabled: collapse large pastes" in _visible_text(screen)
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Console paste collapse: Disabled: collapse large pastes",
+        )
 
 
 @pytest.mark.asyncio
@@ -2892,6 +2896,43 @@ async def test_settings_console_behavior_revert_restores_global_defaults(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_settings_console_behavior_revert_button_works_with_input_focus(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "streaming": True,
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 2048,
+    }
+    saved = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_screen.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        temperature = screen.query_one("#settings-console-default-temperature", Input)
+        temperature.focus()
+        temperature.value = "0.33"
+        screen.handle_console_default_temperature_changed(Input.Changed(temperature, temperature.value))
+        monkeypatch.setattr(screen, "_settings_text_entry_has_focus", lambda: True)
+
+        screen.handle_revert_category(
+            Button.Pressed(screen.query_one("#settings-revert-category", Button))
+        )
+
+        assert screen.query_one("#settings-console-default-temperature", Input).value == "0.7"
+        assert screen.query_one("#settings-save-category", Button).disabled is True
+        assert "No unsaved changes" in _visible_text(screen)
+
+    assert saved == []
+    assert app.app_config["chat_defaults"]["temperature"] == 0.7
+
+
+@pytest.mark.asyncio
 async def test_settings_console_behavior_revert_discards_draft(monkeypatch):
     app = _build_test_app()
     app.app_config["console"] = {"collapse_large_pastes": True}
@@ -3727,6 +3768,45 @@ async def test_settings_provider_category_preserves_existing_endpoint_key(monkey
         endpoint.value = "https://proxy.example.com/v1"
 
         await pilot.click("#settings-save-category")
+
+    assert saved == [
+        ("api_settings.openai", "api_base_url", "https://proxy.example.com/v1"),
+    ]
+    assert app.app_config["api_settings"]["openai"]["api_base_url"] == "https://proxy.example.com/v1"
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_save_button_works_with_endpoint_input_focus(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+        "streaming": True,
+        "temperature": 0.7,
+    }
+    app.app_config["api_settings"] = {
+        "openai": {"api_base_url": "https://api.openai.com/v1"}
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.focus()
+        endpoint.value = "https://proxy.example.com/v1"
+        monkeypatch.setattr(screen, "_settings_text_entry_has_focus", lambda: True)
+
+        screen.handle_save_category(
+            Button.Pressed(screen.query_one("#settings-save-category", Button))
+        )
 
     assert saved == [
         ("api_settings.openai", "api_base_url", "https://proxy.example.com/v1"),

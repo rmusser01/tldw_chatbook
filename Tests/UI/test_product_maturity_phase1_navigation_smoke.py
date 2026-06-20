@@ -174,16 +174,15 @@ async def test_top_level_navigation_activates_visible_tab_border_from_cached_con
                 lambda: app.current_tab == "settings" and app.screen.__class__.__name__ == "SettingsScreen",
             )
 
-            await pilot.click("#nav-console")
+            await _click_visible_widget_bottom_row(pilot, app, "#nav-console")
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
             )
 
-            await pilot.click("#nav-settings")
+            await _click_visible_widget_bottom_row(pilot, app, "#nav-settings")
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == "settings" and app.screen.__class__.__name__ == "SettingsScreen",
             )
-
 
