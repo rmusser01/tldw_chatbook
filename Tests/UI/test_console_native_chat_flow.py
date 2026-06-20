@@ -171,6 +171,43 @@ async def _wait_for_focus(app, pilot, widget, *, attempts: int = 40) -> None:
     )
 
 
+async def _wait_for_active_session_change(
+    store: ConsoleChatStore,
+    pilot,
+    previous_session_id: str | None,
+    *,
+    attempts: int = 40,
+) -> str:
+    """Wait for the Console store to activate a different session."""
+    for _ in range(attempts):
+        active_session_id = store.active_session_id
+        if active_session_id is not None and active_session_id != previous_session_id:
+            return active_session_id
+        await pilot.pause(0.05)
+    raise AssertionError(
+        "Console active session did not change. "
+        f"previous={previous_session_id!r}; active={store.active_session_id!r}"
+    )
+
+
+async def _wait_for_active_session(
+    store: ConsoleChatStore,
+    pilot,
+    expected_session_id: str,
+    *,
+    attempts: int = 40,
+) -> None:
+    """Wait for the Console store to activate the expected session."""
+    for _ in range(attempts):
+        if store.active_session_id == expected_session_id:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        "Console active session did not match expected session. "
+        f"expected={expected_session_id!r}; active={store.active_session_id!r}"
+    )
+
+
 def _static_plain_text(widget: Static) -> str:
     renderable = widget.renderable
     return getattr(renderable, "plain", str(renderable))
@@ -1788,6 +1825,94 @@ async def test_console_native_tab_strip_creates_and_switches_sessions():
 
         assert store.active_session_id == first.id
         assert "Chat 1" in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_native_tab_switch_restores_transcript_messages():
+    """Verify native tab switching restores the prior session transcript."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        store.append_message(
+            first.id,
+            role=ConsoleMessageRole.USER,
+            content="first tab user prompt",
+        )
+        store.append_message(
+            first.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="first tab assistant reply",
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_text(console, pilot, "first tab assistant reply")
+
+        previous = store.active_session_id
+        await pilot.click("#console-new-chat-tab")
+        second = await _wait_for_active_session_change(store, pilot, previous)
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+        await _wait_for_text(console, pilot, "No messages yet.")
+        assert "first tab assistant reply" not in _visible_text(console)
+
+        await pilot.click(f"#console-session-tab-{first.id}")
+
+        await _wait_for_active_session(store, pilot, first.id)
+        await _wait_for_text(console, pilot, "first tab user prompt")
+        await _wait_for_text(console, pilot, "first tab assistant reply")
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_switch_restores_transcript_messages():
+    """Verify workspace conversation switching restores the prior transcript."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        store.append_message(
+            first.id,
+            role=ConsoleMessageRole.USER,
+            content="workspace row user prompt",
+        )
+        store.append_message(
+            first.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="workspace row assistant reply",
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_text(console, pilot, "workspace row assistant reply")
+
+        await _wait_for_selector(console, pilot, "#console-new-workspace-conversation")
+        previous = store.active_session_id
+        await pilot.click("#console-new-workspace-conversation")
+        second = await _wait_for_active_session_change(store, pilot, previous)
+        assert second != first.id
+        await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Chat 2",
+            selected=True,
+        )
+        await _wait_for_text(console, pilot, "No messages yet.")
+        assert "workspace row assistant reply" not in _visible_text(console)
+
+        await _click_console_workspace_conversation_for_session(
+            console,
+            pilot,
+            store,
+            first.id,
+        )
+
+        await _wait_for_active_session(store, pilot, first.id)
+        await _wait_for_text(console, pilot, "workspace row user prompt")
+        await _wait_for_text(console, pilot, "workspace row assistant reply")
 
 
 @pytest.mark.asyncio
