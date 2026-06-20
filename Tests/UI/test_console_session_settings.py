@@ -870,6 +870,7 @@ async def test_console_settings_modal_single_model_uses_readonly_value_not_dead_
         assert model_input.display is True
         assert model_input.disabled is True
         assert model_input.value == "model-a"
+        assert app.focused is model_custom
 
 
 @pytest.mark.asyncio

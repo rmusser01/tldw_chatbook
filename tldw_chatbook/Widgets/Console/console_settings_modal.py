@@ -520,7 +520,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             if model_select.display and not model_select.disabled:
                 model_select.focus()
             else:
-                model_input.focus()
+                model_custom.focus()
             return
 
         model_input.value = normalize_console_model_value(model_select.value) or ""
