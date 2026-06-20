@@ -1791,6 +1791,95 @@ async def test_console_native_tab_strip_creates_and_switches_sessions():
 
 
 @pytest.mark.asyncio
+async def test_console_native_tab_switch_restores_transcript_messages():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        store.append_message(
+            first.id,
+            role=ConsoleMessageRole.USER,
+            content="first tab user prompt",
+        )
+        store.append_message(
+            first.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="first tab assistant reply",
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_text(console, pilot, "first tab assistant reply")
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+        await _wait_for_text(console, pilot, "No messages yet.")
+        assert "first tab assistant reply" not in _visible_text(console)
+
+        await pilot.click(f"#console-session-tab-{first.id}")
+
+        assert store.active_session_id == first.id
+        await _wait_for_text(console, pilot, "first tab user prompt")
+        await _wait_for_text(console, pilot, "first tab assistant reply")
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_switch_restores_transcript_messages():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Chat 1")
+        store.append_message(
+            first.id,
+            role=ConsoleMessageRole.USER,
+            content="workspace row user prompt",
+        )
+        store.append_message(
+            first.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="workspace row assistant reply",
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_text(console, pilot, "workspace row assistant reply")
+
+        await _wait_for_selector(console, pilot, "#console-new-workspace-conversation")
+        console.query_one("#console-new-workspace-conversation", Button).press()
+        for _ in range(20):
+            if store.active_session_id != first.id:
+                break
+            await pilot.pause(0.05)
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Chat 2",
+            selected=True,
+        )
+        await _wait_for_text(console, pilot, "No messages yet.")
+        assert "workspace row assistant reply" not in _visible_text(console)
+
+        await _click_console_workspace_conversation_for_session(
+            console,
+            pilot,
+            store,
+            first.id,
+        )
+
+        assert store.active_session_id == first.id
+        await _wait_for_text(console, pilot, "workspace row user prompt")
+        await _wait_for_text(console, pilot, "workspace row assistant reply")
+
+
+@pytest.mark.asyncio
 async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
     app = _build_test_app()
     service = app.workspace_registry_service
