@@ -150,6 +150,26 @@ class ConsoleChatController:
 
     def update_provider_selection(self, selection: ConsoleProviderSelection) -> None:
         """Sync controller provider settings from a Console selection."""
+        previous_selection = (
+            self.provider,
+            self.model,
+            self.configured_model,
+            self.base_url,
+            self.temperature,
+            self.top_p,
+            self.min_p,
+            self.top_k,
+            self.max_tokens,
+            self.seed,
+            self.presence_penalty,
+            self.frequency_penalty,
+            self.reasoning_effort,
+            self.reasoning_summary,
+            self.verbosity,
+            self.thinking_effort,
+            self.thinking_budget_tokens,
+            self.streaming,
+        )
         self.provider = selection.provider
         self.model = selection.explicit_model
         self.configured_model = selection.configured_model
@@ -168,6 +188,28 @@ class ConsoleChatController:
         self.thinking_effort = selection.thinking_effort
         self.thinking_budget_tokens = selection.thinking_budget_tokens
         self.streaming = selection.streaming
+        current_selection = (
+            self.provider,
+            self.model,
+            self.configured_model,
+            self.base_url,
+            self.temperature,
+            self.top_p,
+            self.min_p,
+            self.top_k,
+            self.max_tokens,
+            self.seed,
+            self.presence_penalty,
+            self.frequency_penalty,
+            self.reasoning_effort,
+            self.reasoning_summary,
+            self.verbosity,
+            self.thinking_effort,
+            self.thinking_budget_tokens,
+            self.streaming,
+        )
+        if current_selection != previous_selection:
+            self._clear_terminal_run_state()
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing native Console session."""

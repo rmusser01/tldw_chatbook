@@ -2689,6 +2689,59 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
 
 
 @pytest.mark.asyncio
+async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+        "custom": {
+            "api_url": "http://localhost:1234/v1/chat/completions",
+            "model": "custom-model-beta",
+        },
+    }
+    app.providers_models = {
+        "llama_cpp": ["model-a"],
+        "custom": ["custom-model-alpha", "custom-model-beta"],
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        )
+        await console._sync_native_console_chat_ui()
+
+        controller = console._ensure_console_chat_controller()
+        stale_copy = "Provider blocked: old llama.cpp failure."
+        controller.run_state = ConsoleRunState.blocked(stale_copy)
+        console._sync_console_mode_bar()
+        assert stale_copy in str(console.query_one("#console-mode-bar", Static).renderable)
+
+        console.query_one("#console-settings-open", Button).press()
+        modal_screen = await _wait_for_console_settings_modal(host, pilot)
+        modal_screen.dismiss(
+            ConsoleSessionSettings(
+                provider="custom",
+                model="custom-model-beta",
+                base_url="http://localhost:1234/v1/chat/completions",
+            )
+        )
+        await _wait_for_console_top_screen(host, console, pilot)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        assert console._build_console_provider_selection().provider == "custom"
+        assert controller.run_state.status is ConsoleRunStatus.IDLE
+        assert stale_copy not in str(console.query_one("#console-mode-bar", Static).renderable)
+
+
+@pytest.mark.asyncio
 async def test_console_send_blocker_uses_saved_unsupported_session_provider() -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
