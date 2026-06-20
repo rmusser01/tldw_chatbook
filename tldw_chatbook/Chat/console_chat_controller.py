@@ -141,13 +141,35 @@ class ConsoleChatController:
     ) -> ConsoleChatSession:
         """Create and activate a new native Console session."""
         next_number = len(self.store.sessions()) + 1
-        return self.store.create_session(
+        session = self.store.create_session(
             title=title or f"Chat {next_number}",
             settings=settings,
         )
+        self._clear_terminal_run_state()
+        return session
 
     def update_provider_selection(self, selection: ConsoleProviderSelection) -> None:
         """Sync controller provider settings from a Console selection."""
+        previous_selection = (
+            self.provider,
+            self.model,
+            self.configured_model,
+            self.base_url,
+            self.temperature,
+            self.top_p,
+            self.min_p,
+            self.top_k,
+            self.max_tokens,
+            self.seed,
+            self.presence_penalty,
+            self.frequency_penalty,
+            self.reasoning_effort,
+            self.reasoning_summary,
+            self.verbosity,
+            self.thinking_effort,
+            self.thinking_budget_tokens,
+            self.streaming,
+        )
         self.provider = selection.provider
         self.model = selection.explicit_model
         self.configured_model = selection.configured_model
@@ -166,10 +188,34 @@ class ConsoleChatController:
         self.thinking_effort = selection.thinking_effort
         self.thinking_budget_tokens = selection.thinking_budget_tokens
         self.streaming = selection.streaming
+        current_selection = (
+            self.provider,
+            self.model,
+            self.configured_model,
+            self.base_url,
+            self.temperature,
+            self.top_p,
+            self.min_p,
+            self.top_k,
+            self.max_tokens,
+            self.seed,
+            self.presence_penalty,
+            self.frequency_penalty,
+            self.reasoning_effort,
+            self.reasoning_summary,
+            self.verbosity,
+            self.thinking_effort,
+            self.thinking_budget_tokens,
+            self.streaming,
+        )
+        if current_selection != previous_selection:
+            self._clear_terminal_run_state()
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing native Console session."""
-        return self.store.switch_session(session_id)
+        session = self.store.switch_session(session_id)
+        self._clear_terminal_run_state()
+        return session
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
         """Close an existing native Console session.
@@ -591,6 +637,16 @@ class ConsoleChatController:
     def _set_run_state(self, run_state: ConsoleRunState) -> None:
         self.run_state = run_state
         self.run_state_history.append(run_state.status)
+
+    def _clear_terminal_run_state(self) -> None:
+        """Clear stale terminal status copy when the active session changes."""
+        if self.run_state.status in {
+            ConsoleRunStatus.BLOCKED,
+            ConsoleRunStatus.COMPLETED,
+            ConsoleRunStatus.FAILED,
+            ConsoleRunStatus.STOPPED,
+        }:
+            self._set_run_state(ConsoleRunState())
 
     def _active_stream_belongs_to_session(self, session_id: str) -> bool:
         if self._active_assistant_message_id is None:

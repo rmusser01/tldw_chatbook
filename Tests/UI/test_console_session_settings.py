@@ -723,6 +723,32 @@ async def test_console_model_resolution_failure_logs_provider_context(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_console_settings_model_resolution_preserves_configured_alternatives() -> None:
+    app = _build_test_app()
+    app.providers_models = {
+        "local_llamacpp": ["uat-local-model", "uat-alt-local-model"],
+    }
+    app.llm_provider_catalog_scope_service = FakeConsoleModelDiscoveryScope(
+        (
+            _merged_model(
+                "uat-local-model",
+                source="runtime_discovered",
+                capability_status="known",
+                persisted=False,
+            ),
+        )
+    )
+    console = ChatScreen(app)
+
+    models = await console._providers_models_for_console_settings(
+        "local_llamacpp",
+        current_model="uat-local-model",
+    )
+
+    assert models["local_llamacpp"] == ["uat-local-model", "uat-alt-local-model"]
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_cancel_discards_draft() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
@@ -800,6 +826,51 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
     assert app.saved_settings.model == "model-a"
     assert app.saved_settings.temperature == 0.42
     assert app.saved_settings.top_p == 0.88
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_single_model_uses_readonly_value_not_dead_dropdown() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        model_custom = app.screen.query_one("#console-settings-model-custom", Button)
+
+        assert model_select.display is False
+        assert model_select.disabled is True
+        assert model_input.display is True
+        assert model_input.disabled is True
+        assert model_input.value == "model-a"
+        assert model_custom.display is True
+        assert model_custom.disabled is False
+
+        model_custom.press()
+        await pilot.pause()
+        assert model_input.display is True
+        assert model_input.disabled is False
+        assert model_custom.label == "Model list"
+
+        model_custom.press()
+        await pilot.pause()
+        assert model_select.display is False
+        assert model_input.display is True
+        assert model_input.disabled is True
+        assert model_input.value == "model-a"
+        assert app.focused is model_custom
 
 
 @pytest.mark.asyncio
@@ -2164,8 +2235,13 @@ async def test_console_settings_modal_provider_change_uses_target_provider_model
         await pilot.pause()
 
         model_select = app.screen.query_one("#console-settings-model-select", Select)
-        assert model_select.disabled is False
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_select.display is False
+        assert model_select.disabled is True
         assert model_select.value == "gpt-4.1"
+        assert model_input.display is True
+        assert model_input.disabled is True
+        assert model_input.value == "gpt-4.1"
         assert "model-a" not in _select_values(model_select)
         await pilot.click("#console-settings-save")
 
@@ -2610,6 +2686,59 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
 
         assert modal_screen.query_one("#console-settings-save", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "model-a"
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"},
+        "custom": {
+            "api_url": "http://localhost:1234/v1/chat/completions",
+            "model": "custom-model-beta",
+        },
+    }
+    app.providers_models = {
+        "llama_cpp": ["model-a"],
+        "custom": ["custom-model-alpha", "custom-model-beta"],
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        )
+        await console._sync_native_console_chat_ui()
+
+        controller = console._ensure_console_chat_controller()
+        stale_copy = "Provider blocked: old llama.cpp failure."
+        controller.run_state = ConsoleRunState.blocked(stale_copy)
+        console._sync_console_mode_bar()
+        assert stale_copy in str(console.query_one("#console-mode-bar", Static).renderable)
+
+        console.query_one("#console-settings-open", Button).press()
+        modal_screen = await _wait_for_console_settings_modal(host, pilot)
+        modal_screen.dismiss(
+            ConsoleSessionSettings(
+                provider="custom",
+                model="custom-model-beta",
+                base_url="http://localhost:1234/v1/chat/completions",
+            )
+        )
+        await _wait_for_console_top_screen(host, console, pilot)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+
+        assert console._build_console_provider_selection().provider == "custom"
+        assert controller.run_state.status is ConsoleRunStatus.IDLE
+        assert stale_copy not in str(console.query_one("#console-mode-bar", Static).renderable)
 
 
 @pytest.mark.asyncio

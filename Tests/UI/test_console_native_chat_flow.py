@@ -2304,7 +2304,8 @@ async def test_console_native_tab_title_has_stable_visible_label_region():
         tab = console.query_one(tab_selector, Button)
 
         assert tab.tooltip == (
-            "Rename Console tab: Planning session with a long descriptive name"
+            "Active Console tab: Planning session with a long descriptive name. "
+            "Click again to rename."
         )
         assert str(tab.label) == "Planning session..."
         assert tab.region.width >= 18

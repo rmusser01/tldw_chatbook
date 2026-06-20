@@ -175,6 +175,42 @@ def test_controller_creates_and_switches_sessions():
     assert store.active_session_id == first.id
 
 
+def test_controller_session_changes_clear_terminal_run_copy() -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    first = store.ensure_session(title="Chat 1")
+
+    controller.run_state = ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
+    controller.new_session(title="Chat 2")
+
+    assert controller.run_state.status is ConsoleRunStatus.IDLE
+    assert controller.run_state.visible_copy == ""
+
+    controller.run_state = ConsoleRunState(ConsoleRunStatus.BLOCKED, "Provider blocked.")
+    controller.switch_session(first.id)
+
+    assert controller.run_state.status is ConsoleRunStatus.IDLE
+    assert controller.run_state.visible_copy == ""
+
+
+def test_controller_session_changes_preserve_active_run_copy() -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    first = store.ensure_session(title="Chat 1")
+
+    controller.run_state = ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+    controller.new_session(title="Chat 2")
+
+    assert controller.run_state.status is ConsoleRunStatus.STREAMING
+    assert controller.run_state.visible_copy == "Streaming response."
+
+    controller.run_state = ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+    controller.switch_session(first.id)
+
+    assert controller.run_state.status is ConsoleRunStatus.VALIDATING
+    assert controller.run_state.visible_copy == "Validating provider."
+
+
 def test_controller_new_session_accepts_settings_snapshot() -> None:
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())

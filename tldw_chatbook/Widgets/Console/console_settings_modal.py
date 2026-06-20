@@ -124,6 +124,11 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         uses_base_url = self._provider_uses_base_url(self._settings.provider)
         model_options = self._model_select_options(self._settings.provider, selected_model)
         has_model_options = bool(model_options)
+        use_model_select = self._should_use_model_select(
+            self._settings.provider,
+            selected_model,
+            model_options,
+        )
         readiness = build_console_settings_readiness(self._settings, app_config=self._app_config)
 
         with Vertical(id="console-settings-modal"):
@@ -163,12 +168,12 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                             value=selected_model or "",
                             allow_blank=False,
                             id="console-settings-model-select",
-                            disabled=not has_model_options,
+                            disabled=not use_model_select,
                             classes="console-settings-control",
                         )
                         model_select.styles.width = "1fr"
                         model_select.styles.min_width = 0
-                        model_select.display = has_model_options
+                        model_select.display = use_model_select
                         yield model_select
                         model_input = ConsoleSettingsInput(
                             value=selected_model or "",
@@ -179,7 +184,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                         )
                         model_input.styles.width = "1fr"
                         model_input.styles.min_width = 0
-                        model_input.display = not has_model_options
+                        model_input.display = not use_model_select
                         yield model_input
                     with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("")
@@ -312,7 +317,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         self._open_select_from_redirected_settings_click(event)
 
     def _open_select_from_redirected_settings_click(self, event: events.Click) -> None:
-        """Open a settings select when an input-held click lands on the select.
+        """Recover settings controls when an input-held click lands on them.
 
         Args:
             event: Click event to recover when Textual Web keeps routing clicks
@@ -341,6 +346,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             if select_region.contains(event.screen_x, event.screen_y):
                 select.focus()
                 select.action_show_overlay()
+                event.stop()
+                return
+        for button in self.query(Button):
+            if button.disabled or not button.display:
+                continue
+            button_region = _settings_screen_region(button)
+            if button_region.contains(event.screen_x, event.screen_y):
+                button.focus()
+                button.press()
                 event.stop()
                 return
 
@@ -468,10 +482,11 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             option_values = {str(value) for _, value in model_options}
             selected = current_model if current_model in option_values else str(model_options[0][1])
             model_select.value = selected
-            model_select.disabled = False
-            model_select.display = True
+            use_model_select = self._should_use_model_select(provider, selected, model_options)
+            model_select.disabled = not use_model_select
+            model_select.display = use_model_select
             model_input.disabled = True
-            model_input.display = False
+            model_input.display = not use_model_select
             model_input.value = selected
             model_custom.label = "Custom model"
             model_custom.disabled = False
@@ -496,11 +511,20 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         model_custom = self.query_one("#console-settings-model-custom", Button)
 
         if model_input.display:
+            if model_input.disabled:
+                model_input.disabled = False
+                model_custom.label = "Model list"
+                model_input.focus()
+                self._sync_readiness_display()
+                return
             provider = str(self.query_one("#console-settings-provider", Select).value or "")
             current_model = normalize_console_model_value(model_input.value)
             self._sync_model_controls(provider, current_model)
             self._sync_readiness_display()
-            model_select.focus()
+            if model_select.display and not model_select.disabled:
+                model_select.focus()
+            else:
+                model_custom.focus()
             return
 
         model_input.value = normalize_console_model_value(model_select.value) or ""
@@ -537,6 +561,47 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             (option.label, option.value)
             for option in build_console_model_options(provider, self._providers_models, None)
         ]
+
+    def _should_use_model_select(
+        self,
+        provider: str,
+        selected_model: str | None,
+        model_options: list[tuple[str, str]],
+    ) -> bool:
+        """Return whether the model list should be an interactive Select.
+
+        The approved single-model fix only applies to the steady-state local
+        runtime case where the user already has that exact model selected. Other
+        single-option states still need an interactive list because they are
+        recovery/setup flows, custom/freeform providers, or provider-switch
+        transitions where saving must capture the resolved model.
+        """
+        if not model_options:
+            return False
+        if len(model_options) > 1:
+            return True
+
+        provider_key = provider_config_key(provider)
+        if provider_key == "custom":
+            return True
+        configured_values = {str(value) for _, value in self._configured_model_select_options(provider)}
+        selected_model = normalize_console_model_value(selected_model)
+
+        if self._focus_model:
+            return True
+        if provider != self._settings.provider:
+            if provider_key in {"llama_cpp", "local_llamacpp"}:
+                return True
+            return bool(selected_model and selected_model not in configured_values)
+
+        settings_model = normalize_console_model_value(self._settings.model)
+        if not settings_model:
+            return True
+        if provider_key not in {"llama_cpp", "local_llamacpp", "openai"}:
+            return True
+        if selected_model and selected_model not in configured_values:
+            return True
+        return not selected_model or selected_model != settings_model
 
     def _set_provider_model_draft(self, provider: str, value: object) -> None:
         """Store a per-provider draft model, normalized once at this boundary."""

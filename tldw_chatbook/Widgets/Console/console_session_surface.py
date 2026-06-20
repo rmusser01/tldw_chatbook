@@ -27,6 +27,13 @@ CONSOLE_SESSION_TAB_WIDTH = 21
 CONSOLE_TRANSCRIPT_TITLE = "Transcript / Event Stream"
 
 
+def _session_tab_tooltip(session: ConsoleChatSession, *, active: bool) -> str:
+    """Return action copy for a Console session tab."""
+    if active:
+        return f"Active Console tab: {session.title}. Click again to rename."
+    return f"Switch to Console tab: {session.title}"
+
+
 class ConsoleSessionSurface(Vertical):
     """Host Console transcript/event stream sessions without legacy chat chrome."""
 
@@ -109,11 +116,7 @@ class ConsoleSessionSurface(Vertical):
             classes=classes,
             compact=True,
         )
-        button.tooltip = (
-            f"Rename Console tab: {session.title}"
-            if active
-            else f"Switch to Console tab: {session.title}"
-        )
+        button.tooltip = _session_tab_tooltip(session, active=active)
         button.styles.width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.min_width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.max_width = CONSOLE_SESSION_TAB_WIDTH
@@ -170,10 +173,9 @@ class ConsoleSessionSurface(Vertical):
                 if session is None or not isinstance(child, Button):
                     continue
                 child.label = self._display_title(session.title)
-                child.tooltip = (
-                    f"Rename Console tab: {session.title}"
-                    if session.id == active_session_id
-                    else f"Switch to Console tab: {session.title}"
+                child.tooltip = _session_tab_tooltip(
+                    session,
+                    active=session.id == active_session_id,
                 )
                 child.set_class(
                     session.id == active_session_id,
