@@ -723,6 +723,32 @@ async def test_console_model_resolution_failure_logs_provider_context(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_console_settings_model_resolution_preserves_configured_alternatives() -> None:
+    app = _build_test_app()
+    app.providers_models = {
+        "local_llamacpp": ["uat-local-model", "uat-alt-local-model"],
+    }
+    app.llm_provider_catalog_scope_service = FakeConsoleModelDiscoveryScope(
+        (
+            _merged_model(
+                "uat-local-model",
+                source="runtime_discovered",
+                capability_status="known",
+                persisted=False,
+            ),
+        )
+    )
+    console = ChatScreen(app)
+
+    models = await console._providers_models_for_console_settings(
+        "local_llamacpp",
+        current_model="uat-local-model",
+    )
+
+    assert models["local_llamacpp"] == ["uat-local-model", "uat-alt-local-model"]
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_cancel_discards_draft() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
@@ -800,6 +826,50 @@ async def test_console_settings_modal_save_returns_validated_settings() -> None:
     assert app.saved_settings.model == "model-a"
     assert app.saved_settings.temperature == 0.42
     assert app.saved_settings.top_p == 0.88
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_single_model_uses_readonly_value_not_dead_dropdown() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        model_select = app.screen.query_one("#console-settings-model-select", Select)
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        model_custom = app.screen.query_one("#console-settings-model-custom", Button)
+
+        assert model_select.display is False
+        assert model_select.disabled is True
+        assert model_input.display is True
+        assert model_input.disabled is True
+        assert model_input.value == "model-a"
+        assert model_custom.display is True
+        assert model_custom.disabled is False
+
+        model_custom.press()
+        await pilot.pause()
+        assert model_input.display is True
+        assert model_input.disabled is False
+        assert model_custom.label == "Model list"
+
+        model_custom.press()
+        await pilot.pause()
+        assert model_select.display is False
+        assert model_input.display is True
+        assert model_input.disabled is True
+        assert model_input.value == "model-a"
 
 
 @pytest.mark.asyncio
@@ -2164,8 +2234,13 @@ async def test_console_settings_modal_provider_change_uses_target_provider_model
         await pilot.pause()
 
         model_select = app.screen.query_one("#console-settings-model-select", Select)
-        assert model_select.disabled is False
+        model_input = app.screen.query_one("#console-settings-model-input", Input)
+        assert model_select.display is False
+        assert model_select.disabled is True
         assert model_select.value == "gpt-4.1"
+        assert model_input.display is True
+        assert model_input.disabled is True
+        assert model_input.value == "gpt-4.1"
         assert "model-a" not in _select_values(model_select)
         await pilot.click("#console-settings-save")
 
