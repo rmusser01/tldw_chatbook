@@ -25,7 +25,7 @@ Verify and harden message selection and per-message actions so users can operate
 - [ ] #1 User can select a transcript message with mouse and keyboard and see the selected-message action row.
 - [ ] #2 Enter activates the selected message or focused action consistently, and Tab moves between major Console screen areas.
 - [ ] #3 Copy works and provides visible status feedback.
-- [ ] #4 Edit opens a dedicated edit modal, saves changes to the selected message, and does not confuse editing with composing a new message.
+- [ ] #5 Save as opens the Save as modal and clearly labels unavailable destinations as unavailable or WIP.
 - [ ] #5 Save as opens the conversion modal and clearly labels unavailable destinations as unavailable or WIP.
 - [ ] #6 Regenerate creates variants and exposes previous/next controls for choosing which variant to continue from.
 - [ ] #7 Continue extends the selected message/thread context according to its documented meaning.
