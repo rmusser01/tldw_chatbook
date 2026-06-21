@@ -603,6 +603,74 @@ def test_summary_state_keeps_missing_model_row_compact() -> None:
     assert state.action_tooltip == "Choose a model for this Console session"
 
 
+def test_summary_state_exposes_safe_credential_source() -> None:
+    """Show safe env/config credential sources without exposing secret values."""
+    env_state = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsReadiness(
+            label="Ready",
+            detail="OpenAI is ready. API key found via env:OPENAI_API_KEY.",
+            native_send_supported=True,
+        ),
+    )
+    config_state = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="anthropic", model="claude-sonnet-4-20250514"),
+        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsReadiness(
+            label="Ready",
+            detail="Anthropic is ready. API key found via config:api_settings.anthropic.api_key.",
+            native_send_supported=True,
+        ),
+    )
+
+    assert env_state.credential_row == "Credential: env OPENAI_API_KEY"
+    assert config_state.credential_row == "Credential: config api_settings.anthropic.api_key"
+
+
+def test_summary_state_handles_empty_credential_source_names() -> None:
+    """Collapse empty env/config credential-source identifiers without padding."""
+    env_state = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsReadiness(
+            label="Ready",
+            detail="OpenAI is ready. API key found via env:   .",
+            native_send_supported=True,
+        ),
+    )
+    config_state = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="anthropic", model="claude-sonnet-4-20250514"),
+        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsReadiness(
+            label="Ready",
+            detail="Anthropic is ready. API key found via config:   .",
+            native_send_supported=True,
+        ),
+    )
+
+    assert env_state.credential_row == "Credential: env"
+    assert config_state.credential_row == "Credential: config"
+
+
+def test_summary_state_ignores_warning_lines_after_credential_source() -> None:
+    """Keep appended readiness warnings out of the credential summary row."""
+    state = build_console_settings_summary_state(
+        ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+        ConsoleSettingsContextEstimate(used_tokens=12, token_limit=4096, label="12 / 4k"),
+        ConsoleSettingsReadiness(
+            label="Ready",
+            detail=(
+                "OpenAI is ready. API key found via env:OPENAI_API_KEY.\n"
+                "Model warning: selected model may not support native tools."
+            ),
+            native_send_supported=True,
+        ),
+    )
+
+    assert state.credential_row == "Credential: env OPENAI_API_KEY"
+
+
 def test_summary_state_appends_optional_sampling_fields_only_when_set() -> None:
     without_optional = build_console_settings_summary_state(
         ConsoleSessionSettings(provider="llama_cpp", model="model-a", temperature=0.7, top_p=0.95),
