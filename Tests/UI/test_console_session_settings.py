@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from textual import events
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, ScrollableContainer
 from textual.geometry import Region
 from textual.widgets import Button, Input, Select, Static
 
@@ -27,6 +27,8 @@ from tldw_chatbook.Chat.console_session_settings import (
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens import provider_model_resolution
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    MODAL_BODY_MIN_HEIGHT,
+    MODAL_CONTROL_HEIGHT,
     ConsoleSettingsInput,
     ConsoleSettingsModal,
     _settings_screen_region,
@@ -338,6 +340,14 @@ def test_console_settings_summary_button_sizing_uses_named_constants() -> None:
     assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_MIN_WIDTH == 9
     assert settings_summary_module.CONSOLE_SETTINGS_BUTTON_MAX_WIDTH == 14
     assert settings_summary_module.CONSOLE_SETTINGS_ROW_HEIGHT == 1
+
+
+def test_console_settings_modal_sizing_uses_named_constants() -> None:
+    assert MODAL_BODY_MIN_HEIGHT == 0
+    assert MODAL_CONTROL_HEIGHT == 3
+    assert f"min-height: {MODAL_BODY_MIN_HEIGHT};" in ConsoleSettingsModal.DEFAULT_CSS
+    assert f"height: {MODAL_CONTROL_HEIGHT};" in ConsoleSettingsModal.DEFAULT_CSS
+    assert f"min-height: {MODAL_CONTROL_HEIGHT};" in ConsoleSettingsModal.DEFAULT_CSS
 
 
 def test_pending_launch_inspector_auto_open_docstring_is_google_style() -> None:
@@ -1003,6 +1013,153 @@ async def test_console_settings_modal_accepts_keyboard_edited_sampling_inputs(
 
     assert app.saved_settings is not None
     assert getattr(app.saved_settings, attribute) == expected
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_body_is_scrollable_container_for_overflow_controls() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="openai",
+        model="gpt-4.1",
+        temperature=0.70,
+        top_p=0.95,
+        seed=17,
+        presence_penalty=0.4,
+        frequency_penalty=0.5,
+        reasoning_effort="high",
+        reasoning_summary="auto",
+        verbosity="medium",
+        thinking_effort="low",
+        thinking_budget_tokens=2048,
+    )
+
+    async with app.run_test(size=(140, 32)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        body = app.screen.query_one("#console-settings-body")
+        assert isinstance(body, ScrollableContainer)
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_preserves_provider_specific_generation_controls() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="openai",
+        model="gpt-4.1",
+        temperature=0.70,
+        top_p=0.95,
+        seed=17,
+        presence_penalty=0.4,
+        frequency_penalty=0.5,
+        reasoning_effort="high",
+        reasoning_summary="auto",
+        verbosity="medium",
+        thinking_effort="low",
+        thinking_budget_tokens=2048,
+    )
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        for selector in (
+            "#console-settings-seed",
+            "#console-settings-presence-penalty",
+            "#console-settings-frequency-penalty",
+            "#console-settings-reasoning-effort",
+            "#console-settings-reasoning-summary",
+            "#console-settings-verbosity",
+            "#console-settings-thinking-effort",
+            "#console-settings-thinking-budget-tokens",
+        ):
+            input_widget = app.screen.query_one(selector, Input)
+            body = app.screen.query_one("#console-settings-body")
+            body.scroll_to_widget(input_widget)
+            await pilot.pause()
+
+            assert input_widget.display is True
+            assert input_widget.disabled is False
+            assert input_widget.value
+            assert input_widget.content_region.height >= 1
+
+        app.screen.query_one("#console-settings-seed", Input).value = "23"
+        app.screen.query_one("#console-settings-presence-penalty", Input).value = "0.6"
+        app.screen.query_one("#console-settings-frequency-penalty", Input).value = "0.7"
+        app.screen.query_one("#console-settings-reasoning-effort", Input).value = "medium"
+        app.screen.query_one("#console-settings-reasoning-summary", Input).value = "concise"
+        app.screen.query_one("#console-settings-verbosity", Input).value = "high"
+        app.screen.query_one("#console-settings-thinking-effort", Input).value = "medium"
+        app.screen.query_one("#console-settings-thinking-budget-tokens", Input).value = "4096"
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.seed == 23
+    assert app.saved_settings.presence_penalty == 0.6
+    assert app.saved_settings.frequency_penalty == 0.7
+    assert app.saved_settings.reasoning_effort == "medium"
+    assert app.saved_settings.reasoning_summary == "concise"
+    assert app.saved_settings.verbosity == "high"
+    assert app.saved_settings.thinking_effort == "medium"
+    assert app.saved_settings.thinking_budget_tokens == 4096
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_normalizes_provider_specific_choices() -> None:
+    app = StyledModalHarness()
+    settings = ConsoleSessionSettings(
+        provider="openai",
+        model="gpt-4.1",
+        temperature=0.70,
+        top_p=0.95,
+        reasoning_effort="medium",
+        reasoning_summary="concise",
+        verbosity="low",
+        thinking_effort="medium",
+    )
+
+    async with app.run_test(size=(140, 60)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4.1"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+
+        app.screen.query_one("#console-settings-reasoning-effort", Input).value = " HIGH "
+        app.screen.query_one("#console-settings-reasoning-summary", Input).value = " AUTO "
+        app.screen.query_one("#console-settings-verbosity", Input).value = " Medium "
+        app.screen.query_one("#console-settings-thinking-effort", Input).value = " LOW "
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.reasoning_effort == "high"
+    assert app.saved_settings.reasoning_summary == "auto"
+    assert app.saved_settings.verbosity == "medium"
+    assert app.saved_settings.thinking_effort == "low"
 
 
 @pytest.mark.asyncio
