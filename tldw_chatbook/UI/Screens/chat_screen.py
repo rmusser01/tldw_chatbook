@@ -1,6 +1,6 @@
 """Chat screen implementation with comprehensive state management."""
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime
 import inspect
 import os
@@ -35,9 +35,12 @@ from ...Chat.console_chat_controller import ConsoleChatController
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
+    ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunStatus,
+    ConsoleVariant,
+    ConsoleVariantSet,
     ConsoleWorkspaceContext,
     ConsoleStagedSource,
 )
@@ -51,7 +54,7 @@ from ...Chat.console_session_settings import (
     build_console_settings_readiness,
     build_console_settings_summary_state,
 )
-from ...Chat.console_chat_store import ConsoleChatStore
+from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
     ConsoleProviderGateway,
@@ -155,6 +158,7 @@ CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
 CONSOLE_PROVIDER_ADD_API_KEY_LABEL = "Add API Key"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
+NATIVE_CONSOLE_STATE_VERSION = "1.0"
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -2659,6 +2663,9 @@ class ChatScreen(BaseAppScreen):
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
         self._stop_console_transcript_sync_timer()
+        controller = self._console_chat_controller
+        if controller is not None:
+            await controller.shutdown()
         gateway = self._console_provider_gateway
         close = getattr(gateway, "aclose", None)
         if callable(close):
@@ -2668,6 +2675,224 @@ class ChatScreen(BaseAppScreen):
         self._console_provider_gateway = None
         self._console_chat_controller = None
         super().on_unmount()
+
+    @staticmethod
+    def _serialize_console_settings(
+        settings: ConsoleSessionSettings | None,
+    ) -> dict[str, Any] | None:
+        """Return a JSON-safe snapshot of per-session Console settings."""
+        if settings is None:
+            return None
+        return asdict(settings)
+
+    @staticmethod
+    def _restore_console_settings(
+        payload: Any,
+    ) -> ConsoleSessionSettings | None:
+        """Return per-session Console settings from a saved state payload."""
+        if not isinstance(payload, dict):
+            return None
+        valid_fields = set(ConsoleSessionSettings.__dataclass_fields__)
+        values = {key: value for key, value in payload.items() if key in valid_fields}
+        provider = str(values.get("provider") or "").strip()
+        if not provider:
+            return None
+        values["provider"] = provider
+        try:
+            return ConsoleSessionSettings(**values)
+        except TypeError:
+            logger.debug("Skipping invalid Console session settings payload", exc_info=True)
+            return None
+
+    @staticmethod
+    def _serialize_console_variants(
+        variants: ConsoleVariantSet | None,
+    ) -> dict[str, Any] | None:
+        """Return a JSON-safe snapshot of regenerated message variants."""
+        if variants is None:
+            return None
+        return {
+            "turn_id": variants.turn_id,
+            "selected_index": variants.selected_index,
+            "variants": [
+                {"id": variant.id, "content": variant.content}
+                for variant in variants.variants
+            ],
+        }
+
+    @staticmethod
+    def _restore_console_variants(payload: Any) -> ConsoleVariantSet | None:
+        """Return regenerated message variants from a saved state payload."""
+        if not isinstance(payload, dict):
+            return None
+        raw_variants = payload.get("variants")
+        if not isinstance(raw_variants, list) or not raw_variants:
+            return None
+        variants: list[ConsoleVariant] = []
+        for raw_variant in raw_variants:
+            if not isinstance(raw_variant, dict):
+                continue
+            content = str(raw_variant.get("content") or "")
+            variant_id = str(raw_variant.get("id") or uuid.uuid4())
+            variants.append(ConsoleVariant(content=content, id=variant_id))
+        if not variants:
+            return None
+        selected_index = payload.get("selected_index", 0)
+        if not isinstance(selected_index, int):
+            selected_index = 0
+        selected_index = min(max(selected_index, 0), len(variants) - 1)
+        return ConsoleVariantSet(
+            turn_id=str(payload.get("turn_id") or uuid.uuid4()),
+            variants=variants,
+            selected_index=selected_index,
+        )
+
+    @classmethod
+    def _serialize_console_message(
+        cls,
+        message: ConsoleChatMessage,
+    ) -> dict[str, Any]:
+        """Return a JSON-safe snapshot of a native Console transcript message."""
+        role = message.role.value if hasattr(message.role, "value") else message.role
+        return {
+            "id": message.id,
+            "role": role,
+            "content": message.content,
+            "turn_id": message.turn_id,
+            "status": message.status,
+            "persisted_message_id": message.persisted_message_id,
+            "feedback": message.feedback,
+            "variants": cls._serialize_console_variants(message.variants),
+        }
+
+    @classmethod
+    def _restore_console_message(cls, payload: Any) -> ConsoleChatMessage | None:
+        """Return a native Console transcript message from a saved state payload."""
+        if not isinstance(payload, dict):
+            return None
+        try:
+            role = ConsoleMessageRole(str(payload.get("role") or "system"))
+        except ValueError:
+            role = ConsoleMessageRole.SYSTEM
+        status = str(payload.get("status") or "complete")
+        if status not in {"complete", "pending", "streaming", "stopped", "failed"}:
+            status = "complete"
+        feedback = payload.get("feedback")
+        if feedback not in {None, "up", "down"}:
+            feedback = None
+        return ConsoleChatMessage(
+            role=role,
+            content=str(payload.get("content") or ""),
+            id=str(payload.get("id") or uuid.uuid4()),
+            turn_id=(
+                str(payload["turn_id"])
+                if payload.get("turn_id") is not None
+                else None
+            ),
+            status=status,  # type: ignore[arg-type]
+            persisted_message_id=(
+                str(payload["persisted_message_id"])
+                if payload.get("persisted_message_id") is not None
+                else None
+            ),
+            variants=cls._restore_console_variants(payload.get("variants")),
+            feedback=feedback,  # type: ignore[arg-type]
+        )
+
+    def _serialize_native_console_state(self) -> dict[str, Any] | None:
+        """Return the native Console in-session state for screen restoration."""
+        store = self._console_chat_store
+        if store is None or not store.sessions():
+            return None
+
+        visible_session_id = self._console_visible_draft_session_id
+        composer = self._console_composer_or_none()
+        if composer is not None and visible_session_id is not None:
+            try:
+                store.set_session_draft(visible_session_id, composer.draft_text())
+            except KeyError:
+                pass
+
+        return {
+            "version": NATIVE_CONSOLE_STATE_VERSION,
+            "active_session_id": store.active_session_id,
+            "sessions": [
+                {
+                    "id": session.id,
+                    "title": session.title,
+                    "workspace_id": session.workspace_id,
+                    "persisted_conversation_id": session.persisted_conversation_id,
+                    "draft": session.draft,
+                    "settings": self._serialize_console_settings(session.settings),
+                }
+                for session in store.sessions()
+            ],
+            "messages_by_session": {
+                session.id: [
+                    self._serialize_console_message(message)
+                    for message in store.messages_for_session(session.id)
+                ]
+                for session in store.sessions()
+            },
+        }
+
+    def _restore_native_console_state(self, payload: Any) -> None:
+        """Restore native Console in-session state saved by ``save_state``."""
+        if not isinstance(payload, dict):
+            return
+        raw_sessions = payload.get("sessions")
+        if not isinstance(raw_sessions, list) or not raw_sessions:
+            return
+
+        store = self._ensure_console_chat_store()
+        raw_messages_by_session = payload.get("messages_by_session")
+        messages_by_session = (
+            raw_messages_by_session
+            if isinstance(raw_messages_by_session, dict)
+            else {}
+        )
+        restored_sessions: list[ConsoleChatSession] = []
+        restored_messages_by_session: dict[str, list[ConsoleChatMessage]] = {}
+        for raw_session in raw_sessions:
+            if not isinstance(raw_session, dict):
+                continue
+            session_id = str(raw_session.get("id") or uuid.uuid4())
+            session = ConsoleChatSession(
+                id=session_id,
+                title=str(raw_session.get("title") or DEFAULT_CONSOLE_SESSION_TITLE),
+                workspace_id=str(
+                    raw_session.get("workspace_id")
+                    or store.workspace_context.active_workspace_id
+                    or CONSOLE_GLOBAL_WORKSPACE_ID
+                ),
+                persisted_conversation_id=(
+                    str(raw_session["persisted_conversation_id"])
+                    if raw_session.get("persisted_conversation_id") is not None
+                    else None
+                ),
+                settings=self._restore_console_settings(raw_session.get("settings")),
+                draft=str(raw_session.get("draft") or ""),
+            )
+            restored_sessions.append(session)
+            restored_messages_by_session[session.id] = []
+            raw_messages = messages_by_session.get(session.id, [])
+            if not isinstance(raw_messages, list):
+                continue
+            for raw_message in raw_messages:
+                message = self._restore_console_message(raw_message)
+                if message is None:
+                    continue
+                restored_messages_by_session[session.id].append(message)
+
+        active_session_id = payload.get("active_session_id")
+        active_session_id = str(active_session_id) if active_session_id is not None else ""
+        store.restore_state(
+            sessions=restored_sessions,
+            messages_by_session=restored_messages_by_session,
+            active_session_id=active_session_id,
+        )
+        self._console_visible_draft_session_id = None
+        self._last_native_transcript_refresh_key = None
     
     def save_state(self) -> Dict[str, Any]:
         """
@@ -2730,11 +2955,18 @@ class ChatScreen(BaseAppScreen):
 
             # Save pending attachments
             self._save_attachments()
+
+            native_console_state = self._serialize_native_console_state()
+            if native_console_state is not None:
+                state["native_console_state"] = native_console_state
             
             # Convert to dict for storage
             state['chat_state'] = self.chat_state.to_dict()
             state['state_version'] = '1.0'
-            state['interface_type'] = 'tabbed' if self.chat_state.tabs else 'single'
+            if native_console_state is not None:
+                state["interface_type"] = "native_console"
+            else:
+                state['interface_type'] = 'tabbed' if self.chat_state.tabs else 'single'
             
             logger.info(f"Saved chat state: {len(self.chat_state.tabs)} tabs, interface: {state.get('interface_type')}")
             
@@ -2753,6 +2985,9 @@ class ChatScreen(BaseAppScreen):
         super().restore_state(state)
         
         try:
+            if "native_console_state" in state:
+                self._restore_native_console_state(state["native_console_state"])
+
             if 'chat_state' in state:
                 # Restore from saved state
                 self.chat_state = ChatScreenState.from_dict(state['chat_state'])
@@ -2763,9 +2998,10 @@ class ChatScreen(BaseAppScreen):
                 
                 if self.chat_state.validate():
                     logger.info(f"Restoring {len(self.chat_state.tabs)} tabs")
-                    
-                    # Schedule restoration after mount
-                    self.set_timer(0.1, self._perform_state_restoration)
+
+                    # Native Console does not mount legacy ChatTabContainer widgets.
+                    if self.chat_state.tabs:
+                        self.set_timer(0.1, self._perform_state_restoration)
                 else:
                     logger.warning("Chat state validation failed, starting fresh")
                     self.chat_state = ChatScreenState()
@@ -3339,6 +3575,7 @@ class ChatScreen(BaseAppScreen):
             if setup_blocked_reason and not blocked_reason.startswith(
                 "Console send blocked: Library Search/RAG"
             ):
+                await self._append_native_console_system_message(setup_blocked_reason)
                 self.app_instance.notify(
                     setup_blocked_reason,
                     severity="warning",

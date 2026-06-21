@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from typing import Any, Iterable, Mapping, Protocol
 from uuid import uuid4
 
 from loguru import logger
@@ -228,6 +228,45 @@ class ConsoleChatStore:
     def set_workspace_context(self, workspace_context: ConsoleWorkspaceContext) -> None:
         """Replace the active workspace context."""
         self.workspace_context = workspace_context
+
+    def restore_state(
+        self,
+        *,
+        sessions: Iterable[ConsoleChatSession],
+        messages_by_session: Mapping[str, Iterable[ConsoleChatMessage]] | None = None,
+        active_session_id: str | None = None,
+    ) -> None:
+        """Replace in-memory Console state with previously restored sessions.
+
+        Args:
+            sessions: Native Console sessions to load in display order.
+            messages_by_session: Transcript messages keyed by session ID.
+            active_session_id: Preferred active session after restoration.
+        """
+        restored_sessions = list(sessions)
+        self.active_session_id = None
+        self._sessions.clear()
+        self._messages_by_session.clear()
+        self._message_session_index.clear()
+        self._pending_persistence_message_ids.clear()
+        self._stream_chunks_by_message.clear()
+        self._stream_materialized_counts.clear()
+        self._sync_v2_message_versions.clear()
+
+        messages_by_session = messages_by_session or {}
+        for session in restored_sessions:
+            self._sessions[session.id] = replace(session)
+            restored_messages: list[ConsoleChatMessage] = []
+            for message in messages_by_session.get(session.id, ()):
+                restored_message = replace(message)
+                restored_messages.append(restored_message)
+                self._message_session_index[restored_message.id] = session.id
+            self._messages_by_session[session.id] = restored_messages
+
+        if active_session_id in self._sessions:
+            self.active_session_id = active_session_id
+        elif self._sessions:
+            self.active_session_id = next(iter(self._sessions))
 
     def append_message(
         self,

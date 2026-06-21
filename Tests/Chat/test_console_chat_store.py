@@ -1,8 +1,12 @@
 import pytest
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleWorkspaceContext
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+    ConsoleWorkspaceContext,
+)
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -125,6 +129,35 @@ def test_store_creates_and_switches_sessions():
 
     assert store.active_session_id == first.id
     assert store.messages_for_session(first.id)[0].content == "first"
+
+
+def test_store_restore_state_replaces_sessions_and_rebuilds_message_indexes():
+    store = ConsoleChatStore()
+    stale_session = store.ensure_session(title="Stale")
+    stale_message = store.append_message(
+        stale_session.id,
+        role=ConsoleMessageRole.USER,
+        content="stale",
+    )
+    restored_session = ConsoleChatSession(id="session-a", title="Restored")
+    restored_message = ConsoleChatMessage(
+        id="message-a",
+        role=ConsoleMessageRole.ASSISTANT,
+        content="answer",
+    )
+
+    store.restore_state(
+        sessions=[restored_session],
+        messages_by_session={"session-a": [restored_message]},
+        active_session_id="session-a",
+    )
+
+    assert [session.id for session in store.sessions()] == ["session-a"]
+    assert store.active_session_id == "session-a"
+    assert store.messages_for_session("session-a")[0].content == "answer"
+    assert store.session_id_for_message("message-a") == "session-a"
+    with pytest.raises(KeyError):
+        store.get_message(stale_message.id)
 
 
 def test_store_renames_session_with_trimmed_title():

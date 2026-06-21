@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual import on
+from textual.app import App
 from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -84,6 +85,32 @@ class ConsoleNavigationHarness(ConsoleHarness):
     def capture_navigation(self, message: NavigateToScreen) -> None:
         self.navigation_messages.append(message)
         message.stop()
+
+
+class RestoredConsoleHarness(App[None]):
+    """Mount a Console ChatScreen from a previously saved state.
+
+    Args:
+        app_instance: Test application object injected into the screen.
+        restored_state: Serialized screen state passed to ``ChatScreen.restore_state``.
+    """
+
+    def __init__(self, app_instance: object, restored_state: dict) -> None:
+        """Initialize the restore harness with the target app and state payload.
+
+        Args:
+            app_instance: Test application object injected into the screen.
+            restored_state: Serialized screen state used during mount.
+        """
+        super().__init__()
+        self.app_instance = app_instance
+        self.restored_state = restored_state
+
+    async def on_mount(self) -> None:
+        """Restore and mount a Console ChatScreen for lifecycle regression tests."""
+        screen = ChatScreen(self.app_instance)
+        screen.restore_state(self.restored_state)
+        await self.push_screen(screen)
 
 
 class BlockedGateway:
@@ -498,6 +525,45 @@ async def test_console_native_enter_on_setup_blocked_send_shows_recovery_feedbac
                 {"severity": "warning"},
             )
         ]
+
+
+@pytest.mark.asyncio
+async def test_console_setup_blocked_send_adds_durable_transcript_recovery_feedback():
+    """Verify setup-blocked sends leave durable transcript recovery feedback."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "MISSING_OPENAI_KEY"}
+    }
+    app.console_provider_gateway_factory = lambda: ConsoleProviderGateway(
+        config_provider=lambda: app.app_config,
+        environ={},
+    )
+    notifications: list[tuple[str, dict]] = []
+    app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("blocked setup draft")
+
+        await pilot.press("enter")
+        await _wait_for_text(console, pilot, "Add API Key in Settings before sending.")
+
+        store = console._ensure_console_chat_store()
+        messages = store.messages_for_session(store.active_session_id)
+        assert composer.draft_text() == "blocked setup draft"
+        assert messages[-1].role is ConsoleMessageRole.SYSTEM
+        assert messages[-1].content == "Add API Key in Settings before sending."
+
+    assert notifications == [
+        (
+            "Add API Key in Settings before sending.",
+            {"severity": "warning"},
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -964,6 +1030,65 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
         messages = store.messages_for_session(store.active_session_id)
         assert messages[-2].content == "hello"
         assert messages[-1].content == "hello"
+
+
+@pytest.mark.asyncio
+async def test_console_chat_lifecycle_state_survives_screen_recreation_return():
+    """Verify Console chat tabs, transcript, and draft restore after recreation."""
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("assistant return",))
+    saved_state: dict | None = None
+    first_session_id: str | None = None
+    second_session_id: str | None = None
+
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.insert_text("typed text")
+        composer.insert_pasted_text(" and pasted text")
+        assert "typed text and pasted text" in _visible_text(console)
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "assistant return")
+
+        store = console._ensure_console_chat_store()
+        first_session_id = store.active_session_id
+        assert first_session_id is not None
+        await pilot.click("#console-new-chat-tab")
+        second_session_id = await _wait_for_active_session_change(
+            store,
+            pilot,
+            first_session_id,
+        )
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second_session_id}")
+        composer.load_draft("draft before return")
+        await console._sync_native_console_chat_ui()
+
+        saved_state = console.save_state()
+
+    assert saved_state is not None
+    assert first_session_id is not None
+    assert second_session_id is not None
+
+    restored_host = RestoredConsoleHarness(app, saved_state)
+    async with restored_host.run_test(size=(160, 48)) as pilot:
+        console = restored_host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second_session_id}")
+        await _wait_for_text(console, pilot, "draft before return")
+
+        store = console._ensure_console_chat_store()
+        assert store.active_session_id == second_session_id
+
+        await pilot.click(f"#console-session-tab-{first_session_id}")
+        await _wait_for_active_session(store, pilot, first_session_id)
+        await _wait_for_text(console, pilot, "typed text and pasted text")
+        await _wait_for_text(console, pilot, "assistant return")
 
 
 @pytest.mark.asyncio
@@ -2430,3 +2555,21 @@ async def test_console_close_tab_with_messages_shows_confirmation():
             await pilot.pause()
 
         assert session.id not in {s.id for s in store.sessions()}, "session closed after confirm"
+
+
+def test_native_console_state_serializes_plain_string_message_role():
+    """Verify saved Console messages tolerate legacy/plain-string roles."""
+    message = SimpleNamespace(
+        id="message-a",
+        role="assistant",
+        content="answer",
+        turn_id=None,
+        status="complete",
+        persisted_message_id=None,
+        feedback=None,
+        variants=None,
+    )
+
+    serialized = ChatScreen._serialize_console_message(message)
+
+    assert serialized["role"] == "assistant"

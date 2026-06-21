@@ -20,7 +20,7 @@ Evidence protocol: `Docs/superpowers/qa/console-uat-parallelization/cdp-evidence
 | Workstream | Task | Branch | Owner Scope | Status | Visual Evidence | Regression/UAT Evidence | Approval |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | UAT Harness | TASK-128 | `codex/console-uat-harness-coordination` | CDP setup, fixtures, screenshot naming, acceptance matrix | In progress | Pending | Pending | Not approved |
-| Chat Lifecycle | TASK-129 | `codex/console-chat-lifecycle` | New chat, close tab, send, blocked-send recovery, transcript baseline, in-session return | Not started | Pending | Pending | Not approved |
+| Chat Lifecycle | TASK-129 | `codex/console-chat-lifecycle-parallel` | New chat, close tab, send, blocked-send recovery, transcript baseline, in-session return | Done | `task-129-chat-lifecycle-cdp-2026-06-21.png`; `task-129-composer-text-visible-cdp-2026-06-21.png` | `Tests/UI/test_console_native_chat_flow.py` passed locally: 76 passed | Approved |
 | Provider + Model Configuration | TASK-130 | `codex/console-provider-model-uat` | Provider/model/settings selection, endpoint preservation, readiness, streaming fallback | Not started | Pending | Pending | Not approved |
 | Message Actions | TASK-131 | `codex/console-message-actions-uat` | Select message, keyboard/click actions, Copy/Edit/Save as/Regenerate/Continue/Thumbs/Delete | Not started | Pending | Pending | Not approved |
 | Workspace + Resume | TASK-127 | `codex/console-workspace-resume-uat` | Workspace switcher, saved conversation list, resume prior chats, Default workspace policy | Not started | Pending | Pending | Not approved |

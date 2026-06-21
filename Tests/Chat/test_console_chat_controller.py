@@ -589,6 +589,39 @@ async def test_stop_active_run_returns_without_waiting_for_next_provider_chunk()
 
 
 @pytest.mark.asyncio
+async def test_shutdown_stops_and_awaits_active_stream_task():
+    """Verify controller shutdown stops and drains an active stream task."""
+    class StalledGateway(StreamingGateway):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.never_release = asyncio.Event()
+
+        async def stream_chat(self, resolution, messages):
+            self.started.set()
+            yield "partial"
+            await self.never_release.wait()
+            yield "ignored"
+
+    gateway = StalledGateway()
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    task = asyncio.create_task(controller.submit_draft("hello"))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    await asyncio.wait_for(controller.shutdown(), timeout=0.5)
+    result = await asyncio.wait_for(task, timeout=0.1)
+
+    messages = store.messages_for_session(store.active_session_id)
+    assert result.accepted is True
+    assert messages[-1].content == "partial"
+    assert messages[-1].status == "stopped"
+    assert controller.run_state.status is ConsoleRunStatus.STOPPED
+    assert controller._active_stream_task is None
+
+
+@pytest.mark.asyncio
 async def test_close_streaming_session_stops_run_without_key_error():
     class WaitingGateway(StreamingGateway):
         def __init__(self):
