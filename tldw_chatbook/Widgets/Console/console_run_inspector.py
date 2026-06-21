@@ -27,6 +27,12 @@ _ROW_IDS = {
     "Authority": "console-inspector-authority",
     "Artifacts": "console-inspector-artifacts",
     "Approvals": "console-inspector-approvals",
+    "Selected message": "console-inspector-selected-message",
+    "Message actions": "console-inspector-message-actions",
+    "Keyboard": "console-inspector-message-keyboard",
+    "Variants": "console-inspector-message-variants",
+    "Excerpt": "console-inspector-message-excerpt",
+    "Delete confirmation": "console-inspector-delete-confirmation",
 }
 
 _ROW_GROUPS = (
@@ -49,6 +55,11 @@ _ROW_GROUPS = (
         "Approvals",
         "console-inspector-approvals-heading",
         ("Approvals",),
+    ),
+    (
+        "Selected Message",
+        "console-inspector-selected-message-heading",
+        ("Selected message", "Message actions", "Keyboard", "Variants", "Excerpt", "Delete confirmation"),
     ),
 )
 

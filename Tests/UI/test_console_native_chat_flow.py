@@ -1,4 +1,5 @@
 import asyncio
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -1119,7 +1120,9 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         row_text = _widget_text(row)
         assert row_text.startswith("> ")
         assert "Chat 1" in row_text
-        assert "workspace-thread" in row_text
+        assert "[workspace]" in row_text
+        assert "workspace-thread" not in row_text
+        assert not re.search(r"\[[0-9a-f]{8}\]", row_text)
         assert len(console.query("#console-workspace-empty-conversations")) == 0
 
 
@@ -1543,6 +1546,81 @@ async def test_console_selected_message_copy_action_works_from_keyboard():
 
 
 @pytest.mark.asyncio
+async def test_console_message_action_keyboard_focus_stays_inside_action_row():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-delete-{message.id}")
+
+        transcript.focus_action(message.id, "delete")
+        delete_button = console.query_one(f"#console-message-action-delete-{message.id}", Button)
+        await _wait_for_focus(console.app, pilot, delete_button)
+
+        await pilot.press("tab")
+        copy_button = console.query_one(f"#console-message-action-copy-{message.id}", Button)
+        await _wait_for_focus(console.app, pilot, copy_button)
+
+        await pilot.press("tab")
+        edit_button = console.query_one(f"#console-message-action-edit-{message.id}", Button)
+        await _wait_for_focus(console.app, pilot, edit_button)
+
+        await pilot.press("tab")
+        save_as_button = console.query_one(f"#console-message-action-save-as-{message.id}", Button)
+        await _wait_for_focus(console.app, pilot, save_as_button)
+
+        await pilot.press("enter")
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
+
+    assert console._last_console_action.action_id == "save-as"
+
+
+@pytest.mark.asyncio
+async def test_console_selected_message_updates_inspector_action_guidance():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="first assistant variant",
+        )
+        store.add_variant(message.id, "second assistant variant")
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, "#console-inspector-selected-message")
+
+        inspector_text = _visible_text(console.query_one("#console-run-inspector-state"))
+        assert "Selected message: Assistant message" in inspector_text
+        assert "Message actions: Copy, Edit, Save as..., Regenerate, Continue, Feedback, Delete" in inspector_text
+        assert "Keyboard: Tab/Shift+Tab cycle actions; Enter activates; Esc clears selection" in inspector_text
+        assert "Variants: 2 variants, showing 2/2" in inspector_text
+        assert "Excerpt: second assistant variant" in inspector_text
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_feedback_action_records_rating():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1596,6 +1674,14 @@ async def test_console_selected_message_delete_action_removes_message_from_trans
         await _wait_for_selector(console, pilot, f"#console-message-action-delete-{message.id}")
 
         await pilot.click(f"#console-message-action-delete-{message.id}")
+        await pilot.pause()
+
+        assert store.messages_for_session(session.id) == [message]
+        assert console._last_console_action.action_id == "delete"
+        assert console._last_console_action.visible_copy == "Press Delete again to remove this message."
+
+        delete_button = console.query_one(f"#console-message-action-delete-{message.id}", Button)
+        delete_button.press()
         await pilot.pause()
 
     assert store.messages_for_session(session.id) == []
@@ -1779,6 +1865,52 @@ async def test_console_selected_message_save_as_action_opens_modal():
 
 
 @pytest.mark.asyncio
+async def test_console_save_as_modal_labels_unwired_destinations_as_wip():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-save-as-{message.id}")
+
+        await pilot.click(f"#console-message-action-save-as-{message.id}")
+        await _wait_for_selector(host.screen_stack[-1], pilot, "#console-save-as-modal")
+        save_as_modal = host.screen_stack[-1]
+
+        assert "Saving selected Assistant message" in _static_plain_text(
+            save_as_modal.query_one("#console-save-as-context", Static)
+        )
+        assert "answer" in _static_plain_text(
+            save_as_modal.query_one("#console-save-as-excerpt", Static)
+        )
+        assert _static_plain_text(save_as_modal.query_one("#console-save-as-wip-chatbook", Static)).startswith(
+            "Chatbook [WIP]"
+        )
+        assert "WIP: save as Chatbook is not wired yet." in _static_plain_text(
+            save_as_modal.query_one("#console-save-as-wip-chatbook", Static)
+        )
+        assert "WIP: save as Media is not wired yet." in _static_plain_text(
+            save_as_modal.query_one("#console-save-as-wip-media", Static)
+        )
+        assert "WIP: save as Prompt is not wired yet." in _static_plain_text(
+            save_as_modal.query_one("#console-save-as-wip-prompt", Static)
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_save_as_note_creates_note_from_message():
     app = _build_test_app()
     app.notes_scope_service = SimpleNamespace(
@@ -1926,6 +2058,51 @@ async def test_console_regenerate_action_streams_selected_variant():
         updated = store.get_message(source.id)
         assert updated.variants.current.content == "hello"
         assert updated.variants.can_go_previous is True
+
+
+@pytest.mark.asyncio
+async def test_console_regenerated_message_variant_controls_cycle_visible_content():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(title="Chat 1")
+        source = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="seed",
+        )
+        store.add_variant(source.id, "updated answer")
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(source.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-variant-previous-{source.id}")
+        await _wait_for_selector(console, pilot, f"#console-message-action-variant-next-{source.id}")
+
+        previous_button = console.query_one(f"#console-message-action-variant-previous-{source.id}", Button)
+        next_button = console.query_one(f"#console-message-action-variant-next-{source.id}", Button)
+        assert previous_button.disabled is False
+        assert next_button.disabled is True
+        assert "updated answer" in _static_plain_text(console.query_one(f"#console-message-{source.id}", Static))
+
+        await pilot.click(f"#console-message-action-variant-previous-{source.id}")
+        await _wait_for_text(console, pilot, "seed")
+        previous_button = console.query_one(f"#console-message-action-variant-previous-{source.id}", Button)
+        next_button = console.query_one(f"#console-message-action-variant-next-{source.id}", Button)
+        assert previous_button.disabled is True
+        assert next_button.disabled is False
+
+        await pilot.click(f"#console-message-action-variant-next-{source.id}")
+        await _wait_for_text(console, pilot, "updated answer")
+        previous_button = console.query_one(f"#console-message-action-variant-previous-{source.id}", Button)
+        next_button = console.query_one(f"#console-message-action-variant-next-{source.id}", Button)
+        assert previous_button.disabled is False
+        assert next_button.disabled is True
 
 
 @pytest.mark.asyncio

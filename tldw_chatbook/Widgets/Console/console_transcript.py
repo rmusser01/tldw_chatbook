@@ -95,10 +95,74 @@ class ConsoleTranscriptMessage(Static):
 class ConsoleTranscriptActionButton(Button):
     """Message action button that supports Enter activation in transcript focus mode."""
 
+    BINDINGS = [
+        ("tab", "focus_next_action", "Next action"),
+        ("shift+tab", "focus_previous_action", "Previous action"),
+        ("enter", "activate_action", "Activate"),
+        ("escape", "clear_message_selection", "Clear selection"),
+    ]
+
     def on_key(self, event: Key) -> None:
         if event.key == "enter":
-            self.press()
+            self.action_activate_action()
             event.stop()
+            event.prevent_default()
+            return
+        if event.key == "tab":
+            self.action_focus_next_action()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "shift+tab":
+            self.action_focus_previous_action()
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key == "escape":
+            self.action_clear_message_selection()
+            event.stop()
+            event.prevent_default()
+
+    def action_activate_action(self) -> None:
+        """Activate the focused message action."""
+        self.press()
+
+    def action_focus_next_action(self) -> None:
+        """Move focus to the next visible action in the selected-message row."""
+        self._focus_relative_action(1)
+
+    def action_focus_previous_action(self) -> None:
+        """Move focus to the previous visible action in the selected-message row."""
+        self._focus_relative_action(-1)
+
+    def action_clear_message_selection(self) -> None:
+        """Clear the transcript selection from a focused action button."""
+        transcript = self._parent_transcript()
+        if transcript is not None:
+            transcript.action_clear_selection()
+
+    def _parent_transcript(self) -> ConsoleTranscript | None:
+        parent = self.parent
+        while parent is not None and not isinstance(parent, ConsoleTranscript):
+            parent = parent.parent
+        return parent if isinstance(parent, ConsoleTranscript) else None
+
+    def _focus_relative_action(self, offset: int) -> None:
+        parent = self.parent
+        if parent is None:
+            return
+        action_buttons = [
+            child
+            for child in parent.children
+            if isinstance(child, ConsoleTranscriptActionButton) and not child.disabled
+        ]
+        if not action_buttons:
+            return
+        try:
+            current_index = action_buttons.index(self)
+        except ValueError:
+            return
+        action_buttons[(current_index + offset) % len(action_buttons)].focus()
 
 
 class ConsoleTranscript(VerticalScroll):
@@ -168,6 +232,7 @@ class ConsoleTranscript(VerticalScroll):
         self.selected_message_id = message_id
         if self.is_mounted:
             self.call_later(self.refresh_messages)
+            self.call_later(self._notify_selection_changed)
 
     def focus_action(self, message_id: str, action_id: str) -> None:
         """Focus a selected-message action button by message/action ID."""
@@ -225,6 +290,7 @@ class ConsoleTranscript(VerticalScroll):
         self.selected_message_id = None
         if self.is_mounted:
             self.call_later(self.refresh_messages)
+            self.call_later(self._notify_selection_changed)
 
     def on_key(self, event: Key) -> None:
         if event.key in {"down", "j"}:
@@ -259,6 +325,12 @@ class ConsoleTranscript(VerticalScroll):
 
     def _message_by_id(self, message_id: str) -> ConsoleChatMessage | None:
         return next((message for message in self._messages if message.id == message_id), None)
+
+    def _notify_selection_changed(self) -> None:
+        """Let the owning screen refresh inspector/control surfaces after selection changes."""
+        sync_console_control_bar = getattr(self.screen, "_sync_console_control_bar", None)
+        if callable(sync_console_control_bar):
+            sync_console_control_bar()
 
     def _transcript_rows(self) -> list[_TranscriptRow]:
         rows: list[_TranscriptRow] = []

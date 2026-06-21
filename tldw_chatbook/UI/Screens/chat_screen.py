@@ -68,6 +68,7 @@ from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleControlState,
+    ConsoleDisplayRow,
     ConsoleInspectorState,
     ConsoleStagedContextState,
     build_console_evidence_display_state,
@@ -525,6 +526,7 @@ class ChatScreen(BaseAppScreen):
         self._console_message_action_service = ConsoleMessageActionService()
         self._console_model_option_warnings: dict[tuple[str, str], str] = {}
         self._last_console_action: ConsoleActionResult | None = None
+        self._pending_console_delete_message_id: str | None = None
         self._console_transcript_sync_timer: Any | None = None
         self._console_sync_in_progress = False
         self._console_sync_requested = False
@@ -1801,7 +1803,7 @@ class ChatScreen(BaseAppScreen):
             or self._launch_targets_chatbook_artifact(pending_launch)
         )
         evidence_state = build_console_evidence_display_state(pending_launch)
-        return ConsoleInspectorState.from_values(
+        inspector_state = ConsoleInspectorState.from_values(
             live_work_title=pending_launch.title if pending_launch else None,
             provider_ready=provider_ready,
             provider_recovery=provider_recovery,
@@ -1818,6 +1820,65 @@ class ChatScreen(BaseAppScreen):
             approval_count=self._console_pending_approval_count(),
             can_save_chatbook=can_save_chatbook,
         )
+        selected_rows = self._selected_console_message_inspector_rows()
+        if selected_rows:
+            inspector_state = replace(
+                inspector_state,
+                rows=inspector_state.rows + selected_rows,
+            )
+        return inspector_state
+
+    def _selected_console_message_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
+        """Return inspector guidance for the currently selected transcript message."""
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            return ()
+        message_id = transcript.selected_message_id
+        if message_id is None:
+            return ()
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            return ()
+
+        rows = [
+            ConsoleDisplayRow(
+                "Selected message",
+                f"{self._console_message_role_label(message)} message",
+            ),
+            ConsoleDisplayRow(
+                "Message actions",
+                "Copy, Edit, Save as..., Regenerate, Continue, Feedback, Delete",
+            ),
+            ConsoleDisplayRow(
+                "Keyboard",
+                "Tab/Shift+Tab cycle actions; Enter activates; Esc clears selection",
+            ),
+        ]
+        if message.variants is not None:
+            rows.append(
+                ConsoleDisplayRow(
+                    "Variants",
+                    (
+                        f"{len(message.variants.variants)} variants, "
+                        f"showing {message.variants.selected_index + 1}/"
+                        f"{len(message.variants.variants)}"
+                    ),
+                )
+            )
+        excerpt = self._console_message_excerpt(message, max_length=90)
+        if excerpt:
+            rows.append(ConsoleDisplayRow("Excerpt", excerpt))
+        if self._pending_console_delete_message_id == message.id:
+            rows.append(
+                ConsoleDisplayRow(
+                    "Delete confirmation",
+                    "Press Delete again to remove this message.",
+                    status="blocked",
+                )
+            )
+        return tuple(rows)
 
     def _toggle_console_chat_sidebar(self) -> None:
         """Route Console-level compact control toggles to the embedded chat sidebar."""
@@ -3709,6 +3770,9 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify("Console message action target no longer exists.", severity="warning")
             return True
 
+        if action_id != "delete":
+            self._pending_console_delete_message_id = None
+
         if action_id == "save-as":
             destinations = self._console_save_as_destinations(message)
 
@@ -3722,6 +3786,8 @@ class ChatScreen(BaseAppScreen):
             await self.app.push_screen(
                 ConsoleSaveAsModal(
                     destinations=destinations,
+                    message_role=self._console_message_role_label(message),
+                    message_excerpt=self._console_message_excerpt(message),
                 ),
                 callback=_apply_save_as,
             )
@@ -3763,6 +3829,17 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify(result.visible_copy, severity="information")
             return True
         if action_id == "delete" and result.status == "completed":
+            if self._pending_console_delete_message_id != message_id:
+                self._pending_console_delete_message_id = message_id
+                self._last_console_action = ConsoleActionResult(
+                    action_id=action_id,
+                    status="blocked",
+                    visible_copy="Press Delete again to remove this message.",
+                    target_message_id=message_id,
+                )
+                await self._sync_native_console_chat_ui()
+                return True
+            self._pending_console_delete_message_id = None
             store.delete_message(message_id)
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(result.visible_copy, severity="information")
@@ -3774,6 +3851,32 @@ class ChatScreen(BaseAppScreen):
         severity = "information" if result.status in {"completed", "wip"} else "warning"
         self.app_instance.notify(result.visible_copy, severity=severity)
         return True
+
+    @staticmethod
+    def _console_message_role_label(message: ConsoleChatMessage) -> str:
+        """Return a user-facing role label for a Console transcript message."""
+        role = message.role.value if hasattr(message.role, "value") else str(message.role)
+        return role.title()
+
+    @staticmethod
+    def _console_message_content(message: ConsoleChatMessage) -> str:
+        """Return the currently visible content for a Console transcript message."""
+        if message.variants is not None:
+            return message.variants.current.content
+        return message.content
+
+    @classmethod
+    def _console_message_excerpt(
+        cls,
+        message: ConsoleChatMessage,
+        *,
+        max_length: int = 120,
+    ) -> str:
+        """Return a single-line excerpt for selected-message context surfaces."""
+        normalized = " ".join(cls._console_message_content(message).split())
+        if len(normalized) <= max_length:
+            return normalized
+        return f"{normalized[: max(0, max_length - 1)].rstrip()}…"
 
     def _console_save_as_destinations(self, message: Any) -> list[Any]:
         """Return Save-as destinations available in the current app runtime."""

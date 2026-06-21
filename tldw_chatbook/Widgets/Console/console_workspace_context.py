@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from rich.text import Text
@@ -10,6 +11,15 @@ from textual.containers import Vertical
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
+
+
+_TRAILING_SHORT_ID_RE = re.compile(r"\s+\[[0-9a-fA-F]{8}\]$")
+_STATUS_LABELS = {
+    "workspace-thread": "workspace",
+    "workspace": "workspace",
+    "active": "active",
+    "open": "open",
+}
 
 
 class ConsoleWorkspaceContextTray(Vertical):
@@ -34,6 +44,7 @@ class ConsoleWorkspaceContextTray(Vertical):
         *,
         id: str,
         conversation_id: str,
+        tooltip_label: str | None = None,
     ) -> Button:
         button = Button(
             Text(str(text)),
@@ -42,7 +53,7 @@ class ConsoleWorkspaceContextTray(Vertical):
             compact=True,
         )
         button.conversation_id = conversation_id
-        button.tooltip = f"Switch to {text.lstrip('> ').strip()}"
+        button.tooltip = f"Switch to {tooltip_label or text.lstrip('> ').strip()}"
         button.styles.height = 1
         button.styles.min_height = 1
         return button
@@ -90,11 +101,14 @@ class ConsoleWorkspaceContextTray(Vertical):
             if self.state.conversation_rows:
                 for index, row in enumerate(self.state.conversation_rows):
                     marker = "> " if row.selected else "  "
-                    status = f" [{row.status}]" if row.status else ""
+                    title = self._conversation_title(row.title)
+                    status = self._conversation_status(row.status)
+                    status_suffix = f" [{status}]" if status else ""
                     yield self._conversation_button(
-                        f"{marker}{row.title}{status}",
+                        f"{marker}{title}{status_suffix}",
                         id=f"console-workspace-conversation-{index}",
                         conversation_id=row.conversation_id,
+                        tooltip_label=f"{title}{status_suffix}",
                     )
             else:
                 yield self._static(
@@ -183,3 +197,16 @@ class ConsoleWorkspaceContextTray(Vertical):
         if workspace_label.startswith("Workspace: "):
             workspace_label = workspace_label.removeprefix("Workspace: ").strip()
         return workspace_label
+
+    @staticmethod
+    def _conversation_title(title: str) -> str:
+        """Return a readable conversation label without raw disambiguation IDs."""
+        return _TRAILING_SHORT_ID_RE.sub("", str(title).strip()) or "Untitled conversation"
+
+    @staticmethod
+    def _conversation_status(status: str) -> str:
+        """Return a short user-facing conversation status badge."""
+        normalized = str(status or "").strip().lower()
+        if not normalized:
+            return ""
+        return _STATUS_LABELS.get(normalized, normalized.replace("-", " "))
