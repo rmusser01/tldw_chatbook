@@ -1590,6 +1590,20 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
 
 
 @pytest.mark.asyncio
+async def test_console_inspector_hides_selected_message_group_without_selection():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-run-inspector-state")
+
+        inspector = console.query_one("#console-run-inspector-state")
+        assert "Selected Message" not in _visible_text(inspector)
+        assert len(console.query("#console-inspector-selected-message-heading")) == 0
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_updates_inspector_action_guidance():
     app = _build_test_app()
     host = ConsoleHarness(app)

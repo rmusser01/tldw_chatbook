@@ -95,13 +95,6 @@ class ConsoleTranscriptMessage(Static):
 class ConsoleTranscriptActionButton(Button):
     """Message action button that supports Enter activation in transcript focus mode."""
 
-    BINDINGS = [
-        ("tab", "focus_next_action", "Next action"),
-        ("shift+tab", "focus_previous_action", "Previous action"),
-        ("enter", "activate_action", "Activate"),
-        ("escape", "clear_message_selection", "Clear selection"),
-    ]
-
     def on_key(self, event: Key) -> None:
         if event.key == "enter":
             self.action_activate_action()

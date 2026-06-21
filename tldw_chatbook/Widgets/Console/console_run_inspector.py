@@ -147,15 +147,23 @@ class ConsoleRunInspector(Vertical):
         rendered_action_ids: set[str] = set()
 
         for heading, heading_id, labels in _ROW_GROUPS:
+            group_labels = [label for label in labels if label in rows_by_label]
+            action_ids = _ACTION_GROUPS.get(heading, ())
+            group_actions = [
+                action
+                for action in self.state.actions
+                if action.widget_id in action_ids
+            ]
+            if not group_labels and not group_actions:
+                continue
+
             yield Static(
                 heading,
                 id=heading_id,
                 classes="console-inspector-group-heading destination-section",
             )
-            for label in labels:
-                row_entry = rows_by_label.get(label)
-                if row_entry is None:
-                    continue
+            for label in group_labels:
+                row_entry = rows_by_label[label]
                 index, row = row_entry
                 rendered_labels.add(label)
                 yield Static(
@@ -165,13 +173,9 @@ class ConsoleRunInspector(Vertical):
                     markup=False,
                 )
 
-            action_ids = _ACTION_GROUPS.get(heading, ())
-            if action_ids:
-                for action in self.state.actions:
-                    if action.widget_id not in action_ids:
-                        continue
-                    rendered_action_ids.add(action.widget_id)
-                    yield from self._compose_action(action)
+            for action in group_actions:
+                rendered_action_ids.add(action.widget_id)
+                yield from self._compose_action(action)
 
         for index, row in enumerate(self.state.rows):
             if row.label in rendered_labels:
