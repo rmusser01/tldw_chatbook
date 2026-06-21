@@ -2750,9 +2750,10 @@ class ChatScreen(BaseAppScreen):
         message: ConsoleChatMessage,
     ) -> dict[str, Any]:
         """Return a JSON-safe snapshot of a native Console transcript message."""
+        role = message.role.value if hasattr(message.role, "value") else message.role
         return {
             "id": message.id,
-            "role": message.role.value,
+            "role": role,
             "content": message.content,
             "turn_id": message.turn_id,
             "status": message.status,
@@ -2841,21 +2842,14 @@ class ChatScreen(BaseAppScreen):
             return
 
         store = self._ensure_console_chat_store()
-        store.active_session_id = None
-        store._sessions.clear()
-        store._messages_by_session.clear()
-        store._message_session_index.clear()
-        store._pending_persistence_message_ids.clear()
-        store._stream_chunks_by_message.clear()
-        store._stream_materialized_counts.clear()
-        store._sync_v2_message_versions.clear()
-
         raw_messages_by_session = payload.get("messages_by_session")
         messages_by_session = (
             raw_messages_by_session
             if isinstance(raw_messages_by_session, dict)
             else {}
         )
+        restored_sessions: list[ConsoleChatSession] = []
+        restored_messages_by_session: dict[str, list[ConsoleChatMessage]] = {}
         for raw_session in raw_sessions:
             if not isinstance(raw_session, dict):
                 continue
@@ -2876,8 +2870,8 @@ class ChatScreen(BaseAppScreen):
                 settings=self._restore_console_settings(raw_session.get("settings")),
                 draft=str(raw_session.get("draft") or ""),
             )
-            store._sessions[session.id] = session
-            store._messages_by_session[session.id] = []
+            restored_sessions.append(session)
+            restored_messages_by_session[session.id] = []
             raw_messages = messages_by_session.get(session.id, [])
             if not isinstance(raw_messages, list):
                 continue
@@ -2885,15 +2879,15 @@ class ChatScreen(BaseAppScreen):
                 message = self._restore_console_message(raw_message)
                 if message is None:
                     continue
-                store._messages_by_session[session.id].append(message)
-                store._message_session_index[message.id] = session.id
+                restored_messages_by_session[session.id].append(message)
 
         active_session_id = payload.get("active_session_id")
         active_session_id = str(active_session_id) if active_session_id is not None else ""
-        if active_session_id in store._sessions:
-            store.active_session_id = active_session_id
-        elif store._sessions:
-            store.active_session_id = next(iter(store._sessions))
+        store.restore_state(
+            sessions=restored_sessions,
+            messages_by_session=restored_messages_by_session,
+            active_session_id=active_session_id,
+        )
         self._console_visible_draft_session_id = None
         self._last_native_transcript_refresh_key = None
     

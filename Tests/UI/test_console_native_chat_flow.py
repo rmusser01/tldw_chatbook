@@ -2539,3 +2539,20 @@ async def test_console_close_tab_with_messages_shows_confirmation():
             await pilot.pause()
 
         assert session.id not in {s.id for s in store.sessions()}, "session closed after confirm"
+
+
+def test_native_console_state_serializes_plain_string_message_role():
+    message = SimpleNamespace(
+        id="message-a",
+        role="assistant",
+        content="answer",
+        turn_id=None,
+        status="complete",
+        persisted_message_id=None,
+        feedback=None,
+        variants=None,
+    )
+
+    serialized = ChatScreen._serialize_console_message(message)
+
+    assert serialized["role"] == "assistant"
