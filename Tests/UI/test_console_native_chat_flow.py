@@ -88,12 +88,26 @@ class ConsoleNavigationHarness(ConsoleHarness):
 
 
 class RestoredConsoleHarness(App[None]):
+    """Mount a Console ChatScreen from a previously saved state.
+
+    Args:
+        app_instance: Test application object injected into the screen.
+        restored_state: Serialized screen state passed to ``ChatScreen.restore_state``.
+    """
+
     def __init__(self, app_instance: object, restored_state: dict) -> None:
+        """Initialize the restore harness with the target app and state payload.
+
+        Args:
+            app_instance: Test application object injected into the screen.
+            restored_state: Serialized screen state used during mount.
+        """
         super().__init__()
         self.app_instance = app_instance
         self.restored_state = restored_state
 
     async def on_mount(self) -> None:
+        """Restore and mount a Console ChatScreen for lifecycle regression tests."""
         screen = ChatScreen(self.app_instance)
         screen.restore_state(self.restored_state)
         await self.push_screen(screen)
@@ -515,6 +529,7 @@ async def test_console_native_enter_on_setup_blocked_send_shows_recovery_feedbac
 
 @pytest.mark.asyncio
 async def test_console_setup_blocked_send_adds_durable_transcript_recovery_feedback():
+    """Verify setup-blocked sends leave durable transcript recovery feedback."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {
@@ -1019,6 +1034,7 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
 
 @pytest.mark.asyncio
 async def test_console_chat_lifecycle_state_survives_screen_recreation_return():
+    """Verify Console chat tabs, transcript, and draft restore after recreation."""
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
@@ -2542,6 +2558,7 @@ async def test_console_close_tab_with_messages_shows_confirmation():
 
 
 def test_native_console_state_serializes_plain_string_message_role():
+    """Verify saved Console messages tolerate legacy/plain-string roles."""
     message = SimpleNamespace(
         id="message-a",
         role="assistant",

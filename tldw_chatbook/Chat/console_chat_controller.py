@@ -260,6 +260,22 @@ class ConsoleChatController:
             self._active_stream_task.cancel()
         return True
 
+    async def shutdown(self) -> None:
+        """Stop and await the active stream task before owner teardown."""
+        task = self._active_stream_task
+        if task is None:
+            return
+        if not self.stop_active_run():
+            self._stop_requested = True
+            if task is not asyncio.current_task():
+                task.cancel()
+        if task is asyncio.current_task():
+            return
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""
         session_id = self.store.active_session_id

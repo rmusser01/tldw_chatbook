@@ -2663,6 +2663,9 @@ class ChatScreen(BaseAppScreen):
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
         self._stop_console_transcript_sync_timer()
+        controller = self._console_chat_controller
+        if controller is not None:
+            await controller.shutdown()
         gateway = self._console_provider_gateway
         close = getattr(gateway, "aclose", None)
         if callable(close):
