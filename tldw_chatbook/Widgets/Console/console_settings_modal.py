@@ -8,7 +8,7 @@ from textual import events
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Select, Static
@@ -87,6 +87,36 @@ class ConsoleSettingsInput(Input):
 class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     """Edit a draft of the current Console session settings."""
 
+    DEFAULT_CSS = """
+    ConsoleSettingsModal #console-settings-body {
+        height: 1fr;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
+    ConsoleSettingsModal .console-settings-modal-section {
+        height: auto;
+    }
+
+    ConsoleSettingsModal .console-settings-modal-row {
+        height: auto;
+        min-height: 3;
+    }
+
+    ConsoleSettingsModal .console-settings-modal-label {
+        height: 3;
+        min-height: 3;
+    }
+
+    ConsoleSettingsModal Input,
+    ConsoleSettingsModal Select,
+    ConsoleSettingsModal Button {
+        height: 3;
+        min-height: 3;
+    }
+    """
+
     BINDINGS = [("escape", "dismiss", "Cancel")]
 
     def __init__(
@@ -146,7 +176,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 markup=False,
             )
 
-            with Vertical(id="console-settings-body", classes="console-settings-body"):
+            with ScrollableContainer(id="console-settings-body", classes="console-settings-body"):
                 with Vertical(
                     id="console-settings-provider-model-section",
                     classes=self._provider_model_section_classes(),
@@ -247,10 +277,69 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Seed")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.seed),
+                            id="console-settings-seed",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Presence")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.presence_penalty),
+                            id="console-settings-presence-penalty",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Frequency")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.frequency_penalty),
+                            id="console-settings-frequency-penalty",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
                         yield self._modal_label("Streaming")
                         yield Checkbox(
                             value=self._settings.streaming,
                             id="console-settings-streaming",
+                            classes="console-settings-control",
+                        )
+
+                with Vertical(classes="console-settings-modal-section"):
+                    yield Static("Provider-specific", classes="destination-section")
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Reasoning")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.reasoning_effort),
+                            id="console-settings-reasoning-effort",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Summary")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.reasoning_summary),
+                            id="console-settings-reasoning-summary",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Verbosity")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.verbosity),
+                            id="console-settings-verbosity",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Thinking")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.thinking_effort),
+                            id="console-settings-thinking-effort",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Budget")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.thinking_budget_tokens),
+                            id="console-settings-thinking-budget-tokens",
                             classes="console-settings-control",
                         )
 
@@ -466,6 +555,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             min_p=self._parse_optional_float_input("console-settings-min-p"),
             top_k=self._parse_optional_int_input("console-settings-top-k"),
             max_tokens=self._parse_optional_int_input("console-settings-max-tokens"),
+            seed=self._parse_optional_int_input("console-settings-seed"),
+            presence_penalty=self._parse_optional_float_input("console-settings-presence-penalty"),
+            frequency_penalty=self._parse_optional_float_input("console-settings-frequency-penalty"),
+            reasoning_effort=self._parse_optional_text_input("console-settings-reasoning-effort"),
+            reasoning_summary=self._parse_optional_text_input("console-settings-reasoning-summary"),
+            verbosity=self._parse_optional_text_input("console-settings-verbosity"),
+            thinking_effort=self._parse_optional_text_input("console-settings-thinking-effort"),
+            thinking_budget_tokens=self._parse_optional_int_input("console-settings-thinking-budget-tokens"),
             streaming=self.query_one("#console-settings-streaming", Checkbox).value,
             persona_label=self._settings.persona_label,
             character_label=self._settings.character_label,
@@ -829,3 +926,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             return int(raw_value)
         except ValueError:
             return raw_value
+
+    def _parse_optional_text_input(self, input_id: str) -> str | None:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        return raw_value or None
