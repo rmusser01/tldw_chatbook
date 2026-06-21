@@ -973,7 +973,9 @@ def _format_credential_summary_row(readiness: ConsoleSettingsReadiness) -> str:
     source_marker = "api key found via "
     source_index = detail_lower.find(source_marker)
     if source_index >= 0:
-        source = detail[source_index + len(source_marker) :].strip().rstrip(".").strip()
+        source_tail = detail[source_index + len(source_marker) :]
+        source_line = source_tail.splitlines()[0] if source_tail else ""
+        source = source_line.strip().rstrip(".").strip()
         source_lower = source.lower()
         if source_lower.startswith("env:"):
             env_name = source[len("env:") :].strip()
