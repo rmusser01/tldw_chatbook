@@ -964,11 +964,21 @@ def _format_endpoint_summary_row(settings: ConsoleSessionSettings) -> str:
 
 def _format_credential_summary_row(readiness: ConsoleSettingsReadiness) -> str:
     label = (_string_value(readiness.label) or "").lower()
-    detail = (_string_value(readiness.detail) or "").lower()
-    if label == "missing key" or "missing api key" in detail:
+    detail = _string_value(readiness.detail) or ""
+    detail_lower = detail.lower()
+    if label == "missing key" or "missing api key" in detail_lower:
         return "Credential: missing"
-    if "no api key is required" in detail:
+    if "no api key is required" in detail_lower:
         return "Credential: not required"
-    if "api key found" in detail:
+    source_marker = "api key found via "
+    source_index = detail_lower.find(source_marker)
+    if source_index >= 0:
+        source = detail[source_index + len(source_marker) :].strip().rstrip(".")
+        if source.startswith("env:"):
+            return f"Credential: env {source.removeprefix('env:')}"
+        if source.startswith("config:"):
+            return f"Credential: config {source.removeprefix('config:')}"
+        return f"Credential: {source or 'ready'}"
+    if "api key found" in detail_lower:
         return "Credential: ready"
     return "Credential: check setup"
