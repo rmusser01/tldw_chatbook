@@ -3485,6 +3485,7 @@ class ChatScreen(BaseAppScreen):
             transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
         except QueryError:
             return
+        self._pending_console_delete_message_id = None
         transcript.selected_message_id = None
         self._last_native_transcript_refresh_key = None
         self._sync_console_transcript_guidance()
@@ -4073,6 +4074,7 @@ class ChatScreen(BaseAppScreen):
 
     def _sync_console_control_bar(self) -> None:
         """Refresh Console-owned control labels from current selection state."""
+        self._sync_console_pending_delete_confirmation()
         try:
             control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
         except QueryError:
@@ -4096,6 +4098,18 @@ class ChatScreen(BaseAppScreen):
             and self._console_chatbook_action_available()
         )
         self._sync_console_rail_visibility(self._current_console_rail_state())
+
+    def _sync_console_pending_delete_confirmation(self) -> None:
+        """Clear stale destructive-action confirmation when transcript selection changes."""
+        if self._pending_console_delete_message_id is None:
+            return
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            self._pending_console_delete_message_id = None
+            return
+        if transcript.selected_message_id != self._pending_console_delete_message_id:
+            self._pending_console_delete_message_id = None
 
     def _console_chatbook_action_available(self) -> bool:
         """Return True when the composer Chatbook action has a real target."""

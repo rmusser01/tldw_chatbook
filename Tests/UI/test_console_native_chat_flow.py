@@ -1704,6 +1704,55 @@ async def test_console_selected_message_delete_action_removes_message_from_trans
 
 
 @pytest.mark.asyncio
+async def test_console_delete_confirmation_resets_when_selection_changes():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        first_message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="first answer",
+        )
+        second_message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="second answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(first_message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-delete-{first_message.id}")
+
+        await pilot.click(f"#console-message-action-delete-{first_message.id}")
+        await pilot.pause()
+        assert console._last_console_action.visible_copy == "Press Delete again to remove this message."
+
+        transcript.select_message(second_message.id)
+        await pilot.pause()
+        transcript.select_message(first_message.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-action-delete-{first_message.id}")
+
+        delete_button = console.query_one(f"#console-message-action-delete-{first_message.id}", Button)
+        delete_button.press()
+        await pilot.pause()
+
+    assert [message.id for message in store.messages_for_session(session.id)] == [
+        first_message.id,
+        second_message.id,
+    ]
+    assert console._last_console_action.action_id == "delete"
+    assert console._last_console_action.visible_copy == "Press Delete again to remove this message."
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_edit_action_opens_modal_and_saves_content():
     app = _build_test_app()
     host = ConsoleHarness(app)
