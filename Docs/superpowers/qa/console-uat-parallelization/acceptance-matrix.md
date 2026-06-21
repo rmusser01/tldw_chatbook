@@ -23,7 +23,7 @@ Evidence protocol: `Docs/superpowers/qa/console-uat-parallelization/cdp-evidence
 | Chat Lifecycle | TASK-129 | `codex/console-chat-lifecycle` | New chat, close tab, send, blocked-send recovery, transcript baseline, in-session return | Not started | Pending | Pending | Not approved |
 | Provider + Model Configuration | TASK-130 | `codex/console-provider-model-uat` | Provider/model/settings selection, endpoint preservation, readiness, streaming fallback | Not started | Pending | Pending | Not approved |
 | Message Actions | TASK-131 | `codex/console-message-actions-uat` | Select message, keyboard/click actions, Copy/Edit/Save as/Regenerate/Continue/Thumbs/Delete | Not started | Pending | Pending | Not approved |
-| Workspace + Resume | TASK-127 | `codex/console-workspace-resume-uat` | Default workspace policy, workspace switcher, saved conversation list, resume | Not started | Pending | Pending | Not approved |
+| Workspace + Resume | TASK-127 | `codex/console-workspace-resume-uat` | Workspace switcher, saved conversation list, resume prior chats, Default workspace policy | Not started | Pending | Pending | Not approved |
 
 ## Required Evidence Per PR
 
