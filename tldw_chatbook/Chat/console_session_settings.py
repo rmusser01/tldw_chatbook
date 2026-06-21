@@ -973,11 +973,14 @@ def _format_credential_summary_row(readiness: ConsoleSettingsReadiness) -> str:
     source_marker = "api key found via "
     source_index = detail_lower.find(source_marker)
     if source_index >= 0:
-        source = detail[source_index + len(source_marker) :].strip().rstrip(".")
-        if source.startswith("env:"):
-            return f"Credential: env {source.removeprefix('env:')}"
-        if source.startswith("config:"):
-            return f"Credential: config {source.removeprefix('config:')}"
+        source = detail[source_index + len(source_marker) :].strip().rstrip(".").strip()
+        source_lower = source.lower()
+        if source_lower.startswith("env:"):
+            env_name = source[len("env:") :].strip()
+            return f"Credential: env {env_name}" if env_name else "Credential: env"
+        if source_lower.startswith("config:"):
+            config_name = source[len("config:") :].strip()
+            return f"Credential: config {config_name}" if config_name else "Credential: config"
         return f"Credential: {source or 'ready'}"
     if "api key found" in detail_lower:
         return "Credential: ready"
