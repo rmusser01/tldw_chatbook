@@ -30,11 +30,21 @@ from tldw_chatbook.Chat.console_session_settings import (
     normalize_llamacpp_base_url,
     validate_console_session_settings,
 )
+from tldw_chatbook.Utils.input_validation import validate_text_input
 
 
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
+MODAL_BODY_MIN_HEIGHT = 0
+MODAL_CONTROL_HEIGHT = 3
 MODAL_LABEL_WIDTH = 16
 MODEL_CUSTOM_BUTTON_WIDTH = 18
+PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
+PROVIDER_CHOICE_INPUTS = (
+    ("Reasoning effort", "console-settings-reasoning-effort"),
+    ("Reasoning summary", "console-settings-reasoning-summary"),
+    ("Verbosity", "console-settings-verbosity"),
+    ("Thinking effort", "console-settings-thinking-effort"),
+)
 
 
 def _settings_screen_region(widget: Any) -> Any:
@@ -87,34 +97,34 @@ class ConsoleSettingsInput(Input):
 class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     """Edit a draft of the current Console session settings."""
 
-    DEFAULT_CSS = """
-    ConsoleSettingsModal #console-settings-body {
+    DEFAULT_CSS = f"""
+    ConsoleSettingsModal #console-settings-body {{
         height: 1fr;
-        min-height: 0;
+        min-height: {MODAL_BODY_MIN_HEIGHT};
         overflow-y: auto;
         overflow-x: hidden;
-    }
+    }}
 
-    ConsoleSettingsModal .console-settings-modal-section {
+    ConsoleSettingsModal .console-settings-modal-section {{
         height: auto;
-    }
+    }}
 
-    ConsoleSettingsModal .console-settings-modal-row {
+    ConsoleSettingsModal .console-settings-modal-row {{
         height: auto;
-        min-height: 3;
-    }
+        min-height: {MODAL_CONTROL_HEIGHT};
+    }}
 
-    ConsoleSettingsModal .console-settings-modal-label {
-        height: 3;
-        min-height: 3;
-    }
+    ConsoleSettingsModal .console-settings-modal-label {{
+        height: {MODAL_CONTROL_HEIGHT};
+        min-height: {MODAL_CONTROL_HEIGHT};
+    }}
 
     ConsoleSettingsModal Input,
     ConsoleSettingsModal Select,
-    ConsoleSettingsModal Button {
-        height: 3;
-        min-height: 3;
-    }
+    ConsoleSettingsModal Button {{
+        height: {MODAL_CONTROL_HEIGHT};
+        min-height: {MODAL_CONTROL_HEIGHT};
+    }}
     """
 
     BINDINGS = [("escape", "dismiss", "Cancel")]
@@ -497,6 +507,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         draft = self._build_draft()
         errors = [
             *self._required_sampling_errors(),
+            *self._provider_choice_input_errors(),
             *validate_console_session_settings(draft, app_config=self._app_config),
         ]
         if errors:
@@ -558,10 +569,10 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             seed=self._parse_optional_int_input("console-settings-seed"),
             presence_penalty=self._parse_optional_float_input("console-settings-presence-penalty"),
             frequency_penalty=self._parse_optional_float_input("console-settings-frequency-penalty"),
-            reasoning_effort=self._parse_optional_text_input("console-settings-reasoning-effort"),
-            reasoning_summary=self._parse_optional_text_input("console-settings-reasoning-summary"),
-            verbosity=self._parse_optional_text_input("console-settings-verbosity"),
-            thinking_effort=self._parse_optional_text_input("console-settings-thinking-effort"),
+            reasoning_effort=self._parse_optional_choice_input("console-settings-reasoning-effort"),
+            reasoning_summary=self._parse_optional_choice_input("console-settings-reasoning-summary"),
+            verbosity=self._parse_optional_choice_input("console-settings-verbosity"),
+            thinking_effort=self._parse_optional_choice_input("console-settings-thinking-effort"),
             thinking_budget_tokens=self._parse_optional_int_input("console-settings-thinking-budget-tokens"),
             streaming=self.query_one("#console-settings-streaming", Checkbox).value,
             persona_label=self._settings.persona_label,
@@ -909,6 +920,18 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             errors.append("Top P is required.")
         return errors
 
+    def _provider_choice_input_errors(self) -> list[str]:
+        errors: list[str] = []
+        for label, input_id in PROVIDER_CHOICE_INPUTS:
+            raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+            if raw_value and not validate_text_input(
+                raw_value,
+                max_length=PROVIDER_CHOICE_INPUT_MAX_LENGTH,
+                allow_html=False,
+            ):
+                errors.append(f"{label} contains unsupported text.")
+        return errors
+
     def _parse_optional_float_input(self, input_id: str) -> object:
         raw_value = self.query_one(f"#{input_id}", Input).value.strip()
         if not raw_value:
@@ -929,4 +952,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
 
     def _parse_optional_text_input(self, input_id: str) -> str | None:
         raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        if raw_value and not validate_text_input(
+            raw_value,
+            max_length=PROVIDER_CHOICE_INPUT_MAX_LENGTH,
+            allow_html=False,
+        ):
+            return raw_value
         return raw_value or None
+
+    def _parse_optional_choice_input(self, input_id: str) -> str | None:
+        raw_value = self._parse_optional_text_input(input_id)
+        return raw_value.lower() if raw_value else None
