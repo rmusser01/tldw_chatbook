@@ -48,6 +48,15 @@ def _message_body(message: ConsoleChatMessage) -> str:
     return content
 
 
+def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> str:
+    """Return compact transcript copy for the visible message row."""
+    role_label = _message_role_label(message)
+    body = _message_body(message)
+    if not selected and "\n" not in body and len(body) <= 120:
+        return f"{role_label}  {body}"
+    return f"{role_label}\n{body}"
+
+
 @dataclass(frozen=True)
 class _TranscriptRow:
     key: str
@@ -69,7 +78,7 @@ class ConsoleTranscriptMessage(Static):
         if selected:
             classes = f"{classes} console-transcript-message-selected"
         super().__init__(
-            f"{_message_role_label(message)}\n{_message_body(message)}",
+            _message_render_text(message, selected=selected),
             id=f"console-message-{message.id}",
             classes=classes,
         )
@@ -77,7 +86,7 @@ class ConsoleTranscriptMessage(Static):
     def sync_message(self, message: ConsoleChatMessage, *, selected: bool = False) -> None:
         """Update row content and selection styling without remounting the row."""
         self.message_id = message.id
-        self.update(f"{_message_role_label(message)}\n{_message_body(message)}")
+        self.update(_message_render_text(message, selected=selected))
         if selected:
             self.add_class("console-transcript-message-selected")
         else:
@@ -467,8 +476,7 @@ class ConsoleTranscript(VerticalScroll):
             )
         return (
             "message",
-            _message_role_label(message),
-            _message_body(message),
+            _message_render_text(message, selected=selected),
             message.status,
             selected,
             variants_signature,

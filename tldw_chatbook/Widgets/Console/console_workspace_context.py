@@ -20,6 +20,13 @@ _STATUS_LABELS = {
     "active": "active",
     "open": "open",
 }
+_STATUS_DETAIL_LABELS = {
+    "workspace-thread": "saved workspace",
+    "workspace": "saved workspace",
+    "active": "active session",
+    "open": "open session",
+}
+_MAX_CONVERSATION_ROW_TITLE = 20
 
 
 class ConsoleWorkspaceContextTray(Vertical):
@@ -45,6 +52,7 @@ class ConsoleWorkspaceContextTray(Vertical):
         id: str,
         conversation_id: str,
         tooltip_label: str | None = None,
+        selected: bool = False,
     ) -> Button:
         button = Button(
             Text(str(text)),
@@ -54,8 +62,9 @@ class ConsoleWorkspaceContextTray(Vertical):
         )
         button.conversation_id = conversation_id
         button.tooltip = f"Switch to {tooltip_label or text.lstrip('> ').strip()}"
-        button.styles.height = 1
-        button.styles.min_height = 1
+        button.set_class(selected, "console-workspace-conversation-row-selected")
+        button.styles.height = 2
+        button.styles.min_height = 2
         return button
 
     def compose(self) -> ComposeResult:
@@ -93,7 +102,7 @@ class ConsoleWorkspaceContextTray(Vertical):
             id="console-workspace-conversations-title",
             classes="destination-section",
         )
-        conversation_count = max(1, len(self.state.conversation_rows))
+        conversation_count = max(1, len(self.state.conversation_rows) * 3)
         conversation_list = Vertical(id="console-workspace-conversations")
         conversation_list.styles.height = conversation_count
         conversation_list.styles.min_height = conversation_count
@@ -102,13 +111,17 @@ class ConsoleWorkspaceContextTray(Vertical):
                 for index, row in enumerate(self.state.conversation_rows):
                     marker = "> " if row.selected else "  "
                     title = self._conversation_title(row.title)
+                    visible_title = self._conversation_visible_title(title)
                     status = self._conversation_status(row.status)
+                    detail = self._conversation_detail_status(row.status)
                     status_suffix = f" [{status}]" if status else ""
+                    secondary = detail or "conversation"
                     yield self._conversation_button(
-                        f"{marker}{title}{status_suffix}",
+                        f"{marker}{visible_title}\n  {secondary}",
                         id=f"console-workspace-conversation-{index}",
                         conversation_id=row.conversation_id,
                         tooltip_label=f"{title}{status_suffix}",
+                        selected=row.selected,
                     )
             else:
                 yield self._static(
@@ -204,9 +217,25 @@ class ConsoleWorkspaceContextTray(Vertical):
         return _TRAILING_SHORT_ID_RE.sub("", str(title).strip()) or "Untitled conversation"
 
     @staticmethod
+    def _conversation_visible_title(title: str) -> str:
+        """Return a rail-safe visible title that does not clip in narrow panes."""
+        readable = ConsoleWorkspaceContextTray._conversation_title(title)
+        if len(readable) <= _MAX_CONVERSATION_ROW_TITLE:
+            return readable
+        return f"{readable[: _MAX_CONVERSATION_ROW_TITLE - 3].rstrip()}..."
+
+    @staticmethod
     def _conversation_status(status: str) -> str:
         """Return a short user-facing conversation status badge."""
         normalized = str(status or "").strip().lower()
         if not normalized:
             return ""
         return _STATUS_LABELS.get(normalized, normalized.replace("-", " "))
+
+    @staticmethod
+    def _conversation_detail_status(status: str) -> str:
+        """Return second-line row metadata for row disambiguation."""
+        normalized = str(status or "").strip().lower()
+        if not normalized:
+            return ""
+        return _STATUS_DETAIL_LABELS.get(normalized, normalized.replace("-", " "))

@@ -1282,6 +1282,129 @@ class ChatScreen(BaseAppScreen):
                 return session.id
         return None
 
+    @staticmethod
+    def _iter_console_tree_messages(nodes: Any) -> list[dict[str, Any]]:
+        """Return persisted conversation tree messages in visible transcript order."""
+        ordered: list[dict[str, Any]] = []
+
+        def _visit(node: Any) -> None:
+            if not isinstance(node, dict):
+                return
+            ordered.append(node)
+            children = node.get("children")
+            if isinstance(children, list) and children:
+                _visit(children[-1])
+
+        if isinstance(nodes, list):
+            for root in nodes:
+                _visit(root)
+        return ordered
+
+    @staticmethod
+    def _console_message_role_from_persisted(message: dict[str, Any]) -> ConsoleMessageRole:
+        """Return a native Console role for a persisted Chat message row."""
+        raw_role = str(message.get("role") or "").strip().lower()
+        if raw_role:
+            try:
+                return ConsoleMessageRole(raw_role)
+            except ValueError:
+                pass
+        sender = str(message.get("sender") or "").strip().lower()
+        if sender in {"user", "system", "tool"}:
+            return ConsoleMessageRole(sender)
+        return ConsoleMessageRole.ASSISTANT
+
+    def _console_messages_from_conversation_tree(
+        self,
+        tree: dict[str, Any],
+    ) -> list[ConsoleChatMessage]:
+        """Build native Console messages from a persisted conversation tree."""
+        messages: list[ConsoleChatMessage] = []
+        for row in self._iter_console_tree_messages(tree.get("root_threads")):
+            content = str(row.get("content") or "")
+            if not content:
+                continue
+            persisted_message_id = row.get("id")
+            messages.append(
+                ConsoleChatMessage(
+                    role=self._console_message_role_from_persisted(row),
+                    content=content,
+                    status="complete",
+                    persisted_message_id=(
+                        str(persisted_message_id)
+                        if persisted_message_id is not None
+                        else None
+                    ),
+                )
+            )
+        return messages
+
+    async def _resume_console_workspace_conversation(self, conversation_id: str) -> bool:
+        """Load a persisted workspace conversation into a native Console session."""
+        target = str(conversation_id or "").strip()
+        if not target:
+            return False
+        conversation_service = getattr(
+            self.app_instance,
+            "chat_conversation_scope_service",
+            None,
+        )
+        get_conversation_tree = getattr(conversation_service, "get_conversation_tree", None)
+        if not callable(get_conversation_tree):
+            self.app_instance.notify(
+                "Saved conversation resume is unavailable in this build.",
+                severity="warning",
+            )
+            return False
+
+        try:
+            maybe_tree = get_conversation_tree(target, mode="local")
+            tree = await maybe_tree if inspect.isawaitable(maybe_tree) else maybe_tree
+        except Exception:
+            logger.exception(
+                f"Unable to resume Console workspace conversation: conversation_id={target}"
+            )
+            self.app_instance.notify(
+                "Unable to load this saved workspace conversation.",
+                severity="error",
+            )
+            return False
+
+        if not isinstance(tree, dict) or not tree.get("conversation"):
+            self.app_instance.notify(
+                "Saved workspace conversation was not found.",
+                severity="warning",
+            )
+            return False
+
+        conversation = tree.get("conversation")
+        if not isinstance(conversation, dict):
+            conversation = {}
+        store = self._ensure_console_chat_store()
+        active_workspace_id = str(store.workspace_context.active_workspace_id or "").strip()
+        persisted_workspace_id = (
+            str(conversation.get("workspace_id")).strip()
+            if conversation.get("workspace_id") is not None
+            else ""
+        )
+        workspace_id = persisted_workspace_id or active_workspace_id or None
+        title = str(conversation.get("title") or "Saved conversation").strip()
+        if not title:
+            title = "Saved conversation"
+        messages = self._console_messages_from_conversation_tree(tree)
+        session = store.restore_persisted_session(
+            title=title,
+            workspace_id=workspace_id,
+            persisted_conversation_id=target,
+            messages=messages,
+            settings=self._active_console_session_settings(),
+        )
+        self._set_active_workspace_for_console_session(session.id)
+        self._sync_console_chat_core_state()
+        await self._sync_native_console_chat_ui()
+        self._focus_console_composer_if_needed(force=True)
+        return True
+
     def _build_console_workspace_context_state(
         self,
         session_data: Optional[ChatSessionData] = None,
@@ -1821,12 +1944,54 @@ class ChatScreen(BaseAppScreen):
             can_save_chatbook=can_save_chatbook,
         )
         selected_rows = self._selected_console_message_inspector_rows()
+        conversation_rows = self._selected_console_conversation_inspector_rows()
+        if conversation_rows:
+            inspector_state = replace(
+                inspector_state,
+                rows=conversation_rows + inspector_state.rows,
+            )
         if selected_rows:
             inspector_state = replace(
                 inspector_state,
                 rows=inspector_state.rows + selected_rows,
             )
         return inspector_state
+
+    def _selected_console_conversation_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
+        """Return inspector rows for the active Console conversation/session."""
+        store = self._console_chat_store
+        if store is None or store.active_session_id is None:
+            return (
+                ConsoleDisplayRow("Selected conversation", "No active conversation"),
+                ConsoleDisplayRow("Conversation source", "none"),
+            )
+
+        try:
+            active_session = store.switch_session(store.active_session_id)
+        except KeyError:
+            return (
+                ConsoleDisplayRow("Selected conversation", "No active conversation"),
+                ConsoleDisplayRow("Conversation source", "none"),
+            )
+
+        workspace_state = self._build_console_workspace_context_state()
+        workspace_label = str(workspace_state.workspace_label or "").strip()
+        if workspace_label.startswith("Workspace: "):
+            workspace_label = workspace_label.removeprefix("Workspace: ").strip()
+        workspace_label = workspace_label or str(active_session.workspace_id or "Default")
+        persisted_id = str(active_session.persisted_conversation_id or "").strip()
+        source = "saved conversation" if persisted_id else "native Console session"
+        resume_state = (
+            f"restored from {persisted_id}"
+            if persisted_id
+            else "local session, not persisted yet"
+        )
+        return (
+            ConsoleDisplayRow("Selected conversation", active_session.title),
+            ConsoleDisplayRow("Conversation source", source),
+            ConsoleDisplayRow("Workspace", workspace_label),
+            ConsoleDisplayRow("Resume state", resume_state),
+        )
 
     def _selected_console_message_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
         """Return inspector guidance for the currently selected transcript message."""
@@ -2528,15 +2693,6 @@ class ChatScreen(BaseAppScreen):
                             variant=self._workspace_context_frame_variant(workspace_context_state),
                         )
 
-                        settings_summary = ConsoleSettingsSummary(
-                            self._build_console_settings_summary_state(),
-                            id="console-settings-summary",
-                            classes="console-left-rail-section console-settings-summary",
-                        )
-                        settings_summary.styles.width = "100%"
-                        settings_summary.styles.min_width = 0
-                        yield self._frame_console_region(settings_summary, variant="quiet")
-
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"
                 main_column.styles.min_width = 56
@@ -2648,6 +2804,14 @@ class ChatScreen(BaseAppScreen):
                                 inspector_state,
                                 id="console-run-inspector-state",
                             )
+                            settings_summary = ConsoleSettingsSummary(
+                                self._build_console_settings_summary_state(),
+                                id="console-settings-summary",
+                                classes="console-inspector-session-settings console-settings-summary",
+                            )
+                            settings_summary.styles.width = "100%"
+                            settings_summary.styles.min_width = 0
+                            yield settings_summary
                         if pending_launch:
                             yield from self._render_console_live_work_status_card(
                                 pending_launch
@@ -5209,6 +5373,9 @@ class ChatScreen(BaseAppScreen):
             conversation_id = str(getattr(event.button, "conversation_id", "") or "")
             session_id = self._console_session_id_for_workspace_conversation(conversation_id)
             if session_id is None:
+                resumed = await self._resume_console_workspace_conversation(conversation_id)
+                if resumed:
+                    return
                 self.app_instance.notify(
                     "Open this workspace conversation from Library before switching here.",
                     severity="warning",

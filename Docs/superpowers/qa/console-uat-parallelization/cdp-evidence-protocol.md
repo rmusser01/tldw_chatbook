@@ -11,6 +11,8 @@ Provide one durable Console evidence protocol for the parallel Console UAT strea
 Each Console UAT PR must include:
 
 - A screenshot or recording from the actual running app through Textual-web/CDP.
+- Real user-path interaction for the evidence state: navigate/click/type through the running app UI and use the app's real local/server services.
+- A live provider/API response for any state that claims completed assistant output. If no provider is reachable, capture the real blocked/unavailable state and mark provider-response UAT as blocked.
 - A short note with the branch, commit, port, isolated config/data paths, and target Console state.
 - The focused regression or UAT command used for that PR.
 - A user approval checkpoint: approved, not approved, or blocked.
@@ -23,7 +25,17 @@ Do not use these as approval evidence:
 - ASCII mockups.
 - Static code layout diagrams.
 - Screenshots of test doubles or non-running stand-ins.
+- Seeded or hand-authored assistant transcripts presented as if they were provider responses.
+- Mocked provider responses, fake scope services, or fixture-only data presented as UAT acceptance evidence.
 - Terminal logs without a rendered screen capture.
+
+## Regression Tests Versus UAT Evidence
+
+Automated regressions may use fakes, seeded fixtures, or deterministic service doubles
+when needed for stable CI coverage. Those tests prove code paths and edge cases, but
+they are not user acceptance evidence. UAT approval requires the real running app,
+real UI interactions, real persistence/services, and real provider/API responses when
+the workflow includes assistant generation.
 
 ## Launch Requirements
 
