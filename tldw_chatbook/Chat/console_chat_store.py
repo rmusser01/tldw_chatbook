@@ -156,7 +156,19 @@ class ConsoleChatStore:
         messages: Iterable[ConsoleChatMessage],
         settings: ConsoleSessionSettings | None = None,
     ) -> ConsoleChatSession:
-        """Create and activate a native session from persisted conversation data."""
+        """Create and activate a native session from persisted conversation data.
+
+        Args:
+            title: Display title for the restored Console session.
+            workspace_id: Workspace scope recorded on the persisted conversation,
+                or ``None`` to use the current store workspace context.
+            persisted_conversation_id: Durable Chat conversation identifier.
+            messages: Native Console messages reconstructed from persisted data.
+            settings: Optional provider/model settings snapshot for the session.
+
+        Returns:
+            The newly created and activated Console session.
+        """
         session = self.create_session(
             title=title,
             workspace_id=workspace_id,

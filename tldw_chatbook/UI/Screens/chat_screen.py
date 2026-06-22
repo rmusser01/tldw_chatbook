@@ -1292,9 +1292,8 @@ class ChatScreen(BaseAppScreen):
                 return
             ordered.append(node)
             children = node.get("children")
-            if isinstance(children, list):
-                for child in children:
-                    _visit(child)
+            if isinstance(children, list) and children:
+                _visit(children[-1])
 
         if isinstance(nodes, list):
             for root in nodes:
@@ -1362,7 +1361,9 @@ class ChatScreen(BaseAppScreen):
             maybe_tree = get_conversation_tree(target, mode="local")
             tree = await maybe_tree if inspect.isawaitable(maybe_tree) else maybe_tree
         except Exception:
-            logger.exception("Unable to resume Console workspace conversation")
+            logger.exception(
+                f"Unable to resume Console workspace conversation: conversation_id={target}"
+            )
             self.app_instance.notify(
                 "Unable to load this saved workspace conversation.",
                 severity="error",
@@ -1386,18 +1387,20 @@ class ChatScreen(BaseAppScreen):
             if conversation.get("workspace_id") is not None
             else ""
         )
-        workspace_id = active_workspace_id or persisted_workspace_id
+        workspace_id = persisted_workspace_id or active_workspace_id or None
         title = str(conversation.get("title") or "Saved conversation").strip()
         if not title:
             title = "Saved conversation"
         messages = self._console_messages_from_conversation_tree(tree)
-        store.restore_persisted_session(
+        session = store.restore_persisted_session(
             title=title,
             workspace_id=workspace_id,
             persisted_conversation_id=target,
             messages=messages,
             settings=self._active_console_session_settings(),
         )
+        self._set_active_workspace_for_console_session(session.id)
+        self._sync_console_chat_core_state()
         await self._sync_native_console_chat_ui()
         self._focus_console_composer_if_needed(force=True)
         return True

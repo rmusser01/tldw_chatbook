@@ -102,7 +102,7 @@ class ConsoleWorkspaceContextTray(Vertical):
             id="console-workspace-conversations-title",
             classes="destination-section",
         )
-        conversation_count = max(1, len(self.state.conversation_rows) * 2)
+        conversation_count = max(1, len(self.state.conversation_rows) * 3)
         conversation_list = Vertical(id="console-workspace-conversations")
         conversation_list.styles.height = conversation_count
         conversation_list.styles.min_height = conversation_count
