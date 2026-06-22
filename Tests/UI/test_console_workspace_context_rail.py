@@ -119,7 +119,10 @@ async def test_console_workspace_context_exposes_new_conversation_for_default_wo
 
         text = _visible_text(console)
         assert "New conversation" in text
-        assert "Runtime: none, file tools disabled" in text
+        assert "File tools: Off in Default workspace" in text
+        assert "Server handoff: Not configured" in text
+        assert "local registry" not in text.lower()
+        assert "authoritative" not in text.lower()
         assert "Workspace conversation creation lands in a later slice" not in text
 
 
@@ -256,13 +259,13 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
         text = _visible_text(console)
-        assert "Server: unavailable" in text
-        assert "No background sync" in text
-        assert "Runtime: 1 binding, 0 ready, 1 missing" in text
-        assert "Handoff readiness" in text
+        assert "Server handoff: Unavailable" in text
+        assert "Chats stay local" in text
+        assert "File tools: 0 ready, 1 missing" in text
+        assert "Handoff" in text
         assert "Source note - copy" in text
         assert "Conversation package - metadata-only" in text
-        assert "ACP task/run: unavailable" in text
+        assert "ACP handoff: Not configured" in text
         assert "Audit: visible only; no package was sent." in text
 
 

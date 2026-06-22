@@ -241,36 +241,36 @@ class ConsoleWorkspaceContextTray(Vertical):
                     classes="console-workspace-recovery",
                 )
         yield from self._status_pair(
-            self.state.authority_label,
+            self._friendly_status_label(self.state.authority_label),
             label_id="console-workspace-authority-label",
             value_id="console-workspace-authority-value",
-            fallback_label="Authority",
+            fallback_label="Storage",
         )
         yield from self._status_pair(
-            self.state.sync_label,
+            self._friendly_status_label(self.state.sync_label),
             label_id="console-workspace-sync-label",
             value_id="console-workspace-sync-value",
             fallback_label="Sync",
         )
         yield from self._status_pair(
-            self.state.runtime_label,
+            self._friendly_status_label(self.state.runtime_label),
             label_id="console-workspace-runtime-label",
             value_id="console-workspace-runtime-value",
-            fallback_label="Runtime",
+            fallback_label="File tools",
         )
         yield from self._status_pair(
-            self.state.server_readiness_label,
+            self._friendly_status_label(self.state.server_readiness_label),
             label_id="console-workspace-server-readiness-label",
             value_id="console-workspace-server-readiness-value",
-            fallback_label="Server",
+            fallback_label="Server handoff",
         )
         yield self._static(
-            self.state.server_readiness_detail,
+            self._friendly_detail_copy(self.state.server_readiness_detail),
             id="console-workspace-server-readiness-detail",
             classes="console-workspace-recovery",
         )
         yield self._static(
-            "Handoff readiness",
+            "Handoff",
             id="console-workspace-handoff-title",
             classes="destination-section",
         )
@@ -285,18 +285,18 @@ class ConsoleWorkspaceContextTray(Vertical):
                     )
             else:
                 yield self._static(
-                    "No workspace items ready for handoff preflight.",
+                    "No handoff package is ready.",
                     id="console-workspace-handoff-empty",
                     classes="console-workspace-empty-copy",
                 )
         yield from self._status_pair(
-            self.state.acp_handoff_label,
+            self._friendly_status_label(self.state.acp_handoff_label),
             label_id="console-workspace-handoff-label",
             value_id="console-workspace-handoff-value",
             fallback_label="Handoff",
         )
         yield self._static(
-            self.state.acp_handoff_detail,
+            self._friendly_detail_copy(self.state.acp_handoff_detail),
             id="console-workspace-acp-handoff-detail",
             classes="console-workspace-recovery",
         )
@@ -341,3 +341,52 @@ class ConsoleWorkspaceContextTray(Vertical):
         if not normalized:
             return ""
         return _STATUS_DETAIL_LABELS.get(normalized, normalized.replace("-", " "))
+
+    @staticmethod
+    def _friendly_status_label(label: str) -> str:
+        """Return user-facing workspace status copy for the Console rail."""
+        raw = str(label or "").strip()
+        normalized = raw.lower()
+        if normalized.startswith("authority: unavailable"):
+            return "Storage: Unavailable"
+        if normalized.startswith("authority:"):
+            return "Storage: local"
+        if normalized == "sync: not configured":
+            return "Sync: Off"
+        if normalized.startswith("runtime: none, file tools disabled"):
+            return "File tools: Off in Default workspace"
+        if normalized.startswith("runtime: none"):
+            return "File tools: Off"
+        if normalized.startswith("runtime:"):
+            readiness = re.search(r"(\d+) ready(?:,\s+(\d+) missing)?", raw)
+            if readiness:
+                label = f"File tools: {readiness.group(1)} ready"
+                if readiness.group(2):
+                    label = f"{label}, {readiness.group(2)} missing"
+                return label
+            return raw.replace("Runtime:", "File tools:", 1)
+        if normalized == "server: local fallback":
+            return "Server handoff: Not configured"
+        if normalized.startswith("server: unavailable"):
+            return "Server handoff: Unavailable"
+        if normalized.startswith("server:"):
+            return raw.replace("Server:", "Server handoff:", 1)
+        if normalized.startswith("acp task/run: unavailable"):
+            return "ACP handoff: Not configured"
+        if normalized.startswith("acp task/run:"):
+            return raw.replace("ACP task/run:", "ACP handoff:", 1)
+        return raw
+
+    @staticmethod
+    def _friendly_detail_copy(copy: str) -> str:
+        """Return first-run readable detail while preserving diagnostic intent."""
+        raw = str(copy or "").strip()
+        normalized = raw.lower()
+        if (
+            "local registry" in normalized
+            or "no background sync" in normalized
+        ):
+            return "Chats stay local. Connect a server later for explicit handoff."
+        if "acp task/run package handoff is not wired" in normalized:
+            return "ACP task/run package handoff is not configured yet."
+        return raw

@@ -307,6 +307,18 @@ def test_console_transcript_action_row_stays_within_terminal_width_budget():
     assert len(action_row) <= 48
 
 
+def test_console_transcript_selected_message_explains_icon_actions():
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1")
+    transcript = ConsoleTranscript()
+    transcript.set_messages([message])
+    transcript.select_message("m1")
+
+    rendered = transcript.to_plain_text(width=80)
+
+    assert "Copy Edit Save as... ♻ ---> 👍 👎 🗑" in rendered
+    assert "Guide: ♻ Regenerate  ---> Continue  👍/👎 Rate  🗑 Delete" in rendered
+
+
 def test_console_transcript_variant_navigation_changes_displayed_content():
     message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="first", id="m1")
     message.variants = ConsoleVariantSet.from_contents(
@@ -402,6 +414,7 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
     assert "👍" in text
     assert "👎" in text
     assert "🗑" in text
+    assert "Guide: ♻ Regenerate" in text
     assert "|" not in text
 
 

@@ -2691,11 +2691,19 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 .console-transcript-action-row {
     height: 3;
     min-height: 3;
-    margin: 0 0 1 0;
+    margin: 0;
     padding: 0 1;
     background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+.console-transcript-action-guide {
+    height: 1;
+    min-height: 1;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    color: $ds-text-muted;
 }
 
 .console-modal-header {

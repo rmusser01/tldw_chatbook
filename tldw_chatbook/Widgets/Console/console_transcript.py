@@ -18,6 +18,9 @@ from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, Con
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
 EMPTY_TRANSCRIPT_COPY = "Ready. Ask a question, run a command, or attach context."
+SELECTED_MESSAGE_ACTION_GUIDE = (
+    "Guide: ♻ Regenerate  ---> Continue  👍/👎 Rate  🗑 Delete"
+)
 _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
     "edit": "Edit this message before continuing the thread.",
@@ -60,7 +63,7 @@ def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> str:
 @dataclass(frozen=True)
 class _TranscriptRow:
     key: str
-    kind: Literal["rule", "message", "actions", "empty"]
+    kind: Literal["rule", "message", "actions", "action-help", "empty"]
     signature: tuple
     message: ConsoleChatMessage | None = None
     selected: bool = False
@@ -274,6 +277,7 @@ class ConsoleTranscript(VerticalScroll):
             )
             if message.id == self.selected_message_id:
                 lines.append(self._plain_action_row(message))
+                lines.append(SELECTED_MESSAGE_ACTION_GUIDE)
         if self._messages:
             lines.append(rule)
         return "\n".join(lines)
@@ -364,6 +368,14 @@ class ConsoleTranscript(VerticalScroll):
                         message=message,
                     )
                 )
+                rows.append(
+                    _TranscriptRow(
+                        key=f"action-help:{message.id}",
+                        kind="action-help",
+                        signature=("action-help", SELECTED_MESSAGE_ACTION_GUIDE),
+                        renderable=SELECTED_MESSAGE_ACTION_GUIDE,
+                    )
+                )
         if self._messages:
             rows.append(
                 _TranscriptRow(
@@ -446,6 +458,12 @@ class ConsoleTranscript(VerticalScroll):
                 row.renderable,
                 id=self._row_widget_id(row),
                 classes="console-transcript-empty-state",
+            )
+        if row.kind == "action-help":
+            return Static(
+                row.renderable,
+                id=self._row_widget_id(row),
+                classes="console-transcript-action-guide",
             )
         if row.kind == "message" and row.message is not None:
             return ConsoleTranscriptMessage(row.message, selected=row.selected)

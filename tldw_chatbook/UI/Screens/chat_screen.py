@@ -157,6 +157,11 @@ CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
+CONSOLE_READY_EMPTY_TRANSCRIPT_COPY = (
+    "Start here: ask a question, paste a task, or attach context.\n"
+    "Setup: use Settings for provider/model changes; use Test before long runs. "
+    "Enter sends; Ctrl+U clears; Ctrl+A selects."
+)
 CONSOLE_PROVIDER_ADD_API_KEY_LABEL = "Add API Key"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
@@ -2154,17 +2159,23 @@ class ChatScreen(BaseAppScreen):
         return f"Provider setup needed: {settings_readiness.detail}"
 
     @staticmethod
-    def _console_empty_transcript_copy(blocker_copy: str) -> str:
+    def _console_empty_transcript_copy(
+        blocker_copy: str,
+        *,
+        guidance_visible: bool,
+    ) -> str:
         """Return compact empty transcript copy while setup details live nearby."""
         blocker = blocker_copy.strip()
-        if not blocker:
-            return ""
-        return (
+        if blocker:
+            return (
             "Start here\n"
             f"1. Finish provider setup: {blocker}\n"
             "2. Attach Library, runs, Artifacts, or RAG\n"
             "3. Type a message or command in Composer"
-        )
+            )
+        if guidance_visible:
+            return CONSOLE_READY_EMPTY_TRANSCRIPT_COPY
+        return ""
 
     def _console_setup_blocked_reason(self) -> str:
         """Return setup-specific send blocker copy for the native composer."""
@@ -2325,7 +2336,10 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             pass
         else:
-            empty_copy = self._console_empty_transcript_copy(blocker_copy)
+            empty_copy = self._console_empty_transcript_copy(
+                blocker_copy,
+                guidance_visible=guidance_visible,
+            )
             surface.sync_inline_guidance(
                 visible=bool(empty_copy),
                 copy=empty_copy,
@@ -4410,6 +4424,21 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         if not self._should_capture_console_input(composer):
+            return
+        if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
+            composer.select_all_draft()
+            event.stop()
+            event.prevent_default()
+            return
+        if (
+            event.key in {"ctrl+c", "super+c", "cmd+c", "meta+c"}
+            and composer.has_full_draft_selection()
+        ):
+            copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
+            if callable(copy_to_clipboard):
+                copy_to_clipboard(composer.draft_text())
+            event.stop()
+            event.prevent_default()
             return
         if event.key in {"backspace", "ctrl+h", "delete"}:
             composer.delete_left()

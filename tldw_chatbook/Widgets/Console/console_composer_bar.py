@@ -97,6 +97,7 @@ class ConsoleComposerBar(Horizontal):
         self._setup_blocked_reason = ""
         self._can_save_chatbook = False
         self._suppress_next_draft_click = False
+        self._draft_selection_all = False
 
     @property
     def collapse_large_pastes_enabled(self) -> bool:
@@ -184,6 +185,10 @@ class ConsoleComposerBar(Horizontal):
                         self.PASTE_CONFIRM_STYLE,
                     )
                 )
+        if self._draft_selection_all:
+            display_text = self._display_draft_text()
+            if display_text:
+                style_ranges.append((0, len(display_text), "reverse"))
         return style_ranges
 
     def _sync_hidden_input(self) -> None:
@@ -545,6 +550,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Draft payload to show and send literally.
         """
+        self._draft_selection_all = False
         self._segments = [_DraftSegment(text)] if text else []
         self._segments_initialized = True
         self._sync_hidden_input()
@@ -554,12 +560,31 @@ class ConsoleComposerBar(Horizontal):
 
     def clear_draft(self) -> None:
         """Clear the native Console draft without falling back to stale input."""
+        self._draft_selection_all = False
         self._segments = []
         self._segments_initialized = True
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
         self._sync_current_action_state()
+
+    def select_all_draft(self) -> bool:
+        """Mark the full visible Console draft as selected without mutating it."""
+        if not self.draft_text():
+            self._draft_selection_all = False
+            self._refresh_visible_draft()
+            return False
+        if not self._segments_initialized:
+            existing = self.draft_text()
+            self._segments = [_DraftSegment(existing)] if existing else []
+            self._segments_initialized = True
+        self._draft_selection_all = True
+        self._refresh_visible_draft()
+        return True
+
+    def has_full_draft_selection(self) -> bool:
+        """Return whether the composer currently has a full-draft selection."""
+        return self._draft_selection_all and bool(self.draft_text())
 
     def insert_text(self, text: str) -> None:
         """Append user-entered text to the Console draft as literal text.
@@ -575,6 +600,9 @@ class ConsoleComposerBar(Horizontal):
             existing = self.draft_text()
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
+        if self._draft_selection_all:
+            self._segments = []
+            self._draft_selection_all = False
         self._reset_pending_unfurl_state()
         self._append_literal_segment(text)
         self._sync_hidden_input()
@@ -596,6 +624,9 @@ class ConsoleComposerBar(Horizontal):
             existing = self.draft_text()
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
+        if self._draft_selection_all:
+            self._segments = []
+            self._draft_selection_all = False
         self._reset_pending_unfurl_state()
         should_collapse = (
             self.collapse_large_pastes_enabled
@@ -612,6 +643,9 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_left(self) -> None:
         """Delete the last draft character for simple terminal-style editing."""
+        if self._draft_selection_all:
+            self.clear_draft()
+            return
         if not self._segments_initialized:
             self.load_draft(self.draft_text()[:-1])
             return
@@ -792,7 +826,10 @@ class ConsoleComposerBar(Horizontal):
             padding_left=padding_left,
         )
         if segment is None:
-            return False
+            changed = self._reset_pending_unfurl_state()
+            if changed:
+                self._refresh_visible_draft()
+            return changed
         if segment.collapse_state == "collapsed":
             segment.collapse_state = "confirm"
         elif segment.collapse_state == "confirm":

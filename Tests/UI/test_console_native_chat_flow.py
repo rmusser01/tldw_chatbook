@@ -2707,7 +2707,10 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
             selected=True,
         )
         assert any(text.startswith("> ") and "Chat 2" in text for text in row_texts)
-        assert "file tools disabled" in _visible_text(console)
+        visible_text = _visible_text(console)
+        assert "File tools: Off in Default workspace" in visible_text
+        assert "Server handoff: Not configured" in visible_text
+        assert "Workspace conversation creation lands in a later slice" not in visible_text
 
 
 @pytest.mark.asyncio
