@@ -1,7 +1,7 @@
 # Console UAT Parallelization Acceptance Matrix
 
 Date: 2026-06-21
-Base: `origin/dev` after PR #546 (`0222294e`)
+Base: `origin/dev` after PR #548 (`2e47f1d7`)
 
 ## Purpose
 
@@ -21,11 +21,35 @@ Evidence protocol: `Docs/superpowers/qa/console-uat-parallelization/cdp-evidence
 
 | Workstream | Task | Branch | Owner Scope | Status | Visual Evidence | Regression/UAT Evidence | Approval |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| UAT Harness | TASK-128 | `codex/console-uat-harness-coordination` | CDP setup, fixtures, screenshot naming, acceptance matrix | In progress | Pending | Pending | Not approved |
-| Chat Lifecycle | TASK-129 | `codex/console-chat-lifecycle-parallel` | New chat, close tab, send, blocked-send recovery, transcript baseline, in-session return | Done | `task-129-chat-lifecycle-cdp-2026-06-21.png`; `task-129-composer-text-visible-cdp-2026-06-21.png` | `Tests/UI/test_console_native_chat_flow.py` passed locally: 76 passed | Approved |
-| Provider + Model Configuration | TASK-130 | `codex/console-provider-model-uat-current` | Provider/model/settings selection, endpoint preservation, readiness, streaming fallback | Done | `TASK-130-provider-model-modal-controls-cdp.png`; `task-130-provider-credential-source-cdp-2026-06-21.png` | `Tests/UI/test_console_session_settings.py -k "provider or model or endpoint or credential or generation or summary"` passed locally: 64 passed; generic non-streaming fallback and UI completed-message checks passed locally: 2 passed | Approved |
-| Message Actions | TASK-131 | `codex/console-message-actions-uat-current` | Select message, keyboard/click actions, Copy/Edit/Save as/Regenerate/Continue/Thumbs/Delete | Done | `task-131-selected-message-inspector-expanded-cdp-2026-06-21.png`; `task-131-save-as-context-cdp-2026-06-21.png` | `Tests/UI/test_console_native_chat_flow.py -k "message_action or selected_message or continue_action or regenerate_action or save_as or workspace_conversation"` passed locally: 18 passed | Approved |
-| Workspace + Resume | TASK-127 | `codex/console-workspace-resume-uat-current` | Workspace switcher, saved conversation list, resume prior chats, Default workspace policy | Done | `task-127-live-llamacpp-response-cdp-2026-06-21.png`; `task-127-saved-conversation-resume-cdp-2026-06-21.png`; `task-127-polish-pass-cdp-chromium-2026-06-21.png` | Mounted regressions verify fake-service and real local DB-backed resume paths; focused workspace/resume subset passed locally: 16 passed; rail-safe conversation label polish regressions passed locally: 3 passed. Live llama.cpp UAT verified through Textual-web/CDP on `127.0.0.1:9099`: user prompt rendered, assistant returned `OK-127`, saved conversation row resumed persisted transcript. | Approved |
+| UAT Harness | TASK-128 | `codex/console-uat-harness-closeout` | CDP setup, fixtures, screenshot naming, acceptance matrix | Approved | N/A - documentation/protocol harness, no app screen state changed | `cdp-evidence-protocol.md`; this matrix; Backlog frontmatter uniqueness check | Approved - documentation-only harness |
+| Chat Lifecycle | TASK-129 | `codex/console-chat-lifecycle-parallel` | New chat, close tab, send, blocked-send recovery, transcript baseline, in-session return | Merged | `task-129-chat-lifecycle-cdp-2026-06-21.png`; `task-129-composer-text-visible-cdp-2026-06-21.png` | `Tests/UI/test_console_native_chat_flow.py` passed locally: 76 passed | Approved |
+| Provider + Model Configuration | TASK-130 | `codex/console-provider-model-uat-current` | Provider/model/settings selection, endpoint preservation, readiness, streaming fallback | Merged | `TASK-130-provider-model-modal-controls-cdp.png`; `task-130-provider-credential-source-cdp-2026-06-21.png` | `Tests/UI/test_console_session_settings.py -k "provider or model or endpoint or credential or generation or summary"` passed locally: 64 passed; generic non-streaming fallback and UI completed-message checks passed locally: 2 passed | Approved |
+| Message Actions | TASK-131 | `codex/console-message-actions-uat-current` | Select message, keyboard/click actions, Copy/Edit/Save as/Regenerate/Continue/Thumbs/Delete | Merged | `task-131-selected-message-inspector-expanded-cdp-2026-06-21.png`; `task-131-save-as-context-cdp-2026-06-21.png` | `Tests/UI/test_console_native_chat_flow.py -k "message_action or selected_message or continue_action or regenerate_action or save_as or workspace_conversation"` passed locally: 18 passed | Approved |
+| Workspace + Resume | TASK-127 | `codex/console-workspace-resume-uat-current` | Workspace switcher, saved conversation list, resume prior chats, Default workspace policy | Merged | `task-127-live-llamacpp-response-cdp-2026-06-21.png`; `task-127-saved-conversation-resume-cdp-2026-06-21.png`; `task-127-polish-pass-cdp-chromium-2026-06-21.png` | Mounted regressions verify fake-service and real local DB-backed resume paths; focused workspace/resume subset passed locally: 16 passed; rail-safe conversation label polish regressions passed locally: 3 passed. Live llama.cpp UAT verified through Textual-web/CDP on `127.0.0.1:9099`: user prompt rendered, assistant returned `OK-127`, saved conversation row resumed persisted transcript. | Approved |
+| Final Integration Replay | TASK-132 | TBD | Replay merged matrix, rerun/link focused regressions, identify residual Console gaps | Not started | Pending | Pending | Not approved |
+
+## Checkpoint States
+
+Use these exact checkpoint states when coordinating Console UAT work:
+
+- `Not started`: task exists but no implementation/evidence work has begun.
+- `In progress`: implementation or documentation work is active in a branch/worktree.
+- `Blocked`: work cannot continue without an external dependency, unavailable provider/API, or user decision.
+- `Needs screenshot`: code/test work is ready, but actual rendered CDP/Textual-web evidence has not been captured or approved.
+- `Approved`: user approved the actual rendered screen state or the task is documentation-only and explicitly has no screen state.
+- `Merged`: PR has been merged into `dev` and the matrix/task evidence has been updated from merged state.
+
+## Reusable Focused Commands
+
+Use these commands as the starting point for final replay and future Console UAT verification. Extend them only when the touched scope requires additional coverage.
+
+```bash
+python -m pytest -q Tests/UI/test_console_native_chat_flow.py --tb=short
+python -m pytest -q Tests/UI/test_console_session_settings.py -k "provider or model or endpoint or credential or generation or summary" --tb=short
+python -m pytest -q Tests/Chat/test_console_provider_gateway.py::test_stream_chat_generic_non_streaming_yields_completion_once Tests/UI/test_console_native_chat_flow.py::test_console_native_generic_provider_send_renders_completed_message --tb=short
+python -m pytest -q Tests/UI/test_product_maturity_phase1_harness.py::test_backlog_task_frontmatter_ids_are_unique --tb=short
+git diff --check
+```
 
 ## Required Evidence Per PR
 
