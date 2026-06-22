@@ -28,6 +28,15 @@ _ROW_IDS = {
     "Artifacts": "console-inspector-artifacts",
     "Approvals": "console-inspector-approvals",
     "Selected message": "console-inspector-selected-message",
+    "Selected conversation": "console-inspector-selected-conversation",
+    "Conversation source": "console-inspector-conversation-source",
+    "Workspace": "console-inspector-workspace",
+    "Resume state": "console-inspector-resume-state",
+    "Session provider": "console-inspector-session-provider",
+    "Session model": "console-inspector-session-model",
+    "Session endpoint": "console-inspector-session-endpoint",
+    "Session sampling": "console-inspector-session-sampling",
+    "Session persona": "console-inspector-session-persona",
     "Message actions": "console-inspector-message-actions",
     "Keyboard": "console-inspector-message-keyboard",
     "Variants": "console-inspector-message-variants",
@@ -36,6 +45,22 @@ _ROW_IDS = {
 }
 
 _ROW_GROUPS = (
+    (
+        "Selected Conversation",
+        "console-inspector-selected-conversation-heading",
+        ("Selected conversation", "Conversation source", "Workspace", "Resume state"),
+    ),
+    (
+        "Session Defaults",
+        "console-inspector-session-defaults-heading",
+        (
+            "Session provider",
+            "Session model",
+            "Session endpoint",
+            "Session sampling",
+            "Session persona",
+        ),
+    ),
     (
         "Run State",
         "console-inspector-run-state-heading",

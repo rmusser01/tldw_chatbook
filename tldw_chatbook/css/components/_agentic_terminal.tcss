@@ -626,7 +626,20 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 
 .console-workspace-conversation-row {
     height: auto;
-    min-height: 1;
+    min-height: 2;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.console-workspace-conversation-row-selected {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 #console-left-rail {
@@ -826,6 +839,13 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 
 .console-left-rail-section.console-settings-summary {
     margin: 0 0 1 0;
+    padding: 0 1;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+.console-inspector-session-settings {
+    margin: 1 0 0 0;
     padding: 0 1;
     border: none;
     background: $ds-surface-panel;
@@ -1126,7 +1146,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 
 .console-transcript-message {
     height: auto;
-    min-height: 2;
+    min-height: 1;
     padding: 0 1;
     margin: 0;
     background: $ds-surface-panel;
@@ -1134,6 +1154,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 }
 
 .console-transcript-message-selected {
+    min-height: 2;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
