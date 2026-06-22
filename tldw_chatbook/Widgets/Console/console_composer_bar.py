@@ -442,12 +442,23 @@ class ConsoleComposerBar(Horizontal):
     def _placeholder_renderable(self, *, width: int) -> Text:
         """Return setup-aware empty composer placeholder copy."""
         if self._send_blocked and self._setup_blocked_reason:
-            if "model" in self._setup_blocked_reason.lower():
+            reason = self._setup_blocked_reason.lower()
+            if "api key" in reason:
                 return Text(
-                    "Setup required: choose a model in Console Settings.",
+                    "Setup required: Add API Key before sending.",
                     style="bold yellow",
                 )
-            return Text("Setup required: finish provider setup.", style="bold yellow")
+            if "model" in reason:
+                return Text(
+                    "Setup required: Choose model before sending.",
+                    style="bold yellow",
+                )
+            if "endpoint" in reason:
+                return Text(
+                    "Setup required: Configure endpoint before sending.",
+                    style="bold yellow",
+                )
+            return Text("Setup required: Finish setup before sending.", style="bold yellow")
         return self._draft_renderable("", width=width)
 
     @classmethod

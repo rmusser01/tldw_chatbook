@@ -1,7 +1,7 @@
 # Console UAT Parallelization Acceptance Matrix
 
 Date: 2026-06-21
-Base: `origin/dev` after PR #548 (`2e47f1d7`)
+Base: `origin/dev` after PR #549 (`15259871`)
 
 ## Purpose
 
@@ -23,10 +23,11 @@ Evidence protocol: `Docs/superpowers/qa/console-uat-parallelization/cdp-evidence
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | UAT Harness | TASK-128 | `codex/console-uat-harness-closeout` | CDP setup, fixtures, screenshot naming, acceptance matrix | Approved | N/A - documentation/protocol harness, no app screen state changed | `cdp-evidence-protocol.md`; this matrix; Backlog frontmatter uniqueness check | Approved - documentation-only harness |
 | Chat Lifecycle | TASK-129 | `codex/console-chat-lifecycle-parallel` | New chat, close tab, send, blocked-send recovery, transcript baseline, in-session return | Merged | `task-129-chat-lifecycle-cdp-2026-06-21.png`; `task-129-composer-text-visible-cdp-2026-06-21.png` | `Tests/UI/test_console_native_chat_flow.py` passed locally: 76 passed | Approved |
-| Provider + Model Configuration | TASK-130 | `codex/console-provider-model-uat-current` | Provider/model/settings selection, endpoint preservation, readiness, streaming fallback | Merged | `TASK-130-provider-model-modal-controls-cdp.png`; `task-130-provider-credential-source-cdp-2026-06-21.png` | `Tests/UI/test_console_session_settings.py -k "provider or model or endpoint or credential or generation or summary"` passed locally: 64 passed; generic non-streaming fallback and UI completed-message checks passed locally: 2 passed | Approved |
+| Provider + Model Configuration | TASK-130 | `codex/console-provider-model-uat-current` | Provider/model/settings selection, endpoint preservation, readiness, streaming fallback | Merged | `TASK-130-provider-model-modal-controls-cdp.png`; `task-130-provider-credential-source-cdp-2026-06-21.png` | `Tests/UI/test_console_session_settings.py -k "provider or model or endpoint or credential or generation or summary"` rerun in final replay: 66 passed, 42 deselected; full `Tests/UI/test_console_session_settings.py` rerun in final replay: 108 passed; generic non-streaming fallback and UI completed-message checks rerun in final replay: 2 passed | Approved |
 | Message Actions | TASK-131 | `codex/console-message-actions-uat-current` | Select message, keyboard/click actions, Copy/Edit/Save as/Regenerate/Continue/Thumbs/Delete | Merged | `task-131-selected-message-inspector-expanded-cdp-2026-06-21.png`; `task-131-save-as-context-cdp-2026-06-21.png` | `Tests/UI/test_console_native_chat_flow.py -k "message_action or selected_message or continue_action or regenerate_action or save_as or workspace_conversation"` passed locally: 18 passed | Approved |
 | Workspace + Resume | TASK-127 | `codex/console-workspace-resume-uat-current` | Workspace switcher, saved conversation list, resume prior chats, Default workspace policy | Merged | `task-127-live-llamacpp-response-cdp-2026-06-21.png`; `task-127-saved-conversation-resume-cdp-2026-06-21.png`; `task-127-polish-pass-cdp-chromium-2026-06-21.png` | Mounted regressions verify fake-service and real local DB-backed resume paths; focused workspace/resume subset passed locally: 16 passed; rail-safe conversation label polish regressions passed locally: 3 passed. Live llama.cpp UAT verified through Textual-web/CDP on `127.0.0.1:9099`: user prompt rendered, assistant returned `OK-127`, saved conversation row resumed persisted transcript. | Approved |
-| Final Integration Replay | TASK-132 | TBD | Replay merged matrix, rerun/link focused regressions, identify residual Console gaps | Not started | Pending | Pending | Not approved |
+| Final Integration Replay | TASK-132 | `codex/console-uat-final-replay` | Replay merged matrix, rerun/link focused regressions, identify residual Console gaps | Approved | `task-132-final-replay-console-wide-cdp-2026-06-21.jpg` | Final replay reran `Tests/UI/test_console_native_chat_flow.py`: 89 passed; `Tests/UI/test_console_session_settings.py`: 108 passed; provider/model subset: 66 passed, 42 deselected; generic provider fallback checks: 2 passed; Backlog frontmatter uniqueness: 1 passed; `git diff --check`: passed | Approved |
+| Console Setup-State Polish | TASK-133 | `codex/console-uat-final-replay` | Improve blocked setup visibility, empty-state guidance, workspace authority rows, and composer recovery copy | Approved | `task-133-console-setup-polish-cdp-2026-06-22.jpg`; `task-133-console-setup-polish-inspector-cdp-2026-06-22.jpg` | `Tests/UI/test_console_native_chat_flow.py`: 94 passed; `Tests/UI/test_console_session_settings.py -k "provider or model or endpoint or credential or generation or summary"`: 67 passed, 41 deselected; `git diff --check`: passed | Approved |
 
 ## Checkpoint States
 
@@ -79,6 +80,7 @@ git diff --check
 | Missing historical CDP runbook | Agents cannot reproduce prior browser QA setup | Harness restores a durable Console-specific protocol before feature streams claim approval. |
 | False approvals | UI appears approved based on mockups or non-running captures | Approval requires actual CDP/Textual-web evidence only. |
 | Workspace scope creep | Sync/server work derails Console usability | Workspace + Resume covers local/default workspace and handoff-ready metadata only; server sync remains WIP-labeled. |
+| Final replay browser capture requires explicit wide viewport | Default in-app browser viewport captured only the left Console rail | Final replay evidence used Textual-web/CDP with a documented explicit `2048x1220` viewport to capture the complete Console shell. |
 
 ## Suggested Fresh Worktree Commands
 
