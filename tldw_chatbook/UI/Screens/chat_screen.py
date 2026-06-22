@@ -2217,9 +2217,9 @@ class ChatScreen(BaseAppScreen):
             )
         return ("Review settings", "console", "Review this Console session's settings")
 
-    def _console_provider_recovery_strip_visible(self, blocker_copy: str) -> bool:
+    def _console_provider_recovery_strip_visible(self, blocker_copy: str | None) -> bool:
         """Return whether provider recovery needs a persistent transcript row."""
-        return bool(blocker_copy.strip())
+        return bool(blocker_copy and blocker_copy.strip())
 
     @staticmethod
     def _console_provider_blocker_display_copy(copy: str, action_label: str) -> str:

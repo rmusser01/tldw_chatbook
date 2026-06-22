@@ -54,6 +54,19 @@ def test_console_workspace_conversation_visible_title_is_rail_safe():
     )
 
 
+def test_console_provider_recovery_strip_visible_handles_missing_blocker_copy():
+    """Missing blocker copy should keep the recovery strip hidden."""
+    assert ChatScreen._console_provider_recovery_strip_visible(object(), None) is False
+
+
+def test_console_workspace_status_row_empty_value_uses_unavailable():
+    """Status labels ending in a colon should not repeat the label as the value."""
+    assert ConsoleWorkspaceContextTray._split_status_row("Authority: ", "Authority") == (
+        "Authority",
+        "unavailable",
+    )
+
+
 def test_console_tree_messages_follow_latest_branch_only():
     """Verify resumed transcripts do not flatten regenerated alternatives."""
     rows = ChatScreen._iter_console_tree_messages(

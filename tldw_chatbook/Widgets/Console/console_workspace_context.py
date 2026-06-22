@@ -93,8 +93,13 @@ class ConsoleWorkspaceContextTray(Vertical):
         """Return a scannable label/value pair from legacy status copy."""
         raw = str(text or "").strip()
         label, separator, value = raw.partition(":")
-        if separator and label.strip() and value.strip():
-            return label.strip(), value.strip()
+        if separator:
+            clean_label = label.strip()
+            clean_value = value.strip()
+            if clean_label and clean_value:
+                return clean_label, clean_value
+            if clean_label:
+                return clean_label, "unavailable"
         return fallback_label, raw or "unavailable"
 
     def _status_pair(
