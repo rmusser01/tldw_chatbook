@@ -1208,6 +1208,21 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     text-style: bold;
 }
 
+.console-workspace-status-pair {
+    height: auto;
+    min-height: 1;
+    margin: 0;
+}
+
+.console-workspace-status-label {
+    color: $ds-text-muted;
+    text-style: bold;
+}
+
+.console-workspace-status-value {
+    color: $ds-text-primary;
+}
+
 .console-workspace-action {
     height: 1;
     min-height: 1;

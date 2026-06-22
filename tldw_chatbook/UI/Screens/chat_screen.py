@@ -1943,6 +1943,27 @@ class ChatScreen(BaseAppScreen):
             approval_count=self._console_pending_approval_count(),
             can_save_chatbook=can_save_chatbook,
         )
+        setup_blocker_copy = self._console_provider_blocker_copy()
+        if setup_blocker_copy:
+            action_label, _action_target, _action_tooltip = self._console_provider_recovery_action()
+            setup_rows = (
+                ConsoleDisplayRow("Setup", "Provider configuration required", status="blocked"),
+                ConsoleDisplayRow(
+                    "Send blocked",
+                    "finish setup before sending",
+                    status="blocked",
+                    recovery=setup_blocker_copy,
+                ),
+                ConsoleDisplayRow(
+                    "Recovery action",
+                    action_label or "Open Settings",
+                    status="blocked",
+                ),
+            )
+            inspector_state = replace(
+                inspector_state,
+                rows=setup_rows + inspector_state.rows,
+            )
         selected_rows = self._selected_console_message_inspector_rows()
         conversation_rows = self._selected_console_conversation_inspector_rows()
         if conversation_rows:
@@ -2135,10 +2156,15 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     def _console_empty_transcript_copy(blocker_copy: str) -> str:
         """Return compact empty transcript copy while setup details live nearby."""
-        blocker = blocker_copy.strip().lower()
+        blocker = blocker_copy.strip()
         if not blocker:
             return ""
-        return "No messages yet."
+        return (
+            "Start here\n"
+            f"1. Finish provider setup: {blocker}\n"
+            "2. Attach Library, runs, Artifacts, or RAG\n"
+            "3. Type a message or command in Composer"
+        )
 
     def _console_setup_blocked_reason(self) -> str:
         """Return setup-specific send blocker copy for the native composer."""
@@ -2193,20 +2219,19 @@ class ChatScreen(BaseAppScreen):
 
     def _console_provider_recovery_strip_visible(self, blocker_copy: str) -> bool:
         """Return whether provider recovery needs a persistent transcript row."""
-        if not blocker_copy:
-            return False
-        action_label, _action_target, _action_tooltip = self._console_provider_recovery_action()
-        return action_label not in {"Choose provider", "Choose model"}
+        return bool(blocker_copy.strip())
 
     @staticmethod
     def _console_provider_blocker_display_copy(copy: str, action_label: str) -> str:
-        """Return visible recovery copy with an arrow for API-key setup actions."""
+        """Return one coherent setup callout with problem, impact, and action."""
         copy = copy.strip()
         if not copy:
             return ""
-        if action_label == CONSOLE_PROVIDER_ADD_API_KEY_LABEL:
-            return f"{copy}{CONSOLE_PROVIDER_ACTION_ARROW}"
-        return copy
+        return (
+            f"{copy}\n"
+            "Impact: Send is blocked until setup is finished.\n"
+            f"Action: {action_label or 'Open Settings'}"
+        )
 
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
@@ -2341,18 +2366,20 @@ class ChatScreen(BaseAppScreen):
         action_label: str,
     ) -> None:
         """Show provider recovery as one compact warning/action row."""
-        strip.styles.height = "auto" if visible else 0
-        strip.styles.min_height = 1 if visible else 0
-        strip.styles.display = "block" if visible else "none"
-        blocker.update(
+        display_copy = (
             ChatScreen._console_provider_blocker_display_copy(copy, action_label)
             if visible
             else ""
         )
+        row_count = display_copy.count("\n") + 1 if display_copy else 0
+        strip.styles.height = "auto" if visible else 0
+        strip.styles.min_height = row_count if visible else 0
+        strip.styles.display = "block" if visible else "none"
+        blocker.update(display_copy)
         blocker.styles.display = "block" if visible else "none"
         blocker.styles.width = "1fr"
         blocker.styles.height = "auto" if visible else 0
-        blocker.styles.min_height = 1 if visible else 0
+        blocker.styles.min_height = row_count if visible else 0
         blocker.styles.margin = 0
 
     @staticmethod

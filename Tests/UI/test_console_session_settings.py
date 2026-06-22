@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -166,6 +167,27 @@ async def _wait_for_console_settings_modal(host: ConsoleHarness, pilot):
             return host.screen_stack[-1]
         await pilot.pause(0.05)
     raise AssertionError("Console settings modal did not open")
+
+
+async def _visible_console_settings_button(console: ChatScreen, pilot) -> Button:
+    """Open the inspector rail and return the actionable settings summary button."""
+    rail_state = replace(
+        console._current_console_rail_state(),
+        right_open=True,
+    )
+    console._sync_console_rail_visibility(rail_state)
+    assert rail_state.right_open is True
+    await _wait_for_selector(console, pilot, "#console-settings-open")
+    for _ in range(40):
+        button = console.query_one("#console-settings-open", Button)
+        if button.display and button.region.width > 0 and button.region.height > 0:
+            return button
+        await pilot.pause(0.05)
+    button = console.query_one("#console-settings-open", Button)
+    raise AssertionError(
+        "Console settings button is not visible/actionable: "
+        f"display={button.display!r} region={button.region!r}"
+    )
 
 
 async def _wait_for_console_top_screen(host: ConsoleHarness, console, pilot) -> None:
@@ -2341,8 +2363,8 @@ async def test_console_settings_modal_can_select_runtime_discovered_model_with_w
 
     async with host.run_test(size=(180, 60)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-settings-open")
-        await pilot.click("#console-settings-open")
+        settings_button = await _visible_console_settings_button(console, pilot)
+        settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
 
         model_select = modal_screen.query_one("#console-settings-model-select", Select)
@@ -2352,6 +2374,7 @@ async def test_console_settings_modal_can_select_runtime_discovered_model_with_w
         await pilot.pause()
         await pilot.click("#console-settings-save")
         await _wait_for_console_top_screen(host, console, pilot)
+        await _visible_console_settings_button(console, pilot)
         for _ in range(40):
             summary_text = _summary_text(console)
             if "Model: gpt-5 (Capabilities unknown)" in summary_text:
@@ -2621,7 +2644,7 @@ async def test_console_settings_modal_restores_freeform_model_after_provider_rou
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_prioritizes_workspace_context_before_settings() -> None:
+async def test_console_left_rail_orders_staged_context_before_workspace_context() -> None:
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2633,12 +2656,14 @@ async def test_console_left_rail_prioritizes_workspace_context_before_settings()
         settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
 
-        assert staged_context.region.y < workspace_context.region.y < settings.region.y
-        assert settings.region.width == staged_context.region.width
+        assert staged_context.region.y < workspace_context.region.y
+        assert settings.parent.id == "console-run-inspector"
+        assert staged_context.parent.id == "console-left-rail-body"
+        assert workspace_context.parent.id == "console-left-rail-body"
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_body_scrolls_below_fixed_header() -> None:
+async def test_console_left_rail_body_scrolls_below_fixed_header_without_settings_summary() -> None:
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2655,12 +2680,12 @@ async def test_console_left_rail_body_scrolls_below_fixed_header() -> None:
 
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
-        assert settings.parent is body
+        assert settings.parent.id == "console-run-inspector"
         assert workspace_context.parent is body
-        assert staged_context.region.width == settings.region.width
-        assert settings.region.width == workspace_context.region.width
-        assert settings.region.width <= body.region.width
-        assert body.region.width - settings.region.width <= 2
+        assert staged_context.parent is body
+        assert staged_context.region.width == workspace_context.region.width
+        assert workspace_context.region.width <= body.region.width
+        assert body.region.width - workspace_context.region.width <= 2
 
 
 @pytest.mark.asyncio
@@ -2689,11 +2714,13 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(console, pilot, "#console-settings-summary")
 
-        console.query_one("#console-settings-open", Button).press()
+        settings_button = await _visible_console_settings_button(console, pilot)
+        settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
         modal_screen.dismiss(ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
         await _wait_for_console_top_screen(host, console, pilot)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
+        await _visible_console_settings_button(console, pilot)
 
         summary_text = _summary_text(console)
         assert "Provider: openai" in summary_text
@@ -2703,6 +2730,7 @@ async def test_console_settings_modal_save_updates_active_summary_only() -> None
 
         await _click_console_session_tab(console, store, pilot, first.id)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
+        await _visible_console_settings_button(console, pilot)
 
         summary_text = _summary_text(console)
         assert "Provider: llama_cpp" in summary_text
@@ -2733,7 +2761,8 @@ async def test_console_settings_are_isolated_between_native_tabs() -> None:
         second_id = await _press_new_console_tab(console, store, pilot)
         store.replace_session_settings(second_id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
         await console._sync_native_console_chat_ui()
-        console.query_one("#console-settings-open", Button).press()
+        settings_button = await _visible_console_settings_button(console, pilot)
+        settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
         modal_screen.dismiss(ConsoleSessionSettings(provider="openai", model="gpt-4.1"))
         await _wait_for_console_top_screen(host, console, pilot)
@@ -2875,9 +2904,11 @@ async def test_console_settings_modal_cancel_keeps_original_summary() -> None:
         session = store.ensure_session()
         store.replace_session_settings(session.id, ConsoleSessionSettings(provider="llama_cpp", model="model-a"))
         await console._sync_native_console_chat_ui()
+        await _visible_console_settings_button(console, pilot)
         original_summary = _summary_text(console)
 
-        console.query_one("#console-settings-open", Button).press()
+        settings_button = await _visible_console_settings_button(console, pilot)
+        settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
         modal_screen.dismiss(None)
         await _wait_for_console_top_screen(host, console, pilot)
@@ -2907,7 +2938,8 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         controller = console._ensure_console_chat_controller()
         controller.run_state = ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
 
-        console.query_one("#console-settings-open", Button).press()
+        settings_button = await _visible_console_settings_button(console, pilot)
+        settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
 
         assert modal_screen.query_one("#console-settings-save", Button).disabled is True
@@ -2949,7 +2981,8 @@ async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
         console._sync_console_mode_bar()
         assert stale_copy in str(console.query_one("#console-mode-bar", Static).renderable)
 
-        console.query_one("#console-settings-open", Button).press()
+        settings_button = await _visible_console_settings_button(console, pilot)
+        settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
         modal_screen.dismiss(
             ConsoleSessionSettings(
@@ -3010,14 +3043,14 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-settings-open")
+        await _visible_console_settings_button(console, pilot)
         await _wait_for_selector(console, pilot, "#console-open-provider-settings")
 
         recovery_button = console.query_one("#console-open-provider-settings", Button)
         assert str(recovery_button.label) == "Choose model"
-        assert recovery_button.display is False
+        assert recovery_button.display is True
 
-        console.query_one("#console-settings-open", Button).press()
+        recovery_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
         await _wait_for_focused_id(host, pilot, "console-settings-model-select")
 
@@ -3031,6 +3064,7 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
         await pilot.click("#console-settings-save")
         await _wait_for_console_top_screen(host, console, pilot)
         await _wait_for_selector(console, pilot, "#console-settings-summary")
+        await _visible_console_settings_button(console, pilot)
 
         text = _screen_visible_text(console)
         assert "Model: model-a" in _summary_text(console)

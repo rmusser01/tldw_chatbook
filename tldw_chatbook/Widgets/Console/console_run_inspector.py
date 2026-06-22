@@ -20,6 +20,9 @@ from tldw_chatbook.Chat.console_display_state import (
 
 _ROW_IDS = {
     "Live work": "console-inspector-live-work",
+    "Setup": "console-inspector-setup",
+    "Send blocked": "console-inspector-send-blocked",
+    "Recovery action": "console-inspector-recovery-action",
     "Provider": "console-inspector-provider",
     "Tools": "console-inspector-tools",
     "RAG/source": "console-inspector-rag-source",
@@ -64,7 +67,7 @@ _ROW_GROUPS = (
     (
         "Run State",
         "console-inspector-run-state-heading",
-        ("Live work", "Provider"),
+        ("Live work", "Setup", "Send blocked", "Recovery action", "Provider"),
     ),
     (
         "Source Readiness",

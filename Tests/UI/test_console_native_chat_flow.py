@@ -1,5 +1,6 @@
 import asyncio
 import re
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -35,6 +36,12 @@ from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryServ
 
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
+
+
+def _configure_openai_missing_api_key(app) -> None:
+    """Keep setup-state tests on the API-key recovery path."""
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4o"}
+    app.app_config["api_settings"] = {"openai": {"api_key": ""}}
 
 
 def test_console_workspace_conversation_visible_title_is_rail_safe():
@@ -307,6 +314,46 @@ async def _wait_for_active_session(
     raise AssertionError(
         "Console active session did not match expected session. "
         f"expected={expected_session_id!r}; active={store.active_session_id!r}"
+    )
+
+
+async def _open_console_inspector_rail(console: ChatScreen, pilot) -> None:
+    """Open the right rail before asserting inspector-visible content."""
+    rail_state = replace(
+        console._current_console_rail_state(),
+        right_open=True,
+    )
+    console._sync_console_rail_visibility(rail_state)
+    await _wait_for_selector(console, pilot, "#console-run-inspector-state")
+    for _ in range(40):
+        inspector = console.query_one("#console-run-inspector-state")
+        if inspector.display and inspector.region.width > 0 and inspector.region.height > 0:
+            return
+        await pilot.pause(0.05)
+    inspector = console.query_one("#console-run-inspector-state")
+    raise AssertionError(
+        "Console run inspector is not visible/actionable: "
+        f"display={inspector.display!r} region={inspector.region!r}"
+    )
+
+
+async def _open_console_context_rail(console: ChatScreen, pilot) -> None:
+    """Open the left rail before asserting context-visible content."""
+    rail_state = replace(
+        console._current_console_rail_state(),
+        left_open=True,
+    )
+    console._sync_console_rail_visibility(rail_state)
+    await _wait_for_selector(console, pilot, "#console-workspace-authority-label")
+    for _ in range(40):
+        label = console.query_one("#console-workspace-authority-label")
+        if label.display and label.region.width > 0 and label.region.height > 0:
+            return
+        await pilot.pause(0.05)
+    label = console.query_one("#console-workspace-authority-label")
+    raise AssertionError(
+        "Console workspace authority row is not visible/actionable: "
+        f"display={label.display!r} region={label.region!r}"
     )
 
 
@@ -1712,6 +1759,106 @@ async def test_console_inspector_hides_selected_message_group_without_selection(
 
 
 @pytest.mark.asyncio
+async def test_console_setup_required_state_groups_recovery_and_action_copy():
+    app = _build_test_app()
+    _configure_openai_missing_api_key(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 54)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-provider-recovery-strip")
+
+        recovery = console.query_one("#console-provider-recovery-strip")
+        recovery_text = _visible_text(recovery)
+        assert "Provider setup needed" in recovery_text
+        assert "Impact: Send is blocked until setup is finished." in recovery_text
+        assert "Action: Add API Key" in recovery_text
+        assert recovery.region.y < console.query_one("#console-native-transcript").region.y
+
+
+@pytest.mark.asyncio
+async def test_console_empty_transcript_teaches_setup_and_start_paths():
+    app = _build_test_app()
+    _configure_openai_missing_api_key(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 54)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        empty_text = _visible_text(transcript)
+        assert "Start here" in empty_text
+        assert "1. Finish provider setup" in empty_text
+        assert "2. Attach Library, runs, Artifacts, or RAG" in empty_text
+        assert "3. Type a message or command in Composer" in empty_text
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_authority_rows_are_structured_for_scanning():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 54)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_context_rail(console, pilot)
+
+        assert _static_plain_text(
+            console.query_one("#console-workspace-authority-label", Static)
+        ) == "Authority"
+        assert "local-only" in _static_plain_text(
+            console.query_one("#console-workspace-authority-value", Static)
+        )
+        assert _static_plain_text(
+            console.query_one("#console-workspace-runtime-label", Static)
+        ) == "Runtime"
+        assert "file tools disabled" in _static_plain_text(
+            console.query_one("#console-workspace-runtime-value", Static)
+        )
+        assert _static_plain_text(
+            console.query_one("#console-workspace-handoff-label", Static)
+        ) == "Handoff"
+        assert "unavailable" in _static_plain_text(
+            console.query_one("#console-workspace-handoff-value", Static)
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_inspector_setup_state_explains_blocked_send_without_selection():
+    app = _build_test_app()
+    _configure_openai_missing_api_key(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 54)) as pilot:
+        console = host.screen_stack[-1]
+        await _open_console_inspector_rail(console, pilot)
+
+        inspector_text = _visible_text(console.query_one("#console-run-inspector-state"))
+        assert "Setup" in inspector_text
+        assert "Send blocked" in inspector_text
+        assert "Add API Key" in inspector_text
+        assert "Selected Message" not in inspector_text
+
+
+@pytest.mark.asyncio
+async def test_console_composer_setup_placeholder_names_recovery_action():
+    app = _build_test_app()
+    _configure_openai_missing_api_key(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 54)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer_text = _visible_text(composer)
+        assert "Setup required: Add API Key before sending." in composer_text
+        assert console.query_one("#console-send-message", Button).tooltip == (
+            "Add API Key in Settings before sending."
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_selected_message_updates_inspector_action_guidance():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -2328,7 +2475,7 @@ async def test_console_native_tab_switch_restores_transcript_messages():
         await pilot.click("#console-new-chat-tab")
         second = await _wait_for_active_session_change(store, pilot, previous)
         await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
-        await _wait_for_text(console, pilot, "No messages yet.")
+        await _wait_for_text(console, pilot, "Start here")
         assert "first tab assistant reply" not in _visible_text(console)
 
         await pilot.click(f"#console-session-tab-{first.id}")
@@ -2373,7 +2520,7 @@ async def test_console_workspace_conversation_switch_restores_transcript_message
             "Chat 2",
             selected=True,
         )
-        await _wait_for_text(console, pilot, "No messages yet.")
+        await _wait_for_text(console, pilot, "Start here")
         assert "workspace row assistant reply" not in _visible_text(console)
 
         await _click_console_workspace_conversation_for_session(
