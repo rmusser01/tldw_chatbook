@@ -30,7 +30,14 @@ _MAX_CONVERSATION_ROW_TITLE = 20
 
 
 class ConsoleWorkspaceStatusPair(Horizontal):
-    """A structured label/value row for workspace authority metadata."""
+    """Render workspace authority metadata as a structured status row.
+
+    Attributes:
+        label: User-facing row label.
+        value: User-facing row value.
+        label_id: Textual widget id for the label cell.
+        value_id: Textual widget id for the value cell.
+    """
 
     def __init__(
         self,
@@ -41,6 +48,15 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         value_id: str,
         **kwargs: Any,
     ) -> None:
+        """Initialize the label/value status row.
+
+        Args:
+            label: User-facing row label.
+            value: User-facing row value.
+            label_id: Textual widget id for the label cell.
+            value_id: Textual widget id for the value cell.
+            **kwargs: Additional keyword arguments passed to ``Horizontal``.
+        """
         super().__init__(classes="console-workspace-status-pair", **kwargs)
         self.label = label
         self.value = value
@@ -50,7 +66,11 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         self.styles.min_height = 1
 
     def compose(self) -> ComposeResult:
-        """Render the pair as queryable Textual widgets."""
+        """Render the row as queryable Textual widgets.
+
+        Returns:
+            ComposeResult containing the label and value widgets.
+        """
         label_widget = Static(
             self.label,
             id=self.label_id,
