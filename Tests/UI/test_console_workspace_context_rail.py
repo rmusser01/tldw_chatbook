@@ -36,6 +36,23 @@ def _visible_text(screen) -> str:
     return " ".join(visible_chunks)
 
 
+def _static_plain(screen, selector: str) -> str:
+    widget = screen.query_one(selector, Static)
+    return getattr(widget.render(), "plain", str(widget.render()))
+
+
+def _assert_status_row(
+    screen,
+    *,
+    label_selector: str,
+    value_selector: str,
+    label: str,
+    value_contains: str,
+) -> None:
+    assert _static_plain(screen, label_selector) == label
+    assert value_contains in _static_plain(screen, value_selector)
+
+
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
     for _ in range(40):
         if (
@@ -119,8 +136,20 @@ async def test_console_workspace_context_exposes_new_conversation_for_default_wo
 
         text = _visible_text(console)
         assert "New conversation" in text
-        assert "File tools: Off in Default workspace" in text
-        assert "Server handoff: Not configured" in text
+        _assert_status_row(
+            console,
+            label_selector="#console-workspace-runtime-label",
+            value_selector="#console-workspace-runtime-value",
+            label="File tools",
+            value_contains="Off in Default workspace",
+        )
+        _assert_status_row(
+            console,
+            label_selector="#console-workspace-server-readiness-label",
+            value_selector="#console-workspace-server-readiness-value",
+            label="Server handoff",
+            value_contains="Not configured",
+        )
         assert "local registry" not in text.lower()
         assert "authoritative" not in text.lower()
         assert "Workspace conversation creation lands in a later slice" not in text
@@ -172,7 +201,13 @@ async def test_console_workspace_context_renders_active_workspace() -> None:
 
         text = _visible_text(console)
         assert "Research Sprint" in text
-        assert "Sync: dry-run only" in text
+        _assert_status_row(
+            console,
+            label_selector="#console-workspace-sync-label",
+            value_selector="#console-workspace-sync-value",
+            label="Sync",
+            value_contains="dry-run only",
+        )
         assert "Planning thread" in text
         assert len(console.query("#console-new-workspace-conversation")) == 1
         assert "Workspace conversation creation lands in a later slice." not in text
@@ -259,13 +294,31 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
         text = _visible_text(console)
-        assert "Server handoff: Unavailable" in text
+        _assert_status_row(
+            console,
+            label_selector="#console-workspace-server-readiness-label",
+            value_selector="#console-workspace-server-readiness-value",
+            label="Server handoff",
+            value_contains="Unavailable",
+        )
         assert "Chats stay local" in text
-        assert "File tools: 0 ready, 1 missing" in text
+        _assert_status_row(
+            console,
+            label_selector="#console-workspace-runtime-label",
+            value_selector="#console-workspace-runtime-value",
+            label="File tools",
+            value_contains="0 ready, 1 missing",
+        )
         assert "Handoff" in text
         assert "Source note - copy" in text
         assert "Conversation package - metadata-only" in text
-        assert "ACP handoff: Not configured" in text
+        _assert_status_row(
+            console,
+            label_selector="#console-workspace-handoff-label",
+            value_selector="#console-workspace-handoff-value",
+            label="Handoff",
+            value_contains="ACP handoff: Not configured",
+        )
         assert "Audit: visible only; no package was sent." in text
 
 

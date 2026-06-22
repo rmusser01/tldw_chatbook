@@ -2168,10 +2168,10 @@ class ChatScreen(BaseAppScreen):
         blocker = blocker_copy.strip()
         if blocker:
             return (
-            "Start here\n"
-            f"1. Finish provider setup: {blocker}\n"
-            "2. Attach Library, runs, Artifacts, or RAG\n"
-            "3. Type a message or command in Composer"
+                "Start here\n"
+                "1. Finish provider setup using the recovery action above\n"
+                "2. Attach Library, runs, Artifacts, or RAG\n"
+                "3. Type a message or command in Composer"
             )
         if guidance_visible:
             return CONSOLE_READY_EMPTY_TRANSCRIPT_COPY
