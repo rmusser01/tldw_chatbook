@@ -2,6 +2,9 @@
 id: TASK-132
 title: Console UAT final integration replay
 status: To Do
+assignee: []
+created_date: '2026-06-21 21:36'
+updated_date: '2026-06-21 21:36'
 labels:
 - console
 - uat
