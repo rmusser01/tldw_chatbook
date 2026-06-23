@@ -569,7 +569,11 @@ class ConsoleComposerBar(Horizontal):
         self._sync_current_action_state()
 
     def select_all_draft(self) -> bool:
-        """Mark the full visible Console draft as selected without mutating it."""
+        """Mark the full visible Console draft as selected without mutating it.
+
+        Returns:
+            True when there is draft text to select, otherwise False.
+        """
         if not self.draft_text():
             self._draft_selection_all = False
             self._refresh_visible_draft()
@@ -583,7 +587,11 @@ class ConsoleComposerBar(Horizontal):
         return True
 
     def has_full_draft_selection(self) -> bool:
-        """Return whether the composer currently has a full-draft selection."""
+        """Return whether the composer currently has a full-draft selection.
+
+        Returns:
+            True when the visible draft exists and is fully selected.
+        """
         return self._draft_selection_all and bool(self.draft_text())
 
     def insert_text(self, text: str) -> None:

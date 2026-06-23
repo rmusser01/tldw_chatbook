@@ -93,6 +93,38 @@ def test_console_workspace_runtime_label_is_case_insensitive() -> None:
     )
 
 
+def test_console_workspace_authority_label_preserves_non_local_state() -> None:
+    assert (
+        ConsoleWorkspaceContextTray._friendly_status_label("Authority: runtime-missing")
+        == "Storage: runtime missing"
+    )
+    assert (
+        ConsoleWorkspaceContextTray._friendly_status_label("Authority: server-backed")
+        == "Storage: server backed"
+    )
+
+
+def test_console_workspace_readiness_detail_preserves_error_copy() -> None:
+    assert (
+        ConsoleWorkspaceContextTray._friendly_detail_copy(
+            "Workspace registry service is not ready. No background sync is running."
+        )
+        == "Workspace registry service is not ready. No background sync is running."
+    )
+    assert (
+        ConsoleWorkspaceContextTray._friendly_detail_copy(
+            "Workspace registry could not be read. No background sync is running."
+        )
+        == "Workspace registry could not be read. No background sync is running."
+    )
+    assert (
+        ConsoleWorkspaceContextTray._friendly_detail_copy(
+            "Local registry fallback is active. No background sync is running."
+        )
+        == "Chats stay local. Connect a server later for explicit handoff."
+    )
+
+
 @pytest.mark.asyncio
 async def test_console_left_rail_splits_staged_context_from_workspace_context() -> None:
     app = _build_test_app()
@@ -313,7 +345,7 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
             label="Server handoff",
             value_contains="Unavailable",
         )
-        assert "Chats stay local" in text
+        assert "No tldw_server workspace API configured." in text
         _assert_status_row(
             console,
             label_selector="#console-workspace-runtime-label",

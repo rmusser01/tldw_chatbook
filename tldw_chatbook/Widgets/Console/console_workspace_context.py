@@ -26,6 +26,17 @@ _STATUS_DETAIL_LABELS = {
     "active": "active session",
     "open": "open session",
 }
+_AUTHORITY_LABELS = {
+    "local registry ready": "local",
+    "local-only": "local",
+    "server-backed": "server backed",
+    "syncing-to-server": "syncing to server",
+    "syncing-from-server": "syncing from server",
+    "conflict": "conflict",
+    "detached": "detached",
+    "remote-only": "remote only",
+    "runtime-missing": "runtime missing",
+}
 _MAX_CONVERSATION_ROW_TITLE = 20
 
 
@@ -350,7 +361,9 @@ class ConsoleWorkspaceContextTray(Vertical):
         if normalized.startswith("authority: unavailable"):
             return "Storage: Unavailable"
         if normalized.startswith("authority:"):
-            return "Storage: local"
+            authority = normalized.partition(":")[2].strip()
+            readable = _AUTHORITY_LABELS.get(authority, authority.replace("-", " "))
+            return f"Storage: {readable or 'unavailable'}"
         if normalized == "sync: not configured":
             return "Sync: Off"
         if normalized.startswith("runtime: none, file tools disabled"):
@@ -383,8 +396,8 @@ class ConsoleWorkspaceContextTray(Vertical):
         raw = str(copy or "").strip()
         normalized = raw.lower()
         if (
-            "local registry" in normalized
-            or "no background sync" in normalized
+            "local registry fallback is active" in normalized
+            or "local registry is authoritative" in normalized
         ):
             return "Chats stay local. Connect a server later for explicit handoff."
         if "acp task/run package handoff is not wired" in normalized:
