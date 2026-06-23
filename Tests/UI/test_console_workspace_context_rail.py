@@ -11,7 +11,10 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_models import ChatSessionData
-from tldw_chatbook.Widgets.Console import ConsoleWorkspaceSwitcherModal
+from tldw_chatbook.Widgets.Console import (
+    ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceSwitcherModal,
+)
 from tldw_chatbook.Workspaces import (
     ConsoleWorkspaceACPHandoffState,
     DEFAULT_WORKSPACE_ID,
@@ -79,6 +82,15 @@ def test_console_workspace_switcher_modal_documents_constructor_contract() -> No
 
     assert docstring is not None
     assert "Args:" in docstring
+
+
+def test_console_workspace_runtime_label_is_case_insensitive() -> None:
+    assert (
+        ConsoleWorkspaceContextTray._friendly_status_label(
+            "Runtime: 2 bindings, 1 Ready, 1 Missing"
+        )
+        == "File tools: 1 ready, 1 missing"
+    )
 
 
 @pytest.mark.asyncio

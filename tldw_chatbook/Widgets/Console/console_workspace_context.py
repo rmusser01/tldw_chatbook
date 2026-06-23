@@ -358,7 +358,7 @@ class ConsoleWorkspaceContextTray(Vertical):
         if normalized.startswith("runtime: none"):
             return "File tools: Off"
         if normalized.startswith("runtime:"):
-            readiness = re.search(r"(\d+) ready(?:,\s+(\d+) missing)?", raw)
+            readiness = re.search(r"(\d+) ready(?:,\s+(\d+) missing)?", normalized)
             if readiness:
                 label = f"File tools: {readiness.group(1)} ready"
                 if readiness.group(2):

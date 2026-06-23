@@ -826,7 +826,7 @@ class ConsoleComposerBar(Horizontal):
             padding_left=padding_left,
         )
         if segment is None:
-            changed = self._reset_pending_unfurl_state()
+            changed = bool(self._reset_pending_unfurl_state())
             if changed:
                 self._refresh_visible_draft()
             return changed
