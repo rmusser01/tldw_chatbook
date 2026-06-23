@@ -1171,7 +1171,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 }
 
 .console-transcript-action-guide {
-    height: 1;
+    height: auto;
     min-height: 1;
     margin: 0 0 1 0;
     padding: 0 1;

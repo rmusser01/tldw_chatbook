@@ -216,6 +216,11 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    min-height: 8;"
         ) in css
         assert (
+            ".console-transcript-action-guide {\n"
+            "    height: auto;\n"
+            "    min-height: 1;"
+        ) in css
+        assert (
             "#console-left-rail-body {\n"
             "    width: 100%;\n"
             "    min-width: 0;\n"
