@@ -1818,20 +1818,20 @@ async def test_console_workspace_authority_rows_are_structured_for_scanning():
 
         assert _static_plain_text(
             console.query_one("#console-workspace-authority-label", Static)
-        ) == "Authority"
-        assert "local-only" in _static_plain_text(
+        ) == "Storage"
+        assert "local" in _static_plain_text(
             console.query_one("#console-workspace-authority-value", Static)
         )
         assert _static_plain_text(
             console.query_one("#console-workspace-runtime-label", Static)
-        ) == "Runtime"
-        assert "file tools disabled" in _static_plain_text(
+        ) == "File tools"
+        assert "Off in Default workspace" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
         assert _static_plain_text(
             console.query_one("#console-workspace-handoff-label", Static)
         ) == "Handoff"
-        assert "unavailable" in _static_plain_text(
+        assert "Not configured" in _static_plain_text(
             console.query_one("#console-workspace-handoff-value", Static)
         )
 
@@ -2607,39 +2607,6 @@ async def test_console_workspace_conversation_list_reserves_two_line_rows_with_m
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_rail_new_conversation_creates_default_workspace_session():
-    app = _build_test_app()
-    service = app.workspace_registry_service
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-transcript")
-        await _wait_for_selector(console, pilot, "#console-new-workspace-conversation")
-        store = console._ensure_console_chat_store()
-        first = store.ensure_session(title="Chat 1")
-        await console._sync_native_console_chat_ui()
-
-        console.query_one("#console-new-workspace-conversation", Button).press()
-        await pilot.pause()
-
-        active_session = store.switch_session(store.active_session_id)
-        assert active_session.id != first.id
-        assert active_session.workspace_id == service.get_active_workspace().workspace_id
-        row_texts = await _wait_for_workspace_conversation_text(
-            console,
-            pilot,
-            active_session.title,
-            selected=True,
-        )
-        assert any("Chat 2" in text for text in row_texts)
-        assert all(
-            "Workspace conversation creation lands in a later slice" not in text
-            for text in row_texts
-        )
-
-
-@pytest.mark.asyncio
 async def test_console_new_chat_tab_promotes_active_native_session_in_workspace_rail():
     app = _build_test_app()
     service = app.workspace_registry_service
@@ -2707,7 +2674,20 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
             selected=True,
         )
         assert any(text.startswith("> ") and "Chat 2" in text for text in row_texts)
-        assert "file tools disabled" in _visible_text(console)
+        assert _static_plain_text(
+            console.query_one("#console-workspace-runtime-label", Static)
+        ) == "File tools"
+        assert "Off in Default workspace" in _static_plain_text(
+            console.query_one("#console-workspace-runtime-value", Static)
+        )
+        assert _static_plain_text(
+            console.query_one("#console-workspace-server-readiness-label", Static)
+        ) == "Server handoff"
+        assert "Not configured" in _static_plain_text(
+            console.query_one("#console-workspace-server-readiness-value", Static)
+        )
+        visible_text = _visible_text(console)
+        assert "Workspace conversation creation lands in a later slice" not in visible_text
 
 
 @pytest.mark.asyncio

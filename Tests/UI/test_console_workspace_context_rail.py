@@ -11,7 +11,10 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.Chat.chat_models import ChatSessionData
-from tldw_chatbook.Widgets.Console import ConsoleWorkspaceSwitcherModal
+from tldw_chatbook.Widgets.Console import (
+    ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceSwitcherModal,
+)
 from tldw_chatbook.Workspaces import (
     ConsoleWorkspaceACPHandoffState,
     DEFAULT_WORKSPACE_ID,
@@ -34,6 +37,23 @@ def _visible_text(screen) -> str:
         if button.display:
             visible_chunks.append(str(button.label))
     return " ".join(visible_chunks)
+
+
+def _static_plain(screen, selector: str) -> str:
+    widget = screen.query_one(selector, Static)
+    return getattr(widget.render(), "plain", str(widget.render()))
+
+
+def _assert_status_row(
+    screen,
+    *,
+    label_selector: str,
+    value_selector: str,
+    label: str,
+    value_contains: str,
+) -> None:
+    assert _static_plain(screen, label_selector) == label
+    assert value_contains in _static_plain(screen, value_selector)
 
 
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
@@ -62,6 +82,47 @@ def test_console_workspace_switcher_modal_documents_constructor_contract() -> No
 
     assert docstring is not None
     assert "Args:" in docstring
+
+
+def test_console_workspace_runtime_label_is_case_insensitive() -> None:
+    assert (
+        ConsoleWorkspaceContextTray._friendly_status_label(
+            "Runtime: 2 bindings, 1 Ready, 1 Missing"
+        )
+        == "File tools: 1 ready, 1 missing"
+    )
+
+
+def test_console_workspace_authority_label_preserves_non_local_state() -> None:
+    assert (
+        ConsoleWorkspaceContextTray._friendly_status_label("Authority: runtime-missing")
+        == "Storage: runtime missing"
+    )
+    assert (
+        ConsoleWorkspaceContextTray._friendly_status_label("Authority: server-backed")
+        == "Storage: server backed"
+    )
+
+
+def test_console_workspace_readiness_detail_preserves_error_copy() -> None:
+    assert (
+        ConsoleWorkspaceContextTray._friendly_detail_copy(
+            "Workspace registry service is not ready. No background sync is running."
+        )
+        == "Workspace registry service is not ready. No background sync is running."
+    )
+    assert (
+        ConsoleWorkspaceContextTray._friendly_detail_copy(
+            "Workspace registry could not be read. No background sync is running."
+        )
+        == "Workspace registry could not be read. No background sync is running."
+    )
+    assert (
+        ConsoleWorkspaceContextTray._friendly_detail_copy(
+            "Local registry fallback is active. No background sync is running."
+        )
+        == "Chats stay local. Connect a server later for explicit handoff."
+    )
 
 
 @pytest.mark.asyncio
@@ -119,7 +180,22 @@ async def test_console_workspace_context_exposes_new_conversation_for_default_wo
 
         text = _visible_text(console)
         assert "New conversation" in text
-        assert "Runtime: none, file tools disabled" in text
+        _assert_status_row(
+            console,
+            label_selector="#console-workspace-runtime-label",
+            value_selector="#console-workspace-runtime-value",
+            label="File tools",
+            value_contains="Off in Default workspace",
+        )
+        _assert_status_row(
+            console,
+            label_selector="#console-workspace-server-readiness-label",
+            value_selector="#console-workspace-server-readiness-value",
+            label="Server handoff",
+            value_contains="Not configured",
+        )
+        assert "local registry" not in text.lower()
+        assert "authoritative" not in text.lower()
         assert "Workspace conversation creation lands in a later slice" not in text
 
 
@@ -169,7 +245,13 @@ async def test_console_workspace_context_renders_active_workspace() -> None:
 
         text = _visible_text(console)
         assert "Research Sprint" in text
-        assert "Sync: dry-run only" in text
+        _assert_status_row(
+            console,
+            label_selector="#console-workspace-sync-label",
+            value_selector="#console-workspace-sync-value",
+            label="Sync",
+            value_contains="dry-run only",
+        )
         assert "Planning thread" in text
         assert len(console.query("#console-new-workspace-conversation")) == 1
         assert "Workspace conversation creation lands in a later slice." not in text
@@ -256,13 +338,31 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
         text = _visible_text(console)
-        assert "Server: unavailable" in text
-        assert "No background sync" in text
-        assert "Runtime: 1 binding, 0 ready, 1 missing" in text
-        assert "Handoff readiness" in text
+        _assert_status_row(
+            console,
+            label_selector="#console-workspace-server-readiness-label",
+            value_selector="#console-workspace-server-readiness-value",
+            label="Server handoff",
+            value_contains="Unavailable",
+        )
+        assert "No tldw_server workspace API configured." in text
+        _assert_status_row(
+            console,
+            label_selector="#console-workspace-runtime-label",
+            value_selector="#console-workspace-runtime-value",
+            label="File tools",
+            value_contains="0 ready, 1 missing",
+        )
+        assert "Handoff" in text
         assert "Source note - copy" in text
         assert "Conversation package - metadata-only" in text
-        assert "ACP task/run: unavailable" in text
+        _assert_status_row(
+            console,
+            label_selector="#console-workspace-handoff-label",
+            value_selector="#console-workspace-handoff-value",
+            label="Handoff",
+            value_contains="ACP handoff: Not configured",
+        )
         assert "Audit: visible only; no package was sent." in text
 
 

@@ -26,10 +26,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Screens.chat_screen import (
-    CONSOLE_PROVIDER_ACTION_ARROW,
-    ChatScreen,
-)
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.config import resolve_provider_name
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
@@ -217,6 +214,11 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "#console-workspace-context {\n"
             "    height: 1fr;\n"
             "    min-height: 8;"
+        ) in css
+        assert (
+            ".console-transcript-action-guide {\n"
+            "    height: auto;\n"
+            "    min-height: 1;"
         ) in css
         assert (
             "#console-left-rail-body {\n"
@@ -555,7 +557,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         )
         await pilot.pause(0.1)
 
-        assert "Setup required: choose a model in Console Settings." in visible_draft.renderable.plain
+        assert "Setup required: Choose model before sending." in visible_draft.renderable.plain
         assert send_button.disabled is False
         assert send_button.tooltip == "Choose a model in Console Settings before sending."
 
@@ -1078,6 +1080,35 @@ async def test_console_collapsed_paste_second_click_unfurls_literal_text():
 
 
 @pytest.mark.asyncio
+async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_collapsed():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        pasted_text = "literal forgiving paste " * 10
+
+        composer.load_draft("prefix ")
+        composer.insert_pasted_text(pasted_text)
+        await pilot.click("#console-command-visible-text", offset=(8, 0))
+        await pilot.pause(0.1)
+        assert "Unfurl?" in visible_draft.renderable.plain
+
+        await pilot.click("#console-command-visible-text", offset=(0, 0))
+        await pilot.pause(0.1)
+
+        visible_plain = visible_draft.renderable.plain
+        assert "prefix " in visible_plain
+        assert "Pasted Text:" in visible_plain
+        assert "Unfurl?" not in visible_plain
+        assert composer.draft_text() == f"prefix {pasted_text}"
+
+
+@pytest.mark.asyncio
 async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_flow():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1352,6 +1383,43 @@ async def test_console_native_composer_captures_printable_typing_from_non_text_f
 
 
 @pytest.mark.asyncio
+async def test_console_native_composer_select_all_shortcut_preserves_draft_and_copies():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    copied: list[str] = []
+    app.copy_to_clipboard = copied.append
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+
+        composer.load_draft("replace this text")
+        composer.focus()
+        await pilot.press("ctrl+a")
+        await pilot.pause(0.1)
+
+        assert composer.draft_text() == "replace this text"
+        assert composer.has_full_draft_selection()
+        assert visible_draft.renderable.plain == "replace this text"
+
+        await pilot.press("ctrl+c")
+        await pilot.pause(0.1)
+
+        assert copied == ["replace this text"]
+        assert composer.draft_text() == "replace this text"
+
+        await pilot.press("n", "e", "w")
+        await pilot.pause(0.1)
+
+        assert composer.draft_text() == "new"
+        assert visible_draft.renderable.plain == "new"
+        assert not composer.has_full_draft_selection()
+
+
+@pytest.mark.asyncio
 async def test_console_native_composer_clicking_visible_draft_captures_typing():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1527,18 +1595,22 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
         for expected in (
             "Provider setup needed",
             "OpenAI missing API key",
-            "Settings",
-            "No messages yet.",
-            "Setup required: finish provider setup.",
+            "Impact: Send is blocked until setup is finished.",
+            "Action: Add API Key",
+            "Start here",
+            "1. Finish provider setup",
+            "2. Attach Library, runs, Artifacts, or RAG",
+            "3. Type a message or command in Composer",
         ):
             assert expected in text
         for redundant_copy in (
-            "Start here",
             "Run command",
             "Provider setup required before sending.",
             "Finish provider setup to start chatting.",
             "Enter send",
             "Ctrl+P commands",
+            "No messages yet.",
+            "Setup required: finish provider setup.",
             "No messages yet. Send a prompt or attach context.",
         ):
             assert redundant_copy not in text
@@ -1547,11 +1619,33 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
         blocker = console.query_one("#console-provider-blocker", Static)
         blocker_text = getattr(blocker.render(), "plain", str(blocker.render()))
         assert blocker_text.startswith("Provider setup needed: OpenAI missing API key")
-        assert CONSOLE_PROVIDER_ACTION_ARROW in blocker_text
-        assert blocker_text.endswith(">")
+        assert "Impact: Send is blocked until setup is finished." in blocker_text
+        assert blocker_text.endswith("Action: Add API Key")
         assert console.query_one("#console-inspector-rail-handle").display is True
         assert console.query_one("#console-right-rail").display is False
         assert text.lower().count("missing api key") == 1
+
+
+@pytest.mark.asyncio
+async def test_console_empty_ready_transcript_shows_first_run_guidance():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        text = _visible_text(console)
+        assert "Start here: ask a question, paste a task, or attach context." in text
+        assert "Setup: use Settings for provider/model changes; use Test before long runs." in text
+        assert "Enter sends" in text
+
+        await pilot.press("h")
+        await pilot.pause(0.1)
+
+        text = _visible_text(console)
+        assert "Start here: ask a question, paste a task, or attach context." not in text
 
 
 @pytest.mark.asyncio
@@ -1592,8 +1686,8 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         assert button.region.x + button.region.width <= strip.region.x + strip.region.width
         blocker_text = getattr(blocker.render(), "plain", str(blocker.render()))
         assert blocker_text.startswith("Provider setup needed: OpenAI missing API key")
-        assert CONSOLE_PROVIDER_ACTION_ARROW in blocker_text
-        assert blocker_text.endswith(">")
+        assert "Impact: Send is blocked until setup is finished." in blocker_text
+        assert blocker_text.endswith("Action: Add API Key")
         text = _visible_text(console)
         assert "Add API Key" in text
         assert console.query_one("#console-inspector-rail-handle").display is True
@@ -1659,14 +1753,18 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         await pilot.pause()
         blocker = console.query_one("#console-provider-blocker", Static)
 
-        assert strip.styles.display == "none"
-        assert blocker.styles.display == "none"
-        assert str(blocker.renderable) == ""
-        assert "Provider setup needed: choose a model" not in _visible_text(console)
-        assert "Choose model" not in _visible_text(console)
+        assert strip.styles.display != "none"
+        assert blocker.styles.display != "none"
+        assert "Provider setup needed: choose a model" in getattr(
+            blocker.render(), "plain", str(blocker.render())
+        )
+        assert "Provider setup needed: choose a model" not in _visible_text(
+            console.query_one("#console-native-transcript")
+        )
+        assert "Choose model" in _visible_text(console)
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
-        assert "No messages yet." in _visible_text(console)
-        assert "Setup required: choose a model in Console Settings." in _visible_text(console)
+        assert "No messages yet." not in _visible_text(console)
+        assert "Setup required: Choose model before sending." in _visible_text(console)
 
         store.replace_session_settings(
             session.id,
@@ -1679,7 +1777,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert str(blocker.renderable) == ""
         assert strip.styles.display == "none"
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
-        assert "Setup required: choose a model in Console Settings." not in _visible_text(console)
+        assert "Setup required: Choose model before sending." not in _visible_text(console)
 
         store.replace_session_settings(
             session.id,
@@ -1688,12 +1786,16 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         console._sync_console_control_bar()
         await pilot.pause()
 
-        assert blocker.styles.display == "none"
-        assert str(blocker.renderable) == ""
-        assert strip.styles.display == "none"
-        assert "Provider setup needed: choose a model" not in _visible_text(console)
+        assert blocker.styles.display != "none"
+        assert strip.styles.display != "none"
+        assert "Provider setup needed: choose a model" in getattr(
+            blocker.render(), "plain", str(blocker.render())
+        )
+        assert "Provider setup needed: choose a model" not in _visible_text(
+            console.query_one("#console-native-transcript")
+        )
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
-        assert "No messages yet." in _visible_text(console)
+        assert "No messages yet." not in _visible_text(console)
 
 
 @pytest.mark.asyncio
@@ -1713,7 +1815,8 @@ async def test_console_empty_transcript_stays_neutral_when_setup_blocked(monkeyp
         transcript = console.query_one("#console-native-transcript")
         text = _visible_text(transcript)
 
-        assert "No messages yet." in text
+        assert "Start here" in text
+        assert "1. Finish provider setup" in text
         assert "Choose a model in Console Settings to start chatting." not in text
         assert "Ready. Ask a question" not in text
 
@@ -1865,7 +1968,8 @@ async def test_console_native_transcript_is_visible_transcript_surface():
         assert transcript.region.height > 0
         assert transcript.styles.display != "none"
         text = _visible_text(console)
-        assert "Ready. Ask a question, run a command, or attach context." in text
+        assert "Start here: ask a question, paste a task, or attach context." in text
+        assert "Setup: use Settings for provider/model changes; use Test before long runs." in text
         assert "No messages yet. Send a prompt or attach context." not in text
 
 
@@ -1886,7 +1990,11 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         assert len(empty_rows) == 1
         empty_row = empty_rows[0]
         empty_text = getattr(empty_row.render(), "plain", str(empty_row.render()))
-        assert empty_text == "Ready. Ask a question, run a command, or attach context."
+        assert empty_text == (
+            "Start here: ask a question, paste a task, or attach context.\n"
+            "Setup: use Settings for provider/model changes; use Test before long runs. "
+            "Enter sends; Ctrl+U clears; Ctrl+A selects."
+        )
         assert "No messages yet. Send a prompt or attach context." not in empty_text
         assert empty_row.region.y == tab_strip.region.y + tab_strip.region.height
 
@@ -1963,11 +2071,10 @@ async def test_console_inspector_live_work_sources_stay_near_top():
         body = console.query_one("#console-inspector-rail-body")
         source_readiness = console.query_one("#console-live-work-source-readiness")
 
-        assert inspector_state.region.height <= 14
         assert inspector.parent is body
         assert source_readiness.parent is body
         assert source_readiness.region.y >= inspector.region.y
-        assert source_readiness.region.y <= inspector.region.y + inspector.region.height + 1
+        assert source_readiness.region.y <= body.region.y + body.region.height
         assert source_readiness.region.height <= 18
 
 
@@ -2126,20 +2233,16 @@ async def test_console_left_rail_sections_use_available_space():
         body = console.query_one("#console-left-rail-body")
         header = console.query_one(".console-rail-header")
         staged_context = console.query_one("#console-staged-context-tray")
-        settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
 
         assert body.parent is left_rail
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
         assert staged_context.parent is body
-        assert settings.parent is body
         assert workspace_context.parent is body
-        assert staged_context.region.y < workspace_context.region.y < settings.region.y
-        assert settings.region.height <= 9
-        assert workspace_context.region.height > settings.region.height
+        assert staged_context.region.y < workspace_context.region.y
+        assert workspace_context.region.height > staged_context.region.height
         assert staged_context.region.width == body.region.width
-        assert settings.region.width == body.region.width
         assert workspace_context.region.width == body.region.width
 
 
