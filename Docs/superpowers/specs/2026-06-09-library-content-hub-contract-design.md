@@ -113,6 +113,12 @@ Library owns source preparation and handoff. Study owns deeper sessions, card ge
 6. TASK-89.7: Clarify Study, Flashcards, and Quizzes handoffs from Library content context.
 7. TASK-89.8: Run actual-use QA across the complete Library hub and cross-screen handoffs before the epic is considered complete.
 
+## Actual-Use Closeout Status
+
+TASK-89.8 adds CDP/Textual-web actual-use evidence for Content Hub, Search/RAG, Import/Export, Workspaces, Collections, Conversations, Study, Flashcards, and Quizzes. The closeout evidence is tracked in `Docs/superpowers/qa/library-content-hub-closeout/2026-06-22-library-content-hub-actual-use-closeout.md`.
+
+Current status: implementation and focused regression coverage are complete for the accepted content-hub scope; final visual acceptance was approved from the rendered screenshots.
+
 ## Non-Goals
 
 - Do not rebuild Notes, Media, Study, Flashcards, Quizzes, or Import/Export inside Library.

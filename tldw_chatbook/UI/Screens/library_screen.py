@@ -295,7 +295,7 @@ class LibraryScreen(BaseAppScreen):
 
     Button.library-mode-chip {
         width: auto;
-        min-width: 0;
+        min-width: 10;
         height: 1;
         min-height: 1;
         padding: 0 1;

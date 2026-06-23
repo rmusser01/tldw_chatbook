@@ -1390,7 +1390,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 Button.library-mode-chip,
 Button.notes-mode-chip {
     width: auto;
-    min-width: 0;
+    min-width: $ds-library-mode-chip-min-width;
     height: $ds-library-mode-chip-height;
     min-height: $ds-library-mode-chip-height;
     padding: 0 1;

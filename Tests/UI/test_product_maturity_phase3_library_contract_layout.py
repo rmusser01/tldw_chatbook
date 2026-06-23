@@ -126,6 +126,30 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(
 
 
 @pytest.mark.asyncio
+async def test_library_mode_chips_keep_minimum_click_target_width() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        for selector in (
+            "#library-mode-sources",
+            "#library-mode-search",
+            "#library-mode-import-export",
+            "#library-mode-workspaces",
+            "#library-mode-collections",
+            "#library-mode-study",
+            "#library-mode-flashcards",
+            "#library-mode-quizzes",
+        ):
+            button = screen.query_one(selector, Button)
+            assert button.region.width >= 10, selector
+
+
+@pytest.mark.asyncio
 async def test_library_status_row_preserves_unavailable_taxonomy() -> None:
     app = _build_test_app()
     app.notes_scope_service = None
@@ -159,5 +183,4 @@ async def test_library_status_row_preserves_policy_recovery_status() -> None:
 
     assert "Wrong source" in status_row
     assert "Blocked" not in status_row
-
 
