@@ -27,7 +27,9 @@ This spec treats `Collections` as a destination-native content page, not as a si
 - `../tldw_server2/Docs/Product/Completed/Content_Collections_UX_Backlog_PRD.md`
 - `../tldw_server2/tldw_Server_API/app/core/Collections/README.md`
 - `../tldw_server2/apps/tldw-frontend/pages/collections.tsx`
-- `../tldw_server2/apps/tldw-frontend/.next/standalone/apps/packages/ui/src/components/Option/Collections/index.tsx`
+- `../tldw_server2/apps/packages/ui/src/components/Option/Collections/index.tsx`
+- `../tldw_server2/apps/packages/ui/src/components/Option/Collections/ReadingList/ReadingItemsList.tsx`
+- `../tldw_server2/apps/packages/ui/src/components/Option/Collections/ReadingList/ReadingItemDetail.tsx`
 
 Reference implications:
 
@@ -36,6 +38,16 @@ Reference implications:
 - The primary page behavior is list/review/view/consume stored content. Grouping, membership, and sync metadata are secondary facets.
 - The server WebUI exposes Reading List, Highlights, Templates, Digest Schedules, and Import/Export. Chatbook does not need full parity in the first visual pass, but it must reserve the correct information architecture so later parity work does not require another redesign.
 - Search/RAG handoff should understand collection items as eligible evidence sources when local data and workspace policy allow it.
+
+## Data and Integration Boundaries
+
+The server Collections module is the product reference, not a runtime dependency for this visual redesign.
+
+- Do not call tldw_server APIs from Library as part of this redesign unless a later task explicitly owns server integration and completes the ADR check.
+- Chatbook should render collection item rows from local Chatbook data adapters only. If a local adapter is missing or incomplete, show an honest empty/WIP state rather than activating fake controls.
+- Collection item UI should use capability flags before enabling actions: `can_read`, `can_update_status`, `can_favorite`, `can_tag`, `can_note`, `can_highlight`, `can_export`, `can_generate_output`, `can_stage_for_rag`, and `can_use_in_console`.
+- Unsupported capabilities remain visible as disabled actions with visible reasons, so the IA is future-compatible without implying functionality exists.
+- Search/RAG and Console handoff must respect workspace policy: global browse/search is allowed, but staging and active context use are limited to the current workspace and eligible item types.
 
 ## ADR Check
 
@@ -80,6 +92,12 @@ Required improvement: use a visibility and eligibility grid.
 The current draft frames Collections as local grouping, selected collection metadata, and membership placeholders. That is not aligned with the server Collections model or intended Chatbook purpose. Collections should behave like Notes or Conversations: a user-facing page for listing, reviewing, opening, reading, and acting on stored collection items.
 
 Required improvement: list/filter saved collection items first, selected item reader/review second, item metadata/actions third, grouping/sync/template parity later.
+
+### P1: Backing capability state is under-specified
+
+The spec reserves future Collections actions, but without an explicit capability model an implementation could render buttons as active even when local Chatbook cannot read, tag, highlight, export, or stage a collection item.
+
+Required improvement: every selected-object action must be enabled by a local capability flag or disabled with a visible reason. Server-only features must be labeled `WIP` or `server parity pending`.
 
 ## Design Principles
 
@@ -216,7 +234,8 @@ Collections requirements:
 - Collection item list stays visible and scannable: title, domain/origin, status, favorite, tags, reading time or word count, and updated time.
 - Selected item detail uses a reader/review region with readable content or a clear recovery state when content is missing.
 - Inspector shows item identity, status, origin, workspace eligibility, allowed actions, blocked actions, and handoff targets.
-- Required item actions: open/read, mark saved/reading/read/archived, favorite/unfavorite, tag, add/edit notes when supported, show highlights when supported, and delete/archive with confirmation.
+- Data-backed item actions, when supported by local capability flags: open/read, mark saved/reading/read/archived, favorite/unfavorite, tag, add/edit notes, show highlights, export, generate output, and delete/archive with confirmation.
+- Unsupported item actions stay visible but disabled with reasons such as `No local collection item store`, `Highlights service unavailable`, `Server parity pending`, or `Workspace blocks Console use`.
 - Bulk action affordances are reserved: multi-select, set status, favorite, add/remove tags, delete/archive, generate output from selected items.
 - Saved searches, highlights, templates, digest schedules, and import/export are visible as future-compatible lanes, but disabled or WIP-labeled unless local backing exists.
 - Search/RAG and Console handoff target collection items, not abstract collection folders. If workspace policy blocks use, the reason must be visible.
@@ -345,6 +364,7 @@ Deliverables:
 - Rename left column conceptually to Source Map.
 - Split left content into Workspace Context, Source Map, and Quick Actions.
 - Convert inspector to a selected-object contract with sections: Status, Allowed, Blocked, Recovery, Handoff, Shortcuts.
+- Do not add new service calls in Stage A. Use existing mode data and honest placeholder copy only.
 - Add mounted tests for region headings, focus visibility, and no horizontal overflow.
 - Capture CDP screenshots for Hub, Search/RAG, Workspaces, Collections.
 
@@ -378,6 +398,7 @@ Goal: make collection item list/detail/reader behavior usable without hiding def
 Deliverables:
 
 - Prioritize collection item filters, item list, and selected item reader/review detail.
+- Introduce or use a local collection-item view model that exposes item data plus capability flags before enabling controls.
 - Render item rows with status, favorite, origin/domain, tags, and updated/reading metadata.
 - Add selected item inspector sections for status, allowed actions, blocked actions, recovery, Search/RAG handoff, and Console handoff.
 - Reserve disabled or WIP-labeled lanes for highlights, templates, digest schedules, import/export, and bulk output generation when local backing is unavailable.
@@ -418,7 +439,7 @@ Suggested CDP evidence set:
 
 - Hub inventory, empty and with seeded source counts.
 - Search/RAG empty/blocked and seeded result/evidence selected.
-- Collections empty and selected collection item with reader/review detail.
+- Collections empty, selected collection item with reader/review detail, and selected item with unsupported capability disabled reasons.
 - Workspaces Default and non-default workspace eligibility matrix.
 - Import/Export empty and source-selected export-eligible state.
 - Conversations empty and saved conversation selected.
@@ -441,7 +462,8 @@ These defaults remove ambiguity for implementation planning:
 1. Keep the existing Study, Flashcards, and Quizzes mode chips through Stages A-E. Stage F may consolidate them into one Study lane, but only after a dedicated screenshot review because it changes the user's mode model.
 2. Do not add a global Source Map filter in Stage A. Keep filtering mode-specific until there is a unified source list with real source rows across Notes, Media, Conversations, Collections, and evidence.
 3. Collections starts as a collection-item reading/review surface in Stage D. Do not add new server sync, membership mutation, template, digest, or highlight services as part of the visual hierarchy redesign unless a local service already exists and the task explicitly owns it.
-4. Compact behavior should preserve the three regions at the currently supported visual QA sizes. At narrower widths, hide lower-priority inspector help first while preserving Status, Allowed, Blocked, and Recovery. Exact breakpoint values should be set by mounted tests and CDP screenshots, not guessed in the spec.
+4. Capability flags decide action availability. Do not enable controls from labels, row presence, seeded test data, or visual placeholders alone.
+5. Compact behavior should preserve the three regions at the currently supported visual QA sizes. At narrower widths, hide lower-priority inspector help first while preserving Status, Allowed, Blocked, and Recovery. Exact breakpoint values should be set by mounted tests and CDP screenshots, not guessed in the spec.
 
 ## Recommended First PR
 
@@ -454,5 +476,6 @@ Acceptance criteria for the first PR:
 - Center pane remains the dominant work area.
 - Inspector uses the selected-object contract even when no object is selected.
 - Collections copy and source-map labels describe stored collection items, not abstract folder membership.
+- No new Library service calls or server API calls are introduced in Stage A.
 - Existing mode switching and fixed chip hit targets remain intact.
 - CDP screenshots are captured and approved before merge.
