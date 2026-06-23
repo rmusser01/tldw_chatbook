@@ -14,15 +14,34 @@ The redesign should help users answer these questions quickly:
 - What sources do I have?
 - What workspace am I operating in?
 - What can I search, stage, organize, import, export, or study?
+- What saved collection items can I read, review, search, or hand off?
 - What object is selected?
 - What actions are allowed, blocked, or WIP?
 - How do I recover from an empty or blocked state?
+
+## Collections Reference From tldw_server
+
+This spec treats `Collections` as a destination-native content page, not as a simple folder/group manager. The reference model comes from the local server project:
+
+- `../tldw_server2/Docs/Product/Completed/Content_Collections_PRD.md`
+- `../tldw_server2/Docs/Product/Completed/Content_Collections_UX_Backlog_PRD.md`
+- `../tldw_server2/tldw_Server_API/app/core/Collections/README.md`
+- `../tldw_server2/apps/tldw-frontend/pages/collections.tsx`
+- `../tldw_server2/apps/tldw-frontend/.next/standalone/apps/packages/ui/src/components/Option/Collections/index.tsx`
+
+Reference implications:
+
+- Collections unify reading-list items, watchlist-derived items, output artifacts, tags, saved searches, and import/export workflows.
+- A collection item is readable content first: title, domain, status, favorite, tags, summary, clean text, notes, highlights, origin metadata, and updated time.
+- The primary page behavior is list/review/view/consume stored content. Grouping, membership, and sync metadata are secondary facets.
+- The server WebUI exposes Reading List, Highlights, Templates, Digest Schedules, and Import/Export. Chatbook does not need full parity in the first visual pass, but it must reserve the correct information architecture so later parity work does not require another redesign.
+- Search/RAG handoff should understand collection items as eligible evidence sources when local data and workspace policy allow it.
 
 ## ADR Check
 
 ADR required: no
 ADR path: N/A
-Reason: this spec changes screen layout, interaction hierarchy, and QA expectations only. It does not change storage/schema, sync conflict policy, provider/runtime boundaries, security policy, or service ownership. If a later implementation changes collection membership storage, workspace eligibility rules, RAG persistence, or sync promotion behavior, that implementation should perform a new ADR check.
+Reason: this spec changes screen layout, interaction hierarchy, and QA expectations only. It does not change storage/schema, sync conflict policy, provider/runtime boundaries, security policy, or service ownership. If a later implementation changes collection item storage, workspace eligibility rules, RAG persistence, note/highlight ownership, or sync promotion behavior, that implementation should perform a new ADR check.
 
 ## UX/HCI Findings From Current Rendered Library
 
@@ -56,17 +75,18 @@ The current Workspaces mode correctly says browse/search remain global while sta
 
 Required improvement: use a visibility and eligibility grid.
 
-### P2: Collections has too many equally weighted regions
+### P1: Collections is mis-modeled as grouping instead of content consumption
 
-The Collections mode includes collection list, selected collection detail, form controls, WIP actions, sync safety, inspector, and blocked handoff messages. The hierarchy is weak.
+The current draft frames Collections as local grouping, selected collection metadata, and membership placeholders. That is not aligned with the server Collections model or intended Chatbook purpose. Collections should behave like Notes or Conversations: a user-facing page for listing, reviewing, opening, reading, and acting on stored collection items.
 
-Required improvement: list first, selected collection second, membership/eligibility third, create/edit actions fourth.
+Required improvement: list/filter saved collection items first, selected item reader/review second, item metadata/actions third, grouping/sync/template parity later.
 
 ## Design Principles
 
 - Library is a source workbench, not a second Console.
 - Console remains the live agentic control surface.
 - Workspaces never hide global browse/search results. They only gate staging, manipulation, and active-context use.
+- Collections are stored content pages, not just folders. Users should be able to list, read, review, tag, favorite, search, and later export or generate outputs from collection items.
 - Empty, blocked, WIP, local-only, server-backed, and sync-unavailable states must be text-labeled.
 - The interface should support repeated power use without removing first-time orientation.
 - Keep the terminal-native three-column grammar, but make the columns earn their space.
@@ -92,7 +112,7 @@ Recommended wide layout:
 │ Notes           0                     │                                           │ Shortcuts                │
 │ Media           0                     │                                           │                         │
 │ Conversations   0                     │                                           │                         │
-│ Collections     1                     │                                           │                         │
+│ Collection items 1                    │                                           │                         │
 │                                       │                                           │                         │
 │ Quick Actions                         │                                           │                         │
 │ Import sources                        │                                           │                         │
@@ -150,7 +170,7 @@ Search/RAG should read as a retrieval workbench.
 │ Workspace: Default         │ [Run Search/RAG] [Use selected in Console]          │ Recovery: import source  │
 │                            │                                                      │                         │
 │ Sources                    │ Scope                                                │ Selected evidence        │
-│ Notes          0           │ [All Library] [Current Workspace] [Collection]       │ none                    │
+│ Notes          0           │ [All Library] [Current Workspace] [Collection items] │ none                    │
 │ Media          0           │                                                      │                         │
 │ Collections    1           │ Evidence                                             │ Handoff                 │
 │                            │ No evidence yet. Add/import sources, then query.     │ Use in Console disabled │
@@ -167,31 +187,40 @@ Search/RAG requirements:
 
 ### Collections
 
-Collections should become a local grouping workbench with selected collection detail and clear WIP boundaries.
+Collections should become a stored-content reading and review workbench. It should let users browse saved collection items across origins, open an item, read or review its content, inspect status/tags/notes/highlights, and choose eligible handoffs. Grouping and sync controls are later facets, not the primary layout.
 
 ```text
-┌ Source Map ────────────────┬ Collections ────────────────────────────────────────┬ Collection Inspector ────┐
-│ Collections                │ Local collections                                   │ Selected: Research Set   │
-│ > Research Set       0     │ ┌ Research Set                         0 items ┐    │ Authority: local         │
-│   Draft Sources      3     │ └ Draft Sources                        3 items ┘    │ Sync: dry-run only       │
-│                            │                                                      │                         │
-│ Quick Actions              │ Selected Collection                                  │ Allowed                 │
-│ New collection             │ Name: Research Set                                   │ Rename, delete metadata │
-│ Import sources             │ Items: 0                                             │                         │
-│ Run Search/RAG             │ Workspace rule: visible globally, use gated          │ Blocked                 │
-│                            │                                                      │ Scoped RAG/Study/Console│
-│                            │ Members                                              │ Recovery                │
-│                            │ No members yet. Add sources from Library lists.      │ Stage individual source │
+┌ Source Map ────────────────┬ Collections ────────────────────────────────────────┬ Item Inspector ──────────┐
+│ Collections                │ Filters                                              │ Selected item            │
+│ > All items          1     │ [All] [Saved] [Reading] [Read] [Archived] [★]        │ Deep dive: local         │
+│   Reading List       1     │ Query/tag/domain filter                              │ Status: saved           │
+│   Watchlist Items    0     │ [filter collection items                            ] │ Origin: reading         │
+│   Outputs            0     │                                                      │ Tags: research          │
+│   Highlights         0     │ Items                                                │                         │
+│                            │ ┌ Deep dive into RAG                     saved ★ ┐   │ Allowed                 │
+│ Quick Actions              │ │ example.com | 8 min | tags: research          │   │ Open/read, favorite    │
+│ Save URL                  │ │ Summary preview...                            │   │ Mark read/archive     │
+│ Import/export             │ └────────────────────────────────────────────────┘   │ Tag, add note/highlight │
+│ Run Search/RAG             │                                                      │                         │
+│                            │ Reader / Review                                      │ Handoff                 │
+│                            │ Title: Deep dive into RAG                            │ Use in Search/RAG       │
+│                            │ Readable content preview or empty recovery.          │ Use in Console if gated │
+│                            │ Notes and highlights summary.                        │                         │
+│                            │                                                      │ Deferred                │
+│                            │ Outputs/templates/digests: WIP unless local service. │ Server sync/parity WIP  │
 └────────────────────────────┴──────────────────────────────────────────────────────┴─────────────────────────┘
 ```
 
 Collections requirements:
 
-- Collection list stays in the left or center upper region, not buried below prose.
-- Selected collection detail uses structured fields.
-- Create/rename/delete controls are grouped as metadata actions.
-- Membership should have a stable placeholder area even before membership management is implemented.
-- WIP collection-scoped RAG, Study, Console, and sync promotion remain visible but disabled with reasons.
+- Collection item list stays visible and scannable: title, domain/origin, status, favorite, tags, reading time or word count, and updated time.
+- Selected item detail uses a reader/review region with readable content or a clear recovery state when content is missing.
+- Inspector shows item identity, status, origin, workspace eligibility, allowed actions, blocked actions, and handoff targets.
+- Required item actions: open/read, mark saved/reading/read/archived, favorite/unfavorite, tag, add/edit notes when supported, show highlights when supported, and delete/archive with confirmation.
+- Bulk action affordances are reserved: multi-select, set status, favorite, add/remove tags, delete/archive, generate output from selected items.
+- Saved searches, highlights, templates, digest schedules, and import/export are visible as future-compatible lanes, but disabled or WIP-labeled unless local backing exists.
+- Search/RAG and Console handoff target collection items, not abstract collection folders. If workspace policy blocks use, the reason must be visible.
+- Do not imply server sync or tldw_server parity exists locally until the service is wired.
 
 ### Workspaces
 
@@ -205,7 +234,7 @@ Workspaces should show scope policy as a matrix.
 │                            │ ┌ Area          Browse/Search   Stage/Use   Why ┐   │ Allowed                 │
 │ Quick Actions              │ │ Notes         all             Default     safe│   │ Browse all sources      │
 │ Create workspace           │ │ Media         all             Default     safe│   │ Switch workspace        │
-│ Import sources             │ │ Collections   all             Default     safe│   │                         │
+│ Import sources             │ │ Collection items all          Default     safe│   │                         │
 │                            │ │ File tools    no              no          default workspace locked │
 │                            │ └──────────────────────────────────────────────┘   │ Blocked                 │
 │                            │                                                      │ No source handoff yet    │
@@ -237,7 +266,7 @@ Import/Export should be a workflow launcher with explicit ownership boundaries.
 Import/Export requirements:
 
 - Explain where import/export routes go and how content returns to Library.
-- Disable export until a source, collection, or evidence set is selected.
+- Disable export until a source, collection item, or evidence set is selected.
 - Avoid making route handoff look like accidental navigation.
 
 ### Conversations
@@ -280,7 +309,7 @@ Recommended simplification:
 - `/`: focus Library filter or Search/RAG query depending on mode.
 - `u`: use selected eligible source/evidence in Console.
 - `i`: import sources.
-- `e`: export selected source/collection when eligible.
+- `e`: export selected source, collection item, or eligible filter set when supported.
 - `Esc`: clear filter/query or return focus to mode root.
 
 ### Selection
@@ -293,7 +322,7 @@ No selected object:
 - Show next-best action.
 - Show why handoff is blocked or available.
 
-Selected source/evidence/collection/conversation:
+Selected source/evidence/collection item/conversation:
 
 - Show identity.
 - Show authority and workspace eligibility.
@@ -342,16 +371,17 @@ Deliverables:
 - Preserve non-source blocked recovery.
 - Add tests for query focus, blocked state, selected evidence handoff, and future citation/snippet placeholders.
 
-### Stage D: Collections Management Workbench
+### Stage D: Collections Item Reading Workbench
 
-Goal: make collection list/detail/membership usable without hiding deferred features.
+Goal: make collection item list/detail/reader behavior usable without hiding deferred server-parity features.
 
 Deliverables:
 
-- Prioritize collection list and selected collection detail.
-- Add a stable membership placeholder/region.
-- Group metadata actions separately from WIP scoped actions.
-- Add tests for selected collection inspector, metadata actions, blocked scoped handoff, and sync dry-run copy.
+- Prioritize collection item filters, item list, and selected item reader/review detail.
+- Render item rows with status, favorite, origin/domain, tags, and updated/reading metadata.
+- Add selected item inspector sections for status, allowed actions, blocked actions, recovery, Search/RAG handoff, and Console handoff.
+- Reserve disabled or WIP-labeled lanes for highlights, templates, digest schedules, import/export, and bulk output generation when local backing is unavailable.
+- Add tests for selected item inspector, status/favorite/tag affordances, blocked workspace handoff, readable content empty state, and deferred server-parity copy.
 
 ### Stage E: Workspace Eligibility Matrix
 
@@ -388,7 +418,7 @@ Suggested CDP evidence set:
 
 - Hub inventory, empty and with seeded source counts.
 - Search/RAG empty/blocked and seeded result/evidence selected.
-- Collections empty and selected collection with membership placeholder.
+- Collections empty and selected collection item with reader/review detail.
 - Workspaces Default and non-default workspace eligibility matrix.
 - Import/Export empty and source-selected export-eligible state.
 - Conversations empty and saved conversation selected.
@@ -400,6 +430,7 @@ Suggested CDP evidence set:
 - Do not implement sync writes as part of the visual redesign.
 - Do not hide global content when workspace changes.
 - Do not implement full citation/snippet persistence unless a stage explicitly owns it.
+- Do not implement full tldw_server Collections parity in the first visual redesign. The spec reserves the IA for Reading List, Highlights, Templates, Digest Schedules, Import/Export, bulk actions, and outputs, but implementation should only wire what local Chatbook services actually support.
 - Do not rebuild Notes, Media, Study, Flashcards, or Quizzes inside Library.
 - Do not accept ASCII layouts or generated mockups as final visual approval; actual screenshots remain required.
 
@@ -409,7 +440,7 @@ These defaults remove ambiguity for implementation planning:
 
 1. Keep the existing Study, Flashcards, and Quizzes mode chips through Stages A-E. Stage F may consolidate them into one Study lane, but only after a dedicated screenshot review because it changes the user's mode model.
 2. Do not add a global Source Map filter in Stage A. Keep filtering mode-specific until there is a unified source list with real source rows across Notes, Media, Conversations, Collections, and evidence.
-3. Collections membership management starts as a stable placeholder/empty region in Stage D. Do not add membership mutation services as part of the visual hierarchy redesign.
+3. Collections starts as a collection-item reading/review surface in Stage D. Do not add new server sync, membership mutation, template, digest, or highlight services as part of the visual hierarchy redesign unless a local service already exists and the task explicitly owns it.
 4. Compact behavior should preserve the three regions at the currently supported visual QA sizes. At narrower widths, hide lower-priority inspector help first while preserving Status, Allowed, Blocked, and Recovery. Exact breakpoint values should be set by mounted tests and CDP screenshots, not guessed in the spec.
 
 ## Recommended First PR
@@ -422,5 +453,6 @@ Acceptance criteria for the first PR:
 - Left column visibly groups Workspace Context, Source Map, and Quick Actions.
 - Center pane remains the dominant work area.
 - Inspector uses the selected-object contract even when no object is selected.
+- Collections copy and source-map labels describe stored collection items, not abstract folder membership.
 - Existing mode switching and fixed chip hit targets remain intact.
 - CDP screenshots are captured and approved before merge.
