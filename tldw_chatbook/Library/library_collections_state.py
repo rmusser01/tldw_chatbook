@@ -11,7 +11,10 @@ from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_
 from tldw_chatbook.Sync_Interop.sync_profile_status_state import SyncProfileStatusDisplay
 
 
-LIBRARY_COLLECTIONS_EMPTY_COPY = "Group saved Library items for Search/RAG, Study, and Console."
+LIBRARY_COLLECTIONS_EMPTY_COPY = (
+    "No stored collection items are available locally yet. Collections are for "
+    "reading, reviewing, and reusing saved content."
+)
 LIBRARY_COLLECTIONS_NAME_MAX_LENGTH = 120
 LIBRARY_COLLECTIONS_DESCRIPTION_MAX_LENGTH = 500
 _DANGEROUS_DISPLAY_PATTERN = re.compile(

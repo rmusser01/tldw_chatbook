@@ -5,12 +5,13 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
+    StaticLibraryNotesListScopeService,
     StaticLibraryNotesScopeService,
     _active_destination_screen,
     _build_test_app,
@@ -55,18 +56,170 @@ async def test_library_default_mode_renders_content_hub_with_real_counts_and_rec
         await _wait_for_selector(screen, pilot, "#library-content-hub-title")
 
         visible = _visible_text(screen)
+        state_summary = str(screen.query_one("#library-hub-state-summary", Static).renderable)
+        hub_header = str(screen.query_one("#library-content-hub-table-header", Static).renderable)
+        notes_row = str(screen.query_one("#library-notes-summary", Static).renderable)
+        media_row = str(screen.query_one("#library-media-summary", Static).renderable)
+        conversations_row = str(
+            screen.query_one("#library-conversations-summary", Static).renderable
+        )
+
         assert "Library Content Hub" in visible
-        assert "Landing page for ingested content, notes, media, conversations, collections, imports/exports, and retrieval." in visible
+        assert "Source overview, retrieval readiness, movement paths, and next action." in visible
+        assert "Content Hub mode" not in visible
+        assert "Open the owning module for deep work" not in visible
+        assert "State: Local workspace | Browse all workspaces | Console staging blocked" in state_summary
+        assert "Inventory: Notes 1 | Media 1 | Conversations 1 | Console eligible 0 | Blocked 3" in state_summary
+        assert "+-----------------+" in hub_header
+        assert "| Source" in hub_header
+        assert "| Count" in hub_header
+        assert "| Browse" in hub_header
+        assert "| Recent" in hub_header
+        assert "| Console" in hub_header
+        assert "Notes" in notes_row
+        assert "1" in notes_row
+        assert "Open Notes" in notes_row
+        assert "Research Note" in notes_row
+        assert "blocked: workspace gate" in notes_row
+        assert notes_row.startswith("| Notes")
         assert "Notes: 1" in visible
-        assert "Recent: Research Note" in visible
+        assert "Owners: Notes edits/sync/export" in visible
+        assert "Media" in media_row
+        assert "Transcript A" in media_row
+        assert "blocked: workspace gate" in media_row
         assert "Media: 1" in visible
-        assert "Recent: Transcript A" in visible
+        assert "Media browses library items" in visible
+        assert "Conversations" in conversations_row
+        assert "Planning Chat" in conversations_row
+        assert "blocked: workspace gate" in conversations_row
         assert "Conversations: 1" in visible
-        assert "Recent: Planning Chat" in visible
-        assert "Search/RAG: query indexed Library content" in visible
-        assert "Collections: organize reusable content groups inside Library" in visible
-        assert "Study: turn Library content into flashcards and quizzes" in visible
+        assert "Conversations resumes chats" in visible
+        assert "Library readiness" in visible
+        assert "Eligible       0 modules" in visible
+        assert "Blocked        3 workspace-gated modules" in visible
+        assert "Recent         Notes: Research Note; Media: Transcript A; Conversations: Planning Chat" in visible
+        assert "Next           Link sources to the active workspace or open an owner screen." in visible
+        assert "Search/RAG     Query indexed content, inspect evidence, launch Console." in visible
+        assert "Collections    Read, review, reuse saved content." in visible
+        assert "Study          Turn Library content into flashcards and quizzes." in visible
         assert "Console handoff is secondary" in visible
+
+
+@pytest.mark.asyncio
+async def test_library_stage_a_shell_surfaces_source_map_workspace_context_and_inspector_actions() -> None:
+    app = _build_test_app()
+    _seed_library_content(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-content-hub-title")
+
+        visible = _visible_text(screen)
+
+        assert "Source Map" in visible
+        assert "Workspace Context" in visible
+        assert "Quick Actions" not in visible
+        assert "Next action" in visible
+        assert "Active Workbench" in visible
+        assert "Browse: all workspaces" in visible
+        assert "Use/stage: active workspace only" in visible
+        assert "Browse/search: all workspaces" not in visible
+        assert "Sources" in visible
+        assert "Retrieval" in visible
+        assert "Movement" in visible
+        assert "Learning" in visible
+
+
+@pytest.mark.asyncio
+async def test_library_hub_inspector_prioritizes_selected_available_blocked_and_next() -> None:
+    app = _build_test_app()
+    _seed_library_content(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-hub-actions-title")
+
+        visible = _visible_text(screen)
+
+        assert "Selected" in visible
+        assert "Selected: none" in visible
+        assert "Available now" in visible
+        assert "Blocked" in visible
+        assert "Next action" in visible
+        assert "Details" in visible
+        assert "Knowledge workflow" not in visible
+        assert "Select a source module on the left to inspect browse and handoff rules." not in visible
+        inspector = screen.query_one("#library-source-inspector")
+        assert not inspector.query("#library-open-study")
+        assert screen.query_one("#library-use-in-console", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_library_hub_detail_uses_scannable_sections_instead_of_report_copy() -> None:
+    app = _build_test_app()
+    _seed_library_content(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-content-hub-title")
+
+        visible = _visible_text(screen)
+
+        for selector in (
+            "#library-hub-section-source-status",
+            "#library-hub-section-retrieval-readiness",
+            "#library-hub-section-movement-reuse",
+            "#library-hub-section-learning-paths",
+            "#library-hub-section-next-action",
+            "#library-hub-source-table-bottom",
+            "#library-hub-spacer-after-source-table",
+            "#library-hub-spacer-before-retrieval",
+            "#library-hub-spacer-before-movement",
+            "#library-hub-spacer-before-learning",
+            "#library-hub-spacer-before-next-action",
+        ):
+            assert screen.query_one(selector, Static)
+
+        assert "-- Source Status " in visible
+        assert "-- Retrieval Readiness " in visible
+        assert "-- Movement + Reuse " in visible
+        assert "-- Learning " in visible
+        assert "-- Next Action " in visible
+        assert "| Notes" in visible
+        assert "+-----------------+---------+--------------------+----------------------------------+---------------------------+" in visible
+        assert "Purpose:" not in str(screen.query_one("#library-notes-summary", Static).renderable)
+        assert "Search/RAG     Query indexed content, inspect evidence, launch Console." in visible
+        assert "Import/Export  Add or move content; imported material returns here." in visible
+        assert "Collections    Read, review, reuse saved content." in visible
+        assert "Study          Turn Library content into flashcards and quizzes." in visible
+        assert "Primary        Import sources or create a note." in visible
+        assert "Then           Open Search/RAG after indexing or Collections after saving content." in visible
+
+
+@pytest.mark.asyncio
+async def test_library_source_rail_marks_active_mode_without_mutating_action_labels() -> None:
+    app = _build_test_app()
+    _seed_library_content(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await pilot.click("#library-open-collections")
+        await _wait_for_selector(screen, pilot, "#library-source-active-marker")
+
+        marker = screen.query_one("#library-source-active-marker", Static)
+        collections_button = screen.query_one("#library-open-collections", Button)
+
+        assert str(marker.renderable) == "> Active: Collections"
+        assert str(collections_button.label) == "Collections"
+        assert collections_button.has_class("is-active")
 
 
 @pytest.mark.asyncio
@@ -88,8 +241,37 @@ async def test_library_hub_recent_titles_render_rich_markup_literals() -> None:
         card = screen.query_one("#library-notes-summary")
 
         assert getattr(card, "_render_markup") is False
-        assert "Recent: [bold]Literal Note[/]" in visible
-        assert "Recent: Literal Note" not in visible
+        assert "[bold]Literal Note[/]" in visible
+        assert "blocked: workspace gate" in visible
+        assert "Notes | Notes: 1 | Open Notes | Literal Note | blocked" not in visible
+
+
+@pytest.mark.asyncio
+async def test_library_hub_recent_column_uses_one_shortened_title() -> None:
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService(
+        [
+            {
+                "title": "A very long note title that should not consume the whole content hub row",
+                "id": "note-1",
+            },
+            {"title": "Second recent note should not appear in the row", "id": "note-2"},
+        ]
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-content-hub-title")
+
+        visible = _visible_text(screen)
+
+        assert "A very long note title that..." in visible
+        assert "Second recent note should not appear" not in visible
+        assert "showing up to" not in str(screen.query_one("#library-notes-summary", Static).renderable)
 
 
 @pytest.mark.asyncio
@@ -146,7 +328,7 @@ async def test_library_hub_owner_route_actions_remain_keyboard_reachable() -> No
 
 
 @pytest.mark.asyncio
-async def test_library_hub_module_actions_are_visually_separated() -> None:
+async def test_library_hub_module_actions_use_compact_console_rows() -> None:
     app = _build_test_app()
     _seed_library_content(app)
     host = DestinationHarness(app, "library")
@@ -159,16 +341,23 @@ async def test_library_hub_module_actions_are_visually_separated() -> None:
             screen.query_one("#library-open-notes", Button),
             screen.query_one("#library-open-media", Button),
             screen.query_one("#library-open-conversations", Button),
-            screen.query_one("#library-open-import-export", Button),
             screen.query_one("#library-open-search", Button),
+            screen.query_one("#library-open-import-export", Button),
             screen.query_one("#library-open-collections", Button),
         ]
 
         for button in action_buttons:
-            assert button.region.height >= 3
+            assert button.region.height == 1
 
         for previous, current in zip(action_buttons, action_buttons[1:]):
-            assert current.region.y > previous.region.y + previous.region.height
+            assert current.region.y >= previous.region.y + previous.region.height
+
+        visible = _visible_text(screen)
+        assert "Notes: 1 | global browse | stage gated" in visible
+        assert "Media: 1 | global browse | stage gated" in visible
+        assert "Conversations: 1 | global browse | stage gated" in visible
+        assert "Retrieval | query first | stage evidence" in visible
+        assert "Collections | read/review | items WIP" in visible
 
 
 @pytest.mark.asyncio
@@ -394,24 +583,33 @@ async def test_library_collections_selection_explains_membership_workspace_and_a
         visible = _visible_text(screen)
 
         assert "Library | Collections | Ready | Local" in visible
+        assert "Collections Reader" in visible
         assert "Launch Evidence" in visible
-        assert "Source membership" in visible
-        assert "Membership: 3 items" in visible
-        assert "Workspace boundary" in visible
-        assert "Visible globally; active workspace controls staging and manipulation." in visible
-        assert "Available now: create, rename, delete local Collection metadata." in visible
+        assert "Selected Collection Record" in visible
+        assert "Stored item count: 3 items" in visible
+        assert "Collection item reader: not wired locally yet." in visible
+        assert "Stored collection content" in visible
+        assert "Selected: Launch Evidence" in visible
+        assert "Available now: create, rename, delete records" in visible
+        assert "Item actions unavailable until collection items exist." in visible
         assert (
-            "Deferred: collection-scoped Search/RAG, Study, Console handoff, "
-            "and server sync promotion."
+            "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync"
         ) in visible
+        assert "Next: collection item adapters are required before item-level actions unlock." in visible
+        assert "Available now: create, rename, and delete local Collection records." not in visible
+        assert (
+            "Later: collection item reader, Search/RAG, Study, Console handoff, "
+            "and server sync promotion."
+        ) not in visible
         assert (
             "Workspace rule: Library browsing/search stays global; "
             "Console/RAG staging follows active workspace."
         ) in visible
-        assert "Blocked: collection-scoped Console handoff is not wired yet." in visible
+        assert "Disabled: collection item Search/RAG is not wired yet." in visible
+        assert "Disabled: collection item Console handoff is not wired yet." in visible
         assert (
-            "Recovery: use the Collection for local organization, or stage "
-            "individual eligible sources from Library."
+            "Recovery: use existing Library Search/RAG or individual eligible sources "
+            "until collection item adapters are available."
         ) in visible
         assert screen.query_one("#library-open-collections", Button).has_class("is-active")
         assert screen.query_one("#library-open-study", Button).disabled is True
@@ -432,19 +630,41 @@ async def test_library_collections_empty_state_keeps_global_browse_rule_and_bloc
         await _wait_for_selector(screen, pilot, "#library-collections-empty")
 
         visible = _visible_text(screen)
+        mode_description = screen.query_one("#library-active-mode-description", Static)
+        mode_next_action = screen.query_one("#library-active-mode-next-action", Static)
 
         assert "Library | Collections | Empty | Local" in visible
-        assert "Group saved Library items for Search/RAG, Study, and Console." in visible
+        assert mode_description.display is False
+        assert mode_next_action.display is False
+        assert "No Collections yet." in visible
+        assert "Create a local Collection record to start reviewing saved content." in visible
+        assert "Type a Collection name to enable Create." in visible
+        assert "Form actions: enter a name to enable Create." in visible
+        assert "Create, Rename, and Delete stay inactive until their requirements are met." in visible
+        assert "No stored collection items are available locally yet." in visible
+        assert "Collections are for reading, reviewing, and reusing saved content." in visible
         assert "No Collection selected." in visible
         assert (
-            "Global browsing remains available; Collections only gate active "
-            "staging and manipulation."
+            "Global browsing/search remains available; active staging and manipulation "
+            "stay workspace-gated."
         ) in visible
-        assert "Local actions available after creation: rename and delete Collection metadata." in visible
+        assert "Selected: none" in visible
+        assert "Available now: create, rename, delete records" in visible
+        assert "Item actions unavailable until collection items exist." in visible
         assert (
-            "WIP actions unavailable: collection-scoped Search/RAG, Study, "
-            "Flashcards, Quizzes, Console handoff, and server sync promotion."
+            "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync"
         ) in visible
-        assert "Create a local Collection first, then select it to inspect membership." in visible
+        assert visible.count("Blocked later:") == 1
+        assert (
+            "Next: select or create a Collection record to inspect local item-reader readiness."
+        ) in visible
+        assert "Available now: create, rename, and delete local Collection records." not in visible
+        assert "Later: collection item reader, Search/RAG, Study, Console handoff, and server sync promotion." not in visible
+        empty_reader = screen.query_one("#library-collection-empty-reader", Static)
+        form_guidance = screen.query_one("#library-collection-form-guidance", Static)
+        form_action_state = screen.query_one("#library-collection-form-action-state", Static)
+        assert empty_reader.region.y <= form_guidance.region.y + 8
+        assert form_action_state.region.y < screen.query_one("#library-create-collection", Button).region.y
+        assert not screen.query("#library-collections-workbench")
         assert screen.query_one("#library-open-study", Button).disabled is True
         assert screen.query_one("#library-use-in-console", Button).disabled is True
