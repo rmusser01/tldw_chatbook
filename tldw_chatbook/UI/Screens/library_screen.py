@@ -67,11 +67,11 @@ LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH = 30
 LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
 LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
 LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH = 11
-LIBRARY_HUB_MODULE_COLUMN_WIDTH = 15
-LIBRARY_HUB_COUNT_COLUMN_WIDTH = 7
-LIBRARY_HUB_BROWSE_COLUMN_WIDTH = 18
-LIBRARY_HUB_RECENT_COLUMN_WIDTH = 32
-LIBRARY_HUB_CONSOLE_COLUMN_WIDTH = 25
+LIBRARY_HUB_RECENT_LABEL_WIDTH = 32
+LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH = 14
+LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH = 16
+LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH = 22
+LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH = 18
 LIBRARY_COLUMN_TITLES = {
     "sources": ("Source Map", "Active Workbench", "Inspector"),
     "conversations": ("Source Map", "Saved Conversations", "Conversation Inspector"),
@@ -957,7 +957,7 @@ class LibraryScreen(BaseAppScreen):
         recent = self._source_recent_value(source_type)
         return f"Recent: {recent}"
 
-    def _hub_table_cell(self, value: str, width: int = LIBRARY_HUB_RECENT_COLUMN_WIDTH) -> str:
+    def _hub_table_cell(self, value: str, width: int = LIBRARY_HUB_RECENT_LABEL_WIDTH) -> str:
         """Keep hub table cells readable in terminal-width layouts."""
         clean_value = " ".join(value.split())
         if len(clean_value) <= width:
@@ -968,68 +968,6 @@ class LibraryScreen(BaseAppScreen):
         if not shortened:
             shortened = clean_value[:limit].strip()
         return f"{shortened}{suffix}"
-
-    def _hub_table_row(
-        self,
-        *,
-        module: str,
-        count: str,
-        browse: str,
-        recent: str,
-        console: str,
-    ) -> str:
-        """Render terminal-native aligned columns without markdown table noise."""
-        module_cell = self._hub_table_cell(module, LIBRARY_HUB_MODULE_COLUMN_WIDTH)
-        count_cell = self._hub_table_cell(count, LIBRARY_HUB_COUNT_COLUMN_WIDTH)
-        browse_cell = self._hub_table_cell(browse, LIBRARY_HUB_BROWSE_COLUMN_WIDTH)
-        recent_cell = self._hub_table_cell(recent, LIBRARY_HUB_RECENT_COLUMN_WIDTH)
-        console_cell = self._hub_table_cell(console, LIBRARY_HUB_CONSOLE_COLUMN_WIDTH)
-        return (
-            f"{module_cell:<{LIBRARY_HUB_MODULE_COLUMN_WIDTH}} "
-            f"{count_cell:<{LIBRARY_HUB_COUNT_COLUMN_WIDTH}} "
-            f"{browse_cell:<{LIBRARY_HUB_BROWSE_COLUMN_WIDTH}} "
-            f"{recent_cell:<{LIBRARY_HUB_RECENT_COLUMN_WIDTH}} "
-            f"{console_cell:<{LIBRARY_HUB_CONSOLE_COLUMN_WIDTH}}"
-        )
-
-    def _hub_table_border(self) -> str:
-        return (
-            "+"
-            + "+".join(
-                "-" * (width + 2)
-                for width in (
-                    LIBRARY_HUB_MODULE_COLUMN_WIDTH,
-                    LIBRARY_HUB_COUNT_COLUMN_WIDTH,
-                    LIBRARY_HUB_BROWSE_COLUMN_WIDTH,
-                    LIBRARY_HUB_RECENT_COLUMN_WIDTH,
-                    LIBRARY_HUB_CONSOLE_COLUMN_WIDTH,
-                )
-            )
-            + "+"
-        )
-
-    def _hub_framed_table_row(
-        self,
-        *,
-        module: str,
-        count: str,
-        browse: str,
-        recent: str,
-        console: str,
-    ) -> str:
-        """Render source status as a visible ASCII table row."""
-        module_cell = self._hub_table_cell(module, LIBRARY_HUB_MODULE_COLUMN_WIDTH)
-        count_cell = self._hub_table_cell(count, LIBRARY_HUB_COUNT_COLUMN_WIDTH)
-        browse_cell = self._hub_table_cell(browse, LIBRARY_HUB_BROWSE_COLUMN_WIDTH)
-        recent_cell = self._hub_table_cell(recent, LIBRARY_HUB_RECENT_COLUMN_WIDTH)
-        console_cell = self._hub_table_cell(console, LIBRARY_HUB_CONSOLE_COLUMN_WIDTH)
-        return (
-            f"| {module_cell:<{LIBRARY_HUB_MODULE_COLUMN_WIDTH}} "
-            f"| {count_cell:<{LIBRARY_HUB_COUNT_COLUMN_WIDTH}} "
-            f"| {browse_cell:<{LIBRARY_HUB_BROWSE_COLUMN_WIDTH}} "
-            f"| {recent_cell:<{LIBRARY_HUB_RECENT_COLUMN_WIDTH}} "
-            f"| {console_cell:<{LIBRARY_HUB_CONSOLE_COLUMN_WIDTH}} |"
-        )
 
     def _hub_section_rule(self, label: str, widget_id: str) -> Static:
         rule_width = 74
@@ -1117,23 +1055,56 @@ class LibraryScreen(BaseAppScreen):
             return "none"
         return self._hub_table_cell(titles[0])
 
-    def _hub_source_card(
+    def _hub_inventory_readiness_label(self, source_type: str, unit: str) -> str:
+        count_label = self._hub_source_count_value(source_type)
+        try:
+            count = int(count_label.rstrip("+"))
+        except ValueError:
+            count = 0
+        if count == 1:
+            return f"{count_label} {unit}"
+        return f"{count_label} {unit}s"
+
+    def _hub_inventory_console_label(self, source_type: str) -> str:
+        return f"Console {self._hub_console_status(source_type)}"
+
+    def _hub_inventory_row(
         self,
         *,
-        source_type: str,
-        label: str,
+        source: str,
+        readiness: str,
         owner: str,
-        purpose: str,
-        next_action: str,
+        action: str,
+        console: str,
         widget_id: str,
     ) -> Static:
+        source_cell = self._hub_table_cell(
+            source,
+            LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH,
+        )
+        readiness_cell = self._hub_table_cell(
+            readiness,
+            LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH,
+        )
+        owner_cell = self._hub_table_cell(
+            owner,
+            LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH,
+        )
+        action_cell = self._hub_table_cell(
+            action,
+            LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH,
+        )
         return Static(
-            self._hub_framed_table_row(
-                module=label,
-                count=self._hub_source_count_value(source_type),
-                browse=next_action,
-                recent=self._source_recent_value(source_type),
-                console=self._hub_console_status(source_type),
+            "\n".join(
+                (
+                    (
+                        f"{source_cell:<{LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH}} "
+                        f"{readiness_cell:<{LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH}} "
+                        f"{owner_cell:<{LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH}} "
+                        f"{action_cell:<{LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH}}"
+                    ),
+                    f"  {console}",
+                )
             ),
             markup=False,
             id=widget_id,
@@ -1162,60 +1133,85 @@ class LibraryScreen(BaseAppScreen):
                 classes="library-hub-card",
             ),
             self._hub_section_rule(
-                "Source Status",
+                "Source Inventory",
                 "library-hub-section-source-status",
             ),
             Static(
-                "\n".join(
-                    (
-                        self._hub_table_border(),
-                        self._hub_framed_table_row(
-                            module="Source",
-                            count="Count",
-                            browse="Browse",
-                            recent="Recent",
-                            console="Console",
-                        ),
-                        self._hub_table_border(),
-                    )
+                (
+                    f"{'Source':<{LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH}} "
+                    f"{'Readiness':<{LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH}} "
+                    f"{'Owner':<{LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH}} "
+                    f"{'Primary action':<{LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH}}"
                 ),
                 id="library-content-hub-table-header",
                 classes="destination-section",
             ),
-            self._hub_source_card(
-                source_type="notes",
-                label="Notes",
-                owner="Notes",
-                purpose="Edit, sync, export notes",
-                next_action="Open Notes",
+            self._hub_inventory_row(
+                source="Notes",
+                readiness=self._hub_inventory_readiness_label("notes", "item"),
+                owner="Notes screen",
+                action="Open Notes",
+                console=self._hub_inventory_console_label("notes"),
                 widget_id="library-notes-summary",
             ),
-            self._hub_source_card(
-                source_type="media",
-                label="Media",
-                owner="Media",
-                purpose="Browse media library items",
-                next_action="Browse media",
+            self._hub_inventory_row(
+                source="Media",
+                readiness=self._hub_inventory_readiness_label("media", "item"),
+                owner="Media library",
+                action="Open Media",
+                console=self._hub_inventory_console_label("media"),
                 widget_id="library-media-summary",
             ),
-            self._hub_source_card(
-                source_type="conversations",
-                label="Conversations",
-                owner="Conversations",
-                purpose="Browse saved chats",
-                next_action="Browse chats",
+            self._hub_inventory_row(
+                source="Conversations",
+                readiness=self._hub_inventory_readiness_label("conversations", "chat"),
+                owner="Conversation browser",
+                action="Browse chats",
+                console=self._hub_inventory_console_label("conversations"),
                 widget_id="library-conversations-summary",
             ),
+            self._hub_inventory_row(
+                source="Collections",
+                readiness="local records",
+                owner="Library Collections",
+                action="Open Collections",
+                console="Console WIP: collection item handoff deferred",
+                widget_id="library-collections-summary",
+            ),
+            self._hub_inventory_row(
+                source="Search/RAG",
+                readiness="query first",
+                owner="Library Search/RAG",
+                action="Run Search/RAG",
+                console="Console disabled until evidence is selected",
+                widget_id="library-search-rag-summary",
+            ),
+            self._hub_inventory_row(
+                source="Import/Export",
+                readiness="ready",
+                owner="Ingest and Media",
+                action="Import sources",
+                console="Console disabled until imported content is staged",
+                widget_id="library-import-export-summary",
+            ),
+            self._hub_inventory_row(
+                source="Study",
+                readiness="source required",
+                owner="Study modules",
+                action="Open Study",
+                console="Console WIP: study handoff deferred",
+                widget_id="library-study-summary",
+            ),
             Static(
-                self._hub_table_border(),
+                "Use in Console requires workspace-eligible Library content.",
                 id="library-hub-source-table-bottom",
-                classes="destination-section",
+                classes="ds-recovery-callout is-blocked",
             ),
             self._hub_spacer("library-hub-spacer-after-source-table"),
             Static(
                 (
-                    "Owners: Notes edits/sync/export | Media browses library items | "
-                    "Conversations resumes chats"
+                    "Owners: Notes screen edits/syncs notes | Media library browses media | "
+                    "Conversation browser resumes chats | Library Search/RAG owns retrieval"
                 ),
                 id="library-hub-source-owner-summary",
                 classes="library-hub-card",
@@ -1284,7 +1280,7 @@ class LibraryScreen(BaseAppScreen):
                 "library-hub-section-next-action",
             ),
             Static(
-                self._hub_key_value_row("Primary", "Import sources or create a note."),
+                "Next best action: Import sources or create a note.",
                 id="library-hub-next-primary",
                 classes="library-hub-card",
             ),
