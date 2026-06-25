@@ -288,6 +288,27 @@ def test_review_approval_requires_live_files_to_match_reviewed_snapshot(tmp_path
     assert review["review_id"] not in service._reviews
 
 
+def test_capture_review_does_not_retain_file_contents_in_pending_review(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir)
+    service.bootstrap_trust()
+    secret_text = "# Demo\nSECRET REVIEW TEXT\n"
+    (skills_dir / "demo" / "SKILL.md").write_text(secret_text, encoding="utf-8")
+
+    review = service.capture_review("demo")
+    stored_review = service._reviews[review["review_id"]]
+
+    assert review["current_files"] == {"SKILL.md": secret_text}
+    assert set(stored_review) == {
+        "review_id",
+        "skill_name",
+        "manifest_generation",
+        "current_digest",
+        "changed_files",
+    }
+    assert secret_text not in json.dumps(stored_review)
+
+
 def test_review_approval_restores_trust_for_reviewed_snapshot(tmp_path):
     service, skills_dir = _service(tmp_path)
     _write_skill(skills_dir)

@@ -289,7 +289,13 @@ class SkillTrustService:
             "changed_files": list(status.changed_files),
             "captured_at": _now_iso(),
         }
-        self._reviews[review_id] = review
+        self._reviews[review_id] = {
+            "review_id": review_id,
+            "skill_name": normalized_name,
+            "manifest_generation": status.manifest_generation,
+            "current_digest": review["current_digest"],
+            "changed_files": list(status.changed_files),
+        }
         return dict(review)
 
     def discard_review(self, review_id: str) -> None:
@@ -323,8 +329,8 @@ class SkillTrustService:
         if self._fingerprints_digest(current) != review["current_digest"]:
             self._reviews.pop(review_id, None)
             raise ValueError("snapshot_mismatch")
-        self.trust_current_skill(skill_name, audit_event="trust_approved", snapshot=current)
         self._reviews.pop(review_id, None)
+        self.trust_current_skill(skill_name, audit_event="trust_approved", snapshot=current)
 
     def trust_current_skill(
         self,
