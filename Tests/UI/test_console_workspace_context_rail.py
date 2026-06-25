@@ -25,7 +25,13 @@ from tldw_chatbook.Workspaces import (
     WorkspaceSyncStatus,
     WorkspaceTransferPolicy,
 )
-from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceServerAdapterState
+from tldw_chatbook.Workspaces.display_state import (
+    CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
+    ConsoleWorkspaceConversationSectionState,
+    ConsoleWorkspaceServerAdapterState,
+    console_workspace_conversation_result_copy,
+    console_workspace_conversation_visible_rows,
+)
 
 
 def _visible_text(screen) -> str:
@@ -54,6 +60,58 @@ def _assert_status_row(
 ) -> None:
     assert _static_plain(screen, label_selector) == label
     assert value_contains in _static_plain(screen, value_selector)
+
+
+def test_console_workspace_conversation_section_state_defaults() -> None:
+    section = ConsoleWorkspaceConversationSectionState(
+        workspace_id="ws-a",
+        collapsed=False,
+        query="",
+        selected_summary="No active conversation.",
+        rows=(),
+    )
+
+    assert section.workspace_id == "ws-a"
+    assert section.workspace_total_count is None
+    assert section.result_total_count is None
+    assert section.result_limit == CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT
+    assert section.search_enabled is True
+    assert section.new_conversation_enabled is True
+    assert section.error_copy == ""
+
+
+def test_console_workspace_conversation_visible_rows_are_clamped() -> None:
+    assert console_workspace_conversation_visible_rows(None) == 4
+    assert console_workspace_conversation_visible_rows(10) == 4
+    assert console_workspace_conversation_visible_rows(48) == 7
+    assert console_workspace_conversation_visible_rows(120) == 12
+
+
+def test_console_workspace_conversation_result_copy_is_explicit() -> None:
+    assert (
+        console_workspace_conversation_result_copy(
+            query="research",
+            result_total_count=143,
+            result_limit=50,
+        )
+        == "Showing 50 of 143 matches"
+    )
+    assert (
+        console_workspace_conversation_result_copy(
+            query="research",
+            result_total_count=3,
+            result_limit=50,
+        )
+        == "3 matches"
+    )
+    assert (
+        console_workspace_conversation_result_copy(
+            query="",
+            result_total_count=None,
+            result_limit=50,
+        )
+        == ""
+    )
 
 
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):

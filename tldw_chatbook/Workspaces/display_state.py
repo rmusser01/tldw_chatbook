@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 from loguru import logger
@@ -46,6 +46,64 @@ class ConsoleWorkspaceConversationRow:
     title: str
     status: str = ""
     selected: bool = False
+
+
+CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT = 50
+CONSOLE_WORKSPACE_CONVERSATION_MIN_VISIBLE_ROWS = 4
+CONSOLE_WORKSPACE_CONVERSATION_MAX_VISIBLE_ROWS = 12
+CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT = 3
+CONSOLE_WORKSPACE_CONVERSATION_HEIGHT_RATIO = 0.45
+
+
+@dataclass(frozen=True)
+class ConsoleWorkspaceConversationSectionState:
+    """Renderable state for the Console workspace Conversations subsection."""
+
+    workspace_id: str
+    collapsed: bool
+    query: str
+    selected_summary: str
+    rows: tuple[ConsoleWorkspaceConversationRow, ...]
+    workspace_total_count: int | None = None
+    result_total_count: int | None = None
+    result_limit: int = CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT
+    status_copy: str = ""
+    empty_copy: str = ""
+    search_enabled: bool = True
+    new_conversation_enabled: bool = True
+    error_copy: str = ""
+
+
+def console_workspace_conversation_visible_rows(body_height: int | None) -> int:
+    """Return the adaptive visible row count for the bounded conversation list."""
+
+    if body_height is None or body_height <= 0:
+        return CONSOLE_WORKSPACE_CONVERSATION_MIN_VISIBLE_ROWS
+    target_rows = int(
+        (int(body_height) * CONSOLE_WORKSPACE_CONVERSATION_HEIGHT_RATIO)
+        // CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT
+    )
+    return max(
+        CONSOLE_WORKSPACE_CONVERSATION_MIN_VISIBLE_ROWS,
+        min(CONSOLE_WORKSPACE_CONVERSATION_MAX_VISIBLE_ROWS, target_rows),
+    )
+
+
+def console_workspace_conversation_result_copy(
+    *,
+    query: str,
+    result_total_count: int | None,
+    result_limit: int = CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
+) -> str:
+    """Return explicit search result count copy for the conversation rail."""
+
+    if not str(query or "").strip() or result_total_count is None:
+        return ""
+    total = max(0, int(result_total_count))
+    limit = max(1, int(result_limit))
+    if total > limit:
+        return f"Showing {limit} of {total} matches"
+    return f"{total} match" if total == 1 else f"{total} matches"
 
 
 @dataclass(frozen=True)
@@ -112,6 +170,10 @@ class ConsoleWorkspaceContextState:
     runtime_label: str
     conversation_rows: tuple[ConsoleWorkspaceConversationRow, ...]
     conversation_empty_copy: str
+    conversation_section: ConsoleWorkspaceConversationSectionState | None = field(
+        default=None,
+        kw_only=True,
+    )
     change_workspace_enabled: bool
     change_workspace_recovery: str
     new_conversation_enabled: bool
@@ -199,6 +261,7 @@ def build_console_workspace_state(
             runtime_label="Runtime: unavailable",
             conversation_rows=(),
             conversation_empty_copy="Workspace conversations are unavailable.",
+            conversation_section=None,
             change_workspace_enabled=False,
             change_workspace_recovery="Workspace service not ready.",
             new_conversation_enabled=False,
@@ -231,6 +294,7 @@ def build_console_workspace_state(
             runtime_label="Runtime: unavailable",
             conversation_rows=(),
             conversation_empty_copy="Workspace conversations are unavailable.",
+            conversation_section=None,
             change_workspace_enabled=False,
             change_workspace_recovery="Workspace registry could not be read.",
             new_conversation_enabled=False,
@@ -259,6 +323,7 @@ def build_console_workspace_state(
             runtime_label="Runtime: none",
             conversation_rows=(),
             conversation_empty_copy="No active workspace conversations.",
+            conversation_section=None,
             change_workspace_enabled=can_switch,
             change_workspace_recovery=(
                 "" if can_switch else "Create a workspace in Library > Workspaces before switching."
@@ -304,6 +369,7 @@ def build_console_workspace_state(
         ),
         conversation_rows=rows,
         conversation_empty_copy="No conversations in this workspace yet.",
+        conversation_section=None,
         change_workspace_enabled=can_switch,
         change_workspace_recovery=(
             "" if can_switch else "Add another workspace before switching."
