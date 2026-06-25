@@ -53,7 +53,7 @@ Rendered Textual-web/CDP evidence for the Console workspace conversation rail ov
 
 ## Approval
 
-- State: captured, pending user/PR approval.
+- State: approved by user on 2026-06-25.
 
 ## Residual Risk
 
