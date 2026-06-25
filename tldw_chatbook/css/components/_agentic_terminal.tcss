@@ -616,6 +616,13 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 #console-workspace-context {
     height: 1fr;
     min-height: 8;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
 }
 
 #console-workspace-handoff-rows {

@@ -3158,7 +3158,11 @@ class ChatScreen(BaseAppScreen):
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
                 with self._frame_console_region(left_rail):
-                    with Horizontal(classes="console-rail-header"):
+                    left_rail_header = Horizontal(classes="console-rail-header")
+                    left_rail_header.styles.height = 1
+                    left_rail_header.styles.min_height = 1
+                    left_rail_header.styles.max_height = 1
+                    with left_rail_header:
                         rail_label = Static(
                             "Context",
                             id="console-context-rail-title",
@@ -3293,7 +3297,11 @@ class ChatScreen(BaseAppScreen):
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
                 with self._frame_console_region(right_rail):
-                    with Horizontal(classes="console-rail-header"):
+                    right_rail_header = Horizontal(classes="console-rail-header")
+                    right_rail_header.styles.height = 1
+                    right_rail_header.styles.min_height = 1
+                    right_rail_header.styles.max_height = 1
+                    with right_rail_header:
                         rail_label = Static(
                             "Inspector",
                             id="console-inspector-rail-title",

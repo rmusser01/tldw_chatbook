@@ -302,16 +302,32 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-conversations")
 
+        workspace_context = console.query_one("#console-workspace-context")
         conversation_list = console.query_one("#console-workspace-conversations")
+        new_conversation = console.query_one("#console-new-workspace-conversation", Button)
         server_readiness = console.query_one("#console-workspace-server-readiness-label")
+        handoff_label = console.query_one("#console-workspace-handoff-label")
+        composer = console.query_one("#console-native-composer")
+        hit_x = new_conversation.region.x + max(0, new_conversation.region.width // 2)
+        hit_y = new_conversation.region.y + max(0, new_conversation.region.height // 2)
+        hit_widget, _region = console.get_widget_at(hit_x, hit_y)
+
+        workspace_bottom = workspace_context.region.y + workspace_context.region.height
+
         assert conversation_list.region.height <= 36
+        assert new_conversation.region.y + new_conversation.region.height <= composer.region.y
+        assert new_conversation.region.y + new_conversation.region.height <= workspace_bottom
+        assert hit_widget is new_conversation
         assert server_readiness.region.y > conversation_list.region.y
-        assert (
-            server_readiness.region.y
-            < console.query_one("#console-left-rail").region.y
-            + console.query_one("#console-left-rail").region.height
-            + 80
-        )
+
+        assert workspace_context.max_scroll_y > 0
+        workspace_context.scroll_end(animate=False)
+        await pilot.pause(0.1)
+
+        assert workspace_context.scroll_y > 0
+        assert handoff_label.region.y >= workspace_context.region.y
+        assert handoff_label.region.y + handoff_label.region.height <= workspace_bottom
+        assert handoff_label.region.y + handoff_label.region.height <= composer.region.y
 
 
 @pytest.mark.asyncio
@@ -784,6 +800,12 @@ def test_console_workspace_conversation_subsection_styles_are_declared() -> None
     assert ".console-workspace-action.console-workspace-conversations-toggle {" in css
     assert "#console-workspace-selected-conversation {" in css
     assert "#console-workspace-conversation-search-row {" in css
+    context_selector = "#console-workspace-context {"
+    assert context_selector in css
+    context_blocks = [
+        block.split("}", 1)[0] for block in css.split(context_selector)[1:]
+    ]
+    assert any("overflow-y: auto" in block for block in context_blocks)
     list_selector = "#console-workspace-conversations {"
     assert list_selector in css
 

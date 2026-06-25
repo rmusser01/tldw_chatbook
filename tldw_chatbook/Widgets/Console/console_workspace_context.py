@@ -11,6 +11,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Workspaces.display_state import (
+    CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT,
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationSectionState,
     console_workspace_conversation_visible_rows,
@@ -42,6 +43,11 @@ _AUTHORITY_LABELS = {
     "runtime-missing": "runtime missing",
 }
 _MAX_CONVERSATION_ROW_TITLE = 20
+_CONVERSATION_SECTION_FIXED_ROWS = 7
+_CONVERSATION_SECTION_STATUS_RESERVE_ROWS = 3
+_CONVERSATION_SECTION_CHROME_HEIGHT = (
+    _CONVERSATION_SECTION_FIXED_ROWS + _CONVERSATION_SECTION_STATUS_RESERVE_ROWS
+)
 
 
 class ConsoleWorkspaceStatusPair(Horizontal):
@@ -107,7 +113,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         yield value_widget
 
 
-class ConsoleWorkspaceContextTray(Vertical):
+class ConsoleWorkspaceContextTray(VerticalScroll):
     """Render workspace selection, conversation scope, and recovery copy."""
 
     def __init__(self, state: ConsoleWorkspaceContextState, **kwargs: Any) -> None:
@@ -220,6 +226,27 @@ class ConsoleWorkspaceContextTray(Vertical):
         button.styles.min_height = 2
         return button
 
+    def _visible_conversation_rows(self) -> int:
+        """Return the conversation rows that fit inside the mounted tray."""
+
+        parent_region = getattr(getattr(self, "parent", None), "region", None)
+        base_rows = console_workspace_conversation_visible_rows(
+            parent_region.height if parent_region is not None else None
+        )
+        tray_height = int(getattr(getattr(self, "region", None), "height", 0) or 0)
+        if tray_height <= 0:
+            return base_rows
+
+        available_list_height = max(
+            1,
+            tray_height - _CONVERSATION_SECTION_CHROME_HEIGHT,
+        )
+        fitted_rows = max(
+            1,
+            available_list_height // CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT,
+        )
+        return min(base_rows, fitted_rows)
+
     def compose(self) -> ComposeResult:
         yield self._static(
             self.state.heading,
@@ -329,10 +356,7 @@ class ConsoleWorkspaceContextTray(Vertical):
                     id="console-workspace-conversation-search-error",
                     classes="console-workspace-recovery",
                 )
-            parent_region = getattr(getattr(self, "parent", None), "region", None)
-            visible_rows = console_workspace_conversation_visible_rows(
-                parent_region.height if parent_region is not None else None
-            )
+            visible_rows = self._visible_conversation_rows()
             conversation_list = VerticalScroll(id="console-workspace-conversations")
             conversation_list.styles.height = max(1, visible_rows * 3)
             conversation_list.styles.min_height = max(1, visible_rows * 3)

@@ -3251,6 +3251,53 @@ async def test_console_new_chat_tab_promotes_active_native_session_in_workspace_
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_new_conversation_button_is_not_under_composer():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-new-workspace-conversation")
+        store = console._ensure_console_chat_store()
+        store.ensure_session(title="Chat 1")
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+
+        button = console.query_one("#console-new-workspace-conversation", Button)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        hit_x = button.region.x + max(0, button.region.width // 2)
+        hit_y = button.region.y + max(0, button.region.height // 2)
+        hit_widget, _region = console.get_widget_at(hit_x, hit_y)
+
+        assert button.region.y + button.region.height <= composer.region.y
+        assert hit_widget is button
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_new_conversation_button_is_hit_target_in_named_workspace():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-new-workspace-conversation")
+        await pilot.pause(0.1)
+
+        button = console.query_one("#console-new-workspace-conversation", Button)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        hit_x = button.region.x + max(0, button.region.width // 2)
+        hit_y = button.region.y + max(0, button.region.height // 2)
+        hit_widget, _region = console.get_widget_at(hit_x, hit_y)
+
+        assert button.region.y + button.region.height <= composer.region.y
+        assert hit_widget is button
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_rail_new_conversation_creates_default_workspace_session():
     app = _build_test_app()
     service = app.workspace_registry_service
