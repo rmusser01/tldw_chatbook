@@ -548,6 +548,24 @@ class SkillsScreen(BaseAppScreen):
                     if review_bound
                     else "Capture a trust review before approving this skill version."
                 )
+        review_bound = self._active_review_matches_selected(metadata)
+        review_files = ", ".join(self._active_review_changed_files()) or "selected files"
+        review_updates = {
+            "#skills-trust-review-title": "Trust Review" if review_bound else "",
+            "#skills-trust-review-skill": (
+                f"Reviewed skill: {selected_name}" if review_bound else ""
+            ),
+            "#skills-trust-review-summary": (
+                f"Review captured: {review_files}. Confirm these current files should become the trusted baseline."
+                if review_bound
+                else ""
+            ),
+        }
+        for selector, text in review_updates.items():
+            for widget in self.query(selector):
+                if isinstance(widget, Static):
+                    widget.update(self._plain_text(text))
+                    widget.display = bool(text)
 
     @staticmethod
     def _column_divider(identifier: str) -> Rule:

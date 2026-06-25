@@ -2222,6 +2222,59 @@ async def test_skills_destination_clears_stale_review_after_refresh():
 
 
 @pytest.mark.asyncio
+async def test_skills_destination_hides_review_summary_when_selecting_another_skill():
+    app = _build_test_app()
+    app.local_skill_trust_service = RecordingSkillTrustService(review_id="review-1")
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "record_id": "local:skill:summarize-notes",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "quarantined_modified",
+                "trust_reason_code": "skill_modified",
+                "trust_blocked": True,
+                "trust_changed_files": ["SKILL.md"],
+            },
+            {
+                "name": "code-review",
+                "description": "Review code changes",
+                "record_id": "local:skill:code-review",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "quarantined_modified",
+                "trust_reason_code": "skill_modified",
+                "trust_blocked": True,
+                "trust_changed_files": ["SKILL.md"],
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        initial_list_calls = len(app.skills_scope_service.calls)
+        await pilot.click("#skills-review-diff")
+        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+
+        assert "Reviewed skill: summarize-notes" in _visible_text(screen)
+        assert "Review captured: SKILL.md." in _visible_text(screen)
+        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+
+        await pilot.click("#skills-select-local-1")
+        await pilot.pause()
+        text = _visible_text(screen)
+
+        assert "Selected: code-review" in text
+        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is True
+        assert "Reviewed skill: summarize-notes" not in text
+        assert "Review captured: SKILL.md." not in text
+
+
+@pytest.mark.asyncio
 async def test_skills_destination_escapes_selected_skill_metadata_in_inspector():
     app = _build_test_app()
     app.skills_scope_service = StaticSkillsScopeService(
