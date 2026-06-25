@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import pytest
 from textual.widgets import Button, Input, Static
@@ -774,3 +775,13 @@ async def test_console_change_workspace_switches_active_context_and_conversation
         assert "Workspace B" in _visible_text(console)
         assert "Planning B" in _visible_text(console)
         assert "Planning A" not in _visible_text(console)
+
+
+def test_console_workspace_conversation_subsection_styles_are_declared() -> None:
+    css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text()
+
+    assert "#console-workspace-conversations-header" in css
+    assert "#console-workspace-selected-conversation" in css
+    assert "#console-workspace-conversation-search-row" in css
+    assert "#console-workspace-conversations" in css
+    assert "scrollbar-size: 1 1" in css
