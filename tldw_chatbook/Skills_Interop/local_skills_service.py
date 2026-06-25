@@ -71,11 +71,18 @@ class LocalSkillsService:
     supplied ``store_dir``. It does not read or mutate Codex runtime skills.
     """
 
-    def __init__(self, *, store_dir: str | Path, policy_enforcer: Any | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        store_dir: str | Path,
+        policy_enforcer: Any | None = None,
+        trust_service: Any | None = None,
+    ) -> None:
         self.store_dir = Path(store_dir)
         self.skills_dir = self.store_dir / _SKILLS_DIRNAME
         self.index_path = self.store_dir / _INDEX_FILENAME
         self.policy_enforcer = policy_enforcer
+        self.trust_service = trust_service
         self._lock = asyncio.Lock()
 
     def _enforce(self, action_id: str) -> None:
@@ -386,10 +393,11 @@ class LocalSkillsService:
             content=content,
             supporting_files=self._read_supporting_files(skill_dir),
         )
-        return self._dump(response)
+        payload = self._dump(response)
+        payload.update(self._trust_fields_for_record(record))
+        return payload
 
-    @staticmethod
-    def _summary_for_record(record: dict[str, Any]) -> dict[str, Any]:
+    def _summary_for_record(self, record: dict[str, Any]) -> dict[str, Any]:
         summary = LocalSkillsService._dump(
             SkillSummary(
                 name=record["name"],
@@ -403,7 +411,31 @@ class LocalSkillsService:
         for field in ("agent_skill_name", "validation_status", "validation_errors", "record_id", "backend"):
             if field in record:
                 summary[field] = record[field]
+        summary.update(self._trust_fields_for_record(record))
         return summary
+
+    def _trust_fields_for_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        if self.trust_service is None:
+            return {
+                "trust_status": "trusted",
+                "trust_reason_code": None,
+                "trust_blocked": False,
+                "trust_changed_files": [],
+                "trust_manifest_generation": None,
+                "trust_last_verified_at": None,
+            }
+        return self.trust_service.status_for_skill(str(record["name"])).response_fields()
+
+    def _require_trusted_skill(self, skill_name: str) -> None:
+        if self.trust_service is not None:
+            self.trust_service.ensure_skill_trusted(skill_name)
+
+    def _trust_after_approved_mutation(self, skill_name: str, *, trust_approved: bool) -> None:
+        if self.trust_service is not None and trust_approved:
+            self.trust_service.trust_current_skill(
+                skill_name,
+                audit_event="trust_chatbook_mutation",
+            )
 
     def _require_record(self, skill_name: str, records: dict[str, dict[str, Any]]) -> dict[str, Any]:
         normalized_name = _normalize_skill_name(skill_name)
@@ -467,18 +499,27 @@ class LocalSkillsService:
     async def get_context(self) -> dict[str, Any]:
         self._enforce("skills.context.list.local")
         records = self._load_index()
-        summaries = [self._summary_for_record(record) for _, record in sorted(records.items())]
+        available: list[dict[str, Any]] = []
+        blocked: list[dict[str, Any]] = []
+        for _, record in sorted(records.items()):
+            summary = self._summary_for_record(record)
+            if summary.get("trust_blocked"):
+                blocked.append(summary)
+                continue
+            available.append(summary)
         context_lines = []
-        for summary in summaries:
+        for summary in available:
             description = f": {summary['description']}" if summary.get("description") else ""
             argument_hint = f" (args: {summary['argument_hint']})" if summary.get("argument_hint") else ""
             context_lines.append(f"- {summary['name']}{description}{argument_hint}")
-        return self._dump(
+        payload = self._dump(
             SkillContextPayload(
-                available_skills=summaries,
+                available_skills=available,
                 context_text="\n".join(context_lines),
             )
         )
+        payload["blocked_skills"] = blocked
+        return payload
 
     async def get_skill(self, skill_name: str) -> dict[str, Any]:
         self._enforce("skills.detail.local")
@@ -491,6 +532,7 @@ class LocalSkillsService:
         name: str,
         content: str,
         supporting_files: dict[str, str] | None = None,
+        trust_approved: bool = False,
     ) -> dict[str, Any]:
         self._enforce("skills.create.local")
         request = SkillCreate(name=name, content=content, supporting_files=supporting_files)
@@ -509,6 +551,7 @@ class LocalSkillsService:
                 skill_dir=skill_dir,
             )
             self._save_index(records)
+            self._trust_after_approved_mutation(skill_name, trust_approved=trust_approved)
             return self._response_for_record(records[skill_name])
 
     async def update_skill(
@@ -518,6 +561,7 @@ class LocalSkillsService:
         content: str | None = None,
         supporting_files: dict[str, str | None] | None = None,
         expected_version: int | None = None,
+        trust_approved: bool = False,
     ) -> dict[str, Any]:
         self._enforce("skills.update.local")
         request = SkillUpdate(content=content, supporting_files=supporting_files)
@@ -543,6 +587,7 @@ class LocalSkillsService:
             next_record["version"] = int(record.get("version", 0)) + 1
             records[normalized_name] = next_record
             self._save_index(records)
+            self._trust_after_approved_mutation(normalized_name, trust_approved=trust_approved)
             return self._response_for_record(next_record)
 
     async def delete_skill(self, skill_name: str, *, expected_version: int | None = None) -> bool:
@@ -564,6 +609,7 @@ class LocalSkillsService:
         name: str | None = None,
         supporting_files: dict[str, str] | None = None,
         overwrite: bool = False,
+        trust_approved: bool = False,
     ) -> dict[str, Any]:
         self._enforce("skills.import.launch.local")
         request = SkillImportRequest(
@@ -594,6 +640,7 @@ class LocalSkillsService:
                 record["version"] = int(existing.get("version", 0)) + 1
             records[skill_name] = record
             self._save_index(records)
+            self._trust_after_approved_mutation(skill_name, trust_approved=trust_approved)
             return self._response_for_record(record)
 
     async def import_skill_file(
@@ -603,6 +650,7 @@ class LocalSkillsService:
         filename: str = _SKILL_FILENAME,
         content_type: str = "text/markdown",
         overwrite: bool = False,
+        trust_approved: bool = False,
     ) -> dict[str, Any]:
         self._enforce("skills.import.launch.local")
         is_zip = content_type in {"application/zip", "application/x-zip-compressed"} or filename.lower().endswith(".zip")
@@ -611,6 +659,7 @@ class LocalSkillsService:
                 name=self._derive_name_from_filename(filename),
                 content=file_content.decode("utf-8"),
                 overwrite=overwrite,
+                trust_approved=trust_approved,
             )
 
         supporting_files: dict[str, str] = {}
@@ -632,6 +681,7 @@ class LocalSkillsService:
             content=skill_content,
             supporting_files=supporting_files or None,
             overwrite=overwrite,
+            trust_approved=trust_approved,
         )
 
     async def export_skill(self, skill_name: str) -> Any:
@@ -650,6 +700,7 @@ class LocalSkillsService:
 
     async def execute_skill(self, skill_name: str, *, args: str | None = None) -> dict[str, Any]:
         self._enforce("skills.execute.launch.local")
+        self._require_trusted_skill(skill_name)
         request = SkillExecuteRequest(args=args)
         skill = await self.get_skill(skill_name)
         _, body = self._parse_front_matter(skill["content"])

@@ -84,13 +84,21 @@ class SkillsScopeService:
             return result
         payload = dict(result)
         payload.setdefault("backend", mode.value)
+        normalized_collection = False
         if isinstance(payload.get("skills"), list):
             payload["skills"] = [self._with_record_id(mode, "skill", item) for item in payload["skills"]]
-            return payload
+            normalized_collection = True
         if isinstance(payload.get("available_skills"), list):
             payload["available_skills"] = [
                 self._with_record_id(mode, "skill", item) for item in payload["available_skills"]
             ]
+            normalized_collection = True
+        if isinstance(payload.get("blocked_skills"), list):
+            payload["blocked_skills"] = [
+                self._with_record_id(mode, "skill", item) for item in payload["blocked_skills"]
+            ]
+            normalized_collection = True
+        if normalized_collection:
             return payload
         return self._normalize_item(mode, payload)
 

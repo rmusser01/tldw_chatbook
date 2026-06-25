@@ -5,6 +5,12 @@ import zipfile
 import pytest
 
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
+from tldw_chatbook.Skills_Interop.skill_trust_store import (
+    FileSkillTrustGenerationMarkerStore,
+    SkillTrustStore,
+)
 
 
 SKILL_WITH_METADATA = """---
@@ -39,6 +45,18 @@ Missing valid Agent Skills metadata.
 """
 
 
+def _trusted_local_service(tmp_path):
+    trust_service = SkillTrustService(
+        skills_dir=tmp_path / "skills",
+        trust_store=SkillTrustStore(
+            store_dir=tmp_path / "trust",
+            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+        ),
+    )
+    trust_service.unlock_with_passphrase("passphrase", salt=b"7" * 32)
+    return LocalSkillsService(store_dir=tmp_path, trust_service=trust_service), trust_service
+
+
 @pytest.mark.asyncio
 async def test_local_skills_service_persists_skill_metadata(tmp_path):
     service = LocalSkillsService(store_dir=tmp_path)
@@ -57,8 +75,12 @@ async def test_local_skills_service_persists_skill_metadata(tmp_path):
     assert loaded["context"] == "fork"
     assert loaded["user_invocable"] is True
     assert loaded["disable_model_invocation"] is False
+    assert loaded["trust_status"] == "trusted"
+    assert loaded["trust_blocked"] is False
     assert listed["skills"][0]["name"] == "summarize-notes"
     assert listed["skills"][0]["description"] == "Summarize notes"
+    assert listed["skills"][0]["trust_status"] == "trusted"
+    assert listed["skills"][0]["trust_blocked"] is False
     assert context["available_skills"][0]["argument_hint"] == "note id"
     assert "- summarize-notes" in context["context_text"]
 
@@ -301,3 +323,71 @@ async def test_local_skills_service_seed_builtin_skills_is_deterministic_when_em
     service = LocalSkillsService(store_dir=tmp_path)
 
     assert await service.seed_builtin_skills(overwrite=True) == {"seeded": [], "count": 0}
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_exposes_trust_state_and_blocks_uninitialized_context(tmp_path):
+    service, _trust = _trusted_local_service(tmp_path)
+    await service.create_skill(name="demo-skill", content="# Demo\nRender {{args}}")
+
+    listed = await service.list_skills()
+    loaded = await service.get_skill("demo-skill")
+    context = await service.get_context()
+
+    assert listed["skills"][0]["trust_status"] == "trust_uninitialized"
+    assert listed["skills"][0]["trust_blocked"] is True
+    assert loaded["trust_status"] == "trust_uninitialized"
+    assert loaded["trust_blocked"] is True
+    assert context["available_skills"] == []
+    assert context["blocked_skills"][0]["name"] == "demo-skill"
+    assert context["blocked_skills"][0]["trust_reason_code"] == "trust_uninitialized"
+    assert "demo-skill" not in context["context_text"]
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_blocks_execute_when_skill_changes_on_disk_after_bootstrap(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    await service.create_skill(name="demo-skill", content="# Demo\nRender {{args}}")
+    trust.bootstrap_trust()
+    (tmp_path / "skills" / "demo-skill" / "SKILL.md").write_text(
+        "# Demo\nChanged {{args}}",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SkillTrustBlockedError, match="skill_modified"):
+        await service.execute_skill("demo-skill", args="x")
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_retrusts_explicitly_approved_update(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    await service.create_skill(name="demo-skill", content="# Demo\nRender {{args}}")
+    trust.bootstrap_trust()
+
+    updated = await service.update_skill(
+        "demo-skill",
+        content="# Demo\nChanged {{args}}",
+        trust_approved=True,
+    )
+    listed = await service.list_skills()
+
+    assert updated["trust_status"] == "trusted"
+    assert updated["trust_blocked"] is False
+    assert listed["skills"][0]["trust_status"] == "trusted"
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_unapproved_update_remains_trust_blocked(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    await service.create_skill(name="demo-skill", content="# Demo\nRender {{args}}")
+    trust.bootstrap_trust()
+
+    updated = await service.update_skill("demo-skill", content="# Demo\nChanged {{args}}")
+    context = await service.get_context()
+
+    assert updated["trust_status"] == "quarantined_modified"
+    assert updated["trust_blocked"] is True
+    assert updated["trust_changed_files"] == ["SKILL.md"]
+    assert context["available_skills"] == []
+    assert context["blocked_skills"][0]["trust_status"] == "quarantined_modified"
+    assert "demo-skill" not in context["context_text"]
