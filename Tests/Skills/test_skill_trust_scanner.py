@@ -2,6 +2,8 @@ import hashlib
 import os
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillFileFingerprint
 from tldw_chatbook.Skills_Interop.skill_trust_scanner import scan_skill_directory
 
@@ -89,6 +91,7 @@ def test_scan_skill_directory_rejects_case_variants_and_case_insensitive_temp_su
         assert variant_snapshot.text_files == {}
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="os.mkfifo is not available")
 def test_scan_skill_directory_treats_non_regular_and_read_error_paths_as_unsupported(
     tmp_path,
     monkeypatch,
