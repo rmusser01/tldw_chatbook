@@ -282,6 +282,79 @@ async def test_console_workspace_conversations_clear_requires_enabled_search() -
         assert clear_button.disabled is True
 
 
+@pytest.mark.asyncio
+async def test_console_workspace_many_conversations_keep_lower_status_reachable() -> None:
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    for index in range(40):
+        service.link_membership(
+            active_workspace.workspace_id,
+            item_type="conversation",
+            item_id=f"overflow-chat-{index}",
+            role="workspace-thread",
+            title=f"Overflow Chat {index:02d}",
+        )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 34)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversations")
+
+        conversation_list = console.query_one("#console-workspace-conversations")
+        server_readiness = console.query_one("#console-workspace-server-readiness-label")
+        assert conversation_list.region.height <= 36
+        assert server_readiness.region.y > conversation_list.region.y
+        assert (
+            server_readiness.region.y
+            < console.query_one("#console-left-rail").region.y
+            + console.query_one("#console-left-rail").region.height
+            + 80
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_collapse_persists_per_workspace() -> None:
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    default_workspace = service.get_active_workspace()
+    service.create_workspace(workspace_id="ws-collapse-b", name="Collapse B")
+    service.link_membership(
+        default_workspace.workspace_id,
+        item_type="conversation",
+        item_id="collapse-chat-a",
+        role="workspace-thread",
+        title="Collapse Chat A",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversations-toggle")
+        assert (
+            console.query_one(
+                "#console-workspace-conversation-search",
+                Input,
+            ).disabled
+            is True
+        )
+
+        await pilot.click("#console-workspace-conversations-toggle")
+        await pilot.pause(0.1)
+        assert len(console.query("#console-workspace-conversations")) == 0
+        assert "Collapse Chat A" in _visible_text(console)
+
+        service.set_active_workspace("ws-collapse-b")
+        console._sync_console_workspace_context()
+        await pilot.pause(0.1)
+        assert len(console.query("#console-workspace-conversations")) == 1
+
+        service.set_active_workspace(default_workspace.workspace_id)
+        console._sync_console_workspace_context()
+        await pilot.pause(0.1)
+        assert len(console.query("#console-workspace-conversations")) == 0
+
+
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
     for _ in range(40):
         if (

@@ -132,9 +132,12 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Workspaces.display_state import (
+    CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
     ConsoleWorkspaceConversationRow,
+    ConsoleWorkspaceConversationSectionState,
     ConsoleWorkspaceContextState,
     build_console_workspace_state,
+    console_workspace_conversation_result_copy,
 )
 from ...Workspaces import DEFAULT_WORKSPACE_ID
 from ...Widgets.compact_model_bar import CompactModelBar
@@ -525,6 +528,10 @@ class ChatScreen(BaseAppScreen):
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
         self._console_chat_store: ConsoleChatStore | None = None
+        self._console_workspace_conversation_query = ""
+        self._console_workspace_conversation_search_timer: Any | None = None
+        self._console_workspace_conversation_search_token = 0
+        self._console_workspace_conversation_workspace_id: str | None = None
         self._console_visible_draft_session_id: str | None = None
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
@@ -1429,7 +1436,38 @@ class ChatScreen(BaseAppScreen):
                 None,
             ),
         )
-        return self._with_native_console_session_rows(state)
+        state = self._with_native_console_session_rows(state)
+        return self._with_console_workspace_conversation_section(state)
+
+    @staticmethod
+    def _console_workspace_row_key(row: ConsoleWorkspaceConversationRow) -> str:
+        return str(row.conversation_id or "").strip()
+
+    def _selected_console_workspace_conversation_summary(
+        self,
+        rows: list[ConsoleWorkspaceConversationRow],
+    ) -> str:
+        selected = next((row for row in rows if row.selected), None)
+        if selected is None:
+            return "No active conversation."
+        title = ConsoleWorkspaceContextTray._conversation_title(selected.title)
+        detail = ConsoleWorkspaceContextTray._conversation_detail_status(selected.status)
+        return f"{title} - {detail or 'conversation'}"
+
+    def _merge_console_workspace_rows(
+        self,
+        primary: list[ConsoleWorkspaceConversationRow],
+        secondary: list[ConsoleWorkspaceConversationRow],
+    ) -> list[ConsoleWorkspaceConversationRow]:
+        merged: list[ConsoleWorkspaceConversationRow] = []
+        seen: set[str] = set()
+        for row in primary + secondary:
+            key = self._console_workspace_row_key(row)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(row)
+        return merged
 
     def _with_native_console_session_rows(
         self,
@@ -1483,7 +1521,66 @@ class ChatScreen(BaseAppScreen):
         if not native_rows:
             return state
         native_rows.sort(key=lambda row: 0 if row.selected else 1)
-        return replace(state, conversation_rows=tuple(native_rows + rows))
+        return replace(
+            state,
+            conversation_rows=tuple(
+                self._merge_console_workspace_rows(native_rows, rows)
+            ),
+        )
+
+    def _with_console_workspace_conversation_section(
+        self,
+        state: ConsoleWorkspaceContextState,
+    ) -> ConsoleWorkspaceContextState:
+        """Attach renderable Conversations subsection state to workspace context."""
+        workspace_id = ""
+        try:
+            workspace_id = str(
+                self._current_console_workspace_context().active_workspace_id or ""
+            ).strip()
+        except Exception:
+            workspace_id = ""
+        store = self._console_chat_store
+        if (
+            not workspace_id
+            and store is not None
+            and store.workspace_context.active_workspace_id
+        ):
+            workspace_id = str(store.workspace_context.active_workspace_id)
+        elif state.workspace_label.startswith("Workspace: "):
+            workspace_id = state.workspace_label.removeprefix("Workspace: ").strip()
+
+        if self._console_workspace_conversation_workspace_id != workspace_id:
+            self._console_workspace_conversation_query = ""
+            self._console_workspace_conversation_workspace_id = workspace_id
+
+        rows = list(state.conversation_rows)
+        selected_summary = self._selected_console_workspace_conversation_summary(rows)
+        query = self._console_workspace_conversation_query
+        result_total = len(rows) if query.strip() else None
+        status_copy = console_workspace_conversation_result_copy(
+            query=query,
+            result_total_count=result_total,
+            result_limit=CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
+        )
+        section = ConsoleWorkspaceConversationSectionState(
+            workspace_id=workspace_id,
+            collapsed=self._console_workspace_conversations_collapsed(workspace_id),
+            query=query,
+            selected_summary=selected_summary,
+            rows=tuple(rows),
+            workspace_total_count=len(rows),
+            result_total_count=result_total,
+            status_copy=status_copy,
+            empty_copy=(
+                "No matches in this workspace."
+                if query.strip()
+                else state.conversation_empty_copy
+            ),
+            search_enabled=False,
+            new_conversation_enabled=state.new_conversation_enabled,
+        )
+        return replace(state, conversation_section=section)
 
     def _console_config(self) -> dict[str, Any]:
         """Return mutable Console app config, initializing the section if needed."""
@@ -1496,6 +1593,43 @@ class ChatScreen(BaseAppScreen):
             console_config = {}
             app_config["console"] = console_config
         return console_config
+
+    def _console_conversation_section_config(self) -> dict[str, Any]:
+        """Return mutable Console conversation-section UI preferences."""
+        console_config = self._console_config()
+        section_config = console_config.get("conversation_section")
+        if not isinstance(section_config, dict):
+            section_config = {}
+            console_config["conversation_section"] = section_config
+        return section_config
+
+    def _console_workspace_conversations_collapsed(
+        self,
+        workspace_id: str | None,
+    ) -> bool:
+        """Return stored collapse preference for one workspace."""
+        key = str(workspace_id or "global").strip() or "global"
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            return False
+        console_config = app_config.get("console")
+        if not isinstance(console_config, dict):
+            return False
+        section_config = console_config.get("conversation_section")
+        if not isinstance(section_config, dict):
+            return False
+        value = section_config.get(key)
+        return bool(value.get("collapsed")) if isinstance(value, dict) else False
+
+    def _set_console_workspace_conversations_collapsed(
+        self,
+        workspace_id: str | None,
+        collapsed: bool,
+    ) -> None:
+        """Store collapse preference for one workspace in memory."""
+        key = str(workspace_id or "global").strip() or "global"
+        section_config = self._console_conversation_section_config()
+        section_config[key] = {"collapsed": bool(collapsed)}
 
     def _console_rail_state_config(self) -> dict[str, Any]:
         """Return mutable Console rail-state config, initializing it if needed."""
@@ -5419,6 +5553,15 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-new-chat-tab":
             event.stop()
             await self._create_native_console_session_from_active_context()
+            return
+        if button_id == "console-workspace-conversations-toggle":
+            event.stop()
+            state = self._build_console_workspace_context_state()
+            section = state.conversation_section
+            workspace_id = section.workspace_id if section is not None else None
+            collapsed = not bool(section.collapsed if section is not None else False)
+            self._set_console_workspace_conversations_collapsed(workspace_id, collapsed)
+            self._sync_console_workspace_context()
             return
         if button_id == "console-new-workspace-conversation":
             event.stop()
