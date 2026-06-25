@@ -336,7 +336,7 @@ async def test_console_workspace_conversation_collapse_persists_per_workspace() 
                 "#console-workspace-conversation-search",
                 Input,
             ).disabled
-            is True
+            is False
         )
 
         await pilot.click("#console-workspace-conversations-toggle")

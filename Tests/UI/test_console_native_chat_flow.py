@@ -2584,6 +2584,42 @@ async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_conversation_search_filters_active_workspace_memberships():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    other_workspace = service.create_workspace(workspace_id="ws-other-search", name="Other Search")
+    service.link_membership(
+        active_workspace.workspace_id,
+        item_type="conversation",
+        item_id="member-alpha",
+        role="workspace-thread",
+        title="Alpha membership conversation",
+    )
+    service.link_membership(
+        other_workspace.workspace_id,
+        item_type="conversation",
+        item_id="member-other-alpha",
+        role="workspace-thread",
+        title="Alpha other workspace",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+
+        await pilot.click("#console-workspace-conversation-search")
+        await pilot.press("a", "l", "p", "h", "a")
+        await _wait_for_text(console, pilot, "1 match")
+        await _wait_for_workspace_conversation_text(console, pilot, "Alpha membership", selected=False)
+        row_texts = _console_workspace_conversation_texts(console)
+        assert any("Alpha membership" in text for text in row_texts)
+        assert all("Alpha other workspace" not in text for text in row_texts)
+        assert "1 match" in _visible_text(console)
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_conversation_list_reserves_two_line_rows_with_margin():
     """Verify conversation list height accounts for two-line rows plus margin."""
     app = _build_test_app()
