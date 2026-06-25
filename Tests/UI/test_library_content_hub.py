@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -42,6 +42,28 @@ class StaticLibraryCollectionsService:
 
     def list_collections(self):
         return self.records
+
+
+class StaticLibraryRagSearchService:
+    """Mounted-test retrieval service for Library Search/RAG evidence rows."""
+
+    def __init__(self, results) -> None:
+        self.results = tuple(results)
+        self.requests = []
+
+    async def search(self, query, scope, mode, **kwargs):
+        self.requests.append(
+            {
+                "query": query,
+                "scope": tuple(scope),
+                "mode": mode,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return {
+            "runtime_backend": "local-test",
+            "results": self.results,
+        }
 
 
 @pytest.mark.asyncio
@@ -203,6 +225,126 @@ async def test_library_stage_b_hub_renders_complete_source_inventory_rows() -> N
         assert "Next best action: Import sources or create a note." in visible
         assert "Use in Console requires workspace-eligible Library content." in visible
         assert "tldw_server" not in visible
+
+
+@pytest.mark.asyncio
+async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regions() -> None:
+    app = _build_test_app()
+    _seed_library_content(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await pilot.click("#library-open-search")
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+
+        visible = _visible_text(screen)
+
+        assert "Retrieval Query" in visible
+        assert screen.query_one("#library-rag-query-section-rule", Static)
+        assert screen.query_one("#library-rag-query-input")
+        assert screen.query_one("#library-rag-run-query", Button).disabled is True
+        assert "Blocked: enter a question or search query." in visible
+        assert screen.query_one("#library-rag-query-blocked-callout", Static)
+        assert "Blocked | Enter a question before running retrieval." in visible
+        assert screen.query_one("#library-rag-run-disabled-reason", Static)
+        assert "Run disabled: enter a question or search query." in visible
+
+        assert "Scope Controls" in visible
+        assert screen.query_one("#library-rag-scope-section-rule", Static)
+        scope_header = str(screen.query_one("#library-rag-scope-table-header", Static).renderable)
+        assert "Scope" in scope_header
+        assert "Count" in scope_header
+        assert "Eligibility" in scope_header
+        assert "Next action" in scope_header
+        for selector in (
+            "#library-rag-scope-row-all",
+            "#library-rag-scope-row-workspace",
+            "#library-rag-scope-row-notes",
+            "#library-rag-scope-row-media",
+            "#library-rag-scope-row-conversations",
+            "#library-rag-scope-row-collections",
+            "#library-rag-scope-row-import-export",
+        ):
+            assert screen.query_one(selector, Static)
+
+        assert "All Library" in visible
+        assert "Browse/search" in visible
+        assert "Add source" in visible
+        assert "Workspace eligible" in visible
+        assert "Collections" in visible
+        assert "Import/Export recovery" in visible
+        assert screen.query_one("#library-rag-results-section-rule", Static)
+        assert "Evidence Results" in visible
+        assert "No evidence yet. Run Search/RAG to populate results." in visible
+        assert screen.query_one("#library-rag-evidence-empty-guidance", Static)
+        assert "Add or import sources, run a query, then select evidence for Console." in visible
+        assert "Citation/snippet carry-through: reserved for selected evidence." in visible
+        assert screen.query_one("#library-rag-console-handoff-heading", Static)
+        assert "Console Handoff" in visible
+        assert "Use in Console: blocked" in visible
+        assert "Blocked: select usable evidence before Console handoff." in visible
+        assert "Selected Evidence: none" in visible
+        assert "Future Attribution" in visible
+        assert "tldw_server" not in visible
+
+
+@pytest.mark.asyncio
+async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_contract() -> None:
+    app = _build_test_app()
+    _seed_library_content(app)
+    app.library_rag_search_service = StaticLibraryRagSearchService(
+        [
+            {
+                "title": "Research Note",
+                "snippet": "Useful answer evidence from the selected note.",
+                "source_id": "note-1",
+                "chunk_id": "chunk-7",
+                "score": 0.82,
+                "citations": [{"label": "Research Note #7", "source_id": "note-1"}],
+                "provenance": {
+                    "source_type": "notes",
+                    "workspace_ids": ["default"],
+                    "active_workspace_id": "default",
+                    "active_context_eligible": True,
+                    "authority_label": "local note",
+                },
+            }
+        ]
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await pilot.click("#library-open-search")
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        query_input = screen.query_one("#library-rag-query-input", Input)
+        query_input.value = "What does the research note say?"
+        await screen.update_library_rag_query(Input.Changed(query_input, query_input.value))
+        await _wait_for_selector(screen, pilot, "#library-rag-run-query")
+        await screen._start_library_rag_query()
+        await _wait_for_selector(screen, pilot, "#library-rag-select-result-0")
+        await pilot.click("#library-rag-select-result-0")
+        await _wait_for_selector(screen, pilot, "#library-rag-selected-result")
+
+        visible = _visible_text(screen)
+
+        assert "Selected: Research Note" in visible
+        assert "Retrieval Status" in visible
+        assert "Use in Console: ready" in visible
+        assert "Why: selected evidence is workspace-eligible." in visible
+        assert "Next: send selected evidence to Console." in visible
+        assert "Allowed actions" in visible
+        assert "Blocked actions" in visible
+        assert "Recovery" in visible
+        assert "Console Handoff" in visible
+        assert "Future Attribution" in visible
+        assert "Citation/snippet carry-through placeholder" in visible
+        assert "Snippet: Useful answer evidence from the selected note." in visible
+        assert "Citations: Research Note #7" in visible
+        assert screen.query_one("#library-rag-use-in-console", Button).disabled is False
 
 
 @pytest.mark.asyncio

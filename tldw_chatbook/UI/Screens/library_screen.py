@@ -2651,6 +2651,7 @@ class LibraryScreen(BaseAppScreen):
                     active_mode = self._active_mode_contract()
                     active_mode_copy_visible = self._active_mode not in {
                         "collections",
+                        "search",
                         "sources",
                         "workspaces",
                     }
@@ -2824,6 +2825,7 @@ class LibraryScreen(BaseAppScreen):
         self.query_one("#library-source-inspector-title", Static).update(inspector_column_title)
         active_mode_copy_visible = self._active_mode not in {
             "collections",
+            "search",
             "sources",
             "workspaces",
         }
@@ -2911,7 +2913,7 @@ class LibraryScreen(BaseAppScreen):
         detail = self.query_one("#library-source-detail", Vertical)
         await detail.mount(
             LibrarySearchRagPanel(panel_state, id="library-search-rag-panel"),
-            after="#library-active-mode-next-action",
+            after="#library-source-detail-title",
         )
         await self._sync_inspector_mode_region(panel_state)
 
@@ -3617,10 +3619,27 @@ class LibraryScreen(BaseAppScreen):
         self.query_one("#library-rag-query-status", Static).update(
             f"Mode: {panel_state.query_state.mode_label} | Top {panel_state.query_state.top_k}"
         )
+        self.query_one("#library-rag-query-blocked", Static).update(
+            self._library_rag_query_blocked_summary(panel_state)
+        )
         run_action = panel_state.query_state.run_action
+        self.query_one("#library-rag-query-blocked-callout", Static).update(
+            self._library_rag_query_blocked_callout(panel_state)
+        )
+        self.query_one("#library-rag-query-blocked-callout", Static).set_class(
+            not run_action.enabled,
+            "is-blocked",
+        )
+        self.query_one("#library-rag-query-blocked-callout", Static).set_class(
+            run_action.enabled,
+            "is-ready",
+        )
         run_button = self.query_one("#library-rag-run-query", Button)
         run_button.disabled = not run_action.enabled
         run_button.tooltip = run_action.tooltip
+        self.query_one("#library-rag-run-disabled-reason", Static).update(
+            self._library_rag_run_disabled_reason(panel_state)
+        )
 
         query_controls = self.query_one("#library-rag-query-controls", Vertical)
         recovery_widgets = list(self.query("#library-rag-query-recovery"))
@@ -3638,7 +3657,7 @@ class LibraryScreen(BaseAppScreen):
                         panel_state.query_state.recovery_copy,
                         id="library-rag-query-recovery",
                     ),
-                    after="#library-rag-query-row",
+                    after="#library-rag-query-shortcuts",
                 )
         else:
             for widget in recovery_widgets:
@@ -3649,6 +3668,8 @@ class LibraryScreen(BaseAppScreen):
         self.query_one("#library-rag-scope-summary", Static).update(
             self._library_rag_scope_summary(panel_state)
         )
+        for widget_id, copy in self._library_rag_scope_rows(panel_state).items():
+            self.query_one(f"#{widget_id}", Static).update(copy)
         scope_recovery_widgets = list(self.query("#library-rag-scope-recovery"))
         import_buttons = list(self.query("#library-rag-open-import-export"))
         if panel_state.scope.recovery_copy:
@@ -3693,7 +3714,10 @@ class LibraryScreen(BaseAppScreen):
         panel_state: LibraryRagPanelState,
     ) -> None:
         results_container = self.query_one("#library-rag-results", Vertical)
-        for child in list(results_container.children)[1:]:
+        self.query_one("#library-rag-attribution-placeholder", Static).update(
+            self._library_rag_attribution_placeholder(panel_state)
+        )
+        for child in list(results_container.children)[3:]:
             await child.remove()
 
         if panel_state.results:
@@ -3765,7 +3789,17 @@ class LibraryScreen(BaseAppScreen):
             )
         else:
             await results_container.mount(
-                Static(panel_state.next_action, id="library-rag-results-empty")
+                Static(
+                    "No evidence yet. Run Search/RAG to populate results.",
+                    id="library-rag-results-empty",
+                )
+            )
+            await results_container.mount(
+                Static(
+                    "Add or import sources, run a query, then select evidence for Console.",
+                    id="library-rag-evidence-empty-guidance",
+                    classes="library-rag-empty-guidance",
+                )
             )
 
     @staticmethod
@@ -3776,6 +3810,71 @@ class LibraryScreen(BaseAppScreen):
             f" | Notes {counts.get('notes', 0)}"
             f" | Media {counts.get('media', 0)}"
             f" | Conversations {counts.get('conversations', 0)}"
+        )
+
+    @staticmethod
+    def _library_rag_scope_rows(panel_state: LibraryRagPanelState) -> dict[str, str]:
+        counts = {option.source_type: option.count for option in panel_state.scope.options}
+        total = panel_state.scope.total_count
+        selected = len(panel_state.scope.selected_source_types)
+        return {
+            "library-rag-scope-row-all": (
+                f"All Library          | {total} sources    | Browse/search     | Add source"
+            ),
+            "library-rag-scope-row-workspace": (
+                f"Workspace eligible   | {selected} scopes     | Stage after pick  | Select evidence"
+            ),
+            "library-rag-scope-row-notes": (
+                f"Notes                | {counts.get('notes', 0)} sources    | Retrieval-ready   | Run query"
+            ),
+            "library-rag-scope-row-media": (
+                f"Media                | {counts.get('media', 0)} sources    | Retrieval-ready   | Run query"
+            ),
+            "library-rag-scope-row-conversations": (
+                "Conversations        | "
+                f"{counts.get('conversations', 0)} sources    | Retrieval-ready   | Run query"
+            ),
+            "library-rag-scope-row-collections": (
+                "Collections          | "
+                f"{counts.get('collections', 0)} records    | Read/review WIP   | Open collection"
+            ),
+            "library-rag-scope-row-import-export": (
+                "Import/Export recovery | add sources | Source intake      | Import source"
+            ),
+        }
+
+    @staticmethod
+    def _library_rag_query_blocked_summary(panel_state: LibraryRagPanelState) -> str:
+        reason = panel_state.query_state.run_action.disabled_reason
+        if not reason:
+            return "Ready: run Search/RAG over selected Library sources."
+        return f"Blocked: {reason[:1].lower()}{reason[1:]}"
+
+    @staticmethod
+    def _library_rag_query_blocked_callout(panel_state: LibraryRagPanelState) -> str:
+        reason = panel_state.query_state.run_action.disabled_reason
+        if not reason:
+            return "Ready | Run retrieval over selected Library sources."
+        if reason == "Enter a question or search query.":
+            reason = "Enter a question before running retrieval."
+        elif reason == "Select at least one Library source.":
+            reason = "Select at least one Library source before running retrieval."
+        return f"Blocked | {reason}"
+
+    @staticmethod
+    def _library_rag_run_disabled_reason(panel_state: LibraryRagPanelState) -> str:
+        reason = panel_state.query_state.run_action.disabled_reason
+        if not reason:
+            return "Run ready: selected Library sources are queryable."
+        return f"Run disabled: {reason[:1].lower()}{reason[1:]}"
+
+    @staticmethod
+    def _library_rag_attribution_placeholder(panel_state: LibraryRagPanelState) -> str:
+        if panel_state.selected_result is None:
+            return "Citation/snippet carry-through: reserved for selected evidence."
+        return (
+            "Citation/snippet carry-through placeholder: selected evidence preserves "
+            "source, chunk, snippet, and citations."
         )
 
     @on(Button.Pressed, "#library-open-notes")
