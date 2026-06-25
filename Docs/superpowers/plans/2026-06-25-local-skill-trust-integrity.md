@@ -22,14 +22,28 @@ ADR path: `backlog/decisions/009-local-skill-trust-boundary.md`
 
 Reason: This changes a security boundary, trust root, local storage semantics, runtime policy IDs, and the `LocalSkillsService` contract. ADR-009 is already accepted and must remain linked from the task and implementation notes.
 
+## Pre-Execution Review Corrections
+
+These corrections are mandatory and supersede any lower-level code snippet that appears to conflict:
+
+1. Production rollback protection must use a secure OS keyring-backed generation marker store. File-backed marker storage is allowed only for tests or an explicit reduced-rollback-protection mode, and that mode must be reflected in Settings posture.
+2. A manifest with a missing, unavailable, stale, or mismatched marker is a global `quarantined_manifest_error`/`rollback_marker_unavailable` state. It must not be accepted as trusted.
+3. `status_for_skill()` and list/context paths must not raise just because trust is locked or the manifest is unverifiable. They must return visible blocked trust status. `ensure_skill_trusted()` is the use-time raise path.
+4. Chatbook-approved create/update/import flows may rebaseline only after explicit approval text. Out-of-band file writes remain the tamper signal and must quarantine.
+5. Review approval uses canonical JSON digests of captured fingerprints, not Python `str(...)`, before updating the baseline.
+6. Skills UI recovery actions must be functional, not only rendered: bootstrap, unlock/retry, review diff, and trust reviewed version must call the trust service through app-owned handlers and refresh state.
+7. `SkillTrustService` must expose Settings posture fields used by the UI: `overall_status()`, `keyring_convenience_enabled`, and `reduced_rollback_protection`.
+8. Production unlock must persist and load a non-secret KDF salt from trust metadata. Tests may inject deterministic salts, but app/bootstrap flows must not require callers to remember a salt.
+9. Optional keyring convenience must store derived trust material or a wrapped trust root in a secure keyring, never the passphrase, and must be disabled by default until the user explicitly enables it.
+
 ## File Structure
 
 - Create `tldw_chatbook/Skills_Interop/skill_trust_models.py`: trust status constants, reason codes, dataclasses, and `SkillTrustBlockedError`.
 - Create `tldw_chatbook/Skills_Interop/skill_trust_crypto.py`: key derivation, canonical JSON, HMAC, AES-GCM encryption/decryption, and hash helpers.
 - Create `tldw_chatbook/Skills_Interop/skill_trust_scanner.py`: deterministic skill-directory scanning, file fingerprinting, unsafe path detection, text snapshot capture.
-- Create `tldw_chatbook/Skills_Interop/skill_trust_store.py`: manifest/snapshot persistence, secure generation marker protocol, keyring convenience helpers, authenticated audit records.
-- Create `tldw_chatbook/Skills_Interop/skill_trust_service.py`: bootstrap, unlock, status classification, review capture, approval, key rotation, and use-time enforcement.
-- Modify `tldw_chatbook/Skills_Interop/local_skills_service.py`: inject trust service, add trust fields to list/detail/context responses, block execution when trust fails, and atomically re-trust explicit Chatbook mutations.
+- Create `tldw_chatbook/Skills_Interop/skill_trust_store.py`: manifest/snapshot persistence, secure keyring generation marker store, explicit reduced-protection file marker for tests/recovery, keyring convenience helpers, authenticated audit records.
+- Create `tldw_chatbook/Skills_Interop/skill_trust_service.py`: bootstrap, unlock, status classification, review capture, approval, key rotation, Settings posture, and use-time enforcement.
+- Modify `tldw_chatbook/Skills_Interop/local_skills_service.py`: inject trust service, add trust fields to list/detail/context responses, block execution when trust fails, and atomically re-trust only explicitly approved Chatbook mutations.
 - Modify `tldw_chatbook/Skills_Interop/skills_scope_service.py`: preserve trust fields during local response normalization. Recovery actions use `app.local_skill_trust_service` directly in v1.
 - Modify `tldw_chatbook/Skills_Interop/__init__.py`: export trust service/types.
 - Modify `tldw_chatbook/runtime_policy/registry.py`: add local `skills.trust.*.local` policy actions.
@@ -659,8 +673,29 @@ import pytest
 from tldw_chatbook.Skills_Interop.skill_trust_crypto import derive_skill_trust_keys
 from tldw_chatbook.Skills_Interop.skill_trust_store import (
     FileSkillTrustGenerationMarkerStore,
+    KeyringSkillTrustKeyCache,
+    KeyringSkillTrustGenerationMarkerStore,
+    SkillTrustMarkerUnavailable,
     SkillTrustStore,
 )
+
+
+class FakeSecureKeyring:
+    __module__ = "keyring.backends.macOS"
+    priority = 1
+
+    def __init__(self):
+        self.values = {}
+
+    def get_password(self, service_name, username):
+        return self.values.get((service_name, username))
+
+    def set_password(self, service_name, username, password):
+        self.values[(service_name, username)] = password
+
+
+class FakePlaintextKeyring(FakeSecureKeyring):
+    __module__ = "keyring.backends.file"
 
 
 def test_trust_store_round_trips_manifest_snapshot_and_marker(tmp_path):
@@ -681,7 +716,7 @@ def test_trust_store_round_trips_manifest_snapshot_and_marker(tmp_path):
         "audit": [],
     }
 
-    store.save_manifest(manifest, keys)
+    store.save_manifest(manifest, keys, salt=b"3" * 32)
     store.save_snapshot("demo-1", {"files": {"SKILL.md": "# Demo"}}, keys, generation=1)
 
     loaded = store.load_manifest(keys)
@@ -689,6 +724,7 @@ def test_trust_store_round_trips_manifest_snapshot_and_marker(tmp_path):
 
     assert loaded["generation"] == 1
     assert snapshot == {"files": {"SKILL.md": "# Demo"}}
+    assert store.load_salt() == b"3" * 32
     assert marker.load_marker() == {"generation": 1, "manifest_digest": store.manifest_digest(loaded)}
 
 
@@ -697,7 +733,7 @@ def test_trust_store_rejects_tampered_manifest(tmp_path):
     marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
-    store.save_manifest({"version": 1, "generation": 1, "skills": {}, "audit": []}, keys)
+    store.save_manifest({"version": 1, "generation": 1, "skills": {}, "audit": []}, keys, salt=b"4" * 32)
     payload = json.loads((tmp_path / "trust" / "skill_trust_manifest.json").read_text(encoding="utf-8"))
     payload["manifest"]["generation"] = 2
     (tmp_path / "trust" / "skill_trust_manifest.json").write_text(json.dumps(payload), encoding="utf-8")
@@ -711,11 +747,49 @@ def test_trust_store_rejects_marker_mismatch(tmp_path):
     marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
-    store.save_manifest({"version": 1, "generation": 3, "skills": {}, "audit": []}, keys)
+    store.save_manifest({"version": 1, "generation": 3, "skills": {}, "audit": []}, keys, salt=b"5" * 32)
     marker.save_marker(generation=2, manifest_digest="old")
 
     with pytest.raises(ValueError, match="manifest generation marker mismatch"):
         store.load_manifest(keys)
+
+
+def test_trust_store_rejects_missing_marker_after_manifest_exists(tmp_path):
+    keys = derive_skill_trust_keys("passphrase", salt=b"5" * 32)
+    marker_path = tmp_path / "marker.json"
+    marker = FileSkillTrustGenerationMarkerStore(marker_path)
+    store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
+
+    store.save_manifest({"version": 1, "generation": 1, "skills": {}, "audit": []}, keys, salt=b"5" * 32)
+    marker_path.unlink()
+
+    with pytest.raises(ValueError, match="manifest generation marker mismatch"):
+        store.load_manifest(keys)
+
+
+def test_keyring_generation_marker_store_round_trips_with_secure_backend():
+    marker = KeyringSkillTrustGenerationMarkerStore(keyring_backend=FakeSecureKeyring())
+
+    marker.save_marker(generation=3, manifest_digest="digest")
+
+    assert marker.load_marker() == {"generation": 3, "manifest_digest": "digest"}
+
+
+def test_keyring_generation_marker_store_rejects_insecure_backend():
+    with pytest.raises(SkillTrustMarkerUnavailable, match="secure OS-backed"):
+        KeyringSkillTrustGenerationMarkerStore(keyring_backend=FakePlaintextKeyring())
+
+
+def test_keyring_key_cache_round_trips_without_storing_passphrase():
+    fake = FakeSecureKeyring()
+    keys = derive_skill_trust_keys("passphrase", salt=b"8" * 32)
+    cache = KeyringSkillTrustKeyCache(keyring_backend=fake)
+
+    cache.save_keys(keys)
+    loaded = cache.load_keys()
+
+    assert loaded == keys
+    assert "passphrase" not in "\n".join(fake.values.values())
 ```
 
 - [ ] **Step 2: Run store tests to verify they fail**
@@ -737,16 +811,26 @@ Create `tldw_chatbook/Skills_Interop/skill_trust_store.py` with these public met
 
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..runtime_policy.server_credentials import is_secure_keyring_backend
 from .skill_trust_crypto import canonical_json, decrypt_json_blob, encrypt_json_blob, manifest_mac, sha256_hex
 
 
 _MANIFEST_FILENAME = "skill_trust_manifest.json"
 _SNAPSHOTS_DIRNAME = "snapshots"
+_DEFAULT_MARKER_SERVICE_NAME = "tldw_chatbook.skill_trust"
+_DEFAULT_KEY_CACHE_SERVICE_NAME = "tldw_chatbook.skill_trust.keys"
+_MARKER_USERNAME = "local-skills:generation-marker:v1"
+_KEY_CACHE_USERNAME = "local-skills:trust-root:v1"
+
+
+class SkillTrustMarkerUnavailable(RuntimeError):
+    reason_code = "rollback_marker_unavailable"
 
 
 class SkillTrustGenerationMarkerStore(Protocol):
@@ -756,6 +840,8 @@ class SkillTrustGenerationMarkerStore(Protocol):
 
 @dataclass(slots=True)
 class FileSkillTrustGenerationMarkerStore:
+    """Reduced-protection/test marker store. Do not use for default production wiring."""
+
     marker_path: Path
 
     def load_marker(self) -> dict[str, Any] | None:
@@ -772,6 +858,107 @@ class FileSkillTrustGenerationMarkerStore:
             encoding="utf-8",
         )
         temp_path.replace(self.marker_path)
+
+
+class UnavailableSkillTrustGenerationMarkerStore:
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    def _raise_unavailable(self) -> None:
+        raise SkillTrustMarkerUnavailable(self.message)
+
+    def load_marker(self) -> dict[str, Any] | None:
+        self._raise_unavailable()
+
+    def save_marker(self, *, generation: int, manifest_digest: str) -> None:
+        self._raise_unavailable()
+
+
+@dataclass(slots=True)
+class KeyringSkillTrustGenerationMarkerStore:
+    service_name: str = _DEFAULT_MARKER_SERVICE_NAME
+    keyring_backend: Any | None = None
+
+    def __post_init__(self) -> None:
+        keyring_backend = self.keyring_backend
+        if keyring_backend is None:
+            import keyring
+
+            keyring_backend = keyring.get_keyring()
+        get_keyring = getattr(keyring_backend, "get_keyring", None)
+        if callable(get_keyring):
+            keyring_backend = get_keyring()
+        if not is_secure_keyring_backend(keyring_backend):
+            raise SkillTrustMarkerUnavailable("No secure OS-backed generation marker store is available.")
+        self.keyring_backend = keyring_backend
+
+    def load_marker(self) -> dict[str, Any] | None:
+        payload = self.keyring_backend.get_password(self.service_name, _MARKER_USERNAME)
+        if not payload:
+            return None
+        marker = json.loads(payload)
+        return marker if isinstance(marker, dict) else None
+
+    def save_marker(self, *, generation: int, manifest_digest: str) -> None:
+        payload = json.dumps({"generation": generation, "manifest_digest": manifest_digest}, sort_keys=True)
+        self.keyring_backend.set_password(self.service_name, _MARKER_USERNAME, payload)
+
+
+def build_default_skill_trust_marker_store(keyring_backend: Any | None = None) -> SkillTrustGenerationMarkerStore:
+    try:
+        return KeyringSkillTrustGenerationMarkerStore(keyring_backend=keyring_backend)
+    except SkillTrustMarkerUnavailable as exc:
+        return UnavailableSkillTrustGenerationMarkerStore(str(exc))
+
+
+@dataclass(slots=True)
+class KeyringSkillTrustKeyCache:
+    service_name: str = _DEFAULT_KEY_CACHE_SERVICE_NAME
+    keyring_backend: Any | None = None
+
+    def __post_init__(self) -> None:
+        keyring_backend = self.keyring_backend
+        if keyring_backend is None:
+            import keyring
+
+            keyring_backend = keyring.get_keyring()
+        get_keyring = getattr(keyring_backend, "get_keyring", None)
+        if callable(get_keyring):
+            keyring_backend = get_keyring()
+        if not is_secure_keyring_backend(keyring_backend):
+            raise SkillTrustMarkerUnavailable("No secure OS-backed key cache is available.")
+        self.keyring_backend = keyring_backend
+
+    def save_keys(self, keys: Any) -> None:
+        payload = {
+            "version": 1,
+            "manifest_mac_key": base64.b64encode(keys.manifest_mac_key).decode("ascii"),
+            "snapshot_key": base64.b64encode(keys.snapshot_key).decode("ascii"),
+            "audit_mac_key": base64.b64encode(keys.audit_mac_key).decode("ascii"),
+            "wrapped_root_key": base64.b64encode(keys.wrapped_root_key).decode("ascii"),
+        }
+        self.keyring_backend.set_password(self.service_name, _KEY_CACHE_USERNAME, json.dumps(payload, sort_keys=True))
+
+    def load_keys(self) -> Any | None:
+        from .skill_trust_crypto import SkillTrustKeys
+
+        payload = self.keyring_backend.get_password(self.service_name, _KEY_CACHE_USERNAME)
+        if not payload:
+            return None
+        data = json.loads(payload)
+        return SkillTrustKeys(
+            manifest_mac_key=base64.b64decode(data["manifest_mac_key"]),
+            snapshot_key=base64.b64decode(data["snapshot_key"]),
+            audit_mac_key=base64.b64decode(data["audit_mac_key"]),
+            wrapped_root_key=base64.b64decode(data["wrapped_root_key"]),
+        )
+
+
+def build_default_skill_trust_key_cache(keyring_backend: Any | None = None) -> KeyringSkillTrustKeyCache | None:
+    try:
+        return KeyringSkillTrustKeyCache(keyring_backend=keyring_backend)
+    except SkillTrustMarkerUnavailable:
+        return None
 
 
 @dataclass(slots=True)
@@ -793,6 +980,16 @@ class SkillTrustStore:
     def manifest_digest(self, manifest: dict[str, Any]) -> str:
         return sha256_hex(canonical_json(manifest))
 
+    def load_salt(self) -> bytes:
+        payload = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        encoded = payload.get("kdf_salt")
+        if not isinstance(encoded, str):
+            raise ValueError("skill trust salt missing")
+        salt = base64.b64decode(encoded.encode("ascii"))
+        if len(salt) != 32:
+            raise ValueError("skill trust salt invalid")
+        return salt
+
     def load_manifest(self, keys: Any) -> dict[str, Any]:
         payload = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         manifest = payload.get("manifest")
@@ -803,16 +1000,22 @@ class SkillTrustStore:
             raise ValueError("manifest authentication failed")
         marker = self.marker_store.load_marker()
         digest = self.manifest_digest(manifest)
-        if marker is not None:
-            if int(marker.get("generation", -1)) != int(manifest.get("generation", -2)):
-                raise ValueError("manifest generation marker mismatch")
-            if marker.get("manifest_digest") != digest:
-                raise ValueError("manifest generation marker mismatch")
+        if marker is None:
+            raise ValueError("manifest generation marker mismatch")
+        if int(marker.get("generation", -1)) != int(manifest.get("generation", -2)):
+            raise ValueError("manifest generation marker mismatch")
+        if marker.get("manifest_digest") != digest:
+            raise ValueError("manifest generation marker mismatch")
         return manifest
 
-    def save_manifest(self, manifest: dict[str, Any], keys: Any) -> None:
+    def save_manifest(self, manifest: dict[str, Any], keys: Any, *, salt: bytes | None = None) -> None:
         self.store_dir.mkdir(parents=True, exist_ok=True)
+        if salt is None:
+            salt = self.load_salt()
+        if len(salt) != 32:
+            raise ValueError("skill trust salt invalid")
         payload = {
+            "kdf_salt": base64.b64encode(salt).decode("ascii"),
             "manifest": manifest,
             "mac": manifest_mac(manifest, keys.manifest_mac_key),
         }
@@ -921,6 +1124,38 @@ def test_bootstrap_trusts_current_files_and_detects_modification(tmp_path):
         service.ensure_skill_trusted("demo")
 
 
+def test_existing_manifest_without_unlock_reports_locked_status(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    (skills_dir / "demo").mkdir(parents=True)
+    (skills_dir / "demo" / "SKILL.md").write_text("# Demo\n", encoding="utf-8")
+    service.bootstrap_trust()
+
+    locked_service = SkillTrustService(
+        skills_dir=skills_dir,
+        trust_store=SkillTrustStore(
+            store_dir=tmp_path / "trust",
+            marker_store=FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+        ),
+    )
+    status = locked_service.status_for_skill("demo")
+
+    assert status.trust_status == "trust_locked"
+    assert status.trust_blocked is True
+
+
+def test_missing_marker_reports_global_manifest_error(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    (skills_dir / "demo").mkdir(parents=True)
+    (skills_dir / "demo" / "SKILL.md").write_text("# Demo\n", encoding="utf-8")
+    service.bootstrap_trust()
+    (tmp_path / "marker.json").unlink()
+
+    status = service.status_for_skill("demo")
+
+    assert status.trust_status == "quarantined_manifest_error"
+    assert status.trust_blocked is True
+
+
 def test_review_approval_requires_live_files_to_match_reviewed_snapshot(tmp_path):
     service, skills_dir = _service(tmp_path)
     (skills_dir / "demo").mkdir(parents=True)
@@ -973,24 +1208,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .skill_trust_crypto import derive_skill_trust_keys, sha256_hex
+from .skill_trust_crypto import canonical_json, derive_skill_trust_keys, sha256_hex
 from .skill_trust_models import (
     SkillDirectorySnapshot,
     SkillTrustBlockedError,
     SkillTrustStatus,
+    TRUST_REASON_MANIFEST_INVALID,
+    TRUST_REASON_ROLLBACK_MARKER_UNAVAILABLE,
     TRUST_REASON_SKILL_ADDED,
     TRUST_REASON_SKILL_DELETED,
     TRUST_REASON_SKILL_MODIFIED,
+    TRUST_REASON_TRUST_LOCKED,
     TRUST_REASON_TRUST_UNINITIALIZED,
     TRUST_REASON_UNSUPPORTED_PATH,
     TRUST_STATUS_QUARANTINED_ADDED,
     TRUST_STATUS_QUARANTINED_DELETED,
+    TRUST_STATUS_QUARANTINED_MANIFEST_ERROR,
     TRUST_STATUS_QUARANTINED_MODIFIED,
     TRUST_STATUS_QUARANTINED_UNSUPPORTED_PATH,
     TRUST_STATUS_TRUSTED,
+    TRUST_STATUS_LOCKED,
     TRUST_STATUS_UNINITIALIZED,
 )
 from .skill_trust_scanner import scan_skill_directory
+from .skill_trust_store import SkillTrustMarkerUnavailable
 
 
 def _now_iso() -> str:
@@ -998,14 +1239,46 @@ def _now_iso() -> str:
 
 
 class SkillTrustService:
-    def __init__(self, *, skills_dir: Path, trust_store: Any) -> None:
+    def __init__(
+        self,
+        *,
+        skills_dir: Path,
+        trust_store: Any,
+        key_cache: Any | None = None,
+        keyring_convenience_enabled: bool = False,
+        reduced_rollback_protection: bool = False,
+    ) -> None:
         self.skills_dir = skills_dir
         self.trust_store = trust_store
+        self.key_cache = key_cache
+        self.keyring_convenience_enabled = keyring_convenience_enabled
+        self.reduced_rollback_protection = reduced_rollback_protection
         self._keys: Any | None = None
+        self._salt: bytes | None = None
         self._reviews: dict[str, dict[str, Any]] = {}
 
-    def unlock_with_passphrase(self, passphrase: str, *, salt: bytes) -> None:
+    def unlock_with_passphrase(self, passphrase: str, *, salt: bytes | None = None) -> None:
+        if salt is None:
+            salt = self.trust_store.load_salt()
         self._keys = derive_skill_trust_keys(passphrase, salt=salt)
+        self._salt = salt
+
+    def enable_keyring_convenience(self) -> None:
+        if self.key_cache is None:
+            raise SkillTrustMarkerUnavailable("No secure OS-backed key cache is available.")
+        self.key_cache.save_keys(self._require_keys())
+        self.keyring_convenience_enabled = True
+
+    def unlock_from_keyring_convenience(self) -> bool:
+        if self.key_cache is None:
+            return False
+        keys = self.key_cache.load_keys()
+        if keys is None:
+            return False
+        self._keys = keys
+        self._salt = self.trust_store.load_salt()
+        self.keyring_convenience_enabled = True
+        return True
 
     def _require_keys(self) -> Any:
         if self._keys is None:
@@ -1016,6 +1289,11 @@ class SkillTrustService:
             )
         return self._keys
 
+    def _require_salt(self) -> bytes:
+        if self._salt is None:
+            raise ValueError("skill trust salt missing")
+        return self._salt
+
     def _empty_manifest(self) -> dict[str, Any]:
         return {"version": 1, "generation": 0, "skills": {}, "audit": []}
 
@@ -1024,14 +1302,42 @@ class SkillTrustService:
             return None
         return self.trust_store.load_manifest(self._require_keys())
 
-    def bootstrap_trust(self) -> None:
+    def _locked_status(self, skill_name: str) -> SkillTrustStatus:
+        return SkillTrustStatus(skill_name, TRUST_STATUS_LOCKED, TRUST_REASON_TRUST_LOCKED, True, (), None, _now_iso())
+
+    def _manifest_error_status(self, skill_name: str, reason_code: str) -> SkillTrustStatus:
+        return SkillTrustStatus(skill_name, TRUST_STATUS_QUARANTINED_MANIFEST_ERROR, reason_code, True, (), None, _now_iso())
+
+    def _fingerprints_digest(self, snapshot: SkillDirectorySnapshot) -> str:
+        entries = [item.as_manifest_entry() for item in snapshot.fingerprints]
+        return sha256_hex(canonical_json(entries))
+
+    def overall_status(self) -> str:
+        if not self.trust_store.has_manifest():
+            return TRUST_STATUS_UNINITIALIZED
+        if self._keys is None:
+            return TRUST_STATUS_LOCKED
+        try:
+            self.trust_store.load_manifest(self._keys)
+        except SkillTrustMarkerUnavailable:
+            return TRUST_STATUS_QUARANTINED_MANIFEST_ERROR
+        except ValueError:
+            return TRUST_STATUS_QUARANTINED_MANIFEST_ERROR
+        return TRUST_STATUS_TRUSTED
+
+    def bootstrap_trust(self, passphrase: str | None = None, *, salt: bytes | None = None) -> None:
+        if passphrase is not None:
+            self.unlock_with_passphrase(passphrase, salt=salt or secrets.token_bytes(32))
         keys = self._require_keys()
+        manifest_salt = self._require_salt()
         skills: dict[str, Any] = {}
         generation = 1
         for skill_dir in sorted(self.skills_dir.iterdir(), key=lambda item: item.name) if self.skills_dir.exists() else []:
             if not skill_dir.is_dir():
                 continue
             snapshot = scan_skill_directory(skill_dir.name, skill_dir)
+            if snapshot.unsupported_paths:
+                raise ValueError("unsupported_path")
             snapshot_id = f"{skill_dir.name}-{generation}"
             self.trust_store.save_snapshot(
                 snapshot_id,
@@ -1050,12 +1356,19 @@ class SkillTrustService:
             "skills": skills,
             "audit": [{"event": "trust_bootstrap", "at": _now_iso(), "skill_count": len(skills)}],
         }
-        self.trust_store.save_manifest(manifest, keys)
+        self.trust_store.save_manifest(manifest, keys, salt=manifest_salt)
 
     def status_for_skill(self, skill_name: str) -> SkillTrustStatus:
-        manifest = self._load_manifest_or_uninitialized()
-        if manifest is None:
+        if not self.trust_store.has_manifest():
             return SkillTrustStatus(skill_name, TRUST_STATUS_UNINITIALIZED, TRUST_REASON_TRUST_UNINITIALIZED, True, (), None, None)
+        if self._keys is None:
+            return self._locked_status(skill_name)
+        try:
+            manifest = self.trust_store.load_manifest(self._keys)
+        except SkillTrustMarkerUnavailable:
+            return self._manifest_error_status(skill_name, TRUST_REASON_ROLLBACK_MARKER_UNAVAILABLE)
+        except ValueError:
+            return self._manifest_error_status(skill_name, TRUST_REASON_MANIFEST_INVALID)
         skill_dir = self.skills_dir / skill_name
         current = scan_skill_directory(skill_name, skill_dir)
         if current.unsupported_paths:
@@ -1098,7 +1411,7 @@ class SkillTrustService:
         review = {
             "review_id": review_id,
             "skill_name": skill_name,
-            "current_digest": sha256_hex(str([item.as_manifest_entry() for item in current.fingerprints]).encode("utf-8")),
+            "current_digest": self._fingerprints_digest(current),
             "current_files": current.text_files,
             "changed_files": list(status.changed_files),
         }
@@ -1109,12 +1422,24 @@ class SkillTrustService:
         review = self._reviews[review_id]
         skill_name = review["skill_name"]
         current = scan_skill_directory(skill_name, self.skills_dir / skill_name)
-        current_digest = sha256_hex(str([item.as_manifest_entry() for item in current.fingerprints]).encode("utf-8"))
+        current_digest = self._fingerprints_digest(current)
         if current_digest != review["current_digest"]:
             raise ValueError("snapshot_mismatch")
+        self.trust_current_skill(skill_name, audit_event="trust_approved", snapshot=current)
+
+    def trust_current_skill(
+        self,
+        skill_name: str,
+        *,
+        audit_event: str = "trust_chatbook_mutation",
+        snapshot: SkillDirectorySnapshot | None = None,
+    ) -> None:
         keys = self._require_keys()
         manifest = self.trust_store.load_manifest(keys)
         generation = int(manifest["generation"]) + 1
+        current = snapshot or scan_skill_directory(skill_name, self.skills_dir / skill_name)
+        if current.unsupported_paths:
+            raise ValueError("unsupported_path")
         snapshot_id = f"{skill_name}-{generation}"
         self.trust_store.save_snapshot(snapshot_id, {"files": current.text_files}, keys, generation=generation)
         manifest["generation"] = generation
@@ -1123,7 +1448,7 @@ class SkillTrustService:
             "snapshot_id": snapshot_id,
             "trusted_at": _now_iso(),
         }
-        manifest.setdefault("audit", []).append({"event": "trust_approved", "at": _now_iso(), "skill_name": skill_name})
+        manifest.setdefault("audit", []).append({"event": audit_event, "at": _now_iso(), "skill_name": skill_name})
         self.trust_store.save_manifest(manifest, keys)
 ```
 
@@ -1195,14 +1520,26 @@ async def test_local_skills_service_exposes_trust_state_and_blocks_uninitialized
 
 
 @pytest.mark.asyncio
-async def test_local_skills_service_blocks_execute_when_skill_changes_after_bootstrap(tmp_path):
+async def test_local_skills_service_blocks_execute_when_skill_changes_on_disk_after_bootstrap(tmp_path):
     service, trust = _trusted_local_service(tmp_path)
     await service.create_skill(name="demo-skill", content="# Demo\nRender {{args}}")
     trust.bootstrap_trust()
-    await service.update_skill("demo-skill", content="# Demo\nChanged {{args}}")
+    (tmp_path / "skills" / "demo-skill" / "SKILL.md").write_text("# Demo\nChanged {{args}}", encoding="utf-8")
 
     with pytest.raises(SkillTrustBlockedError, match="skill_modified"):
         await service.execute_skill("demo-skill", args="x")
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_retrusts_explicitly_approved_update(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    await service.create_skill(name="demo-skill", content="# Demo\nRender {{args}}")
+    trust.bootstrap_trust()
+
+    await service.update_skill("demo-skill", content="# Demo\nChanged {{args}}", trust_approved=True)
+
+    listed = await service.list_skills()
+    assert listed["skills"][0]["trust_status"] == "trusted"
 ```
 
 - [ ] **Step 2: Run failing local service trust tests**
@@ -1210,7 +1547,7 @@ async def test_local_skills_service_blocks_execute_when_skill_changes_after_boot
 Run:
 
 ```bash
-.venv/bin/python -m pytest -q Tests/Skills/test_local_skills_service.py::test_local_skills_service_exposes_trust_state_and_blocks_uninitialized_context Tests/Skills/test_local_skills_service.py::test_local_skills_service_blocks_execute_when_skill_changes_after_bootstrap --tb=short
+.venv/bin/python -m pytest -q Tests/Skills/test_local_skills_service.py::test_local_skills_service_exposes_trust_state_and_blocks_uninitialized_context Tests/Skills/test_local_skills_service.py::test_local_skills_service_blocks_execute_when_skill_changes_on_disk_after_bootstrap Tests/Skills/test_local_skills_service.py::test_local_skills_service_retrusts_explicitly_approved_update --tb=short
 ```
 
 Expected: fail because `LocalSkillsService` does not accept `trust_service`.
@@ -1253,6 +1590,10 @@ Add helpers near `_summary_for_record`:
     def _require_trusted_skill(self, skill_name: str) -> None:
         if self.trust_service is not None:
             self.trust_service.ensure_skill_trusted(skill_name)
+
+    def _trust_after_approved_mutation(self, skill_name: str, *, trust_approved: bool) -> None:
+        if self.trust_service is not None and trust_approved:
+            self.trust_service.trust_current_skill(skill_name, audit_event="trust_chatbook_mutation")
 ```
 
 Update `_response_for_record()` and `_summary_for_record()` call sites so trust fields are merged into detail/list dictionaries:
@@ -1303,17 +1644,27 @@ At the start of `execute_skill()`, add:
         self._require_trusted_skill(skill_name)
 ```
 
-- [ ] **Step 5: Run local service trust tests**
+- [ ] **Step 5: Rebaseline only explicitly approved Chatbook mutations**
+
+Add a keyword-only `trust_approved: bool = False` argument to `create_skill()`, `update_skill()`, `import_skill()`, and `import_skill_file()`. After the skill file, supporting files, and index entry are written successfully, call:
+
+```python
+            self._trust_after_approved_mutation(skill_name, trust_approved=trust_approved)
+```
+
+The UI layer must pass `trust_approved=True` only from Save/Import confirmations that explicitly say the trusted baseline will be updated. Direct filesystem writes, background sync, or API calls without that flag must remain quarantined as added/modified/deleted.
+
+- [ ] **Step 6: Run local service trust tests**
 
 Run:
 
 ```bash
-.venv/bin/python -m pytest -q Tests/Skills/test_local_skills_service.py::test_local_skills_service_exposes_trust_state_and_blocks_uninitialized_context Tests/Skills/test_local_skills_service.py::test_local_skills_service_blocks_execute_when_skill_changes_after_bootstrap --tb=short
+.venv/bin/python -m pytest -q Tests/Skills/test_local_skills_service.py::test_local_skills_service_exposes_trust_state_and_blocks_uninitialized_context Tests/Skills/test_local_skills_service.py::test_local_skills_service_blocks_execute_when_skill_changes_on_disk_after_bootstrap Tests/Skills/test_local_skills_service.py::test_local_skills_service_retrusts_explicitly_approved_update --tb=short
 ```
 
 Expected: pass.
 
-- [ ] **Step 6: Run full local skills tests**
+- [ ] **Step 7: Run full local skills tests**
 
 Run:
 
@@ -1321,9 +1672,9 @@ Run:
 .venv/bin/python -m pytest -q Tests/Skills/test_local_skills_service.py Tests/Skills/test_skills_scope_service.py --tb=short
 ```
 
-Expected: pass. Legacy tests that instantiate `LocalSkillsService` without `trust_service` continue to use the explicit no-trust-service compatibility path.
+Expected: pass. Legacy tests that instantiate `LocalSkillsService` without `trust_service` continue to use the explicit no-trust-service compatibility path, but app wiring tests must prove production constructs a real trust service.
 
-- [ ] **Step 7: Commit local service integration**
+- [ ] **Step 8: Commit local service integration**
 
 Run:
 
@@ -1365,7 +1716,11 @@ Near the existing `LocalSkillsService` construction, import:
 
 ```python
 from .Skills_Interop.skill_trust_service import SkillTrustService
-from .Skills_Interop.skill_trust_store import FileSkillTrustGenerationMarkerStore, SkillTrustStore
+from .Skills_Interop.skill_trust_store import (
+    SkillTrustStore,
+    build_default_skill_trust_key_cache,
+    build_default_skill_trust_marker_store,
+)
 ```
 
 Replace the local skills construction with:
@@ -1376,10 +1731,11 @@ Replace the local skills construction with:
             skills_dir=local_skills_store_dir / "skills",
             trust_store=SkillTrustStore(
                 store_dir=local_skills_store_dir / "trust",
-                marker_store=FileSkillTrustGenerationMarkerStore(
-                    local_skills_store_dir / "trust_generation_marker.json",
-                ),
+                marker_store=build_default_skill_trust_marker_store(),
             ),
+            key_cache=build_default_skill_trust_key_cache(),
+            keyring_convenience_enabled=False,
+            reduced_rollback_protection=False,
         )
         self.local_skills_service = LocalSkillsService(
             store_dir=local_skills_store_dir,
@@ -1417,7 +1773,7 @@ Expected: commit succeeds.
 
 - [ ] **Step 1: Add failing Skills UI trust-state tests**
 
-Append to the Skills destination tests:
+Add `from unittest.mock import AsyncMock` near the other imports if it is not already present, then append to the Skills destination tests:
 
 ```python
 @pytest.mark.asyncio
@@ -1478,6 +1834,89 @@ async def test_skills_destination_shows_uninitialized_bootstrap_action():
 
         assert "Trust: not initialized" in text
         assert screen.query_one("#skills-bootstrap-trust", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_bootstrap_action_calls_trust_service():
+    app = _build_test_app()
+    app.local_skill_trust_service = RecordingSkillTrustService()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "new-skill",
+                "description": "New local skill",
+                "record_id": "local:skill:new-skill",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "trust_uninitialized",
+                "trust_reason_code": "trust_uninitialized",
+                "trust_blocked": True,
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        screen._request_skill_trust_passphrase = AsyncMock(return_value="passphrase")
+        await pilot.click("#skills-bootstrap-trust")
+
+        assert app.local_skill_trust_service.bootstrap_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_review_action_enables_trust_reviewed_version():
+    app = _build_test_app()
+    app.local_skill_trust_service = RecordingSkillTrustService(review_id="review-1")
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "record_id": "local:skill:summarize-notes",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "quarantined_modified",
+                "trust_reason_code": "skill_modified",
+                "trust_blocked": True,
+                "trust_changed_files": ["SKILL.md"],
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        await pilot.click("#skills-review-diff")
+
+        assert app.local_skill_trust_service.reviewed_skill == "summarize-notes"
+        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+
+        await pilot.click("#skills-trust-reviewed-version")
+        assert app.local_skill_trust_service.trusted_review_id == "review-1"
+```
+
+Add a small fake near the destination test helpers:
+
+```python
+class RecordingSkillTrustService:
+    def __init__(self, review_id="review-id"):
+        self.review_id = review_id
+        self.bootstrap_calls = 0
+        self.reviewed_skill = None
+        self.trusted_review_id = None
+
+    def bootstrap_trust(self, *args, **kwargs):
+        self.bootstrap_calls += 1
+
+    def capture_review(self, skill_name):
+        self.reviewed_skill = skill_name
+        return {"review_id": self.review_id, "skill_name": skill_name, "changed_files": ["SKILL.md"]}
+
+    def trust_reviewed_snapshot(self, review_id):
+        self.trusted_review_id = review_id
 ```
 
 - [ ] **Step 2: Run failing Skills UI tests**
@@ -1485,7 +1924,7 @@ async def test_skills_destination_shows_uninitialized_bootstrap_action():
 Run:
 
 ```bash
-.venv/bin/python -m pytest -q Tests/UI/test_destination_shells.py::test_skills_destination_blocks_metadata_valid_trust_blocked_skill Tests/UI/test_destination_shells.py::test_skills_destination_shows_uninitialized_bootstrap_action --tb=short
+.venv/bin/python -m pytest -q Tests/UI/test_destination_shells.py::test_skills_destination_blocks_metadata_valid_trust_blocked_skill Tests/UI/test_destination_shells.py::test_skills_destination_shows_uninitialized_bootstrap_action Tests/UI/test_destination_shells.py::test_skills_destination_bootstrap_action_calls_trust_service Tests/UI/test_destination_shells.py::test_skills_destination_review_action_enables_trust_reviewed_version --tb=short
 ```
 
 Expected: fail because the screen does not render trust state.
@@ -1575,6 +2014,12 @@ In the inspector actions, add disabled-safe recovery controls:
                         tooltip="Create the first trusted baseline after reviewing current local skills.",
                     )
                     yield Button(
+                        "Unlock Trust",
+                        id="skills-unlock-trust",
+                        disabled=not any(self._skill_trust_status(record) == "trust_locked" for record in self._local_skill_records),
+                        tooltip="Unlock local skill trust with the trust passphrase for this session.",
+                    )
+                    yield Button(
                         "Review Diff",
                         id="skills-review-diff",
                         disabled=not (selected_metadata and selected_metadata.get("validation_status") == "valid"),
@@ -1583,22 +2028,61 @@ In the inspector actions, add disabled-safe recovery controls:
                     yield Button(
                         "Trust Reviewed Version",
                         id="skills-trust-reviewed-version",
-                        disabled=True,
+                        disabled=self._active_trust_review is None,
                         tooltip="Enabled after a captured diff still matches live files.",
                     )
 ```
 
-- [ ] **Step 5: Run Skills UI trust tests**
+- [ ] **Step 5: Wire Skills recovery button handlers**
+
+Add `self._active_trust_review: dict[str, Any] | None = None` to the screen state. In the existing button handler, route the trust buttons through `app.local_skill_trust_service`:
+
+```python
+    async def _handle_skill_trust_action(self, button_id: str) -> None:
+        trust_service = getattr(self.app_instance, "local_skill_trust_service", None)
+        if trust_service is None:
+            return
+        if button_id == "skills-bootstrap-trust":
+            passphrase = await self._request_skill_trust_passphrase(confirm_bootstrap=True)
+            if passphrase is None:
+                return
+            trust_service.bootstrap_trust(passphrase)
+            await self._refresh_skills()
+            return
+        if button_id == "skills-unlock-trust":
+            passphrase = await self._request_skill_trust_passphrase(confirm_bootstrap=False)
+            if passphrase is None:
+                return
+            trust_service.unlock_with_passphrase(passphrase)
+            await self._refresh_skills()
+            return
+        selected = self._selected_skill_record()
+        if selected is None:
+            return
+        skill_name = str(selected.get("name") or "")
+        if button_id == "skills-review-diff":
+            self._active_trust_review = trust_service.capture_review(skill_name)
+            await self._refresh_skills()
+            return
+        if button_id == "skills-trust-reviewed-version" and self._active_trust_review:
+            trust_service.trust_reviewed_snapshot(str(self._active_trust_review["review_id"]))
+            self._active_trust_review = None
+            await self._refresh_skills()
+```
+
+Implement `_request_skill_trust_passphrase()` with existing password-dialog primitives or a small modal: no default passphrase, no logging, no path/secrets in notifications. When `confirm_bootstrap=True`, the modal copy must state that current local skill files will become the trusted baseline.
+
+- [ ] **Step 6: Run Skills UI trust tests**
 
 Run:
 
 ```bash
-.venv/bin/python -m pytest -q Tests/UI/test_destination_shells.py::test_skills_destination_blocks_metadata_valid_trust_blocked_skill Tests/UI/test_destination_shells.py::test_skills_destination_shows_uninitialized_bootstrap_action --tb=short
+.venv/bin/python -m pytest -q Tests/UI/test_destination_shells.py::test_skills_destination_blocks_metadata_valid_trust_blocked_skill Tests/UI/test_destination_shells.py::test_skills_destination_shows_uninitialized_bootstrap_action Tests/UI/test_destination_shells.py::test_skills_destination_bootstrap_action_calls_trust_service Tests/UI/test_destination_shells.py::test_skills_destination_review_action_enables_trust_reviewed_version --tb=short
 ```
 
 Expected: pass.
 
-- [ ] **Step 6: Run focused Skills UI tests**
+- [ ] **Step 7: Run focused Skills UI tests**
 
 Run:
 
@@ -1608,7 +2092,7 @@ Run:
 
 Expected: pass.
 
-- [ ] **Step 7: Commit Skills UI trust state**
+- [ ] **Step 8: Commit Skills UI trust state**
 
 Run:
 
