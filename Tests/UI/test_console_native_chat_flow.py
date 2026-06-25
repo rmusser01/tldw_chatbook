@@ -113,6 +113,20 @@ def test_console_workspace_conversation_search_worker_uses_dedicated_group():
     assert "exclusive=True" in source
 
 
+def test_console_workspace_conversation_search_clear_button_stops_pending_timer():
+    source = inspect.getsource(ChatScreen.on_button_pressed)
+    clear_branch = source.split(
+        'if button_id == "console-workspace-conversation-search-clear":',
+        1,
+    )[1].split(
+        'if button_id and button_id.startswith("console-workspace-conversation-")',
+        1,
+    )[0]
+
+    assert "_console_workspace_conversation_search_timer.stop()" in clear_branch
+    assert "_console_workspace_conversation_search_timer = None" in clear_branch
+
+
 class _ReadyResolutionGateway:
     async def resolve_for_send(self, selection):
         return SimpleNamespace(
@@ -322,6 +336,27 @@ class FailingSearchConversationService(StaticConversationTreeService):
     async def list_conversations(self, *, mode: str = "local", **kwargs):
         self.list_calls.append({"mode": mode, **kwargs})
         raise RuntimeError("search failed")
+
+
+class SlowSearchConversationService(StaticConversationTreeService):
+    def __init__(self) -> None:
+        super().__init__({})
+        self.list_calls: list[dict[str, object]] = []
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def list_conversations(self, *, mode: str = "local", **kwargs):
+        self.list_calls.append({"mode": mode, **kwargs})
+        self.started.set()
+        await self.release.wait()
+        return {
+            "items": [],
+            "pagination": {
+                "total": 0,
+                "limit": int(kwargs.get("limit") or 50),
+                "offset": int(kwargs.get("offset") or 0),
+            },
+        }
 
 
 class FailThenRecoverGateway(_ReadyResolutionGateway):
@@ -2811,6 +2846,46 @@ async def test_console_workspace_conversation_search_blank_query_clears_error_ca
         assert console._console_workspace_conversation_search_rows == ()
         assert console._console_workspace_conversation_search_total is None
         assert console._console_workspace_conversation_search_error == ""
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_search_shows_local_rows_before_slow_persisted_search():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    service.link_membership(
+        active_workspace.workspace_id,
+        item_type="conversation",
+        item_id="member-alpha",
+        role="workspace-thread",
+        title="Alpha membership conversation",
+    )
+    app.chat_conversation_scope_service = SlowSearchConversationService()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(
+            console,
+            pilot,
+            "#console-workspace-conversation-search",
+        )
+
+        await pilot.click("#console-workspace-conversation-search")
+        await pilot.press("a", "l", "p", "h", "a")
+        try:
+            for _ in range(40):
+                if app.chat_conversation_scope_service.started.is_set():
+                    break
+                await pilot.pause(0.05)
+            assert app.chat_conversation_scope_service.started.is_set()
+
+            assert "1 match" in _visible_text(console)
+            row_texts = _console_workspace_conversation_texts(console)
+            assert any("Alpha membership" in text for text in row_texts)
+        finally:
+            app.chat_conversation_scope_service.release.set()
+            await pilot.pause(0.2)
 
 
 @pytest.mark.asyncio

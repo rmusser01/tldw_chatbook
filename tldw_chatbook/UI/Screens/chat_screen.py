@@ -1750,6 +1750,12 @@ class ChatScreen(BaseAppScreen):
             workspace_id,
             query,
         )
+        local_rows = self._merge_console_workspace_rows(native_rows, membership_rows)
+        self._console_workspace_conversation_search_rows = tuple(local_rows)
+        self._console_workspace_conversation_search_total = len(local_rows)
+        self._console_workspace_conversation_search_error = ""
+        self._sync_console_workspace_context()
+        self.call_after_refresh(self._focus_console_workspace_conversation_search)
         persisted_rows, persisted_total, error_copy = (
             await self._persisted_console_rows_for_workspace_search(
                 workspace_id,
@@ -1763,11 +1769,14 @@ class ChatScreen(BaseAppScreen):
         if query != self._console_workspace_conversation_query:
             return
         merged = self._merge_console_workspace_rows(
-            self._merge_console_workspace_rows(native_rows, membership_rows),
+            local_rows,
             persisted_rows,
         )
+        result_total = persisted_total
+        if result_total is None or result_total < len(merged):
+            result_total = len(merged)
         self._console_workspace_conversation_search_rows = tuple(merged)
-        self._console_workspace_conversation_search_total = persisted_total
+        self._console_workspace_conversation_search_total = result_total
         self._console_workspace_conversation_search_error = error_copy
         self._sync_console_workspace_context()
         self.call_after_refresh(self._focus_console_workspace_conversation_search)
@@ -5885,6 +5894,9 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-workspace-conversation-search-clear":
             event.stop()
+            if self._console_workspace_conversation_search_timer is not None:
+                self._console_workspace_conversation_search_timer.stop()
+                self._console_workspace_conversation_search_timer = None
             self._console_workspace_conversation_query = ""
             self._console_workspace_conversation_search_token += 1
             self._console_workspace_conversation_search_rows = ()
