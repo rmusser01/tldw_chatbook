@@ -1,7 +1,7 @@
 ---
 id: TASK-134
 title: Library source workbench Stage A shell hierarchy
-status: In Progress
+status: Done
 labels:
 - library
 - ux
@@ -16,11 +16,11 @@ Adapt the Library content hub into the accepted Source Workbench shell hierarchy
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Library mode column titles and visible section labels match the accepted Source Workbench Stage A hierarchy without adding new service calls.
-- [ ] #2 Collections copy describes stored collection content review/read workflows rather than reusable source groups or workspace folders.
-- [ ] #3 Unsupported collection-scoped actions remain disabled with visible reasons and recovery copy, including Search/RAG, Study, Console handoff, and server sync promotion.
-- [ ] #4 Mounted regressions cover Source Map hierarchy, Workspace Context, Quick Actions, selected/empty Collections copy, and disabled capability reasons.
-- [ ] #5 QA evidence includes a rendered CDP/Textual-web screenshot of the updated Library screen and a manual note that no tldw_server runtime dependency was introduced.
+- [x] #1 Library mode column titles and visible section labels match the accepted Source Workbench Stage A hierarchy without adding new service calls.
+- [x] #2 Collections copy describes stored collection content review/read workflows rather than reusable source groups or workspace folders.
+- [x] #3 Unsupported collection-scoped actions remain disabled with visible reasons and recovery copy, including Search/RAG, Study, Console handoff, and server sync promotion.
+- [x] #4 Mounted regressions cover Source Map hierarchy, Workspace Context, Quick Actions, selected/empty Collections copy, and disabled capability reasons.
+- [x] #5 QA evidence includes a rendered CDP/Textual-web screenshot of the updated Library screen and a manual note that no tldw_server runtime dependency was introduced.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -41,13 +41,32 @@ Reason: Stage A changes Library shell hierarchy, labels, disabled-state copy, mo
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Implemented the Stage A Source Workbench shell closeout as a narrow hierarchy/copy slice. The Library left rail now keeps Workspace Context and Source Map visible while adding a visible Quick Actions section, and Collections action copy now explains that item-level reading/review depends on a future local item adapter while Search/RAG, Study, Console handoff, and server sync promotion remain disabled.
 
+Modified files:
+
+- `tldw_chatbook/UI/Screens/library_screen.py`
+- `Tests/UI/test_library_content_hub.py`
+- `Docs/superpowers/qa/library-source-workbench-stage-a/2026-06-24-library-source-workbench-stage-a.md`
+- `Docs/superpowers/qa/library-source-workbench-stage-a/library-stage-a-source-workbench-cdp-2026-06-24.png`
+- `Docs/superpowers/trackers/product-maturity-roadmap.md`
+- `backlog/tasks/task-134 - Library-source-workbench-Stage-A-shell-hierarchy.md`
+
+Verification:
+
+- `python -m pytest -q Tests/UI/test_library_content_hub.py --tb=short` -> `18 passed, 1 warning`
+- `python -m pytest -q Tests/UI/test_product_maturity_phase3_library_contract_layout.py Tests/UI/test_post_ux_product_roadmap_handoff.py --tb=short` -> `11 passed, 1 warning`
+- `git diff --check` -> passed with no output
+
+QA evidence: rendered Textual-web/CDP screenshot approved by the user at `Docs/superpowers/qa/library-source-workbench-stage-a/library-stage-a-source-workbench-cdp-2026-06-24.png`.
+
+Residual risks: collection item reader, local item capability flags, collection-scoped Search/RAG, collection-scoped Console handoff, and server sync promotion remain future stages. No tldw_server runtime dependency or API call was introduced.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Library Source Workbench Stage A hierarchy is verified and documented. Collections remains locally manageable/readiness-focused without implying unavailable item services are wired.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
