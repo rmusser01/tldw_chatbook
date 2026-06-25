@@ -16,7 +16,10 @@ _TEMP_SUFFIXES = (".tmp", ".swp", ".part")
 def _is_supported_filename(filename: str) -> bool:
     if filename == _SKILL_FILENAME:
         return True
-    if filename.endswith(_TEMP_SUFFIXES):
+    normalized_filename = filename.lower()
+    if normalized_filename == _SKILL_FILENAME.lower():
+        return False
+    if normalized_filename.endswith(_TEMP_SUFFIXES):
         return False
     return bool(SUPPORTING_FILE_NAME_PATTERN.fullmatch(filename))
 
@@ -39,11 +42,19 @@ def scan_skill_directory(skill_name: str, skill_dir: Path) -> SkillDirectorySnap
 
     for path in sorted(skill_dir.iterdir(), key=lambda child: child.name):
         relative_path = path.name
-        if path.is_symlink() or path.is_dir() or not _is_supported_filename(relative_path):
+        if path.is_symlink() or not _is_supported_filename(relative_path):
             unsupported_paths.append(relative_path)
             continue
 
-        raw = path.read_bytes()
+        try:
+            if not path.is_file():
+                unsupported_paths.append(relative_path)
+                continue
+            raw = path.read_bytes()
+        except OSError:
+            unsupported_paths.append(relative_path)
+            continue
+
         if b"\x00" in raw:
             unsupported_paths.append(relative_path)
             continue
