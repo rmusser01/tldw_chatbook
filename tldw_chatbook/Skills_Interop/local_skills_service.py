@@ -454,6 +454,8 @@ class LocalSkillsService:
     def _trust_after_approved_mutation(self, skill_name: str, *, trust_approved: bool) -> None:
         if not trust_approved:
             return
+        # Writes and index updates intentionally happen before re-trust. If this
+        # fails, later list/execute paths remain blocked until review or retry.
         if self.trust_service is None:
             if self.allow_untrusted_without_trust_service:
                 return
@@ -465,6 +467,23 @@ class LocalSkillsService:
         self.trust_service.trust_current_skill(
             skill_name,
             audit_event="trust_chatbook_mutation",
+        )
+
+    def _verify_exact_skill_content(self, skill: dict[str, Any]) -> None:
+        if self.trust_service is None:
+            self._require_trusted_skill(str(skill["name"]))
+            return
+        verifier = getattr(self.trust_service, "verify_skill_content", None)
+        if not callable(verifier):
+            raise SkillTrustBlockedError(
+                skill_name=str(skill["name"]),
+                reason_code="trust_verifier_unavailable",
+                trust_status="trust_locked",
+            )
+        verifier(
+            str(skill["name"]),
+            skill_content=str(skill["content"]),
+            supporting_files=skill.get("supporting_files"),
         )
 
     def _require_record(self, skill_name: str, records: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -733,9 +752,9 @@ class LocalSkillsService:
         self._require_trusted_skill(skill_name)
         request = SkillExecuteRequest(args=args)
         skill = await self.get_skill(skill_name)
+        self._verify_exact_skill_content(skill)
         _, body = self._parse_front_matter(skill["content"])
         rendered_prompt = body.strip().replace("{{args}}", request.args or "")
-        self._require_trusted_skill(skill_name)
         return self._dump(
             SkillExecutionResult(
                 skill_name=skill["name"],

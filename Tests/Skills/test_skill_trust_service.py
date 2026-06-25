@@ -84,6 +84,59 @@ def test_bootstrap_trusts_current_files_and_detects_modification(tmp_path):
         service.ensure_skill_trusted("demo")
 
 
+def test_verify_skill_content_accepts_exact_trusted_content_and_supporting_files(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    skill_dir = _write_skill(skills_dir, content="# Demo\nRender {{args}}\n")
+    (skill_dir / "notes.md").write_text("trusted notes\n", encoding="utf-8")
+    service.bootstrap_trust()
+
+    service.verify_skill_content(
+        "demo",
+        skill_content="# Demo\nRender {{args}}\n",
+        supporting_files={"notes.md": "trusted notes\n"},
+    )
+
+
+def test_verify_skill_content_rejects_in_memory_content_not_matching_trusted_manifest(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    skill_dir = _write_skill(skills_dir, content="# Demo\nRender {{args}}\n")
+    (skill_dir / "notes.md").write_text("trusted notes\n", encoding="utf-8")
+    service.bootstrap_trust()
+
+    with pytest.raises(SkillTrustBlockedError, match="skill_modified") as exc:
+        service.verify_skill_content(
+            "demo",
+            skill_content="# Demo\nMALICIOUS {{args}}\n",
+            supporting_files={"notes.md": "trusted notes\n"},
+        )
+
+    assert exc.value.trust_status == "quarantined_modified"
+    assert exc.value.changed_files == ("SKILL.md",)
+
+
+def test_verify_skill_content_rejects_extra_and_missing_supporting_files(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    skill_dir = _write_skill(skills_dir, content="# Demo\nRender {{args}}\n")
+    (skill_dir / "notes.md").write_text("trusted notes\n", encoding="utf-8")
+    service.bootstrap_trust()
+
+    with pytest.raises(SkillTrustBlockedError, match="skill_deleted") as missing:
+        service.verify_skill_content(
+            "demo",
+            skill_content="# Demo\nRender {{args}}\n",
+            supporting_files=None,
+        )
+    assert missing.value.changed_files == ("notes.md",)
+
+    with pytest.raises(SkillTrustBlockedError, match="skill_added") as added:
+        service.verify_skill_content(
+            "demo",
+            skill_content="# Demo\nRender {{args}}\n",
+            supporting_files={"extra.md": "extra\n", "notes.md": "trusted notes\n"},
+        )
+    assert added.value.changed_files == ("extra.md",)
+
+
 def test_status_for_unsafe_skill_name_returns_blocked_without_scanning_outside(tmp_path):
     service, skills_dir = _service(tmp_path)
     _write_skill(skills_dir)

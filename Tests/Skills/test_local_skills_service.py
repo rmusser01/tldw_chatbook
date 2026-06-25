@@ -1,6 +1,7 @@
 import asyncio
 import io
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -539,6 +540,9 @@ async def test_local_skills_service_rebaseline_failure_leaves_mutation_applied_b
                 changed_files=("SKILL.md",),
             )
 
+        def verify_skill_content(self, skill_name, *, skill_content, supporting_files):
+            self.ensure_skill_trusted(skill_name)
+
     service = LocalSkillsService(store_dir=tmp_path, trust_service=FailingTrustService())
     await service.create_skill(name="demo-skill", content="# Demo\nInitial")
 
@@ -546,8 +550,14 @@ async def test_local_skills_service_rebaseline_failure_leaves_mutation_applied_b
         await service.update_skill("demo-skill", content="# Demo\nUpdated", trust_approved=True)
 
     loaded = await service.get_skill("demo-skill")
+    listed = await service.list_skills()
+    context = await service.get_context()
+
     assert loaded["content"] == "# Demo\nUpdated"
     assert loaded["trust_status"] == "quarantined_modified"
+    assert listed["skills"][0]["trust_status"] == "quarantined_modified"
+    assert context["available_skills"] == []
+    assert context["blocked_skills"][0]["name"] == "demo-skill"
     with pytest.raises(SkillTrustBlockedError, match="trust_rebaseline_failed"):
         await service.execute_skill("demo-skill", args="x")
 
@@ -577,6 +587,9 @@ async def test_local_skills_service_execute_rechecks_trust_after_reading_content
                 changed_files=("SKILL.md",),
             )
 
+        def verify_skill_content(self, skill_name, *, skill_content, supporting_files):
+            self.ensure_skill_trusted(skill_name)
+
     skill_path = tmp_path / "skills" / "demo-skill" / "SKILL.md"
     trust_service = MutatingTrustService(skill_path)
     service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
@@ -585,3 +598,26 @@ async def test_local_skills_service_execute_rechecks_trust_after_reading_content
     with pytest.raises(SkillTrustBlockedError, match="skill_modified"):
         await service.execute_skill("demo-skill", args="x")
     assert trust_service.checks == 2
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_execute_rejects_read_and_restore_content_race(tmp_path, monkeypatch):
+    service, trust = _trusted_local_service(tmp_path)
+    await service.create_skill(name="demo-skill", content="# Demo\nRender {{args}}")
+    trust.bootstrap_trust()
+    skill_path = tmp_path / "skills" / "demo-skill" / "SKILL.md"
+    trusted_content = skill_path.read_text(encoding="utf-8")
+    malicious_content = "# Demo\nMALICIOUS {{args}}"
+    original_read_text = Path.read_text
+
+    def read_malicious_then_restored(self, *args, **kwargs):
+        if self == skill_path:
+            assert original_read_text(self, encoding="utf-8") == trusted_content
+            return malicious_content
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_malicious_then_restored)
+
+    with pytest.raises(SkillTrustBlockedError, match="skill_modified"):
+        await service.execute_skill("demo-skill", args="x")
+    assert original_read_text(skill_path, encoding="utf-8") == trusted_content

@@ -38,6 +38,9 @@ from .skill_trust_scanner import scan_skill_directory
 from .skill_trust_store import SkillTrustMarkerUnavailable, SkillTrustStore
 
 
+_SKILL_FILENAME = "SKILL.md"
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -270,6 +273,73 @@ class SkillTrustService:
             reason_code=status.trust_reason_code or "trust_blocked",
             trust_status=status.trust_status,
             changed_files=status.changed_files,
+        )
+
+    def verify_skill_content(
+        self,
+        skill_name: str,
+        *,
+        skill_content: str,
+        supporting_files: dict[str, str] | None,
+    ) -> None:
+        """Verify the exact in-memory skill files match the trusted manifest."""
+
+        self.ensure_skill_trusted(skill_name)
+        try:
+            normalized_name = self._normalize_skill_name(skill_name)
+            manifest = self._load_valid_manifest()
+            trusted = manifest["skills"].get(normalized_name)
+            if trusted is None:
+                raise SkillTrustBlockedError(
+                    skill_name=normalized_name,
+                    reason_code=TRUST_REASON_SKILL_ADDED,
+                    trust_status=TRUST_STATUS_QUARANTINED_ADDED,
+                    changed_files=(_SKILL_FILENAME,),
+                )
+            trusted_files = self._trusted_file_map(trusted)
+        except SkillTrustBlockedError:
+            raise
+        except SkillTrustMarkerUnavailable as exc:
+            raise SkillTrustBlockedError(
+                skill_name=skill_name,
+                reason_code=TRUST_REASON_ROLLBACK_MARKER_UNAVAILABLE,
+                trust_status=TRUST_STATUS_QUARANTINED_MANIFEST_ERROR,
+            ) from exc
+        except ValueError as exc:
+            raise SkillTrustBlockedError(
+                skill_name=skill_name,
+                reason_code=self._manifest_error_reason(exc),
+                trust_status=TRUST_STATUS_QUARANTINED_MANIFEST_ERROR,
+            ) from exc
+
+        current_files = self._fingerprint_in_memory_files(
+            skill_content=skill_content,
+            supporting_files=supporting_files,
+        )
+        missing = set(trusted_files) - set(current_files)
+        added = set(current_files) - set(trusted_files)
+        modified = {
+            path
+            for path in trusted_files.keys() & current_files.keys()
+            if trusted_files[path] != current_files[path]
+        }
+        changed = tuple(sorted(missing | added | modified))
+        if not changed:
+            return
+        if missing:
+            status = TRUST_STATUS_QUARANTINED_DELETED
+            reason = TRUST_REASON_SKILL_DELETED
+        elif added:
+            status = TRUST_STATUS_QUARANTINED_ADDED
+            reason = TRUST_REASON_SKILL_ADDED
+        else:
+            status = TRUST_STATUS_QUARANTINED_MODIFIED
+            reason = TRUST_REASON_SKILL_MODIFIED
+        raise SkillTrustBlockedError(
+            skill_name=normalized_name,
+            reason_code=reason,
+            trust_status=status,
+            changed_files=changed,
         )
 
     def capture_review(self, skill_name: str) -> dict[str, Any]:
@@ -541,6 +611,34 @@ class SkillTrustService:
                 raise ValueError("manifest schema invalid")
             result[str(item["relative_path"])] = dict(item)
         return result
+
+    def _fingerprint_in_memory_files(
+        self,
+        *,
+        skill_content: str,
+        supporting_files: dict[str, str] | None,
+    ) -> dict[str, dict[str, Any]]:
+        files = {
+            _SKILL_FILENAME: self._content_manifest_entry(
+                relative_path=_SKILL_FILENAME,
+                content=skill_content,
+            )
+        }
+        for relative_path, content in sorted((supporting_files or {}).items()):
+            files[str(relative_path)] = self._content_manifest_entry(
+                relative_path=str(relative_path),
+                content=str(content),
+            )
+        return files
+
+    def _content_manifest_entry(self, *, relative_path: str, content: str) -> dict[str, Any]:
+        raw = content.encode("utf-8")
+        return {
+            "relative_path": relative_path,
+            "file_type": "skill" if relative_path == _SKILL_FILENAME else "supporting_text",
+            "byte_length": len(raw),
+            "sha256": sha256_hex(raw),
+        }
 
     def _manifest_skill_entry(
         self,
