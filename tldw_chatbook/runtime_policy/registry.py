@@ -139,6 +139,12 @@ DELETE = _action("delete", "delete")
 PURGE = _action("purge", "delete")
 CANCEL = _action("cancel", "delete")
 LAUNCH = _action("launch", "launch")
+UNLOCK = _action("unlock", "launch")
+REVIEW = _action("review", "detail")
+REJECT = _action("reject", "update")
+REBOOTSTRAP = _action("rebootstrap", "update")
+ROTATE_KEY = _action("rotate_key", "update")
+AUDIT = _action("audit", "detail")
 OBSERVE = _action("observe", "observe")
 OBSERVE_LIST = _action("list", "observe")
 CONFIGURE = _action("configure", "update")
@@ -780,6 +786,11 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("skills.export", actions=(LAUNCH,)),
             _resource("skills.execute", actions=(LAUNCH,)),
             _resource("skills.seed", actions=(LAUNCH,)),
+            _resource(
+                "skills.trust",
+                actions=(UNLOCK, REVIEW, APPROVE, REJECT, REBOOTSTRAP, ROTATE_KEY, AUDIT),
+                sources=LOCAL_ONLY_SOURCES,
+            ),
         ),
     ),
     _capability(

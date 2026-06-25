@@ -818,6 +818,13 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         skills.list.server
         skills.seed.launch.local
         skills.seed.launch.server
+        skills.trust.approve.local
+        skills.trust.audit.local
+        skills.trust.rebootstrap.local
+        skills.trust.reject.local
+        skills.trust.review.local
+        skills.trust.rotate_key.local
+        skills.trust.unlock.local
         skills.update.local
         skills.update.server
     """),

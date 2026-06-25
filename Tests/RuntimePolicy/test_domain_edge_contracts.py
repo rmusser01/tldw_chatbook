@@ -90,6 +90,13 @@ def test_skills_and_kanban_have_local_policy_actions():
     for action_id in [
         "skills.list.local",
         "skills.execute.launch.local",
+        "skills.trust.unlock.local",
+        "skills.trust.review.local",
+        "skills.trust.approve.local",
+        "skills.trust.reject.local",
+        "skills.trust.rebootstrap.local",
+        "skills.trust.rotate_key.local",
+        "skills.trust.audit.local",
         "kanban.boards.list.local",
         "kanban.cards.create.local",
         "kanban.card_links.delete.local",
