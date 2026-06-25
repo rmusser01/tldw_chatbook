@@ -31,6 +31,22 @@ class FakePlaintextKeyring(FakeSecureKeyring):
     __module__ = "keyring.backends.file"
 
 
+class FailingMarkerStore:
+    def __init__(self, wrapped, *, fail_on_save_number):
+        self.wrapped = wrapped
+        self.fail_on_save_number = fail_on_save_number
+        self.save_count = 0
+
+    def load_marker(self):
+        return self.wrapped.load_marker()
+
+    def save_marker(self, *, generation, manifest_digest):
+        self.save_count += 1
+        if self.save_count == self.fail_on_save_number:
+            raise SkillTrustMarkerUnavailable("simulated marker failure")
+        self.wrapped.save_marker(generation=generation, manifest_digest=manifest_digest)
+
+
 def test_trust_store_round_trips_manifest_snapshot_marker_and_salt(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"3" * 32)
     marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
@@ -113,6 +129,33 @@ def test_trust_store_rejects_missing_marker_after_manifest_exists(tmp_path):
         store.load_manifest(keys)
 
 
+def test_trust_store_marker_failure_preserves_previous_manifest_and_marker(tmp_path):
+    keys = derive_skill_trust_keys("passphrase", salt=b"7" * 32)
+    marker = FailingMarkerStore(
+        FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json"),
+        fail_on_save_number=2,
+    )
+    store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
+    previous_manifest = {"version": 1, "generation": 1, "skills": {}, "audit": []}
+    advanced_manifest = {
+        "version": 1,
+        "generation": 2,
+        "skills": {"demo": {"snapshot_id": "demo-2"}},
+        "audit": [],
+    }
+
+    store.save_manifest(previous_manifest, keys, salt=b"7" * 32)
+
+    with pytest.raises(SkillTrustMarkerUnavailable, match="simulated marker failure"):
+        store.save_manifest(advanced_manifest, keys, salt=b"7" * 32)
+
+    assert store.load_manifest(keys) == previous_manifest
+    assert marker.load_marker() == {
+        "generation": 1,
+        "manifest_digest": store.manifest_digest(previous_manifest),
+    }
+
+
 def test_trust_store_load_salt_requires_32_bytes(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"7" * 32)
     marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
@@ -138,6 +181,17 @@ def test_trust_store_snapshot_accepts_immutable_mapping_payloads(tmp_path):
     assert store.load_snapshot("demo-1", keys, generation=1) == {"files": {"SKILL.md": "# Demo"}}
 
 
+def test_trust_store_rejects_non_string_mapping_keys(tmp_path):
+    keys = derive_skill_trust_keys("passphrase", salt=b"9" * 32)
+    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
+
+    with pytest.raises(ValueError, match="mapping keys must be strings"):
+        store.save_snapshot("demo-1", {"files": {1: "numeric", "1": "string"}}, keys, generation=1)
+
+    assert not (store.snapshots_dir / "demo-1.json").exists()
+
+
 def test_keyring_generation_marker_store_round_trips_with_secure_backend():
     marker = KeyringSkillTrustGenerationMarkerStore(keyring_backend=FakeSecureKeyring())
 
@@ -153,12 +207,22 @@ def test_keyring_generation_marker_store_rejects_insecure_backend():
 
 def test_keyring_key_cache_round_trips_without_storing_passphrase():
     fake = FakeSecureKeyring()
-    keys = derive_skill_trust_keys("passphrase", salt=b"9" * 32)
+    keys = derive_skill_trust_keys("passphrase", salt=b"a" * 32)
     cache = KeyringSkillTrustKeyCache(keyring_backend=fake)
 
-    cache.save_keys(keys)
-    loaded = cache.load_keys()
+    cache.save_keys(keys, salt=b"a" * 32)
+    loaded = cache.load_keys(expected_salt=b"a" * 32)
 
     assert loaded == keys
     assert "passphrase" not in "\n".join(fake.values.values())
     assert repr(loaded).count("redacted") == 4
+
+
+def test_keyring_key_cache_rejects_stale_salt_binding():
+    fake = FakeSecureKeyring()
+    keys = derive_skill_trust_keys("passphrase", salt=b"b" * 32)
+    cache = KeyringSkillTrustKeyCache(keyring_backend=fake)
+
+    cache.save_keys(keys, salt=b"b" * 32)
+
+    assert cache.load_keys(expected_salt=b"c" * 32) is None

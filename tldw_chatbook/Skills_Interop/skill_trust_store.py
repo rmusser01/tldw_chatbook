@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -171,11 +172,13 @@ class KeyringSkillTrustKeyCache:
     def __repr__(self) -> str:
         return "KeyringSkillTrustKeyCache(keyring_backend=<redacted>)"
 
-    def save_keys(self, keys: SkillTrustKeys) -> None:
+    def save_keys(self, keys: SkillTrustKeys, *, salt: bytes) -> None:
         """Store derived key material in a secure keyring, never the passphrase."""
 
+        salt_digest = _salt_digest(salt)
         payload = {
             "version": 1,
+            "salt_digest": salt_digest,
             "manifest_mac_key": _encode_bytes(keys.manifest_mac_key),
             "snapshot_key": _encode_bytes(keys.snapshot_key),
             "audit_mac_key": _encode_bytes(keys.audit_mac_key),
@@ -187,15 +190,18 @@ class KeyringSkillTrustKeyCache:
             json.dumps(payload, sort_keys=True),
         )
 
-    def load_keys(self) -> SkillTrustKeys | None:
+    def load_keys(self, *, expected_salt: bytes) -> SkillTrustKeys | None:
         """Load cached derived trust keys from the secure keyring."""
 
+        expected_salt_digest = _salt_digest(expected_salt)
         payload = self.keyring_backend.get_password(self.service_name, _KEY_CACHE_USERNAME)
         if not payload:
             return None
         data = json.loads(payload)
         if not isinstance(data, dict) or data.get("version") != 1:
             raise ValueError("skill trust key cache invalid")
+        if data.get("salt_digest") != expected_salt_digest:
+            return None
         keys = {field: _decode_32_byte_key(data, field) for field in _KEY_CACHE_FIELDS}
         return SkillTrustKeys(**keys)
 
@@ -279,11 +285,25 @@ class SkillTrustStore:
             "mac": manifest_mac(manifest_payload, keys.manifest_mac_key),
         }
         self.store_dir.mkdir(parents=True, exist_ok=True)
+        previous_manifest_bytes = self.manifest_path.read_bytes() if self.has_manifest() else None
+        previous_marker = self.marker_store.load_marker() if previous_manifest_bytes is not None else None
         _atomic_write_json(self.manifest_path, payload, indent=2)
-        self.marker_store.save_marker(
-            generation=int(manifest_payload["generation"]),
-            manifest_digest=self.manifest_digest(manifest_payload),
-        )
+        try:
+            self.marker_store.save_marker(
+                generation=int(manifest_payload["generation"]),
+                manifest_digest=self.manifest_digest(manifest_payload),
+            )
+        except Exception:
+            if previous_manifest_bytes is None:
+                self.manifest_path.unlink(missing_ok=True)
+            else:
+                _atomic_write_bytes(self.manifest_path, previous_manifest_bytes)
+            if previous_marker is not None:
+                self.marker_store.save_marker(
+                    generation=int(previous_marker["generation"]),
+                    manifest_digest=str(previous_marker["manifest_digest"]),
+                )
+            raise
 
     def load_manifest(self, keys: SkillTrustKeys) -> dict[str, Any]:
         """Load a manifest after verifying its HMAC and generation marker."""
@@ -378,6 +398,13 @@ def _atomic_write_json(path: Path, payload: Any, *, indent: int | None = None) -
     temp_path.replace(path)
 
 
+def _atomic_write_bytes(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.tmp")
+    temp_path.write_bytes(payload)
+    temp_path.replace(path)
+
+
 def _encode_bytes(value: bytes) -> str:
     return base64.b64encode(value).decode("ascii")
 
@@ -395,11 +422,24 @@ def _decode_32_byte_key(payload: dict[str, Any], field: str) -> bytes:
     return decoded
 
 
+def _salt_digest(salt: bytes) -> str:
+    if not isinstance(salt, bytes) or len(salt) != 32:
+        raise ValueError("skill trust salt invalid")
+    return sha256_hex(salt)
+
+
 def _json_safe_payload(payload: Any) -> Any:
     if isinstance(payload, Mapping):
-        return {str(key): _json_safe_payload(value) for key, value in payload.items()}
+        result: dict[str, Any] = {}
+        for key, value in payload.items():
+            if not isinstance(key, str):
+                raise ValueError("skill trust JSON mapping keys must be strings")
+            result[key] = _json_safe_payload(value)
+        return result
     if isinstance(payload, tuple):
         return [_json_safe_payload(value) for value in payload]
     if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)):
         return [_json_safe_payload(value) for value in payload]
+    if isinstance(payload, float) and not math.isfinite(payload):
+        raise ValueError("skill trust JSON numbers must be finite")
     return payload
