@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from textual.css.query import QueryError
+from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
 
 
@@ -70,16 +70,12 @@ def _available_targets(
 
 def _resolve_focus_target(pane: Widget, preferred_focus_ids: tuple[str, ...]) -> Widget | None:
     for focus_id in preferred_focus_ids:
-        if pane.id == focus_id and _is_available(pane):
+        if pane.id == focus_id and _is_focusable(pane):
             return pane
         widget = _query_by_id(pane, focus_id)
-        if (
-            widget is not None
-            and not getattr(widget, "disabled", False)
-            and _is_available(widget)
-        ):
+        if widget is not None and _is_focusable(widget):
             return widget
-    if getattr(pane, "can_focus", False):
+    if _is_focusable(pane):
         return pane
     return None
 
@@ -118,9 +114,17 @@ def _is_available(widget: Widget) -> bool:
     return True
 
 
+def _is_focusable(widget: Widget) -> bool:
+    return (
+        bool(getattr(widget, "can_focus", False))
+        and not getattr(widget, "disabled", False)
+        and _is_available(widget)
+    )
+
+
 def _query_by_id(root: Widget, widget_id: str) -> Widget | None:
     selector = f"#{widget_id.lstrip('#')}"
     try:
         return root.query_one(selector, Widget)
-    except QueryError:
+    except (NoMatches, QueryError):
         return None

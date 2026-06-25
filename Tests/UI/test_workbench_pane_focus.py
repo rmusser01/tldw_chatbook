@@ -6,13 +6,19 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button
+from textual.containers import Vertical
+from textual.screen import Screen
+from textual.widgets import Input, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.notes_screen import NotesScreen
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.workbench_focus import (
+    WorkbenchPaneTarget,
+    focus_relative_workbench_pane,
+)
 
 
 class _ConsoleHarness(App[None]):
@@ -67,6 +73,18 @@ class _PersonasHarness(App[None]):
 
     async def on_mount(self) -> None:
         await self.push_screen(PersonasScreen(self.app_instance))
+
+
+class _FocusFallbackScreen(Screen[None]):
+    def compose(self):
+        with Vertical(id="fallback-pane"):
+            yield Static("Passive target", id="passive-target")
+            yield Input(id="focusable-target")
+
+
+class _FocusFallbackHarness(App[None]):
+    async def on_mount(self) -> None:
+        await self.push_screen(_FocusFallbackScreen())
 
 
 async def _wait_for_focused_id(app: App[None], pilot, widget_id: str) -> None:
@@ -165,3 +183,25 @@ def test_workbench_screens_expose_f6_bindings_without_ctrl_arrow_conflicts():
         assert "shift+f6" in keys
         assert "ctrl+left" not in keys
         assert "ctrl+right" not in keys
+
+
+@pytest.mark.asyncio
+async def test_workbench_focus_skips_missing_and_non_focusable_preferred_targets():
+    host = _FocusFallbackHarness()
+
+    async with host.run_test(size=(80, 20)) as pilot:
+        screen = host.screen_stack[-1]
+
+        focused = focus_relative_workbench_pane(
+            screen,
+            (
+                WorkbenchPaneTarget(
+                    "fallback-pane",
+                    ("missing-target", "passive-target", "focusable-target"),
+                ),
+            ),
+            direction=1,
+        )
+
+        assert getattr(focused, "id", None) == "focusable-target"
+        await _wait_for_focused_id(host, pilot, "focusable-target")
