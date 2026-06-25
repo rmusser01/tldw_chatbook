@@ -1,7 +1,10 @@
+from types import SimpleNamespace
+
 from tldw_chatbook.UI.Screens.settings_privacy_security import (
     build_privacy_posture_rows,
     build_settings_privacy_posture,
 )
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
 
 DUMMY_ENV_SECRET = "env-secret-value-that-must-not-render"
@@ -99,3 +102,100 @@ def test_privacy_posture_handles_malformed_config_safely():
     assert posture.sensitive_config_fields == 0
     assert posture.provider_env_configured == 0
     assert "Redaction: active; raw secret values hidden" in rows
+
+
+def test_privacy_posture_reports_skill_trust_without_leaking_paths():
+    posture = build_settings_privacy_posture(
+        {"encryption": {"enabled": True}},
+        environ={},
+        skill_trust={
+            "enabled": True,
+            "trust_status": "quarantined_modified",
+            "keyring_convenience_enabled": True,
+            "reduced_rollback_protection": False,
+            "skills_dir": "/Users/example/private/skills",
+        },
+    )
+
+    text = "\n".join(build_privacy_posture_rows(posture))
+
+    assert "Skill trust: quarantined_modified" in text
+    assert "Skill trust keyring convenience: enabled" in text
+    assert "Skill trust rollback protection: full" in text
+    assert "/Users/example/private/skills" not in text
+
+
+def test_privacy_posture_reports_skill_trust_disabled_without_mapping():
+    posture = build_settings_privacy_posture({}, environ={}, skill_trust=None)
+    rows = build_privacy_posture_rows(posture)
+
+    assert "Skill trust: disabled" in rows
+    assert "Skill trust keyring convenience: disabled" in rows
+    assert "Skill trust rollback protection: full" in rows
+
+
+def test_privacy_posture_sanitizes_unknown_skill_trust_status():
+    posture = build_settings_privacy_posture(
+        {},
+        environ={},
+        skill_trust={
+            "enabled": True,
+            "trust_status": "trusted /Users/example/private/skills secret-token",
+        },
+    )
+    text = "\n".join(build_privacy_posture_rows(posture))
+
+    assert "Skill trust: unavailable" in text
+    assert "/Users/example/private/skills" not in text
+    assert "secret-token" not in text
+
+
+def test_settings_screen_skill_trust_posture_uses_redacted_service_fields():
+    class FakeSkillTrustService:
+        keyring_convenience_enabled = True
+        reduced_rollback_protection = True
+        skills_dir = "/Users/example/private/skills"
+
+        def overall_status(self):
+            return "trusted"
+
+    screen = SettingsScreen(
+        SimpleNamespace(
+            app_config={},
+            local_skill_trust_service=FakeSkillTrustService(),
+        )
+    )
+
+    posture = screen._skill_trust_posture()
+
+    assert posture == {
+        "enabled": True,
+        "trust_status": "trusted",
+        "keyring_convenience_enabled": True,
+        "reduced_rollback_protection": True,
+    }
+
+
+def test_settings_screen_skill_trust_posture_handles_status_errors_safely():
+    class RaisingSkillTrustService:
+        keyring_convenience_enabled = False
+        reduced_rollback_protection = False
+
+        def overall_status(self):
+            raise RuntimeError("/Users/example/private/skills secret-token")
+
+    screen = SettingsScreen(
+        SimpleNamespace(
+            app_config={},
+            local_skill_trust_service=RaisingSkillTrustService(),
+        )
+    )
+
+    posture = screen._skill_trust_posture()
+
+    assert posture == {
+        "enabled": True,
+        "trust_status": "unavailable_error",
+        "keyring_convenience_enabled": False,
+        "reduced_rollback_protection": False,
+    }
