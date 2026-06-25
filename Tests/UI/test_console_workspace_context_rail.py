@@ -780,8 +780,8 @@ async def test_console_change_workspace_switches_active_context_and_conversation
 def test_console_workspace_conversation_subsection_styles_are_declared() -> None:
     css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text()
 
-    assert "#console-workspace-conversations-header" in css
-    assert "#console-workspace-selected-conversation" in css
-    assert "#console-workspace-conversation-search-row" in css
-    assert "#console-workspace-conversations" in css
+    assert "#console-workspace-conversations-header {" in css
+    assert "#console-workspace-selected-conversation {" in css
+    assert "#console-workspace-conversation-search-row {" in css
+    assert "#console-workspace-conversations {" in css
     assert "scrollbar-size: 1 1" in css
