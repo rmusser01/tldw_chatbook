@@ -314,6 +314,16 @@ class SearchableConversationService(StaticConversationTreeService):
         }
 
 
+class FailingSearchConversationService(StaticConversationTreeService):
+    def __init__(self) -> None:
+        super().__init__({})
+        self.list_calls: list[dict[str, object]] = []
+
+    async def list_conversations(self, *, mode: str = "local", **kwargs):
+        self.list_calls.append({"mode": mode, **kwargs})
+        raise RuntimeError("search failed")
+
+
 class FailThenRecoverGateway(_ReadyResolutionGateway):
     def __init__(self) -> None:
         self.calls = 0
@@ -2766,6 +2776,41 @@ async def test_console_workspace_conversation_search_ignores_stale_workspace_res
             stale_token,
         )
         assert "Stale Alpha" not in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_search_blank_query_clears_error_cache():
+    app = _build_test_app()
+    app.chat_conversation_scope_service = FailingSearchConversationService()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(
+            console,
+            pilot,
+            "#console-workspace-conversation-search",
+        )
+
+        await pilot.click("#console-workspace-conversation-search")
+        await pilot.press("f", "a", "i", "l")
+        await _wait_for_text(
+            console,
+            pilot,
+            "Workspace conversation search is unavailable.",
+        )
+
+        search = console.query_one("#console-workspace-conversation-search", Input)
+        search.value = ""
+        await pilot.pause(0.5)
+
+        assert (
+            "Workspace conversation search is unavailable."
+            not in _visible_text(console)
+        )
+        assert console._console_workspace_conversation_search_rows == ()
+        assert console._console_workspace_conversation_search_total is None
+        assert console._console_workspace_conversation_search_error == ""
 
 
 @pytest.mark.asyncio

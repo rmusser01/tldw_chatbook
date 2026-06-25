@@ -353,26 +353,29 @@ class ChatScreen(BaseAppScreen):
         token = self._console_workspace_conversation_search_token
         workspace_id = self._active_console_workspace_id_for_conversation_search()
         query = self._console_workspace_conversation_query
-        if query.strip():
-            native_rows = self._native_console_rows_for_workspace_search(
-                workspace_id,
-                query,
-            )
-            membership_rows = self._membership_console_rows_for_workspace_search(
-                workspace_id,
-                query,
-            )
-            self._console_workspace_conversation_search_rows = tuple(
-                self._merge_console_workspace_rows(native_rows, membership_rows)
-            )
-            self._console_workspace_conversation_search_total = None
-            self._console_workspace_conversation_search_error = ""
-        else:
+        if self._console_workspace_conversation_search_timer is not None:
+            self._console_workspace_conversation_search_timer.stop()
+            self._console_workspace_conversation_search_timer = None
+        if not query.strip():
             self._console_workspace_conversation_search_rows = ()
             self._console_workspace_conversation_search_total = None
             self._console_workspace_conversation_search_error = ""
-        if self._console_workspace_conversation_search_timer is not None:
-            self._console_workspace_conversation_search_timer.stop()
+            self._sync_console_workspace_context()
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+            return
+        native_rows = self._native_console_rows_for_workspace_search(
+            workspace_id,
+            query,
+        )
+        membership_rows = self._membership_console_rows_for_workspace_search(
+            workspace_id,
+            query,
+        )
+        self._console_workspace_conversation_search_rows = tuple(
+            self._merge_console_workspace_rows(native_rows, membership_rows)
+        )
+        self._console_workspace_conversation_search_total = None
+        self._console_workspace_conversation_search_error = ""
         self._console_workspace_conversation_search_timer = self.set_timer(
             0.2,
             lambda: self.run_worker(
@@ -1731,6 +1734,13 @@ class ChatScreen(BaseAppScreen):
         if workspace_id != self._active_console_workspace_id_for_conversation_search():
             return
         if query != self._console_workspace_conversation_query:
+            return
+        if not str(query or "").strip():
+            self._console_workspace_conversation_search_rows = ()
+            self._console_workspace_conversation_search_total = None
+            self._console_workspace_conversation_search_error = ""
+            self._sync_console_workspace_context()
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
             return
         native_rows = self._native_console_rows_for_workspace_search(
             workspace_id,
