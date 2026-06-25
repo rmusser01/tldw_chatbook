@@ -1671,6 +1671,10 @@ class ChatScreen(BaseAppScreen):
         if not isinstance(items, list):
             items = []
         total = result.get("total")
+        if total is None:
+            pagination = result.get("pagination")
+            if isinstance(pagination, dict):
+                total = pagination.get("total")
         try:
             total_count = int(total)
         except (TypeError, ValueError):

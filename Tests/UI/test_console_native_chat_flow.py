@@ -306,9 +306,11 @@ class SearchableConversationService(StaticConversationTreeService):
             )
         return {
             "items": items[:limit],
-            "total": len(items),
-            "limit": limit,
-            "offset": 0,
+            "pagination": {
+                "total": len(items),
+                "limit": limit,
+                "offset": 0,
+            },
         }
 
 
