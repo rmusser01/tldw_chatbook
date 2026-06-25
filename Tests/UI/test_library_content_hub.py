@@ -70,30 +70,30 @@ async def test_library_default_mode_renders_content_hub_with_real_counts_and_rec
         assert "Open the owning module for deep work" not in visible
         assert "State: Local workspace | Browse all workspaces | Console staging blocked" in state_summary
         assert "Inventory: Notes 1 | Media 1 | Conversations 1 | Console eligible 0 | Blocked 3" in state_summary
-        assert "+-----------------+" in hub_header
-        assert "| Source" in hub_header
-        assert "| Count" in hub_header
-        assert "| Browse" in hub_header
-        assert "| Recent" in hub_header
-        assert "| Console" in hub_header
+        assert "Source" in hub_header
+        assert "Readiness" in hub_header
+        assert "Owner" in hub_header
+        assert "Primary action" in hub_header
         assert "Notes" in notes_row
-        assert "1" in notes_row
+        assert "1 item" in notes_row
+        assert "Notes screen" in notes_row
         assert "Open Notes" in notes_row
-        assert "Research Note" in notes_row
-        assert "blocked: workspace gate" in notes_row
-        assert notes_row.startswith("| Notes")
+        assert "Console blocked: workspace gate" in notes_row
+        assert notes_row.startswith("Notes")
         assert "Notes: 1" in visible
-        assert "Owners: Notes edits/sync/export" in visible
+        assert "Owners: Notes screen edits/syncs notes" in visible
         assert "Media" in media_row
-        assert "Transcript A" in media_row
-        assert "blocked: workspace gate" in media_row
+        assert "1 item" in media_row
+        assert "Media library" in media_row
+        assert "Console blocked: workspace gate" in media_row
         assert "Media: 1" in visible
-        assert "Media browses library items" in visible
+        assert "Media library browses media" in visible
         assert "Conversations" in conversations_row
-        assert "Planning Chat" in conversations_row
-        assert "blocked: workspace gate" in conversations_row
+        assert "1 chat" in conversations_row
+        assert "Conversation browser" in conversations_row
+        assert "Console blocked: workspace gate" in conversations_row
         assert "Conversations: 1" in visible
-        assert "Conversations resumes chats" in visible
+        assert "Conversation browser resumes chats" in visible
         assert "Library readiness" in visible
         assert "Eligible       0 modules" in visible
         assert "Blocked        3 workspace-gated modules" in visible
@@ -131,6 +131,78 @@ async def test_library_stage_a_shell_surfaces_source_map_workspace_context_and_i
         assert "Retrieval" in visible
         assert "Movement" in visible
         assert "Learning" in visible
+
+
+@pytest.mark.asyncio
+async def test_library_stage_b_hub_renders_complete_source_inventory_rows() -> None:
+    app = _build_test_app()
+    _seed_library_content(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-content-hub-title")
+
+        visible = _visible_text(screen)
+        header = str(screen.query_one("#library-content-hub-table-header", Static).renderable)
+        notes_row = str(screen.query_one("#library-notes-summary", Static).renderable)
+        media_row = str(screen.query_one("#library-media-summary", Static).renderable)
+        conversations_row = str(
+            screen.query_one("#library-conversations-summary", Static).renderable
+        )
+        collections_row = str(screen.query_one("#library-collections-summary", Static).renderable)
+        search_row = str(screen.query_one("#library-search-rag-summary", Static).renderable)
+        import_export_row = str(
+            screen.query_one("#library-import-export-summary", Static).renderable
+        )
+        study_row = str(screen.query_one("#library-study-summary", Static).renderable)
+
+        assert "Source Inventory" in visible
+        assert "Source" in header
+        assert "Readiness" in header
+        assert "Owner" in header
+        assert "Primary action" in header
+
+        assert "Notes" in notes_row
+        assert "1 item" in notes_row
+        assert "Notes screen" in notes_row
+        assert "Open Notes" in notes_row
+        assert "Console blocked: workspace gate" in notes_row
+
+        assert "Media" in media_row
+        assert "1 item" in media_row
+        assert "Media library" in media_row
+        assert "Open Media" in media_row
+
+        assert "Conversations" in conversations_row
+        assert "1 chat" in conversations_row
+        assert "Conversation browser" in conversations_row
+        assert "Browse chats" in conversations_row
+
+        assert "Collections" in collections_row
+        assert "local records" in collections_row
+        assert "Library Collections" in collections_row
+        assert "Open Collections" in collections_row
+
+        assert "Search/RAG" in search_row
+        assert "query first" in search_row
+        assert "Library Search/RAG" in search_row
+        assert "Run Search/RAG" in search_row
+
+        assert "Import/Export" in import_export_row
+        assert "ready" in import_export_row
+        assert "Ingest and Media" in import_export_row
+        assert "Import sources" in import_export_row
+
+        assert "Study" in study_row
+        assert "source required" in study_row
+        assert "Study modules" in study_row
+        assert "Open Study" in study_row
+
+        assert "Next best action: Import sources or create a note." in visible
+        assert "Use in Console requires workspace-eligible Library content." in visible
+        assert "tldw_server" not in visible
 
 
 @pytest.mark.asyncio
@@ -187,19 +259,32 @@ async def test_library_hub_detail_uses_scannable_sections_instead_of_report_copy
         ):
             assert screen.query_one(selector, Static)
 
-        assert "-- Source Status " in visible
+        assert "-- Source Inventory " in visible
         assert "-- Retrieval Readiness " in visible
         assert "-- Movement + Reuse " in visible
         assert "-- Learning " in visible
         assert "-- Next Action " in visible
-        assert "| Notes" in visible
-        assert "+-----------------+---------+--------------------+----------------------------------+---------------------------+" in visible
+        notes_row = str(screen.query_one("#library-notes-summary", Static).renderable)
+        collections_row = str(screen.query_one("#library-collections-summary", Static).renderable)
+        search_row = str(screen.query_one("#library-search-rag-summary", Static).renderable)
+        assert "Notes" in notes_row
+        assert "1 item" in notes_row
+        assert "Notes screen" in notes_row
+        assert "Open Notes" in notes_row
+        assert "Collections" in collections_row
+        assert "local records" in collections_row
+        assert "Library Collections" in collections_row
+        assert "Open Collections" in collections_row
+        assert "Search/RAG" in search_row
+        assert "query first" in search_row
+        assert "Library Search/RAG" in search_row
+        assert "Run Search/RAG" in search_row
         assert "Purpose:" not in str(screen.query_one("#library-notes-summary", Static).renderable)
         assert "Search/RAG     Query indexed content, inspect evidence, launch Console." in visible
         assert "Import/Export  Add or move content; imported material returns here." in visible
         assert "Collections    Read, review, reuse saved content." in visible
         assert "Study          Turn Library content into flashcards and quizzes." in visible
-        assert "Primary        Import sources or create a note." in visible
+        assert "Next best action: Import sources or create a note." in visible
         assert "Then           Open Search/RAG after indexing or Collections after saving content." in visible
 
 
