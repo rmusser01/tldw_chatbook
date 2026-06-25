@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -47,11 +49,29 @@ class StaticLibraryCollectionsService:
 class StaticLibraryRagSearchService:
     """Mounted-test retrieval service for Library Search/RAG evidence rows."""
 
-    def __init__(self, results) -> None:
+    def __init__(self, results: Iterable[object]) -> None:
         self.results = tuple(results)
-        self.requests = []
+        self.requests: list[dict[str, object]] = []
 
-    async def search(self, query, scope, mode, **kwargs):
+    async def search(
+        self,
+        query: str,
+        scope: Sequence[str],
+        mode: str,
+        **kwargs: Any,
+    ) -> dict[str, object]:
+        """Record a Search/RAG request and return static evidence rows.
+
+        Args:
+            query: User-entered retrieval query.
+            scope: Library source scopes included in the request.
+            mode: Retrieval mode requested by the UI.
+            **kwargs: Additional request metadata forwarded by the screen.
+
+        Returns:
+            A deterministic service payload containing the fake backend label and
+            the preconfigured result rows.
+        """
         self.requests.append(
             {
                 "query": query,

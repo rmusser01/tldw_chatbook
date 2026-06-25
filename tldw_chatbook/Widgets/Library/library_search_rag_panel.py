@@ -9,6 +9,29 @@ from textual.widgets import Button, Input, Static
 from ...Library.library_rag_state import LibraryRagPanelState, LibraryRagResultRow
 
 
+_SELECTED_EVIDENCE_DETAIL_IDS = (
+    "library-rag-selected-status-heading",
+    "library-rag-selected-status",
+    "library-rag-selected-evidence-heading",
+    "library-rag-selected-snippet",
+    "library-rag-selected-citations",
+    "library-rag-selected-authority-heading",
+    "library-rag-selected-source",
+    "library-rag-selected-authority",
+    "library-rag-selected-eligibility",
+    "library-rag-selected-allowed-heading",
+    "library-rag-selected-allowed",
+    "library-rag-selected-blocked-heading",
+    "library-rag-selected-blocked",
+    "library-rag-selected-recovery-heading",
+    "library-rag-selected-recovery",
+    "library-rag-selected-handoff-heading",
+    "library-rag-selected-handoff",
+    "library-rag-selected-future-heading",
+    "library-rag-selected-future",
+)
+
+
 class LibrarySearchRagPanel(Vertical):
     """Display the source scope, query controls, and evidence results."""
 
@@ -478,27 +501,7 @@ class LibrarySearchRagInspectorPanel(Vertical):
 
 
 def _selected_evidence_detail_ids() -> tuple[str, ...]:
-    return (
-        "library-rag-selected-status-heading",
-        "library-rag-selected-status",
-        "library-rag-selected-evidence-heading",
-        "library-rag-selected-snippet",
-        "library-rag-selected-citations",
-        "library-rag-selected-authority-heading",
-        "library-rag-selected-source",
-        "library-rag-selected-authority",
-        "library-rag-selected-eligibility",
-        "library-rag-selected-allowed-heading",
-        "library-rag-selected-allowed",
-        "library-rag-selected-blocked-heading",
-        "library-rag-selected-blocked",
-        "library-rag-selected-recovery-heading",
-        "library-rag-selected-recovery",
-        "library-rag-selected-handoff-heading",
-        "library-rag-selected-handoff",
-        "library-rag-selected-future-heading",
-        "library-rag-selected-future",
-    )
+    return _SELECTED_EVIDENCE_DETAIL_IDS
 
 
 def _selected_evidence_detail_classes(widget_id: str) -> str:

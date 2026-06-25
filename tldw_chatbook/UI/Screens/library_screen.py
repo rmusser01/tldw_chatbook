@@ -72,6 +72,13 @@ LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH = 14
 LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH = 16
 LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH = 22
 LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH = 18
+LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset(
+    {
+        "library-rag-results-section-rule",
+        "library-rag-results-heading",
+        "library-rag-attribution-placeholder",
+    }
+)
 LIBRARY_COLUMN_TITLES = {
     "sources": ("Source Map", "Active Workbench", "Inspector"),
     "conversations": ("Source Map", "Saved Conversations", "Conversation Inspector"),
@@ -3717,7 +3724,9 @@ class LibraryScreen(BaseAppScreen):
         self.query_one("#library-rag-attribution-placeholder", Static).update(
             self._library_rag_attribution_placeholder(panel_state)
         )
-        for child in list(results_container.children)[3:]:
+        for child in list(results_container.children):
+            if child.id in LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS:
+                continue
             await child.remove()
 
         if panel_state.results:
