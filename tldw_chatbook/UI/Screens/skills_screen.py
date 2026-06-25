@@ -183,6 +183,7 @@ class SkillsScreen(BaseAppScreen):
         self._skills_lookup_recovery_state = recovery_state
         self._skills_loaded = True
         self._ensure_selected_skill()
+        self._reconcile_active_trust_review()
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -320,6 +321,40 @@ class SkillsScreen(BaseAppScreen):
         }
         return trust_copy.get(status, "Trust: blocked")
 
+    def _skill_trust_blocked_copy(self, record: Mapping[str, Any]) -> str:
+        status = self._skill_trust_status(record)
+        blocked_copy = {
+            "trust_uninitialized": (
+                "local skill trust has not been initialized. "
+                "Next: Bootstrap Trust after reviewing current local skill files."
+            ),
+            "trust_locked": (
+                "local skill trust is locked. "
+                "Next: Unlock Trust with the trust passphrase."
+            ),
+            "quarantined_modified": (
+                "local skill files changed since the trusted baseline. "
+                "Next: Review Diff, then Trust Reviewed Version."
+            ),
+            "quarantined_added": (
+                "local skill files include new untrusted files. "
+                "Next: Review Diff, then Trust Reviewed Version."
+            ),
+            "quarantined_deleted": (
+                "trusted local skill files are missing. "
+                "Next: Review Diff, then Trust Reviewed Version."
+            ),
+            "quarantined_manifest_error": (
+                "local skill trust manifest cannot be verified. "
+                "Next: resolve local trust state before staging."
+            ),
+            "quarantined_unsupported_path": (
+                "local skill files include unsupported paths. "
+                "Next: remove unsupported paths before staging."
+            ),
+        }
+        return blocked_copy.get(status, "local skill trust blocks execution. Next: resolve trust state before staging.")
+
     def _can_review_skill_trust(self, record: Mapping[str, Any] | None) -> bool:
         if record is None:
             return False
@@ -331,6 +366,52 @@ class SkillsScreen(BaseAppScreen):
 
     def _has_trust_status(self, trust_status: str) -> bool:
         return any(self._skill_trust_status(record) == trust_status for record in self._local_skill_records)
+
+    @staticmethod
+    def _review_file_label(value: Any) -> str:
+        text = str(value or "").replace("\\", "/").strip()
+        if not text:
+            return ""
+        if text.startswith("/") or text.startswith("~") or ":" in text:
+            text = text.rsplit("/", 1)[-1]
+        text = text.replace("..", "").strip("/ ")
+        return sanitize_string(text, max_length=100).strip()
+
+    def _active_review_changed_files(self) -> list[str]:
+        if self._active_trust_review is None:
+            return []
+        files = self._active_trust_review.get("changed_files")
+        if not isinstance(files, (list, tuple)):
+            return []
+        changed_files = []
+        for file_name in files:
+            safe_file_name = self._review_file_label(file_name)
+            if safe_file_name and validate_text_input(safe_file_name, max_length=100, allow_html=False):
+                changed_files.append(safe_file_name)
+        return changed_files
+
+    def _active_review_matches_selected(self, metadata: Mapping[str, Any] | None = None) -> bool:
+        if self._active_trust_review is None:
+            return False
+        metadata = metadata or self._selected_skill_metadata()
+        if not metadata:
+            return False
+        if not metadata.get("trust_reviewable"):
+            return False
+        return (
+            self._active_trust_review.get("selected_skill_name") == metadata.get("selected_skill_name")
+            and self._active_trust_review.get("selected_record_id") == metadata.get("selected_record_id")
+            and self._active_trust_review.get("selected_target_id") == metadata.get("selected_target_id")
+        )
+
+    def _reconcile_active_trust_review(self) -> None:
+        if self._active_trust_review is None:
+            return
+        if self._skills_lookup_error or not self._local_skill_records:
+            self._active_trust_review = None
+            return
+        if not self._active_review_matches_selected():
+            self._active_trust_review = None
 
     def _is_skill_valid(self, record: Mapping[str, Any]) -> bool:
         return self._skill_validation_status(record) == "valid" and not self._skill_trust_blocked(record)
@@ -423,7 +504,7 @@ class SkillsScreen(BaseAppScreen):
         stageable = bool(metadata["stageable"])
         reason = "; ".join(metadata["validation_errors"]) or "Selected skill is not valid."
         if metadata["validation_status"] == "valid" and metadata["trust_blocked"]:
-            reason = f"trust blocked ({metadata['trust_reason_code'] or metadata['trust_status']})"
+            reason = self._skill_trust_blocked_copy(self._selected_skill_record() or {})
         updates = {
             "#skills-selected-context": f"Selected: {selected_name}",
             "#skills-selected-runtime-target": f"Runtime target: {target_id}",
@@ -431,6 +512,11 @@ class SkillsScreen(BaseAppScreen):
                 "Execution: ready to stage in Console" if stageable else "Execution: blocked"
             ),
             "#skills-execution-blocked-reason": "" if stageable else f"Reason: {reason}",
+            "#skills-selected-trust-reason-code": (
+                f"Reason code: {metadata['trust_reason_code']}"
+                if metadata["trust_blocked"] and metadata["trust_reason_code"]
+                else ""
+            ),
         }
         for selector, text in updates.items():
             for widget in self.query(selector):
@@ -455,10 +541,11 @@ class SkillsScreen(BaseAppScreen):
                 )
         for button in self.query("#skills-trust-reviewed-version"):
             if isinstance(button, Button):
-                button.disabled = self._active_trust_review is None
+                review_bound = self._active_review_matches_selected(metadata)
+                button.disabled = not review_bound
                 button.tooltip = (
                     "Trust the captured reviewed skill snapshot."
-                    if self._active_trust_review is not None
+                    if review_bound
                     else "Capture a trust review before approving this skill version."
                 )
 
@@ -621,7 +708,7 @@ class SkillsScreen(BaseAppScreen):
                         )
                         if selected_metadata["validation_status"] == "valid" and selected_metadata["trust_blocked"]:
                             selected_blocked_reason = (
-                                f"trust blocked ({selected_metadata['trust_reason_code'] or selected_metadata['trust_status']})"
+                                self._skill_trust_blocked_copy(self._selected_skill_record() or {})
                             )
                         yield Static(
                             "Execution: ready to stage in Console"
@@ -635,6 +722,33 @@ class SkillsScreen(BaseAppScreen):
                             ),
                             id="skills-execution-blocked-reason",
                         )
+                        yield Static(
+                            self._plain_text(
+                                f"Reason code: {selected_metadata['trust_reason_code']}"
+                                if selected_metadata["trust_blocked"] and selected_metadata["trust_reason_code"]
+                                else ""
+                            ),
+                            id="skills-selected-trust-reason-code",
+                        )
+                        if self._active_review_matches_selected(selected_metadata):
+                            review_files = ", ".join(self._active_review_changed_files()) or "selected files"
+                            yield Static(
+                                "Trust Review",
+                                id="skills-trust-review-title",
+                                classes="destination-section",
+                            )
+                            yield Static(
+                                self._plain_text(
+                                    f"Reviewed skill: {selected_metadata['selected_skill_name']}"
+                                ),
+                                id="skills-trust-review-skill",
+                            )
+                            yield Static(
+                                self._plain_text(
+                                    f"Review captured: {review_files}. Confirm these current files should become the trusted baseline."
+                                ),
+                                id="skills-trust-review-summary",
+                            )
                     yield Static("Actions", classes="destination-section")
                     yield Static(
                         "Skill import is not wired in this shell yet.",
@@ -677,7 +791,7 @@ class SkillsScreen(BaseAppScreen):
                             else "Review is available only for metadata-valid local skills blocked by changed files."
                         ),
                     )
-                    review_active = self._active_trust_review is not None
+                    review_active = self._active_review_matches_selected(selected_metadata)
                     yield Button(
                         "Trust Reviewed Version",
                         id="skills-trust-reviewed-version",
@@ -806,6 +920,7 @@ class SkillsScreen(BaseAppScreen):
             )
             return
         skill_name = self._skill_name(selected_record)
+        selected_metadata = self._selected_skill_metadata()
         result, ok = await self._call_skill_trust_service("capture_review", skill_name)
         if not ok:
             return
@@ -814,7 +929,12 @@ class SkillsScreen(BaseAppScreen):
                 "Local skill trust review could not be captured."
             )
             return
-        self._active_trust_review = dict(result)
+        self._active_trust_review = {
+            **dict(result),
+            "selected_skill_name": selected_metadata.get("selected_skill_name"),
+            "selected_record_id": selected_metadata.get("selected_record_id"),
+            "selected_target_id": selected_metadata.get("selected_target_id"),
+        }
         self._apply_selected_skill_widgets()
         await self._reload_local_skills_context()
 
@@ -825,6 +945,15 @@ class SkillsScreen(BaseAppScreen):
             self._notify_skill_trust_warning(
                 "Capture a local skill trust review before approving this version."
             )
+            return
+        if not self._active_review_matches_selected():
+            self._active_trust_review = None
+            self._notify_skill_trust_warning(
+                "Capture a fresh local skill trust review before approving this version."
+            )
+            self._apply_selected_skill_widgets()
+            if self.is_mounted:
+                self.refresh(recompose=True)
             return
         review_id = self._safe_skill_text(
             self._active_trust_review.get("review_id"),

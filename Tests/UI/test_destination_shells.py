@@ -265,23 +265,38 @@ class StaticSkillsScopeService:
         self.skills = tuple(skills)
         self.calls = []
 
+    def set_skills(self, skills) -> None:
+        self.skills = tuple(skills)
+
     async def list_skills(self, **kwargs):
         self.calls.append(kwargs)
         return {"skills": list(self.skills), "total": len(self.skills)}
 
 
 class RecordingSkillTrustService:
-    def __init__(self, review_id="review-id"):
+    def __init__(self, review_id="review-id", on_capture_review=None):
         self.review_id = review_id
         self.bootstrap_calls = 0
+        self.bootstrap_passphrases = []
+        self.unlock_calls = 0
+        self.unlock_passphrases = []
         self.reviewed_skill = None
         self.trusted_review_id = None
+        self.trust_reviewed_calls = 0
+        self.on_capture_review = on_capture_review
 
-    def bootstrap_trust(self, *args, **kwargs):
+    def bootstrap_trust(self, passphrase, *args, **kwargs):
         self.bootstrap_calls += 1
+        self.bootstrap_passphrases.append(passphrase)
+
+    def unlock_with_passphrase(self, passphrase, *args, **kwargs):
+        self.unlock_calls += 1
+        self.unlock_passphrases.append(passphrase)
 
     def capture_review(self, skill_name):
         self.reviewed_skill = skill_name
+        if self.on_capture_review is not None:
+            self.on_capture_review(skill_name)
         return {
             "review_id": self.review_id,
             "skill_name": skill_name,
@@ -289,6 +304,7 @@ class RecordingSkillTrustService:
         }
 
     def trust_reviewed_snapshot(self, review_id):
+        self.trust_reviewed_calls += 1
         self.trusted_review_id = review_id
 
 
@@ -505,6 +521,21 @@ async def _wait_for_mock_call(mock: Mock, pilot, *, timeout: float = 1.0) -> Non
             return
         await pilot.pause()
     raise AssertionError("Timed out waiting for mock call")
+
+
+async def _wait_for_skills_list_calls(
+    service: StaticSkillsScopeService,
+    count: int,
+    pilot,
+    *,
+    timeout: float = 1.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if len(service.calls) >= count:
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for {count} Skills list calls; saw {len(service.calls)}")
 
 
 async def _wait_for_route(seen_routes: list[str], target_route: str, pilot, *, timeout: float = 1.0) -> None:
@@ -1991,7 +2022,11 @@ async def test_skills_destination_blocks_metadata_valid_trust_blocked_skill():
         assert "Reason code: skill_modified" in text
         assert "Changed files: SKILL.md" in text
         assert "Execution: blocked" in text
-        assert "Reason: trust blocked (skill_modified)" in text
+        assert (
+            "Reason: local skill files changed since the trusted baseline. "
+            "Next: Review Diff, then Trust Reviewed Version."
+        ) in text
+        assert "Reason: trust blocked" not in text
         assert button.disabled is True
 
 
@@ -2046,10 +2081,49 @@ async def test_skills_destination_bootstrap_action_calls_trust_service():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_skills_snapshot(screen, pilot)
+        initial_list_calls = len(app.skills_scope_service.calls)
         screen._request_skill_trust_passphrase = AsyncMock(return_value="passphrase")
         await pilot.click("#skills-bootstrap-trust")
+        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
 
         assert app.local_skill_trust_service.bootstrap_calls == 1
+        assert app.local_skill_trust_service.bootstrap_passphrases == ["passphrase"]
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_unlock_action_calls_trust_service():
+    app = _build_test_app()
+    app.local_skill_trust_service = RecordingSkillTrustService()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "locked-skill",
+                "description": "Locked local skill",
+                "record_id": "local:skill:locked-skill",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "trust_locked",
+                "trust_reason_code": "trust_locked",
+                "trust_blocked": True,
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        initial_list_calls = len(app.skills_scope_service.calls)
+        screen._request_skill_trust_passphrase = AsyncMock(return_value="passphrase")
+
+        unlock_button = screen.query_one("#skills-unlock-trust", Button)
+        assert unlock_button.disabled is False
+
+        await pilot.click("#skills-unlock-trust")
+        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+
+        assert app.local_skill_trust_service.unlock_calls == 1
+        assert app.local_skill_trust_service.unlock_passphrases == ["passphrase"]
 
 
 @pytest.mark.asyncio
@@ -2076,13 +2150,75 @@ async def test_skills_destination_review_action_enables_trust_reviewed_version()
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_skills_snapshot(screen, pilot)
+        initial_list_calls = len(app.skills_scope_service.calls)
         await pilot.click("#skills-review-diff")
+        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        text = _visible_text(screen)
 
         assert app.local_skill_trust_service.reviewed_skill == "summarize-notes"
+        assert "Review captured: SKILL.md." in text
+        assert "Confirm these current files should become the trusted baseline." in text
+        assert "Reviewed skill: summarize-notes" in text
+        assert "/SKILL.md" not in text
         assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
 
+        list_calls_after_review = len(app.skills_scope_service.calls)
         await pilot.click("#skills-trust-reviewed-version")
+        await _wait_for_skills_list_calls(app.skills_scope_service, list_calls_after_review + 1, pilot)
         assert app.local_skill_trust_service.trusted_review_id == "review-1"
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_clears_stale_review_after_refresh():
+    app = _build_test_app()
+    trusted_skill = {
+        "name": "summarize-notes",
+        "description": "Summarize note collections",
+        "record_id": "local:skill:summarize-notes",
+        "validation_status": "valid",
+        "validation_errors": [],
+        "trust_status": "trusted",
+        "trust_reason_code": None,
+        "trust_blocked": False,
+        "trust_changed_files": [],
+    }
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "record_id": "local:skill:summarize-notes",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "quarantined_modified",
+                "trust_reason_code": "skill_modified",
+                "trust_blocked": True,
+                "trust_changed_files": ["SKILL.md"],
+            },
+        ]
+    )
+    app.local_skill_trust_service = RecordingSkillTrustService(
+        review_id="review-1",
+        on_capture_review=lambda _skill_name: app.skills_scope_service.set_skills([trusted_skill]),
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        initial_list_calls = len(app.skills_scope_service.calls)
+
+        await pilot.click("#skills-review-diff")
+        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        await _wait_for_visible_text(screen, pilot, "Trust: trusted baseline")
+
+        approve_button = screen.query_one("#skills-trust-reviewed-version", Button)
+        assert approve_button.disabled is True
+        assert "Review captured:" not in _visible_text(screen)
+
+        await pilot.click("#skills-trust-reviewed-version")
+        await pilot.pause()
+        assert app.local_skill_trust_service.trust_reviewed_calls == 0
 
 
 @pytest.mark.asyncio
