@@ -1232,6 +1232,7 @@ class LibraryScreen(BaseAppScreen):
             ),
             Static(
                 self._hub_readiness_summary(),
+                markup=False,
                 id="library-hub-readiness-summary",
                 classes="library-hub-card",
             ),

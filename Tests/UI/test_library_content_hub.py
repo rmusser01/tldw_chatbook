@@ -239,8 +239,10 @@ async def test_library_hub_recent_titles_render_rich_markup_literals() -> None:
 
         visible = _visible_text(screen)
         card = screen.query_one("#library-notes-summary")
+        readiness = screen.query_one("#library-hub-readiness-summary")
 
         assert getattr(card, "_render_markup") is False
+        assert getattr(readiness, "_render_markup") is False
         assert "[bold]Literal Note[/]" in visible
         assert "blocked: workspace gate" in visible
         assert "Notes | Notes: 1 | Open Notes | Literal Note | blocked" not in visible
