@@ -275,6 +275,43 @@ class StaticConversationTreeService:
         )
 
 
+class SearchableConversationService(StaticConversationTreeService):
+    def __init__(self, conversations: dict[str, dict]) -> None:
+        super().__init__(conversations)
+        self.list_calls: list[dict[str, object]] = []
+
+    async def list_conversations(self, *, mode: str = "local", **kwargs):
+        self.list_calls.append({"mode": mode, **kwargs})
+        query = str(kwargs.get("query") or "").strip().lower()
+        workspace_id = str(kwargs.get("workspace_id") or "").strip()
+        limit = int(kwargs.get("limit") or 50)
+        items = []
+        for conversation_id, tree in self.trees.items():
+            conversation = tree.get("conversation", {})
+            title = str(conversation.get("title") or "")
+            if (
+                workspace_id
+                and str(conversation.get("workspace_id") or "") != workspace_id
+            ):
+                continue
+            if query and query not in title.lower():
+                continue
+            items.append(
+                {
+                    "id": conversation_id,
+                    "title": title,
+                    "workspace_id": conversation.get("workspace_id"),
+                    "state": conversation.get("state", "active"),
+                }
+            )
+        return {
+            "items": items[:limit],
+            "total": len(items),
+            "limit": limit,
+            "offset": 0,
+        }
+
+
 class FailThenRecoverGateway(_ReadyResolutionGateway):
     def __init__(self) -> None:
         self.calls = 0
@@ -2595,6 +2632,138 @@ async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
         assert any("Chat 1" in text for text in row_texts)
         assert any("Chat 2" in text for text in row_texts)
         assert any(text.startswith("> ") and "Chat 2" in text for text in row_texts)
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_search_scopes_persisted_results_to_active_workspace():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    other_workspace = service.create_workspace(
+        workspace_id="ws-other-search",
+        name="Other Search",
+    )
+    app.chat_conversation_scope_service = SearchableConversationService(
+        {
+            "persisted-alpha": {
+                "conversation": {
+                    "id": "persisted-alpha",
+                    "title": "Alpha persisted conversation",
+                    "workspace_id": active_workspace.workspace_id,
+                },
+                "root_threads": [],
+            },
+            "other-alpha": {
+                "conversation": {
+                    "id": "other-alpha",
+                    "title": "Alpha other workspace",
+                    "workspace_id": other_workspace.workspace_id,
+                },
+                "root_threads": [],
+            },
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(
+            console,
+            pilot,
+            "#console-workspace-conversation-search",
+        )
+
+        await pilot.click("#console-workspace-conversation-search")
+        await pilot.press("a", "l", "p", "h", "a")
+        await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Alpha persisted",
+            selected=False,
+        )
+        row_texts = _console_workspace_conversation_texts(console)
+        assert any("Alpha persisted" in text for text in row_texts)
+        assert all("Alpha other workspace" not in text for text in row_texts)
+        assert (
+            app.chat_conversation_scope_service.list_calls[-1]["workspace_id"]
+            == active_workspace.workspace_id
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_search_shows_cap_and_empty_copy():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    conversations = {
+        f"topic-{index}": {
+            "conversation": {
+                "id": f"topic-{index}",
+                "title": f"Topic conversation {index:02d}",
+                "workspace_id": active_workspace.workspace_id,
+            },
+            "root_threads": [],
+        }
+        for index in range(60)
+    }
+    app.chat_conversation_scope_service = SearchableConversationService(conversations)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(
+            console,
+            pilot,
+            "#console-workspace-conversation-search",
+        )
+
+        await pilot.click("#console-workspace-conversation-search")
+        await pilot.press("t", "o", "p", "i", "c")
+        await _wait_for_text(console, pilot, "Showing 50 of 60 matches")
+
+        search = console.query_one("#console-workspace-conversation-search", Input)
+        search.value = "missing"
+        await pilot.pause(0.3)
+        await _wait_for_text(console, pilot, "No matches in this workspace.")
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_search_ignores_stale_workspace_results():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    service.create_workspace(workspace_id="ws-stale-b", name="Stale B")
+    app.chat_conversation_scope_service = SearchableConversationService(
+        {
+            "stale-a": {
+                "conversation": {
+                    "id": "stale-a",
+                    "title": "Stale Alpha",
+                    "workspace_id": active_workspace.workspace_id,
+                },
+                "root_threads": [],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(
+            console,
+            pilot,
+            "#console-workspace-conversation-search",
+        )
+        console._console_workspace_conversation_query = "Alpha"
+        stale_token = console._console_workspace_conversation_search_token + 1
+        console._console_workspace_conversation_search_token = stale_token
+        service.set_active_workspace("ws-stale-b")
+        await console._refresh_console_workspace_conversation_search(
+            active_workspace.workspace_id,
+            "Alpha",
+            stale_token,
+        )
+        assert "Stale Alpha" not in _visible_text(console)
 
 
 @pytest.mark.asyncio
