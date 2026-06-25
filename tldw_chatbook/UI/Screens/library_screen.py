@@ -67,16 +67,21 @@ LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH = 30
 LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
 LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
 LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH = 11
+LIBRARY_HUB_MODULE_COLUMN_WIDTH = 15
+LIBRARY_HUB_COUNT_COLUMN_WIDTH = 7
+LIBRARY_HUB_BROWSE_COLUMN_WIDTH = 18
+LIBRARY_HUB_RECENT_COLUMN_WIDTH = 32
+LIBRARY_HUB_CONSOLE_COLUMN_WIDTH = 25
 LIBRARY_COLUMN_TITLES = {
-    "sources": ("Library Modules", "Content Hub", "Hub Inspector"),
-    "conversations": ("Library Modules", "Saved Conversations", "Conversation Inspector"),
-    "search": ("Source Browser", "Source Detail / Search Results", "Inspector"),
-    "import-export": ("Library Modules", "Import/Export Workflow", "Import/Export Inspector"),
-    "workspaces": ("Workspace Sources", "Scope & Eligibility", "Handoff Rules"),
-    "collections": ("Source Browser", "Source Detail / Search Results", "Inspector"),
-    "study": ("Source Browser", "Study Handoff", "Inspector"),
-    "flashcards": ("Source Browser", "Flashcards Handoff", "Inspector"),
-    "quizzes": ("Source Browser", "Quizzes Handoff", "Inspector"),
+    "sources": ("Source Map", "Active Workbench", "Inspector"),
+    "conversations": ("Source Map", "Saved Conversations", "Conversation Inspector"),
+    "search": ("Source Map", "Search/RAG Workbench", "Evidence Inspector"),
+    "import-export": ("Source Map", "Import/Export Workbench", "Import/Export Inspector"),
+    "workspaces": ("Source Map", "Workspace Context", "Handoff Rules"),
+    "collections": ("Source Map", "Collections Reader", "Collection Inspector"),
+    "study": ("Source Map", "Study Handoff", "Inspector"),
+    "flashcards": ("Source Map", "Flashcards Handoff", "Inspector"),
+    "quizzes": ("Source Map", "Quizzes Handoff", "Inspector"),
 }
 LIBRARY_MODES = {
     "sources": {
@@ -124,11 +129,11 @@ LIBRARY_MODES = {
     "collections": {
         "label": "Collections",
         "button_id": "library-mode-collections",
-        "description": "Collections mode: manage Library-owned reusable source sets.",
-        "next_action": (
-            "Create local source groups now; Collection-scoped Search/RAG citations/snippets, "
-            "Study, and Console are later-stage."
-        ),
+        # Collections owns its explanatory copy inside the reader and inspector.
+        # Keeping these generic mode strings empty avoids stale terminal cells
+        # overlapping the Collections workbench during Textual Web mode changes.
+        "description": "",
+        "next_action": "",
     },
     "study": {
         "label": "Study",
@@ -272,7 +277,7 @@ class LibraryScreen(BaseAppScreen):
     """Source material, imports/exports, conversations, and Search/RAG entry."""
 
     BINDINGS = [
-        ("u", "library_rag_use_in_console", "Use Search/RAG evidence in Console"),
+        ("u", "library_rag_use_in_console", "Use Library context in Console"),
     ]
 
     # Baseline workbench geometry so the screen renders correctly even without
@@ -295,7 +300,7 @@ class LibraryScreen(BaseAppScreen):
 
     Button.library-mode-chip {
         width: auto;
-        min-width: 0;
+        min-width: 10;
         height: 1;
         min-height: 1;
         padding: 0 1;
@@ -338,6 +343,68 @@ class LibraryScreen(BaseAppScreen):
 
     #library-source-inspector {
         width: 2fr;
+    }
+
+    #library-source-browser .library-source-action {
+        height: 1;
+        min-height: 1;
+        width: auto;
+        min-width: 0;
+        padding: 0 1;
+        border: none;
+        background: transparent;
+        content-align: left middle;
+        text-style: none;
+    }
+
+    #library-source-browser .library-source-action-spacer {
+        height: 0;
+        min-height: 0;
+    }
+
+    .library-source-active-marker {
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        background: $surface;
+        color: $text;
+        text-style: bold;
+    }
+
+    .library-source-group-rule {
+        height: 1;
+        min-height: 1;
+        color: $text-muted;
+    }
+
+    .library-source-action-meta {
+        color: $text-muted;
+        height: 1;
+        min-height: 1;
+        margin-bottom: 1;
+    }
+
+    .library-hub-spacer {
+        height: 1;
+        min-height: 1;
+    }
+
+    #library-collection-form Input {
+        height: 3;
+        min-height: 3;
+        padding: 0 1;
+        border: tall $surface-lighten-1;
+        background: $surface;
+        color: $text;
+    }
+
+    #library-collection-actions Button {
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
+        background: transparent;
+        content-align: left middle;
     }
     """
 
@@ -643,6 +710,11 @@ class LibraryScreen(BaseAppScreen):
             return f"{label}: {count}"
         return f"{label} (showing up to {LIBRARY_SOURCE_PAGE_SIZE}): {count}"
 
+    def _hub_source_count_label(self, source_type: str, label: str) -> str:
+        count = self._local_source_counts[source_type]
+        suffix = "" if self._local_source_total_known[source_type] else "+"
+        return f"{label}: {count}{suffix}"
+
     def _source_sample_titles(self, source_type: str) -> list[str]:
         return [
             self._source_title(source_type, record)
@@ -882,10 +954,168 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _source_recent_label(self, source_type: str) -> str:
+        recent = self._source_recent_value(source_type)
+        return f"Recent: {recent}"
+
+    def _hub_table_cell(self, value: str, width: int = LIBRARY_HUB_RECENT_COLUMN_WIDTH) -> str:
+        """Keep hub table cells readable in terminal-width layouts."""
+        clean_value = " ".join(value.split())
+        if len(clean_value) <= width:
+            return clean_value
+        suffix = "..."
+        limit = max(1, width - len(suffix))
+        shortened = clean_value[:limit].rsplit(" ", 1)[0].strip()
+        if not shortened:
+            shortened = clean_value[:limit].strip()
+        return f"{shortened}{suffix}"
+
+    def _hub_table_row(
+        self,
+        *,
+        module: str,
+        count: str,
+        browse: str,
+        recent: str,
+        console: str,
+    ) -> str:
+        """Render terminal-native aligned columns without markdown table noise."""
+        module_cell = self._hub_table_cell(module, LIBRARY_HUB_MODULE_COLUMN_WIDTH)
+        count_cell = self._hub_table_cell(count, LIBRARY_HUB_COUNT_COLUMN_WIDTH)
+        browse_cell = self._hub_table_cell(browse, LIBRARY_HUB_BROWSE_COLUMN_WIDTH)
+        recent_cell = self._hub_table_cell(recent, LIBRARY_HUB_RECENT_COLUMN_WIDTH)
+        console_cell = self._hub_table_cell(console, LIBRARY_HUB_CONSOLE_COLUMN_WIDTH)
+        return (
+            f"{module_cell:<{LIBRARY_HUB_MODULE_COLUMN_WIDTH}} "
+            f"{count_cell:<{LIBRARY_HUB_COUNT_COLUMN_WIDTH}} "
+            f"{browse_cell:<{LIBRARY_HUB_BROWSE_COLUMN_WIDTH}} "
+            f"{recent_cell:<{LIBRARY_HUB_RECENT_COLUMN_WIDTH}} "
+            f"{console_cell:<{LIBRARY_HUB_CONSOLE_COLUMN_WIDTH}}"
+        )
+
+    def _hub_table_border(self) -> str:
+        return (
+            "+"
+            + "+".join(
+                "-" * (width + 2)
+                for width in (
+                    LIBRARY_HUB_MODULE_COLUMN_WIDTH,
+                    LIBRARY_HUB_COUNT_COLUMN_WIDTH,
+                    LIBRARY_HUB_BROWSE_COLUMN_WIDTH,
+                    LIBRARY_HUB_RECENT_COLUMN_WIDTH,
+                    LIBRARY_HUB_CONSOLE_COLUMN_WIDTH,
+                )
+            )
+            + "+"
+        )
+
+    def _hub_framed_table_row(
+        self,
+        *,
+        module: str,
+        count: str,
+        browse: str,
+        recent: str,
+        console: str,
+    ) -> str:
+        """Render source status as a visible ASCII table row."""
+        module_cell = self._hub_table_cell(module, LIBRARY_HUB_MODULE_COLUMN_WIDTH)
+        count_cell = self._hub_table_cell(count, LIBRARY_HUB_COUNT_COLUMN_WIDTH)
+        browse_cell = self._hub_table_cell(browse, LIBRARY_HUB_BROWSE_COLUMN_WIDTH)
+        recent_cell = self._hub_table_cell(recent, LIBRARY_HUB_RECENT_COLUMN_WIDTH)
+        console_cell = self._hub_table_cell(console, LIBRARY_HUB_CONSOLE_COLUMN_WIDTH)
+        return (
+            f"| {module_cell:<{LIBRARY_HUB_MODULE_COLUMN_WIDTH}} "
+            f"| {count_cell:<{LIBRARY_HUB_COUNT_COLUMN_WIDTH}} "
+            f"| {browse_cell:<{LIBRARY_HUB_BROWSE_COLUMN_WIDTH}} "
+            f"| {recent_cell:<{LIBRARY_HUB_RECENT_COLUMN_WIDTH}} "
+            f"| {console_cell:<{LIBRARY_HUB_CONSOLE_COLUMN_WIDTH}} |"
+        )
+
+    def _hub_section_rule(self, label: str, widget_id: str) -> Static:
+        rule_width = 74
+        suffix_width = max(3, rule_width - len(label) - 4)
+        return Static(
+            f"-- {label} {'-' * suffix_width}",
+            id=widget_id,
+            classes="destination-section",
+        )
+
+    def _hub_source_count_value(self, source_type: str) -> str:
+        count = self._local_source_counts.get(source_type, 0)
+        suffix = "" if self._local_source_total_known.get(source_type, True) else "+"
+        return f"{count}{suffix}"
+
+    def _hub_console_status(self, source_type: str) -> str:
+        if self._local_source_counts.get(source_type, 0) <= 0:
+            return "blocked: no source"
+        workspace_depth_state = self._library_workspace_depth_state()
+        if workspace_depth_state.context_handoff_enabled:
+            return "ready"
+        return "blocked: workspace gate"
+
+    def _hub_recent_sources_label(self) -> str:
+        return "; ".join(
+            (
+                f"Notes: {self._source_recent_value('notes')}",
+                f"Media: {self._source_recent_value('media')}",
+                f"Conversations: {self._source_recent_value('conversations')}",
+            )
+        )
+
+    def _hub_readiness_counts(self) -> tuple[int, int, int]:
+        active_modules = sum(
+            1
+            for source_type in ("notes", "media", "conversations")
+            if self._local_source_counts.get(source_type, 0) > 0
+        )
+        workspace_depth_state = self._library_workspace_depth_state()
+        eligible_modules = active_modules if workspace_depth_state.context_handoff_enabled else 0
+        blocked_modules = max(0, active_modules - eligible_modules)
+        return active_modules, eligible_modules, blocked_modules
+
+    def _hub_state_summary(self) -> str:
+        _, eligible_modules, blocked_modules = self._hub_readiness_counts()
+        workspace_depth_state = self._library_workspace_depth_state()
+        console_state = "ready" if workspace_depth_state.context_handoff_enabled else "blocked"
+        return "\n".join(
+            (
+                f"State: Local workspace | Browse all workspaces | Console staging {console_state}",
+                (
+                    f"Inventory: Notes {self._hub_source_count_value('notes')} | "
+                    f"Media {self._hub_source_count_value('media')} | "
+                    f"Conversations {self._hub_source_count_value('conversations')} | "
+                    f"Console eligible {eligible_modules} | Blocked {blocked_modules}"
+                ),
+            )
+        )
+
+    def _hub_readiness_summary(self) -> str:
+        _, eligible_modules, blocked_modules = self._hub_readiness_counts()
+        blocked_suffix = "module" if blocked_modules == 1 else "modules"
+        eligible_suffix = "module" if eligible_modules == 1 else "modules"
+        return "\n".join(
+            (
+                self._hub_key_value_row("Eligible", f"{eligible_modules} {eligible_suffix}"),
+                self._hub_key_value_row(
+                    "Blocked",
+                    f"{blocked_modules} workspace-gated {blocked_suffix}",
+                ),
+                self._hub_key_value_row("Recent", self._hub_recent_sources_label()),
+                self._hub_key_value_row(
+                    "Next",
+                    "Link sources to the active workspace or open an owner screen.",
+                ),
+            )
+        )
+
+    def _hub_key_value_row(self, label: str, value: str, *, label_width: int = 14) -> str:
+        return f"{label:<{label_width}} {value}"
+
+    def _source_recent_value(self, source_type: str) -> str:
         titles = self._source_sample_titles(source_type)
         if not titles:
-            return "Recent: none"
-        return "Recent: " + ", ".join(titles[:LIBRARY_SOURCE_PAGE_SIZE])
+            return "none"
+        return self._hub_table_cell(titles[0])
 
     def _hub_source_card(
         self,
@@ -894,21 +1124,24 @@ class LibraryScreen(BaseAppScreen):
         label: str,
         owner: str,
         purpose: str,
+        next_action: str,
         widget_id: str,
     ) -> Static:
         return Static(
-            "\n".join(
-                (
-                    self._source_count_label(source_type, label),
-                    f"Owner: {owner}",
-                    f"Purpose: {purpose}",
-                    self._source_recent_label(source_type),
-                )
+            self._hub_framed_table_row(
+                module=label,
+                count=self._hub_source_count_value(source_type),
+                browse=next_action,
+                recent=self._source_recent_value(source_type),
+                console=self._hub_console_status(source_type),
             ),
             markup=False,
             id=widget_id,
             classes="library-hub-card",
         )
+
+    def _hub_spacer(self, widget_id: str) -> Static:
+        return Static("", id=widget_id, classes="library-hub-spacer")
 
     def _content_hub_rows(self) -> tuple[Static, ...]:
         return (
@@ -919,56 +1152,148 @@ class LibraryScreen(BaseAppScreen):
             ),
             Static(
                 (
-                    "Landing page for ingested content, notes, media, conversations, "
-                    "collections, imports/exports, and retrieval."
+                    "Source overview, retrieval readiness, movement paths, and next action."
                 ),
                 id="library-content-hub-purpose",
+            ),
+            Static(
+                self._hub_state_summary(),
+                id="library-hub-state-summary",
+                classes="library-hub-card",
+            ),
+            self._hub_section_rule(
+                "Source Status",
+                "library-hub-section-source-status",
+            ),
+            Static(
+                "\n".join(
+                    (
+                        self._hub_table_border(),
+                        self._hub_framed_table_row(
+                            module="Source",
+                            count="Count",
+                            browse="Browse",
+                            recent="Recent",
+                            console="Console",
+                        ),
+                        self._hub_table_border(),
+                    )
+                ),
+                id="library-content-hub-table-header",
+                classes="destination-section",
             ),
             self._hub_source_card(
                 source_type="notes",
                 label="Notes",
                 owner="Notes",
-                purpose="create, edit, sync, template, export, and delete notes",
+                purpose="Edit, sync, export notes",
+                next_action="Open Notes",
                 widget_id="library-notes-summary",
             ),
             self._hub_source_card(
                 source_type="media",
                 label="Media",
                 owner="Media",
-                purpose="browse ingested content, transcripts, analysis, and read-it-later",
+                purpose="Browse media library items",
+                next_action="Browse media",
                 widget_id="library-media-summary",
             ),
             self._hub_source_card(
                 source_type="conversations",
                 label="Conversations",
                 owner="Conversations",
-                purpose="browse saved chats and route conversation history",
+                purpose="Browse saved chats",
+                next_action="Browse chats",
                 widget_id="library-conversations-summary",
             ),
             Static(
+                self._hub_table_border(),
+                id="library-hub-source-table-bottom",
+                classes="destination-section",
+            ),
+            self._hub_spacer("library-hub-spacer-after-source-table"),
+            Static(
                 (
-                    "Search/RAG: query indexed Library content, inspect evidence, "
-                    "and then launch grounded Console work."
+                    "Owners: Notes edits/sync/export | Media browses library items | "
+                    "Conversations resumes chats"
+                ),
+                id="library-hub-source-owner-summary",
+                classes="library-hub-card",
+            ),
+            self._hub_spacer("library-hub-spacer-before-retrieval"),
+            self._hub_section_rule(
+                "Retrieval Readiness",
+                "library-hub-section-retrieval-readiness",
+            ),
+            Static(
+                "Library readiness",
+                id="library-hub-readiness-title",
+                classes="destination-section",
+            ),
+            Static(
+                self._hub_readiness_summary(),
+                markup=False,
+                id="library-hub-readiness-summary",
+                classes="library-hub-card",
+            ),
+            self._hub_spacer("library-hub-spacer-before-movement"),
+            self._hub_section_rule(
+                "Movement + Reuse",
+                "library-hub-section-movement-reuse",
+            ),
+            Static(
+                self._hub_key_value_row(
+                    "Search/RAG",
+                    "Query indexed content, inspect evidence, launch Console.",
                 ),
                 id="library-hub-search-card",
                 classes="library-hub-card",
             ),
             Static(
-                (
-                    "Import/Export: add or move Library content; imported material "
-                    "returns here as hub inventory."
+                self._hub_key_value_row(
+                    "Import/Export",
+                    "Add or move content; imported material returns here.",
                 ),
                 id="library-hub-import-export-card",
                 classes="library-hub-card",
             ),
             Static(
-                "Collections: organize reusable content groups inside Library.",
+                self._hub_key_value_row(
+                    "Collections",
+                    "Read, review, reuse saved content.",
+                ),
                 id="library-hub-collections-card",
                 classes="library-hub-card",
             ),
+            self._hub_spacer("library-hub-spacer-before-learning"),
+            self._hub_section_rule(
+                "Learning",
+                "library-hub-section-learning-paths",
+            ),
             Static(
-                "Study: turn Library content into flashcards and quizzes.",
+                self._hub_key_value_row(
+                    "Study",
+                    "Turn Library content into flashcards and quizzes.",
+                ),
                 id="library-hub-study-card",
+                classes="library-hub-card",
+            ),
+            self._hub_spacer("library-hub-spacer-before-next-action"),
+            self._hub_section_rule(
+                "Next Action",
+                "library-hub-section-next-action",
+            ),
+            Static(
+                self._hub_key_value_row("Primary", "Import sources or create a note."),
+                id="library-hub-next-primary",
+                classes="library-hub-card",
+            ),
+            Static(
+                self._hub_key_value_row(
+                    "Then",
+                    "Open Search/RAG after indexing or Collections after saving content.",
+                ),
+                id="library-hub-next-secondary",
                 classes="library-hub-card",
             ),
         )
@@ -1060,49 +1385,126 @@ class LibraryScreen(BaseAppScreen):
             ),
         )
 
+    def _source_action_meta(self, widget_id: str) -> str:
+        if widget_id == "library-open-notes":
+            return (
+                f"Notes: {self._hub_source_count_value('notes')} | "
+                "global browse | stage gated"
+            )
+        if widget_id == "library-open-media":
+            return (
+                f"Media: {self._hub_source_count_value('media')} | "
+                "global browse | stage gated"
+            )
+        if widget_id == "library-open-conversations":
+            return (
+                f"Conversations: {self._hub_source_count_value('conversations')} | "
+                "global browse | stage gated"
+            )
+        if widget_id == "library-open-search":
+            return "Retrieval | query first | stage evidence"
+        if widget_id == "library-open-collections":
+            return "Collections | read/review | items WIP"
+        return ""
+
     def _source_module_action_widgets(self) -> tuple[Button | Static, ...]:
-        actions: tuple[tuple[str, str, str], ...] = (
-            ("Open Notes", "library-open-notes", "Open saved notes and workspaces."),
-            ("Open Media", "library-open-media", "Open ingested media and transcripts."),
+        action_groups: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
             (
-                "Open Conversations",
-                "library-open-conversations",
-                "Open saved conversation browsing inside Library.",
+                "Sources",
+                (
+                    ("Open Notes", "library-open-notes", "Open saved notes and workspaces."),
+                    (
+                        "Open Media",
+                        "library-open-media",
+                        "Browse the media library, transcripts, analysis, and read-it-later.",
+                    ),
+                    (
+                        "Open Conversations",
+                        "library-open-conversations",
+                        "Open saved conversation browsing inside Library.",
+                    ),
+                ),
             ),
             (
-                "Import/Export Sources",
-                "library-open-import-export",
-                "Open source import and export tools.",
+                "Retrieval",
+                (
+                    ("Search/RAG", "library-open-search", "Search or ask over indexed sources."),
+                ),
             ),
-            ("Search/RAG", "library-open-search", "Search or ask over indexed sources."),
             (
-                "Collections",
-                "library-open-collections",
-                "Manage Library-owned reusable source sets.",
+                "Movement",
+                (
+                    (
+                        "Import/Export Sources",
+                        "library-open-import-export",
+                        "Open source import and export tools.",
+                    ),
+                    (
+                        "Collections",
+                        "library-open-collections",
+                        "Read, review, and reuse saved Library content.",
+                    ),
+                ),
+            ),
+            (
+                "Learning",
+                (
+                    ("Study Dashboard", "library-open-study", "Open Study globally or with Library sources."),
+                    ("Flashcards", "library-open-flashcards", "Open Flashcards globally or with Library sources."),
+                    ("Quizzes", "library-open-quizzes", "Open Quizzes globally or with Library sources."),
+                ),
             ),
         )
 
         widgets: list[Button | Static] = []
         active_action_id = self._active_source_action_id()
         hide_search_action = self._active_mode == "search"
-        for index, (label, widget_id, tooltip) in enumerate(actions):
-            classes = "library-source-action"
-            if widget_id == active_action_id:
-                classes = f"{classes} is-active"
-            button = Button(
-                label,
-                id=widget_id,
-                classes=classes,
-                tooltip=tooltip,
-            )
-            if widget_id == "library-open-search":
-                button.display = not hide_search_action
-            widgets.append(button)
-            if index < len(actions) - 1:
-                spacer = Static("", classes="library-source-action-spacer")
-                if widget_id == "library-open-search":
-                    spacer.display = not hide_search_action
-                widgets.append(spacer)
+        hide_learning_actions = self._active_mode == "collections" or self._active_mode in LIBRARY_STUDY_HANDOFF_MODES
+        for group_index, (group_label, actions) in enumerate(action_groups):
+            if group_label == "Retrieval" and hide_search_action:
+                continue
+            if group_label == "Learning" and hide_learning_actions:
+                continue
+            if group_index > 0:
+                widgets.append(
+                    Static(
+                        "----",
+                        id=f"library-source-group-rule-{group_label.lower().replace(' ', '-')}",
+                        classes="library-source-group-rule",
+                    )
+                )
+            group_heading = Static(group_label, classes="destination-section library-source-group")
+            widgets.append(group_heading)
+            for index, (label, widget_id, tooltip) in enumerate(actions):
+                classes = "library-source-action"
+                if widget_id == active_action_id:
+                    classes = f"{classes} is-active"
+                    widgets.append(
+                        Static(
+                            f"> Active: {label}",
+                            id="library-source-active-marker",
+                            classes="library-source-active-marker",
+                        )
+                    )
+                button = Button(
+                    label,
+                    id=widget_id,
+                    classes=classes,
+                    tooltip=tooltip,
+                )
+                widgets.append(button)
+                meta = self._source_action_meta(widget_id)
+                if meta:
+                    widgets.append(
+                        Static(
+                            meta,
+                            id=f"{widget_id}-meta",
+                            classes="library-source-action-meta",
+                        )
+                    )
+                if index < len(actions) - 1:
+                    spacer = Static("", classes="library-source-action-spacer")
+                    widgets.append(spacer)
         return tuple(widgets)
 
     def _hub_inspector_rows(
@@ -1120,11 +1522,25 @@ class LibraryScreen(BaseAppScreen):
                 id="library-inspector-title",
                 classes="destination-section",
             ),
+            Static("Selected", id="library-hub-inspector-selected-title", classes="destination-section"),
             Static(LIBRARY_INSPECTOR_EMPTY_COPY, id="library-inspector-empty"),
+            Static("Available now", id="library-hub-inspector-available-title", classes="destination-section"),
+            Static(
+                "Browse Notes, Media, Conversations, Collections, and Search/RAG owner screens.",
+                id="library-hub-inspector-available-now",
+            ),
+            Static("Blocked", id="library-hub-inspector-blocked-title", classes="destination-section"),
+            Static(
+                handoff_copy,
+                id="library-hub-inspector-console-boundary",
+                classes="ds-recovery-callout is-blocked",
+            ),
+            Static("Next action", id="library-hub-inspector-next-title", classes="destination-section"),
             Static(
                 LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY,
                 id="library-inspector-empty-next-action",
             ),
+            Static("Details", id="library-hub-inspector-details-title", classes="destination-section"),
             Static(
                 "Notes owner: Notes screen handles editing, sync, templates, export, and delete.",
                 id="library-hub-inspector-notes-owner",
@@ -1140,10 +1556,6 @@ class LibraryScreen(BaseAppScreen):
             Static(
                 "Workspace boundary: browse/search remains global; active workspace gates staging and manipulation.",
                 id="library-hub-inspector-workspace-boundary",
-            ),
-            Static(
-                handoff_copy,
-                id="library-hub-inspector-console-boundary",
             ),
             Static(
                 workspace_depth_state.handoff_label,
@@ -1256,8 +1668,7 @@ class LibraryScreen(BaseAppScreen):
         """Return the left-rail workspace scope copy for the active Library mode."""
         return Text.from_markup(
             "Active workspace: "
-            f"{escape_markup(workspace_depth_state.workspace_name)}\n"
-            "Browse/search: all workspaces"
+            f"{escape_markup(workspace_depth_state.workspace_name)}"
         )
 
     def _source_study_context(self) -> StudyScopeContext | None:
@@ -1441,51 +1852,81 @@ class LibraryScreen(BaseAppScreen):
         if selected is None:
             return (
                 Static("Collections Inspector", id="library-inspector-title", classes="destination-section"),
-                Static("No Collection selected.", id="library-collection-inspector-empty"),
+                Static("Selected: none", id="library-collection-inspector-empty"),
                 Static(
-                    "Select a Collection to inspect its source scope, workspace boundary, and handoff status.",
+                    (
+                        "Collections are for reading and reviewing saved content; "
+                        "the local item reader is not wired in this slice."
+                    ),
                     id="library-collection-inspector-empty-next-action",
                 ),
                 Static(
-                    "Global browsing remains available; Collections only gate active staging and manipulation.",
+                    (
+                        "Global browsing/search remains available; active staging and manipulation "
+                        "stay workspace-gated."
+                    ),
                     id="library-collection-inspector-global-rule",
                 ),
+                Static("Action status", classes="destination-section"),
                 Static(
-                    "Local actions available after creation: rename and delete Collection metadata.",
+                    "Available now: create, rename, delete records",
                     id="library-collection-inspector-empty-local-actions",
                 ),
                 Static(
-                    "Create a local Collection first, then select it to inspect membership.",
-                    id="library-collection-inspector-empty-recovery",
+                    "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync",
+                    id="library-collection-inspector-empty-later-actions",
                     classes="ds-recovery-callout is-blocked",
+                ),
+                Static(
+                    "Next: select or create a Collection record to inspect local item-reader readiness.",
+                    id="library-collection-inspector-empty-recovery",
                 ),
             )
         return (
-            Static("Selected Collection", id="library-inspector-title", classes="destination-section"),
+            Static("Selected Collection Record", id="library-inspector-title", classes="destination-section"),
+            Static(f"Selected: {selected.name}", id="library-collection-inspector-selected"),
             Static(selected.name, id="library-collection-inspector-name"),
             Static(
-                f"Membership: {selected.item_count_label}",
+                f"Stored item count: {selected.item_count_label}",
                 id="library-collection-inspector-item-count",
+            ),
+            Static(
+                "Collection item reader: not wired locally yet.",
+                id="library-collection-inspector-reader-state",
             ),
             Static(
                 "Workspace rule: Library browsing/search stays global; Console/RAG staging follows active workspace.",
                 id="library-collection-inspector-workspace-rule",
             ),
+            Static("Action status", classes="destination-section"),
             Static(
-                "Available now: create, rename, delete local Collection metadata.",
+                "Available now: create, rename, delete records",
                 id="library-collection-inspector-local-actions",
             ),
             Static(
-                "Deferred: collection-scoped Search/RAG, Study, Console handoff, and server sync promotion.",
-                id="library-collection-inspector-deferred-actions",
+                "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync",
+                id="library-collection-inspector-later-actions",
+                classes="ds-recovery-callout is-blocked",
             ),
             Static(
-                "Blocked: collection-scoped Console handoff is not wired yet.",
+                "Next: collection item adapters are required before item-level actions unlock.",
+                id="library-collection-inspector-next",
+            ),
+            Static(
+                "Disabled: collection item Search/RAG is not wired yet.",
+                id="library-collection-inspector-rag-blocked",
+                classes="ds-recovery-callout is-blocked",
+            ),
+            Static(
+                "Disabled: collection item Console handoff is not wired yet.",
                 id="library-collection-inspector-console-blocked",
                 classes="ds-recovery-callout is-blocked",
             ),
             Static(
-                "Recovery: use the Collection for local organization, or stage individual eligible sources from Library.",
+                (
+                    "Recovery: use existing Library Search/RAG or individual eligible sources "
+                    "until collection item adapters are available."
+                ),
                 id="library-collection-inspector-recovery",
             ),
             Static("What this means", classes="destination-section"),
@@ -1896,42 +2337,11 @@ class LibraryScreen(BaseAppScreen):
                 ),
             )
         if self._active_mode == "collections":
-            selected_collection = (
-                collections_panel_state.selected_collection
-                if collections_panel_state is not None
-                else None
-            )
             return (
-                Static("Collection actions", classes="destination-section"),
+                Static("Collection item actions", classes="destination-section"),
                 Static(
-                    "Local actions available: create, rename, delete Collection metadata.",
-                    id="library-collection-actions-local",
-                ),
-                Static(
-                    (
-                        "Selected Collection can organize local source groups, but scoped execution is deferred."
-                        if selected_collection is not None
-                        else "Create a local Collection first, then select it to inspect membership."
-                    ),
-                    id="library-collection-actions-state",
-                ),
-                Static(
-                    (
-                        "Deferred: collection-scoped Search/RAG, Study, Console handoff, "
-                        "and server sync promotion."
-                    ),
-                    id="library-collection-actions-deferred",
-                ),
-                Static(
-                    "Collection-scoped Study, Flashcards, Quizzes, and Console are later-stage.",
-                    id="library-study-purpose",
-                ),
-                Static(
-                    (
-                        "WIP actions unavailable: collection-scoped Search/RAG, Study, "
-                        "Flashcards, Quizzes, Console handoff, and server sync promotion."
-                    ),
-                    id="library-collection-actions-wip",
+                    "Item actions unavailable until collection items exist.",
+                    id="library-collection-actions-disabled-reason",
                     classes="ds-recovery-callout is-blocked",
                 ),
                 Button(
@@ -2023,6 +2433,38 @@ class LibraryScreen(BaseAppScreen):
                     classes="library-source-action",
                     disabled=handoff_disabled,
                     tooltip=handoff_tooltip,
+                ),
+            )
+        if self._active_mode == "sources":
+            return (
+                Static(
+                    "Hub actions",
+                    id="library-hub-actions-title",
+                    classes="destination-section",
+                ),
+                Static(
+                    "Selected: none",
+                    id="library-hub-actions-guidance",
+                ),
+                Static(
+                    "Available now: open source modules and owner screens.",
+                    id="library-hub-actions-selection",
+                ),
+                Static(
+                    "Blocked: Use in Console requires workspace-eligible Library content.",
+                    id="library-hub-actions-boundary",
+                    classes="ds-recovery-callout is-blocked",
+                ),
+                Button(
+                    "Use in Console",
+                    id="library-use-in-console",
+                    classes="library-source-action",
+                    disabled=handoff_disabled,
+                    tooltip=handoff_tooltip,
+                ),
+                Static(
+                    "Next action: open a source mode, import content, or create a note.",
+                    id="library-hub-actions-next",
                 ),
             )
         return (
@@ -2161,15 +2603,29 @@ class LibraryScreen(BaseAppScreen):
                     classes="library-region destination-workbench-pane",
                 ):
                     yield Static(
+                        "Workspace Context",
+                        id="library-workspace-context-title",
+                        classes="destination-section",
+                    )
+                    yield Static(
+                        self._library_workspace_scope_label(workspace_depth_state),
+                        id="library-workspace-scope",
+                    )
+                    yield Static("Browse: all workspaces", id="library-workspace-browse-rule")
+                    yield Static("Use/stage: active workspace only", id="library-workspace-use-rule")
+                    yield Static(
                         source_column_title,
                         id="library-source-browser-title",
                         classes="destination-section",
                     )
                     yield from self._source_module_action_widgets()
-                    yield Static(
-                        self._library_workspace_scope_label(workspace_depth_state),
-                        id="library-workspace-scope",
+                    quick_actions_title = Static(
+                        "",
+                        id="library-quick-actions-title",
+                        classes="destination-section",
                     )
+                    quick_actions_title.display = False
+                    yield quick_actions_title
 
                 with Vertical(
                     id="library-source-detail",
@@ -2185,24 +2641,29 @@ class LibraryScreen(BaseAppScreen):
                             for row in self._workspaces_detail_rows(workspace_depth_state):
                                 yield row
                     active_mode = self._active_mode_contract()
+                    active_mode_copy_visible = self._active_mode not in {
+                        "collections",
+                        "sources",
+                        "workspaces",
+                    }
                     active_mode_title = Static(
-                        f"{active_mode['label']} mode",
+                        f"{active_mode['label']} mode" if active_mode_copy_visible else "",
                         id="library-active-mode-title",
                         classes="destination-section",
                     )
-                    active_mode_title.display = self._active_mode != "workspaces"
+                    active_mode_title.display = active_mode_copy_visible
                     yield active_mode_title
                     active_mode_description = Static(
-                        active_mode["description"],
+                        active_mode["description"] if active_mode_copy_visible else "",
                         id="library-active-mode-description",
                     )
-                    active_mode_description.display = self._active_mode != "workspaces"
+                    active_mode_description.display = active_mode_copy_visible
                     yield active_mode_description
                     active_mode_next_action = Static(
-                        active_mode["next_action"],
+                        active_mode["next_action"] if active_mode_copy_visible else "",
                         id="library-active-mode-next-action",
                     )
-                    active_mode_next_action.display = self._active_mode != "workspaces"
+                    active_mode_next_action.display = active_mode_copy_visible
                     yield active_mode_next_action
                     if self._active_mode in LIBRARY_STUDY_HANDOFF_MODES:
                         yield self._study_handoff_detail_widget()
@@ -2353,10 +2814,20 @@ class LibraryScreen(BaseAppScreen):
         self.query_one("#library-source-browser-title", Static).update(source_column_title)
         self.query_one("#library-source-detail-title", Static).update(detail_column_title)
         self.query_one("#library-source-inspector-title", Static).update(inspector_column_title)
-        self.query_one("#library-active-mode-title", Static).update(f"{active_mode['label']} mode")
-        self.query_one("#library-active-mode-description", Static).update(active_mode["description"])
-        self.query_one("#library-active-mode-next-action", Static).update(active_mode["next_action"])
-        active_mode_copy_visible = self._active_mode != "workspaces"
+        active_mode_copy_visible = self._active_mode not in {
+            "collections",
+            "sources",
+            "workspaces",
+        }
+        self.query_one("#library-active-mode-title", Static).update(
+            f"{active_mode['label']} mode" if active_mode_copy_visible else ""
+        )
+        self.query_one("#library-active-mode-description", Static).update(
+            active_mode["description"] if active_mode_copy_visible else ""
+        )
+        self.query_one("#library-active-mode-next-action", Static).update(
+            active_mode["next_action"] if active_mode_copy_visible else ""
+        )
         self.query_one("#library-active-mode-title", Static).display = active_mode_copy_visible
         self.query_one("#library-active-mode-description", Static).display = active_mode_copy_visible
         self.query_one("#library-active-mode-next-action", Static).display = active_mode_copy_visible
@@ -2382,7 +2853,7 @@ class LibraryScreen(BaseAppScreen):
             buttons = list(self.query(f"#{button_id}"))
             if buttons:
                 buttons[0].set_class(button_id == active_source_action_id, "is-active")
-        self._sync_source_module_actions()
+        await self._sync_source_module_actions()
         workspace_depth_state = self._library_workspace_depth_state(refresh=True)
         self.query_one("#library-workspace-scope", Static).update(
             self._library_workspace_scope_label(workspace_depth_state)
@@ -2394,21 +2865,25 @@ class LibraryScreen(BaseAppScreen):
         await self._sync_workspaces_panel(workspace_depth_state)
         await self._sync_action_region(workspace_depth_state)
 
-    def _sync_source_module_actions(self) -> None:
-        """Toggle stable source action visibility without remounting widgets."""
-        is_search = self._active_mode == "search"
+    async def _sync_source_module_actions(self) -> None:
+        """Rebuild source-map actions so active-mode owned action IDs stay unique."""
         browser = self.query_one("#library-source-browser", Vertical)
+        source_title = self.query_one("#library-source-browser-title", Static)
+        quick_actions_title = self.query_one("#library-quick-actions-title", Static)
         children = list(browser.children)
-        for index, child in enumerate(children):
-            if child.id != "library-open-search":
+        action_widgets: list[Any] = []
+        collect = False
+        for child in children:
+            if child is source_title:
+                collect = True
                 continue
-            child.display = not is_search
-            if (
-                index + 1 < len(children)
-                and children[index + 1].has_class("library-source-action-spacer")
-            ):
-                children[index + 1].display = not is_search
-            break
+            if child is quick_actions_title:
+                break
+            if collect:
+                action_widgets.append(child)
+        for widget in action_widgets:
+            await widget.remove()
+        await browser.mount(*self._source_module_action_widgets(), before=quick_actions_title)
 
     async def _sync_search_rag_panel(
         self,

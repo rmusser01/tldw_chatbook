@@ -40,7 +40,8 @@ def test_empty_panel_state_explains_library_collections_scope() -> None:
 
     assert state.status == "empty"
     assert state.empty_copy == LIBRARY_COLLECTIONS_EMPTY_COPY
-    assert state.empty_copy == "Group saved Library items for Search/RAG, Study, and Console."
+    assert "No stored collection items are available locally yet." in state.empty_copy
+    assert "reading, reviewing, and reusing saved content" in state.empty_copy
     assert state.selected_collection is None
     assert state.delete_action.enabled is False
     assert state.delete_action.disabled_reason == "Select a Collection before deleting it."

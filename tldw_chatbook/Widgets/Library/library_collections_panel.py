@@ -27,6 +27,61 @@ class LibraryCollectionsPanel(Vertical):
         self.description_value = description_value
         self.delete_pending = delete_pending
 
+    def _compose_collection_form(self) -> ComposeResult:
+        with Vertical(id="library-collection-form"):
+            yield Static("Create / Rename", classes="destination-section")
+            yield Static(
+                "Type a Collection name to enable Create.",
+                id="library-collection-form-guidance",
+            )
+            yield Input(
+                value=self.name_value,
+                placeholder="Collection name",
+                id="library-collection-name-input",
+            )
+            yield Input(
+                value=self.description_value,
+                placeholder="Optional description",
+                id="library-collection-description-input",
+            )
+            yield Static(
+                "Form actions: enter a name to enable Create.",
+                id="library-collection-form-action-state",
+            )
+            yield Static(
+                "Create, Rename, and Delete stay inactive until their requirements are met.",
+                id="library-collection-form-action-boundary",
+            )
+            with Horizontal(id="library-collection-actions"):
+                yield Button(
+                    self.state.create_action.label,
+                    id=self.state.create_action.widget_id,
+                    disabled=not self.state.create_action.enabled,
+                    tooltip=self.state.create_action.tooltip,
+                    classes="library-source-action library-collection-form-action",
+                )
+                yield Button(
+                    self.state.rename_action.label,
+                    id=self.state.rename_action.widget_id,
+                    disabled=not self.state.rename_action.enabled,
+                    tooltip=self.state.rename_action.tooltip,
+                    classes="library-source-action library-collection-form-action",
+                )
+                yield Button(
+                    self.state.delete_action.label,
+                    id=self.state.delete_action.widget_id,
+                    disabled=not self.state.delete_action.enabled,
+                    tooltip=self.state.delete_action.tooltip,
+                    classes="library-source-action library-collection-form-action",
+                )
+                if self.delete_pending:
+                    yield Button(
+                        "Confirm delete",
+                        id="library-confirm-delete-collection",
+                        tooltip="Delete the selected local Collection.",
+                        classes="library-source-action library-collection-form-action",
+                    )
+
     def compose(self) -> ComposeResult:
         yield Static("Library Collections", id="library-collections-title", classes="destination-section")
         if self.state.status == "error":
@@ -37,7 +92,28 @@ class LibraryCollectionsPanel(Vertical):
             return
 
         if self.state.status == "empty":
+            yield Static(
+                "No Collections yet.",
+                id="library-collections-empty-title",
+                classes="destination-section",
+            )
+            yield Static(
+                "Create a local Collection record to start reviewing saved content.",
+                id="library-collections-empty-next-action",
+            )
             yield Static(self.state.empty_copy, id="library-collections-empty")
+            yield Static(
+                "Stored content preview",
+                id="library-collection-empty-reader-title",
+                classes="destination-section",
+            )
+            yield Static(
+                "No stored collection items are available locally yet.",
+                id="library-collection-empty-reader",
+            )
+            yield Static("No Collection selected.", id="library-collection-selected-empty")
+            yield from self._compose_collection_form()
+            return
 
         if self.state.sync_profile_status is not None:
             with Vertical(
@@ -77,23 +153,27 @@ class LibraryCollectionsPanel(Vertical):
                     yield button
 
             with Vertical(id="library-collection-detail"):
-                yield Static("Selected Collection", classes="destination-section")
+                yield Static("Stored collection content", classes="destination-section")
                 selected = self.state.selected_collection
                 if selected is None:
                     yield Static("No Collection selected.", id="library-collection-selected-empty")
                 else:
+                    yield Static(
+                        f"Selected: {selected.name}",
+                        id="library-collection-selected-context",
+                    )
                     yield Static(selected.name, id="library-collection-name")
                     yield Static(
                         selected.description or "No description.",
                         id="library-collection-description",
                     )
                     yield Static(
-                        "Source membership",
+                        "Item reader readiness",
                         id="library-collection-membership-heading",
                         classes="destination-section",
                     )
                     yield Static(
-                        f"Membership: {selected.item_count_label}",
+                        f"Stored item count: {selected.item_count_label}",
                         id="library-collection-membership-count",
                     )
                     yield Static(
@@ -101,24 +181,26 @@ class LibraryCollectionsPanel(Vertical):
                         id="library-collection-source-authority",
                     )
                     yield Static(
-                        "Workspace boundary",
+                        "Content use boundary",
                         id="library-collection-workspace-heading",
                         classes="destination-section",
                     )
                     yield Static(
-                        "Visible globally; active workspace controls staging and manipulation.",
+                        "Browse/review remains global; active workspace controls staging and manipulation.",
                         id="library-collection-workspace-rule",
                     )
+                    yield Static("Action status", classes="destination-section")
                     yield Static(
-                        "Available now: create, rename, delete local Collection metadata.",
+                        "Available now: create, rename, delete records",
                         id="library-collection-local-actions",
                     )
                     yield Static(
-                        (
-                            "Deferred: collection-scoped Search/RAG, Study, "
-                            "Console handoff, and server sync promotion."
-                        ),
+                        "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync",
                         id="library-collection-deferred-actions",
+                    )
+                    yield Static(
+                        "Next: collection item adapters are required before item-level actions unlock.",
+                        id="library-collection-reader-later",
                     )
                     yield Static(
                         "Write Sync Safety",
@@ -138,40 +220,5 @@ class LibraryCollectionsPanel(Vertical):
                     yield Static(selected.item_count_label, id="library-collection-item-count")
                     yield Static(selected.updated_at_label, id="library-collection-updated-at")
 
-        with Vertical(id="library-collection-form"):
-            yield Static("Create / Rename", classes="destination-section")
-            yield Input(
-                value=self.name_value,
-                placeholder="Collection name",
-                id="library-collection-name-input",
-            )
-            yield Input(
-                value=self.description_value,
-                placeholder="Optional description",
-                id="library-collection-description-input",
-            )
-            with Horizontal(id="library-collection-actions"):
-                yield Button(
-                    self.state.create_action.label,
-                    id=self.state.create_action.widget_id,
-                    disabled=not self.state.create_action.enabled,
-                    tooltip=self.state.create_action.tooltip,
-                )
-                yield Button(
-                    self.state.rename_action.label,
-                    id=self.state.rename_action.widget_id,
-                    disabled=not self.state.rename_action.enabled,
-                    tooltip=self.state.rename_action.tooltip,
-                )
-                yield Button(
-                    self.state.delete_action.label,
-                    id=self.state.delete_action.widget_id,
-                    disabled=not self.state.delete_action.enabled,
-                    tooltip=self.state.delete_action.tooltip,
-                )
-                if self.delete_pending:
-                    yield Button(
-                        "Confirm delete",
-                        id="library-confirm-delete-collection",
-                        tooltip="Delete the selected local Collection.",
-                    )
+        if self.state.status != "empty":
+            yield from self._compose_collection_form()

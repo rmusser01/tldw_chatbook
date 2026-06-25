@@ -35,6 +35,13 @@ def _text(path: Path) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
+def _css_block(text: str, selector: str) -> str:
+    start = text.index(selector)
+    block_start = text.index("{", start)
+    block_end = text.index("}", block_start)
+    return text[block_start:block_end]
+
+
 def _rendered_static_text(widget: Static) -> str:
     renderable = widget.renderable
     return getattr(renderable, "plain", str(renderable))
@@ -52,6 +59,87 @@ def _screen_text(screen) -> str:
         if button.display and button.label is not None
     ]
     return " ".join([*static_text, *button_text])
+
+
+def test_library_source_actions_use_console_text_control_style() -> None:
+    variables = _text(Path("tldw_chatbook/css/core/_variables.tcss"))
+    agentic_terminal = _text(Path("tldw_chatbook/css/components/_agentic_terminal.tcss"))
+    bundled_stylesheet = _text(Path("tldw_chatbook/css/tldw_cli_modular.tcss"))
+
+    assert "$ds-library-source-action-width: auto;" in variables
+    assert "$ds-library-source-action-min-width: 0;" in variables
+    assert "$ds-library-source-action-height: 1;" in variables
+    assert "$ds-library-source-action-width: auto;" in bundled_stylesheet
+    assert "$ds-library-source-action-min-width: 0;" in bundled_stylesheet
+    assert "$ds-library-source-action-height: 1;" in bundled_stylesheet
+    assert ".library-source-action {" in agentic_terminal
+    source_action_block = _css_block(agentic_terminal, ".library-source-action")
+    bundled_source_action_block = _css_block(bundled_stylesheet, ".library-source-action")
+    assert "background: transparent;" in source_action_block
+    assert "background: transparent;" in bundled_source_action_block
+    assert "border: none;" in source_action_block
+    assert "border: none;" in bundled_source_action_block
+    assert "content-align: left middle;" in source_action_block
+    assert "content-align: left middle;" in bundled_source_action_block
+    assert "text-style: none;" in agentic_terminal
+    assert "text-style: none;" in bundled_stylesheet
+    assert ".library-source-action:focus {" in agentic_terminal
+    assert "background: transparent;" in _css_block(agentic_terminal, ".library-source-action:focus")
+    assert "text-style: bold underline;" in _css_block(agentic_terminal, ".library-source-action:focus")
+    assert "background: transparent;" in _css_block(bundled_stylesheet, ".library-source-action:focus")
+    assert "text-style: bold underline;" in _css_block(bundled_stylesheet, ".library-source-action:focus")
+    assert "color: $ds-focus-fg;" in _css_block(
+        agentic_terminal,
+        ".library-source-action.is-active",
+    )
+    assert "background: transparent;" in _css_block(
+        agentic_terminal,
+        ".library-source-action.is-active",
+    )
+    assert "border: none;" in _css_block(
+        agentic_terminal,
+        ".library-source-action.is-active",
+    )
+    assert "text-style: bold underline;" in _css_block(
+        agentic_terminal,
+        ".library-source-action.is-active",
+    )
+    assert "color: $ds-focus-fg;" in _css_block(
+        bundled_stylesheet,
+        ".library-source-action.is-active",
+    )
+    assert "background: transparent;" in _css_block(
+        bundled_stylesheet,
+        ".library-source-action.is-active",
+    )
+    assert "border: none;" in _css_block(
+        bundled_stylesheet,
+        ".library-source-action.is-active",
+    )
+    assert "text-style: bold underline;" in _css_block(
+        bundled_stylesheet,
+        ".library-source-action.is-active",
+    )
+    assert ".library-source-active-marker {" in agentic_terminal
+    assert ".library-source-active-marker {" in bundled_stylesheet
+    assert "background: $ds-focus-bg;" in _css_block(
+        agentic_terminal,
+        ".library-source-active-marker",
+    )
+    assert "color: $ds-focus-fg;" in _css_block(
+        bundled_stylesheet,
+        ".library-source-active-marker",
+    )
+    assert "#library-collection-form Input {" in agentic_terminal
+    assert "border: tall $ds-grid-line;" in _css_block(
+        agentic_terminal,
+        "#library-collection-form Input",
+    )
+    assert "#library-collection-actions Button {" in agentic_terminal
+    assert "background: transparent;" in _css_block(
+        agentic_terminal,
+        "#library-collection-actions Button",
+    )
 
 
 def _seed_library_sources(app) -> None:
@@ -99,9 +187,11 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(
             "Study",
             "Flashcards",
             "Quizzes",
-            "Library Modules",
-            "Content Hub",
-            "Hub Inspector",
+            "Workspace Context",
+            "Source Map",
+            "Next action",
+            "Active Workbench",
+            "Inspector",
             "Library Content Hub",
             "No source selected.",
             "Research Note",
@@ -123,6 +213,30 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(
         for selector, label in expected_actions.items():
             button = screen.query_one(selector, Button)
             assert str(button.label) == label
+
+
+@pytest.mark.asyncio
+async def test_library_mode_chips_keep_minimum_click_target_width() -> None:
+    app = _build_test_app()
+    _seed_library_sources(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+
+        for selector in (
+            "#library-mode-sources",
+            "#library-mode-search",
+            "#library-mode-import-export",
+            "#library-mode-workspaces",
+            "#library-mode-collections",
+            "#library-mode-study",
+            "#library-mode-flashcards",
+            "#library-mode-quizzes",
+        ):
+            button = screen.query_one(selector, Button)
+            assert button.region.width >= 10, selector
 
 
 @pytest.mark.asyncio
@@ -159,5 +273,3 @@ async def test_library_status_row_preserves_policy_recovery_status() -> None:
 
     assert "Wrong source" in status_row
     assert "Blocked" not in status_row
-
-

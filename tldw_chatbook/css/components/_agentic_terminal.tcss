@@ -1390,7 +1390,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 Button.library-mode-chip,
 Button.notes-mode-chip {
     width: auto;
-    min-width: 0;
+    min-width: $ds-library-mode-chip-min-width;
     height: $ds-library-mode-chip-height;
     min-height: $ds-library-mode-chip-height;
     padding: 0 1;
@@ -1974,6 +1974,11 @@ Button.settings-category-button.settings-secondary-search-match {
     overflow-y: auto;
 }
 
+.library-hub-spacer {
+    height: 1;
+    min-height: 1;
+}
+
 /* Notes form controls mirror the Console settings control language exactly:
    quiet tall-bordered inputs, single-row flattened selects, accent focus. */
 #notes-shell Input {
@@ -2398,19 +2403,96 @@ ListItem.personas-library-row.is-active.-highlight {
     min-width: $ds-library-source-action-min-width;
     height: $ds-library-source-action-height;
     min-height: $ds-library-source-action-height;
-    margin: 0 0 1 0;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    background: transparent;
+    color: $ds-text-primary;
+    content-align: left middle;
+    text-style: none;
 }
 
 .library-source-action-spacer {
+    height: 0;
+    min-height: 0;
+}
+
+.library-source-active-marker {
     height: 1;
     min-height: 1;
+    margin: 0;
+    padding: 0 1;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+.library-source-group-rule {
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    color: $ds-text-muted;
 }
 
 .library-source-action:focus {
-    background: $ds-focus-bg;
+    border: none;
+    background: transparent;
     color: $ds-focus-fg;
     text-style: bold underline;
     outline: none;
+}
+
+.library-source-action.is-active,
+.library-source-action.is-active:focus {
+    border: none;
+    background: transparent;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+    outline: none;
+}
+
+#library-collection-form Input {
+    height: 3;
+    min-height: 3;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-collection-form Input:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+#library-collection-actions {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+    align: left middle;
+}
+
+#library-collection-actions Button {
+    height: 1;
+    min-height: 1;
+    margin-right: 1;
+    padding: 0 1;
+    border: none;
+    background: transparent;
+    color: $ds-text-primary;
+    content-align: left middle;
+    text-style: none;
+}
+
+#library-collection-actions Button:focus {
+    border: none;
+    background: transparent;
+    color: $ds-focus-fg;
+    outline: none;
+    text-style: bold underline;
 }
 
 .library-rag-region {
