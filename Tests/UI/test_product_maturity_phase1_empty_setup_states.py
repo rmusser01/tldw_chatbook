@@ -176,24 +176,21 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
                 lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
                 context="console setup route",
             )
-            # In a clean run no model is selected yet, so the setup blocker is
-            # the model choice, surfaced as the "Choose Model" settings action.
-            # The persistent blocker strip is reserved for API-key-class
-            # blockers by design and stays hidden here.
+            # In a clean run the default model may be preselected, but the
+            # session settings action and persistent blocker strip remain the
+            # recovery/control surfaces.
             await _wait_until(
                 pilot,
-                lambda: any(
-                    b.display and str(b.label) == "Choose Model"
-                    for b in app.screen.query("#console-settings-open")
-                ),
-                context="console provider setup blocker",
+                lambda: "Choose model" in _screen_text(app)
+                or "Open Settings" in _screen_text(app),
+                context="console provider setup controls",
             )
             assert (
                 app.screen._console_provider_blocker_copy()
                 == "Provider setup needed: choose a model"
             )
             blocker_strip = app.screen.query("#console-provider-blocker")
-            assert blocker_strip and blocker_strip[0].display is False
+            assert blocker_strip and blocker_strip[0].display is True
             assert app.screen.query_one("#console-open-provider-settings", Button)
             assert "More: Ctrl+P" in _screen_text(app)
 

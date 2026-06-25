@@ -136,11 +136,8 @@ LIBRARY_MODES = {
     "collections": {
         "label": "Collections",
         "button_id": "library-mode-collections",
-        # Collections owns its explanatory copy inside the reader and inspector.
-        # Keeping these generic mode strings empty avoids stale terminal cells
-        # overlapping the Collections workbench during Textual Web mode changes.
-        "description": "",
-        "next_action": "",
+        "description": "Collections mode: read and review saved Library content.",
+        "next_action": "Select or create a Collection record before item actions become available.",
     },
     "study": {
         "label": "Study",

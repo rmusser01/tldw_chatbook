@@ -12,7 +12,7 @@
 
 ## Source Material
 
-- Backlog task: `backlog/tasks/task-134 - Fix-Console-conversation-rail-overflow.md`
+- Backlog task: `backlog/tasks/task-138 - Fix-Console-conversation-rail-overflow.md`
 - Approved design: `Docs/superpowers/specs/2026-06-25-console-conversation-rail-overflow-design.md`
 - Governing ADR: `backlog/decisions/005-console-workspace-server-readiness.md`
 - Current tray widget: `tldw_chatbook/Widgets/Console/console_workspace_context.py`
@@ -38,7 +38,7 @@ Reason: this changes Console presentation and UI preference state only. It does 
 
 ## File Structure
 
-- Modify `backlog/tasks/task-134 - Fix-Console-conversation-rail-overflow.md`
+- Modify `backlog/tasks/task-138 - Fix-Console-conversation-rail-overflow.md`
   - Add implementation plan before code execution.
   - Check ACs and add implementation notes after implementation.
 
@@ -76,7 +76,7 @@ Reason: this changes Console presentation and UI preference state only. It does 
 ### Task 0: Backlog Task Hygiene
 
 **Files:**
-- Modify: `backlog/tasks/task-134 - Fix-Console-conversation-rail-overflow.md`
+- Modify: `backlog/tasks/task-138 - Fix-Console-conversation-rail-overflow.md`
 
 - [ ] **Step 1: Move the task to In Progress and add the implementation plan summary**
 
@@ -88,14 +88,14 @@ backlog task edit 134 -s "In Progress" --plan "1. Add Console workspace conversa
 3. Add ChatScreen-owned query, collapse preference, search, stale-result, and row-selection wiring.
 4. Add TCSS rules for bounded list, summary, search, and collapse controls.
 5. Add mounted workflow regressions for overflow, collapse, search scope, stale results, selection, and workspace switching.
-6. Run focused Console tests, git diff --check, capture Textual-web/CDP evidence, then update TASK-134 notes.
+6. Run focused Console tests, git diff --check, capture Textual-web/CDP evidence, then update TASK-138 notes.
 
 ADR required: no
 ADR path: N/A
 Reason: presentation and UI preference state only; no schema, sync, workspace ownership, provider/runtime, or handoff contract change."
 ```
 
-Expected: `TASK-134` status becomes `In Progress` and contains the ADR check in its Implementation Plan section.
+Expected: `TASK-138` status becomes `In Progress` and contains the ADR check in its Implementation Plan section.
 
 - [ ] **Step 2: Confirm the task file contains the plan**
 
@@ -112,7 +112,7 @@ Expected: output includes `ADR required: no` and the six implementation steps.
 Run:
 
 ```bash
-git add "backlog/tasks/task-134 - Fix-Console-conversation-rail-overflow.md"
+git add "backlog/tasks/task-138 - Fix-Console-conversation-rail-overflow.md"
 git commit -m "Track Console conversation rail overflow task"
 ```
 
@@ -1787,7 +1787,7 @@ Expected: commit succeeds.
 **Files:**
 - Modify: `Docs/superpowers/qa/console-uat-parallelization/task-134-console-conversation-rail-overflow-evidence.md`
 - Add screenshots under: `Docs/superpowers/qa/console-uat-parallelization/`
-- Modify: `backlog/tasks/task-134 - Fix-Console-conversation-rail-overflow.md`
+- Modify: `backlog/tasks/task-138 - Fix-Console-conversation-rail-overflow.md`
 
 - [ ] **Step 1: Run focused Console workspace tests**
 
@@ -1840,7 +1840,7 @@ Docs/superpowers/qa/console-uat-parallelization/task-134-console-conversation-se
 Create `Docs/superpowers/qa/console-uat-parallelization/task-134-console-conversation-rail-overflow-evidence.md`:
 
 ```markdown
-# TASK-134 Console Conversation Rail Overflow Evidence
+# TASK-138 Console Conversation Rail Overflow Evidence
 
 Date: 2026-06-25
 
@@ -1864,9 +1864,9 @@ ADR path: N/A
 Reason: presentation and UI preference state only; no schema, sync, workspace ownership, provider/runtime, or handoff contract change.
 ```
 
-- [ ] **Step 6: Update TASK-134 acceptance criteria and implementation notes**
+- [ ] **Step 6: Update TASK-138 acceptance criteria and implementation notes**
 
-Edit `backlog/tasks/task-134 - Fix-Console-conversation-rail-overflow.md`:
+Edit `backlog/tasks/task-138 - Fix-Console-conversation-rail-overflow.md`:
 
 - Change all AC checkboxes from `- [ ]` to `- [x]`.
 - Add implementation notes:
@@ -1884,7 +1884,7 @@ Edit `backlog/tasks/task-134 - Fix-Console-conversation-rail-overflow.md`:
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ```
 
-- [ ] **Step 7: Mark TASK-134 Done**
+- [ ] **Step 7: Mark TASK-138 Done**
 
 Run:
 
@@ -1892,14 +1892,14 @@ Run:
 backlog task edit 134 -s Done
 ```
 
-Expected: `TASK-134` status becomes `Done`.
+Expected: `TASK-138` status becomes `Done`.
 
 - [ ] **Step 8: Commit final verification artifacts and task update**
 
 Run:
 
 ```bash
-git add Docs/superpowers/qa/console-uat-parallelization/task-134-console-conversation-rail-overflow-evidence.md Docs/superpowers/qa/console-uat-parallelization/task-134-console-conversation-rail-overflow-cdp-2026-06-25.png Docs/superpowers/qa/console-uat-parallelization/task-134-console-conversation-search-cdp-2026-06-25.png "backlog/tasks/task-134 - Fix-Console-conversation-rail-overflow.md"
+git add Docs/superpowers/qa/console-uat-parallelization/task-134-console-conversation-rail-overflow-evidence.md Docs/superpowers/qa/console-uat-parallelization/task-134-console-conversation-rail-overflow-cdp-2026-06-25.png Docs/superpowers/qa/console-uat-parallelization/task-134-console-conversation-search-cdp-2026-06-25.png "backlog/tasks/task-138 - Fix-Console-conversation-rail-overflow.md"
 git commit -m "Verify Console conversation rail overflow fix"
 ```
 

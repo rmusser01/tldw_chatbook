@@ -207,7 +207,9 @@ async def test_library_search_rag_mode_mounts_native_panel_without_leaving_libra
 
         active_mode_button = screen.query_one("#library-mode-search", Button)
         assert str(active_mode_button.label) == "Search/RAG"
-        assert "Ask Library sources, inspect evidence, then send selected snippets to Console." in _visible_text(screen)
+        assert str(active_mode_button.tooltip) == (
+            "Ask Library sources, inspect evidence, then send selected snippets to Console."
+        )
 
 
 @pytest.mark.asyncio
@@ -238,7 +240,7 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
         assert "Query" in visible_text
         assert "Enter: run query | Tab: move panes | Enter on result: select | u: Use in Console" in visible_text
         assert "Enter a question or search query" in visible_text
-        assert "Run a query and select usable evidence before sending to Console" in visible_text
+        assert "Blocked: select usable evidence before Console handoff." in visible_text
 
 
 @pytest.mark.asyncio
@@ -284,18 +286,17 @@ async def test_library_search_rag_mode_hides_generic_hub_and_study_actions() -> 
         assert len(screen.query("#library-content-hub-title")) == 0
         assert len(screen.query("#library-hub-study-card")) == 0
         assert len(screen.query("#library-use-in-console")) == 0
-        assert len(screen.query("#library-open-study")) == 0
-        open_search_button = screen.query_one("#library-open-search", Button)
-        assert open_search_button.display is False
+        action_region = screen.query_one("#library-action-region")
+        assert len(action_region.query("#library-open-study")) == 0
+        assert len(screen.query("#library-open-search")) == 0
         assert "Library Content Hub" not in visible_text
         assert "Knowledge workflow" not in visible_text
-        assert "Study Dashboard" not in visible_text
+        assert "Study Dashboard actions" not in visible_text
         assert "Retrieval Inspector" in visible_text
 
         screen.query_one("#library-mode-sources", Button).press()
         await _wait_for_selector(screen, pilot, "#library-content-hub-title")
-        assert screen.query_one("#library-open-search", Button) is open_search_button
-        assert open_search_button.display is True
+        assert screen.query_one("#library-open-search", Button).display is True
 
 
 @pytest.mark.asyncio
@@ -564,7 +565,7 @@ async def test_library_search_rag_selected_result_inspector_exposes_evidence_met
         assert "Authority & eligibility" in visible_text
         assert "Authority: Workspace: workspace-a" in visible_text
         assert "Eligibility: available for active workspace" in visible_text
-        assert "Console handoff" in visible_text
+        assert "Console Handoff" in visible_text
         assert "Handoff: snippet + citations + source/chunk IDs" in visible_text
 
 
@@ -771,7 +772,8 @@ async def test_library_search_rag_inspector_pre_mounts_selection_states() -> Non
         empty_state = screen.query_one("#library-rag-inspector-empty", Static)
         selected_state = screen.query_one("#library-rag-selected-result", Static)
         assert empty_state.display is True
-        assert selected_state.display is False
+        assert selected_state.display is True
+        assert str(selected_state.renderable) == "Selected Evidence: none"
 
         screen.query_one("#library-rag-query-input", Input).value = query
         await _wait_for_query_ready(screen, pilot, query)

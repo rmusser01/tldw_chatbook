@@ -208,9 +208,8 @@ async def test_library_collections_mode_mounts_panel_and_defers_scoped_actions()
         assert screen.query_one("#library-open-flashcards", Button).disabled is True
         assert screen.query_one("#library-open-quizzes", Button).disabled is True
         assert screen.query_one("#library-use-in-console", Button).disabled is True
-        assert "Collection-scoped Study, Flashcards, Quizzes, and Console are later-stage." in (
-            _visible_text(screen)
-        )
+        assert "Collection item actions" in _visible_text(screen)
+        assert "Disabled: collection item Search/RAG, Study, Console handoff" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -588,9 +587,7 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
 
         screen.query_one("#library-mode-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
-        assert "Group saved Library items for Search/RAG, Study, and Console." in _visible_text(
-            screen
-        )
+        assert "Create a local Collection record to start reviewing saved content." in _visible_text(screen)
 
         screen.query_one("#library-collection-name-input", Input).value = "Research"
         screen.query_one("#library-collection-description-input", Input).value = "Policy sources"
@@ -620,7 +617,7 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
         await _wait_for_text(
             screen,
             pilot,
-            "Group saved Library items for Search/RAG, Study, and Console.",
+            "Create a local Collection record to start reviewing saved content.",
         )
 
     assert service.deleted == ["collection-1"]

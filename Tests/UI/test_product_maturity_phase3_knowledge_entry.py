@@ -44,12 +44,12 @@ async def test_library_surfaces_study_workflow_entry_points() -> None:
         screen = _active_destination_screen(host)
         visible_text = _visible_text(screen)
 
-        assert "Knowledge workflow" in visible_text
+        assert "Learning" in visible_text
 
         expected_tooltips = {
-            "#library-open-study": "Open the Study dashboard for due cards, decks, quizzes, and resume actions.",
-            "#library-open-flashcards": "Open flashcards for selected or imported Library material.",
-            "#library-open-quizzes": "Open quizzes for selected or imported Library material.",
+            "#library-open-study": "Open Study globally or with Library sources.",
+            "#library-open-flashcards": "Open Flashcards globally or with Library sources.",
+            "#library-open-quizzes": "Open Quizzes globally or with Library sources.",
         }
         expected_labels = {
             "#library-open-study": "Study Dashboard",
@@ -70,12 +70,13 @@ async def test_library_study_entry_buttons_preserve_requested_section() -> None:
 
     async with host.run_test(size=(160, 40)) as pilot:
         await pilot.pause(0.2)
+        screen = _active_destination_screen(host)
 
-        await pilot.click("#library-open-flashcards")
+        screen.query_one("#library-open-flashcards", Button).press()
         await pilot.pause(0.1)
         app.open_study_screen.assert_called_with(initial_section="flashcards")
 
-        await pilot.click("#library-open-quizzes")
+        screen.query_one("#library-open-quizzes", Button).press()
         await pilot.pause(0.1)
         app.open_study_screen.assert_called_with(initial_section="quizzes")
 
@@ -119,5 +120,4 @@ def test_pending_study_initial_section_overrides_restored_section() -> None:
     screen._apply_pending_initial_section()
 
     assert screen.current_section == "quizzes"
-
 

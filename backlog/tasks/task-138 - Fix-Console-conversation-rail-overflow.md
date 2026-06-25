@@ -1,5 +1,5 @@
 ---
-id: TASK-134
+id: TASK-138
 title: Fix Console conversation rail overflow
 status: Done
 labels:
@@ -35,7 +35,7 @@ Make the Console workspace Conversations subsection bounded, collapsible, and se
 3. Add ChatScreen-owned query, collapse preference, search, stale-result, and row-selection wiring.
 4. Add TCSS rules for bounded list, summary, search, and collapse controls.
 5. Add mounted workflow regressions for overflow, collapse, search scope, stale results, selection, and workspace switching.
-6. Run focused Console tests, git diff --check, capture Textual-web/CDP evidence, then update TASK-134 notes.
+6. Run focused Console tests, git diff --check, capture Textual-web/CDP evidence, then update TASK-138 notes.
 
 ADR required: no
 ADR path: N/A
