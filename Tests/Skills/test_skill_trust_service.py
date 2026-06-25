@@ -1,5 +1,6 @@
 import base64
 import json
+import shutil
 
 import pytest
 
@@ -9,6 +10,7 @@ from tldw_chatbook.Skills_Interop.skill_trust_store import (
     FileSkillTrustGenerationMarkerStore,
     KeyringSkillTrustKeyCache,
     SkillTrustStore,
+    UnavailableSkillTrustGenerationMarkerStore,
 )
 
 
@@ -82,6 +84,96 @@ def test_bootstrap_trusts_current_files_and_detects_modification(tmp_path):
         service.ensure_skill_trusted("demo")
 
 
+def test_status_for_unsafe_skill_name_returns_blocked_without_scanning_outside(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir)
+    outside = tmp_path / "outside"
+    _write_skill(tmp_path, name="outside", content="# Secret\n")
+    service.bootstrap_trust()
+
+    traversal_status = service.status_for_skill("../outside")
+    absolute_status = service.status_for_skill(str(outside.resolve()))
+
+    assert traversal_status.trust_status == "quarantined_unsupported_path"
+    assert traversal_status.trust_reason_code == "unsupported_path"
+    assert traversal_status.trust_blocked is True
+    assert absolute_status.trust_status == "quarantined_unsupported_path"
+    with pytest.raises(SkillTrustBlockedError, match="unsupported_path"):
+        service.ensure_skill_trusted("../outside")
+    with pytest.raises(ValueError, match="unsupported_path"):
+        service.capture_review("../outside")
+    with pytest.raises(ValueError, match="unsupported_path"):
+        service.capture_review(str(outside.resolve()))
+
+
+def test_bootstrap_rejects_root_skill_directory_symlink(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    outside_dir = tmp_path / "outside-demo"
+    outside_dir.mkdir()
+    (outside_dir / "SKILL.md").write_text("# Outside\n", encoding="utf-8")
+    skills_dir.mkdir(parents=True)
+    (skills_dir / "demo").symlink_to(outside_dir, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="unsupported_path"):
+        service.bootstrap_trust()
+
+
+def test_root_skill_directory_symlink_is_quarantined_after_bootstrap(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir)
+    service.bootstrap_trust()
+    shutil.rmtree(skills_dir / "demo")
+    outside_dir = tmp_path / "outside-demo"
+    outside_dir.mkdir()
+    (outside_dir / "SKILL.md").write_text("# Outside\n", encoding="utf-8")
+    (skills_dir / "demo").symlink_to(outside_dir, target_is_directory=True)
+
+    status = service.status_for_skill("demo")
+
+    assert status.trust_status == "quarantined_unsupported_path"
+    assert status.trust_reason_code == "unsupported_path"
+    assert status.changed_files == ("demo",)
+
+
+def test_added_file_is_quarantined(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir)
+    service.bootstrap_trust()
+    (skills_dir / "demo" / "notes.md").write_text("new support text", encoding="utf-8")
+
+    status = service.status_for_skill("demo")
+
+    assert status.trust_status == "quarantined_added"
+    assert status.trust_reason_code == "skill_added"
+    assert status.changed_files == ("notes.md",)
+
+
+def test_deleted_file_is_quarantined(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir)
+    service.bootstrap_trust()
+    (skills_dir / "demo" / "SKILL.md").unlink()
+
+    status = service.status_for_skill("demo")
+
+    assert status.trust_status == "quarantined_deleted"
+    assert status.trust_reason_code == "skill_deleted"
+    assert status.changed_files == ("SKILL.md",)
+
+
+def test_unsupported_child_path_is_quarantined(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir)
+    service.bootstrap_trust()
+    (skills_dir / "demo" / "unsafe name.md").write_text("unsafe", encoding="utf-8")
+
+    status = service.status_for_skill("demo")
+
+    assert status.trust_status == "quarantined_unsupported_path"
+    assert status.trust_reason_code == "unsupported_path"
+    assert status.changed_files == ("unsafe name.md",)
+
+
 def test_existing_manifest_without_unlock_reports_locked_status(tmp_path):
     service, skills_dir = _service(tmp_path)
     _write_skill(skills_dir)
@@ -115,6 +207,41 @@ def test_missing_marker_reports_global_manifest_error(tmp_path):
     assert service.overall_status() == "quarantined_manifest_error"
 
 
+def test_marker_mismatch_reports_global_manifest_error(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir)
+    service.bootstrap_trust()
+    service.trust_store.marker_store.save_marker(generation=99, manifest_digest="old")
+
+    status = service.status_for_skill("demo")
+
+    assert status.trust_status == "quarantined_manifest_error"
+    assert status.trust_reason_code == "rollback_marker_unavailable"
+    assert status.trust_blocked is True
+    assert service.overall_status() == "quarantined_manifest_error"
+
+
+def test_marker_store_unavailable_reports_global_manifest_error(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir)
+    service.bootstrap_trust()
+    unavailable_service = SkillTrustService(
+        skills_dir=skills_dir,
+        trust_store=SkillTrustStore(
+            store_dir=tmp_path / "trust",
+            marker_store=UnavailableSkillTrustGenerationMarkerStore("offline"),
+        ),
+    )
+    unavailable_service.unlock_with_passphrase("passphrase")
+
+    status = unavailable_service.status_for_skill("demo")
+
+    assert status.trust_status == "quarantined_manifest_error"
+    assert status.trust_reason_code == "rollback_marker_unavailable"
+    assert status.trust_blocked is True
+    assert unavailable_service.overall_status() == "quarantined_manifest_error"
+
+
 def test_invalid_manifest_reports_blocked_status_without_raising(tmp_path):
     service, skills_dir = _service(tmp_path)
     _write_skill(skills_dir)
@@ -133,6 +260,15 @@ def test_invalid_manifest_reports_blocked_status_without_raising(tmp_path):
         service.ensure_skill_trusted("demo")
 
 
+def test_overall_status_reports_quarantine_when_live_skill_is_modified(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir)
+    service.bootstrap_trust()
+    (skills_dir / "demo" / "SKILL.md").write_text("# Demo\nChanged\n", encoding="utf-8")
+
+    assert service.overall_status() == "quarantined_modified"
+
+
 def test_review_approval_requires_live_files_to_match_reviewed_snapshot(tmp_path):
     service, skills_dir = _service(tmp_path)
     _write_skill(skills_dir)
@@ -149,6 +285,7 @@ def test_review_approval_requires_live_files_to_match_reviewed_snapshot(tmp_path
 
     with pytest.raises(ValueError, match="snapshot_mismatch"):
         service.trust_reviewed_snapshot(review["review_id"])
+    assert review["review_id"] not in service._reviews
 
 
 def test_review_approval_restores_trust_for_reviewed_snapshot(tmp_path):
@@ -163,7 +300,45 @@ def test_review_approval_restores_trust_for_reviewed_snapshot(tmp_path):
     status = service.status_for_skill("demo")
     assert status.trust_status == "trusted"
     assert status.trust_blocked is False
+    assert review["review_id"] not in service._reviews
     service.ensure_skill_trusted("demo")
+
+
+def test_review_approval_rejects_stale_manifest_generation(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir)
+    _write_skill(skills_dir, name="other", content="# Other\n")
+    service.bootstrap_trust()
+    (skills_dir / "demo" / "SKILL.md").write_text("# Demo\nChanged\n", encoding="utf-8")
+    review = service.capture_review("demo")
+    (skills_dir / "other" / "SKILL.md").write_text("# Other\nChanged\n", encoding="utf-8")
+    service.trust_current_skill("other")
+
+    with pytest.raises(ValueError, match="snapshot_mismatch"):
+        service.trust_reviewed_snapshot(review["review_id"])
+    assert review["review_id"] not in service._reviews
+
+
+def test_discard_review_removes_captured_review(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir)
+    service.bootstrap_trust()
+    (skills_dir / "demo" / "SKILL.md").write_text("# Demo\nChanged\n", encoding="utf-8")
+    review = service.capture_review("demo")
+
+    service.discard_review(review["review_id"])
+
+    with pytest.raises(KeyError):
+        service.trust_reviewed_snapshot(review["review_id"])
+
+
+def test_trust_current_skill_rejects_missing_skill(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir)
+    service.bootstrap_trust()
+
+    with pytest.raises(ValueError, match="skill_deleted"):
+        service.trust_current_skill("missing")
 
 
 def test_keyring_convenience_loads_only_salt_bound_cached_keys(tmp_path):

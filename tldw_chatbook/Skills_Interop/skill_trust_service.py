@@ -99,7 +99,7 @@ class SkillTrustService:
         return True
 
     def overall_status(self) -> str:
-        """Return a global Settings-friendly trust posture."""
+        """Return a global Settings-friendly trust posture from live files."""
 
         if not self.trust_store.has_manifest():
             missing_status = self._manifest_missing_status("<all>")
@@ -107,11 +107,19 @@ class SkillTrustService:
         if self._keys is None:
             return TRUST_STATUS_LOCKED
         try:
-            self._load_valid_manifest()
+            manifest = self._load_valid_manifest()
         except SkillTrustMarkerUnavailable:
             return TRUST_STATUS_QUARANTINED_MANIFEST_ERROR
         except ValueError:
             return TRUST_STATUS_QUARANTINED_MANIFEST_ERROR
+        try:
+            skill_names = self._known_and_current_skill_names(manifest)
+        except ValueError:
+            return TRUST_STATUS_QUARANTINED_UNSUPPORTED_PATH
+        for skill_name in sorted(skill_names):
+            status = self.status_for_skill(skill_name)
+            if status.trust_blocked:
+                return status.trust_status
         return TRUST_STATUS_TRUSTED
 
     def bootstrap_trust(self, passphrase: str | None = None, *, salt: bytes | None = None) -> None:
@@ -158,25 +166,32 @@ class SkillTrustService:
     def status_for_skill(self, skill_name: str) -> SkillTrustStatus:
         """Return visible trust status without raising for locked or bad manifests."""
 
+        try:
+            normalized_name = self._normalize_skill_name(skill_name)
+        except ValueError:
+            return self._unsupported_name_status(skill_name)
         if not self.trust_store.has_manifest():
-            return self._manifest_missing_status(skill_name)
+            return self._manifest_missing_status(normalized_name)
         if self._keys is None:
-            return self._locked_status(skill_name)
+            return self._locked_status(normalized_name)
         try:
             manifest = self._load_valid_manifest()
         except SkillTrustMarkerUnavailable:
             return self._manifest_error_status(
-                skill_name,
+                normalized_name,
                 TRUST_REASON_ROLLBACK_MARKER_UNAVAILABLE,
             )
         except ValueError as exc:
-            return self._manifest_error_status(skill_name, self._manifest_error_reason(exc))
+            return self._manifest_error_status(
+                normalized_name,
+                self._manifest_error_reason(exc),
+            )
 
         generation = int(manifest["generation"])
-        current = self._scan_skill(skill_name)
+        current = self._scan_skill(normalized_name)
         if current.unsupported_paths:
             return SkillTrustStatus(
-                skill_name=skill_name,
+                skill_name=normalized_name,
                 trust_status=TRUST_STATUS_QUARANTINED_UNSUPPORTED_PATH,
                 trust_reason_code=TRUST_REASON_UNSUPPORTED_PATH,
                 trust_blocked=True,
@@ -185,10 +200,10 @@ class SkillTrustService:
                 last_verified_at=_now_iso(),
             )
 
-        trusted = manifest["skills"].get(skill_name)
+        trusted = manifest["skills"].get(normalized_name)
         if trusted is None:
             return SkillTrustStatus(
-                skill_name=skill_name,
+                skill_name=normalized_name,
                 trust_status=TRUST_STATUS_QUARANTINED_ADDED,
                 trust_reason_code=TRUST_REASON_SKILL_ADDED,
                 trust_blocked=True,
@@ -200,7 +215,10 @@ class SkillTrustService:
         try:
             trusted_files = self._trusted_file_map(trusted)
         except ValueError as exc:
-            return self._manifest_error_status(skill_name, self._manifest_error_reason(exc))
+            return self._manifest_error_status(
+                normalized_name,
+                self._manifest_error_reason(exc),
+            )
         current_files = {
             item.relative_path: item.as_manifest_entry() for item in current.fingerprints
         }
@@ -214,7 +232,7 @@ class SkillTrustService:
         changed = tuple(sorted(missing | added | modified))
         if not changed:
             return SkillTrustStatus(
-                skill_name=skill_name,
+                skill_name=normalized_name,
                 trust_status=TRUST_STATUS_TRUSTED,
                 trust_reason_code=None,
                 trust_blocked=False,
@@ -232,7 +250,7 @@ class SkillTrustService:
             status = TRUST_STATUS_QUARANTINED_MODIFIED
             reason = TRUST_REASON_SKILL_MODIFIED
         return SkillTrustStatus(
-            skill_name=skill_name,
+            skill_name=normalized_name,
             trust_status=status,
             trust_reason_code=reason,
             trust_blocked=True,
@@ -257,29 +275,53 @@ class SkillTrustService:
     def capture_review(self, skill_name: str) -> dict[str, Any]:
         """Capture a JSON-safe review snapshot for the current skill files."""
 
-        status = self.status_for_skill(skill_name)
-        current = self._scan_skill(skill_name)
+        normalized_name = self._normalize_skill_name(skill_name)
+        status = self.status_for_skill(normalized_name)
+        current = self._scan_skill(normalized_name)
         review_id = secrets.token_hex(16)
         review = {
             "review_id": review_id,
-            "skill_name": skill_name,
+            "skill_name": normalized_name,
+            "manifest_generation": status.manifest_generation,
             "current_digest": self._fingerprints_digest(current),
             "current_files": dict(current.text_files),
             "current_fingerprints": [item.as_manifest_entry() for item in current.fingerprints],
-            "trusted_files": self._trusted_review_files(skill_name),
             "changed_files": list(status.changed_files),
             "captured_at": _now_iso(),
         }
         self._reviews[review_id] = review
         return dict(review)
 
+    def discard_review(self, review_id: str) -> None:
+        """Forget a captured review without changing trust state."""
+
+        self._reviews.pop(review_id, None)
+
     def trust_reviewed_snapshot(self, review_id: str) -> None:
         """Approve a captured review if live files still match that review."""
 
         review = self._reviews[review_id]
-        skill_name = str(review["skill_name"])
+        try:
+            skill_name = self._normalize_skill_name(str(review["skill_name"]))
+        except ValueError as exc:
+            self._reviews.pop(review_id, None)
+            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH) from exc
+
+        try:
+            manifest = self._load_valid_manifest()
+        except SkillTrustMarkerUnavailable as exc:
+            self._reviews.pop(review_id, None)
+            raise ValueError("snapshot_mismatch") from exc
+        review_generation = review.get("manifest_generation")
+        if not isinstance(review_generation, int):
+            self._reviews.pop(review_id, None)
+            raise ValueError("snapshot_mismatch")
+        if int(manifest["generation"]) != review_generation:
+            self._reviews.pop(review_id, None)
+            raise ValueError("snapshot_mismatch")
         current = self._scan_skill(skill_name)
         if self._fingerprints_digest(current) != review["current_digest"]:
+            self._reviews.pop(review_id, None)
             raise ValueError("snapshot_mismatch")
         self.trust_current_skill(skill_name, audit_event="trust_approved", snapshot=current)
         self._reviews.pop(review_id, None)
@@ -293,14 +335,17 @@ class SkillTrustService:
     ) -> None:
         """Trust the live files for one skill after an explicit approval path."""
 
+        normalized_name = self._normalize_skill_name(skill_name)
         keys = self._require_keys()
         manifest = self._load_valid_manifest()
         generation = int(manifest["generation"]) + 1
-        current = snapshot or self._scan_skill(skill_name)
+        current = snapshot or self._scan_skill(normalized_name)
         if current.unsupported_paths:
             raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
+        if not current.fingerprints:
+            raise ValueError(TRUST_REASON_SKILL_DELETED)
 
-        snapshot_id = self._snapshot_id(skill_name, generation)
+        snapshot_id = self._snapshot_id(normalized_name, generation)
         self.trust_store.save_snapshot(
             snapshot_id,
             {"files": dict(current.text_files)},
@@ -308,7 +353,7 @@ class SkillTrustService:
             generation=generation,
         )
         manifest["generation"] = generation
-        manifest.setdefault("skills", {})[skill_name] = self._manifest_skill_entry(
+        manifest.setdefault("skills", {})[normalized_name] = self._manifest_skill_entry(
             snapshot=current,
             snapshot_id=snapshot_id,
             snapshot_generation=generation,
@@ -317,7 +362,7 @@ class SkillTrustService:
             {
                 "event": audit_event,
                 "at": _now_iso(),
-                "skill_name": skill_name,
+                "skill_name": normalized_name,
             }
         )
         self.trust_store.save_manifest(manifest, keys, salt=self._require_salt())
@@ -325,10 +370,27 @@ class SkillTrustService:
     def _iter_skill_dirs(self) -> list[Path]:
         if not self.skills_dir.exists():
             return []
-        return sorted(
-            (child for child in self.skills_dir.iterdir() if child.is_dir()),
-            key=lambda child: child.name,
-        )
+        skill_dirs: list[Path] = []
+        for child in sorted(self.skills_dir.iterdir(), key=lambda item: item.name):
+            if child.is_symlink():
+                raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
+            if child.is_dir():
+                self._normalize_skill_name(child.name)
+                skill_dirs.append(child)
+        return skill_dirs
+
+    def _known_and_current_skill_names(self, manifest: dict[str, Any]) -> set[str]:
+        names: set[str] = set()
+        for skill_name in manifest["skills"]:
+            names.add(self._normalize_skill_name(skill_name))
+        if not self.skills_dir.exists():
+            return names
+        for child in sorted(self.skills_dir.iterdir(), key=lambda item: item.name):
+            if child.is_symlink():
+                raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
+            if child.is_dir():
+                names.add(self._normalize_skill_name(child.name))
+        return names
 
     def _load_valid_manifest(self) -> dict[str, Any]:
         manifest = self.trust_store.load_manifest(self._require_keys())
@@ -357,10 +419,43 @@ class SkillTrustService:
         return self._salt
 
     def _scan_skill(self, skill_name: str) -> SkillDirectorySnapshot:
-        skill_dir = self.skills_dir / skill_name
-        if not skill_dir.exists() or not skill_dir.is_dir():
-            return SkillDirectorySnapshot(skill_name=skill_name, fingerprints=(), text_files={})
-        return scan_skill_directory(skill_name, skill_dir)
+        normalized_name = self._normalize_skill_name(skill_name)
+        skill_dir = self.skills_dir / normalized_name
+        if skill_dir.is_symlink():
+            return SkillDirectorySnapshot(
+                skill_name=normalized_name,
+                fingerprints=(),
+                text_files={},
+                unsupported_paths=(normalized_name,),
+            )
+        if not skill_dir.exists():
+            return SkillDirectorySnapshot(
+                skill_name=normalized_name,
+                fingerprints=(),
+                text_files={},
+            )
+        if not skill_dir.is_dir():
+            return SkillDirectorySnapshot(
+                skill_name=normalized_name,
+                fingerprints=(),
+                text_files={},
+                unsupported_paths=(normalized_name,),
+            )
+        return scan_skill_directory(normalized_name, skill_dir)
+
+    def _normalize_skill_name(self, skill_name: str) -> str:
+        if not isinstance(skill_name, str):
+            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
+        if not skill_name or skill_name in {".", ".."}:
+            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
+        if "\x00" in skill_name or "/" in skill_name or "\\" in skill_name:
+            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
+        path = Path(skill_name)
+        if path.is_absolute() or len(path.parts) != 1:
+            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
+        if any(part in {"", ".", ".."} for part in path.parts):
+            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
+        return skill_name
 
     def _manifest_missing_status(self, skill_name: str) -> SkillTrustStatus:
         try:
@@ -406,6 +501,17 @@ class SkillTrustService:
             last_verified_at=_now_iso(),
         )
 
+    def _unsupported_name_status(self, skill_name: Any) -> SkillTrustStatus:
+        return SkillTrustStatus(
+            skill_name=str(skill_name),
+            trust_status=TRUST_STATUS_QUARANTINED_UNSUPPORTED_PATH,
+            trust_reason_code=TRUST_REASON_UNSUPPORTED_PATH,
+            trust_blocked=True,
+            changed_files=(),
+            manifest_generation=None,
+            last_verified_at=_now_iso(),
+        )
+
     def _manifest_error_reason(self, exc: ValueError) -> str:
         message = str(exc)
         if "marker" in message:
@@ -416,30 +522,6 @@ class SkillTrustService:
         return sha256_hex(
             canonical_json([item.as_manifest_entry() for item in snapshot.fingerprints])
         )
-
-    def _trusted_review_files(self, skill_name: str) -> dict[str, str]:
-        if self._keys is None or not self.trust_store.has_manifest():
-            return {}
-        try:
-            manifest = self._load_valid_manifest()
-            entry = manifest["skills"].get(skill_name)
-            if not isinstance(entry, dict):
-                return {}
-            snapshot_id = entry.get("snapshot_id")
-            if not isinstance(snapshot_id, str):
-                return {}
-            snapshot_generation = entry.get("snapshot_generation", manifest["generation"])
-            payload = self.trust_store.load_snapshot(
-                snapshot_id,
-                self._require_keys(),
-                generation=int(snapshot_generation),
-            )
-            files = payload.get("files")
-        except (OSError, ValueError, SkillTrustMarkerUnavailable):
-            return {}
-        if not isinstance(files, dict):
-            return {}
-        return {str(path): str(content) for path, content in files.items()}
 
     def _trusted_file_map(self, trusted: Any) -> dict[str, dict[str, Any]]:
         if not isinstance(trusted, dict):
