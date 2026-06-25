@@ -1,15 +1,19 @@
 """Workspace operating-context APIs."""
 
 from .display_state import (
+    CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
     ConsoleWorkspaceACPHandoffState,
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
+    ConsoleWorkspaceConversationSectionState,
     ConsoleWorkspaceHandoffRow,
     ConsoleWorkspaceServerAdapterState,
     LibraryWorkspaceDepthState,
     LibraryWorkspaceSourceRow,
     build_library_workspace_depth_state,
     build_console_workspace_state,
+    console_workspace_conversation_result_copy,
+    console_workspace_conversation_visible_rows,
 )
 from .eligibility import evaluate_workspace_eligibility
 from .models import (
@@ -29,8 +33,10 @@ from .models import (
 from .registry_service import LocalWorkspaceRegistryService
 
 __all__ = [
+    "CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT",
     "ConsoleWorkspaceContextState",
     "ConsoleWorkspaceConversationRow",
+    "ConsoleWorkspaceConversationSectionState",
     "ConsoleWorkspaceACPHandoffState",
     "ConsoleWorkspaceHandoffRow",
     "ConsoleWorkspaceServerAdapterState",
@@ -51,5 +57,7 @@ __all__ = [
     "WorkspaceTransferPolicy",
     "build_library_workspace_depth_state",
     "build_console_workspace_state",
+    "console_workspace_conversation_result_copy",
+    "console_workspace_conversation_visible_rows",
     "evaluate_workspace_eligibility",
 ]
