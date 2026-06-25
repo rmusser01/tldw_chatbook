@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from rich.text import Text
@@ -18,7 +17,6 @@ from tldw_chatbook.Workspaces.display_state import (
 )
 
 
-_TRAILING_SHORT_ID_RE = re.compile(r"\s+\[[0-9a-fA-F]{8}\]$")
 _STATUS_LABELS = {
     "workspace-thread": "workspace",
     "workspace": "workspace",
@@ -471,8 +469,8 @@ class ConsoleWorkspaceContextTray(VerticalScroll):
 
     @staticmethod
     def _conversation_title(title: str) -> str:
-        """Return a readable conversation label without raw disambiguation IDs."""
-        return _TRAILING_SHORT_ID_RE.sub("", str(title).strip()) or "Untitled conversation"
+        """Return a readable conversation label."""
+        return str(title).strip() or "Untitled conversation"
 
     @staticmethod
     def _conversation_visible_title(title: str) -> str:

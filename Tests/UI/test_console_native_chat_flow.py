@@ -59,6 +59,14 @@ def test_console_workspace_conversation_visible_title_is_rail_safe():
     )
 
 
+def test_console_workspace_conversation_title_preserves_duplicate_suffix():
+    """Duplicate-title disambiguators should remain visible in rail labels."""
+    title = "Chat [deadbeef]"
+
+    assert ConsoleWorkspaceContextTray._conversation_title(title) == title
+    assert ConsoleWorkspaceContextTray._conversation_visible_title(title) == title
+
+
 def test_console_provider_recovery_strip_visible_handles_missing_blocker_copy():
     """Missing blocker copy should keep the recovery strip hidden."""
     assert ChatScreen._console_provider_recovery_strip_visible(object(), None) is False

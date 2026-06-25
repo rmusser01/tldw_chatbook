@@ -75,7 +75,15 @@ class ConsoleWorkspaceConversationSectionState:
 
 
 def console_workspace_conversation_visible_rows(body_height: int | None) -> int:
-    """Return the adaptive visible row count for the bounded conversation list."""
+    """Return the adaptive visible row count for the conversation list.
+
+    Args:
+        body_height: Available Console body height, or ``None`` when the
+            mounted body has not been measured yet.
+
+    Returns:
+        A clamped row count for the bounded workspace conversation list.
+    """
 
     if body_height is None or body_height <= 0:
         return CONSOLE_WORKSPACE_CONVERSATION_MIN_VISIBLE_ROWS
@@ -95,7 +103,18 @@ def console_workspace_conversation_result_copy(
     result_total_count: int | None,
     result_limit: int = CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
 ) -> str:
-    """Return explicit search result count copy for the conversation rail."""
+    """Return explicit search result count copy for the conversation rail.
+
+    Args:
+        query: Current workspace conversation search text.
+        result_total_count: Total number of scoped matches, or ``None`` when
+            no search result count should be shown.
+        result_limit: Maximum number of result rows rendered in the rail.
+
+    Returns:
+        Human-readable count copy for scoped search results, or an empty
+        string when no count should be displayed.
+    """
 
     if not str(query or "").strip() or result_total_count is None:
         return ""

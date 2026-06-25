@@ -129,19 +129,31 @@ class ConsoleTranscriptActionButton(Button):
             event.prevent_default()
 
     def action_activate_action(self) -> None:
-        """Activate the focused message action."""
+        """Activate the focused message action.
+
+        Presses the currently focused transcript action button.
+        """
         self.press()
 
     def action_focus_next_action(self) -> None:
-        """Move focus to the next visible action in the selected-message row."""
+        """Move focus to the next visible action.
+
+        Advances focus within the selected-message action row.
+        """
         self._focus_relative_action(1)
 
     def action_focus_previous_action(self) -> None:
-        """Move focus to the previous visible action in the selected-message row."""
+        """Move focus to the previous visible action.
+
+        Moves focus backward within the selected-message action row.
+        """
         self._focus_relative_action(-1)
 
     def action_clear_message_selection(self) -> None:
-        """Clear the transcript selection from a focused action button."""
+        """Clear transcript selection from a focused action button.
+
+        Delegates to the parent transcript when the action row owns focus.
+        """
         transcript = self._parent_transcript()
         if transcript is not None:
             transcript.action_clear_selection()
