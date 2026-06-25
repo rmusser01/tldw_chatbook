@@ -2738,6 +2738,78 @@ async def test_console_workspace_conversation_search_scopes_persisted_results_to
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_conversation_search_selection_keeps_query_active():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    app.chat_conversation_scope_service = SearchableConversationService(
+        {
+            "select-alpha": {
+                "conversation": {
+                    "id": "select-alpha",
+                    "title": "Select Alpha",
+                    "workspace_id": active_workspace.workspace_id,
+                },
+                "root_threads": [
+                    {
+                        "id": "select-alpha-message",
+                        "conversation_id": "select-alpha",
+                        "role": "user",
+                        "sender": "user",
+                        "content": "selected alpha prompt",
+                        "children": [],
+                    }
+                ],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await pilot.click("#console-workspace-conversation-search")
+        await pilot.press("a", "l", "p", "h", "a")
+        await _wait_for_workspace_conversation_text(console, pilot, "Select Alpha", selected=False)
+
+        await _click_console_workspace_conversation_for_id(console, pilot, "select-alpha")
+
+        await _wait_for_text(console, pilot, "selected alpha prompt")
+        search = console.query_one("#console-workspace-conversation-search", Input)
+        assert search.value == "alpha"
+        assert "Select Alpha" in _static_plain_text(console.query_one("#console-workspace-selected-conversation", Static))
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_switch_clears_conversation_search_and_restores_collapse_preference():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    workspace_a = service.get_active_workspace()
+    workspace_b = service.create_workspace(workspace_id="ws-search-reset", name="Search Reset")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await pilot.click("#console-workspace-conversation-search")
+        await pilot.press("a", "l", "p", "h", "a")
+        await pilot.click("#console-workspace-conversations-toggle")
+        await pilot.pause(0.1)
+        assert len(console.query("#console-workspace-conversation-search")) == 0
+
+        service.set_active_workspace(workspace_b.workspace_id)
+        console._sync_console_workspace_context()
+        await pilot.pause(0.1)
+        assert len(console.query("#console-workspace-conversation-search")) == 1
+        assert console.query_one("#console-workspace-conversation-search", Input).value == ""
+
+        service.set_active_workspace(workspace_a.workspace_id)
+        console._sync_console_workspace_context()
+        await pilot.pause(0.1)
+        assert len(console.query("#console-workspace-conversation-search")) == 0
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_conversation_search_shows_cap_and_empty_copy():
     app = _build_test_app()
     service = app.workspace_registry_service
