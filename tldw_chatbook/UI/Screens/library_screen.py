@@ -2340,8 +2340,18 @@ class LibraryScreen(BaseAppScreen):
             return (
                 Static("Collection item actions", classes="destination-section"),
                 Static(
+                    "Read/review collection items when a local item adapter is available.",
+                    id="library-collection-actions-local-readiness",
+                ),
+                Static(
                     "Item actions unavailable until collection items exist.",
                     id="library-collection-actions-disabled-reason",
+                    classes="ds-recovery-callout is-blocked",
+                ),
+                Static(
+                    "Disabled: collection item Search/RAG, Study, Console handoff, "
+                    "and server sync promotion are not wired yet.",
+                    id="library-collection-actions-wip-reason",
                     classes="ds-recovery-callout is-blocked",
                 ),
                 Button(
@@ -2619,13 +2629,15 @@ class LibraryScreen(BaseAppScreen):
                         classes="destination-section",
                     )
                     yield from self._source_module_action_widgets()
-                    quick_actions_title = Static(
-                        "",
+                    yield Static(
+                        "Quick Actions",
                         id="library-quick-actions-title",
                         classes="destination-section",
                     )
-                    quick_actions_title.display = False
-                    yield quick_actions_title
+                    yield Static(
+                        "Open a mode, then use the inspector for selected-item actions.",
+                        id="library-quick-actions-guidance",
+                    )
 
                 with Vertical(
                     id="library-source-detail",

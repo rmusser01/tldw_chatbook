@@ -120,7 +120,8 @@ async def test_library_stage_a_shell_surfaces_source_map_workspace_context_and_i
 
         assert "Source Map" in visible
         assert "Workspace Context" in visible
-        assert "Quick Actions" not in visible
+        assert "Quick Actions" in visible
+        assert "Open a mode, then use the inspector for selected-item actions." in visible
         assert "Next action" in visible
         assert "Active Workbench" in visible
         assert "Browse: all workspaces" in visible
@@ -594,6 +595,11 @@ async def test_library_collections_selection_explains_membership_workspace_and_a
         assert "Selected: Launch Evidence" in visible
         assert "Available now: create, rename, delete records" in visible
         assert "Item actions unavailable until collection items exist." in visible
+        assert "Read/review collection items when a local item adapter is available." in visible
+        assert (
+            "Disabled: collection item Search/RAG, Study, Console handoff, and "
+            "server sync promotion are not wired yet."
+        ) in visible
         assert (
             "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync"
         ) in visible
@@ -653,6 +659,11 @@ async def test_library_collections_empty_state_keeps_global_browse_rule_and_bloc
         assert "Selected: none" in visible
         assert "Available now: create, rename, delete records" in visible
         assert "Item actions unavailable until collection items exist." in visible
+        assert "Read/review collection items when a local item adapter is available." in visible
+        assert (
+            "Disabled: collection item Search/RAG, Study, Console handoff, and "
+            "server sync promotion are not wired yet."
+        ) in visible
         assert (
             "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync"
         ) in visible
