@@ -28,6 +28,7 @@ from ..tldw_api import (
 )
 from ..tldw_api.skills_schemas import _normalize_skill_name
 from ..Utils.input_validation import sanitize_string, validate_text_input
+from .skill_trust_models import SkillTrustBlockedError
 
 
 _INDEX_FILENAME = "tldw_chatbook_skills.json"
@@ -62,6 +63,8 @@ _TEXT_FIELD_LIMITS = {
     "metadata_value": 1000,
     "allowed_tool": 128,
 }
+_TRUST_STATUS_SERVICE_UNAVAILABLE = "trust_locked"
+_TRUST_REASON_SERVICE_UNAVAILABLE = "trust_service_unavailable"
 
 
 class LocalSkillsService:
@@ -77,12 +80,14 @@ class LocalSkillsService:
         store_dir: str | Path,
         policy_enforcer: Any | None = None,
         trust_service: Any | None = None,
+        allow_untrusted_without_trust_service: bool = False,
     ) -> None:
         self.store_dir = Path(store_dir)
         self.skills_dir = self.store_dir / _SKILLS_DIRNAME
         self.index_path = self.store_dir / _INDEX_FILENAME
         self.policy_enforcer = policy_enforcer
         self.trust_service = trust_service
+        self.allow_untrusted_without_trust_service = allow_untrusted_without_trust_service
         self._lock = asyncio.Lock()
 
     def _enforce(self, action_id: str) -> None:
@@ -416,6 +421,15 @@ class LocalSkillsService:
 
     def _trust_fields_for_record(self, record: dict[str, Any]) -> dict[str, Any]:
         if self.trust_service is None:
+            if not self.allow_untrusted_without_trust_service:
+                return {
+                    "trust_status": _TRUST_STATUS_SERVICE_UNAVAILABLE,
+                    "trust_reason_code": _TRUST_REASON_SERVICE_UNAVAILABLE,
+                    "trust_blocked": True,
+                    "trust_changed_files": [],
+                    "trust_manifest_generation": None,
+                    "trust_last_verified_at": None,
+                }
             return {
                 "trust_status": "trusted",
                 "trust_reason_code": None,
@@ -427,15 +441,31 @@ class LocalSkillsService:
         return self.trust_service.status_for_skill(str(record["name"])).response_fields()
 
     def _require_trusted_skill(self, skill_name: str) -> None:
-        if self.trust_service is not None:
-            self.trust_service.ensure_skill_trusted(skill_name)
+        if self.trust_service is None:
+            if self.allow_untrusted_without_trust_service:
+                return
+            raise SkillTrustBlockedError(
+                skill_name=skill_name,
+                reason_code=_TRUST_REASON_SERVICE_UNAVAILABLE,
+                trust_status=_TRUST_STATUS_SERVICE_UNAVAILABLE,
+            )
+        self.trust_service.ensure_skill_trusted(skill_name)
 
     def _trust_after_approved_mutation(self, skill_name: str, *, trust_approved: bool) -> None:
-        if self.trust_service is not None and trust_approved:
-            self.trust_service.trust_current_skill(
-                skill_name,
-                audit_event="trust_chatbook_mutation",
+        if not trust_approved:
+            return
+        if self.trust_service is None:
+            if self.allow_untrusted_without_trust_service:
+                return
+            raise SkillTrustBlockedError(
+                skill_name=skill_name,
+                reason_code=_TRUST_REASON_SERVICE_UNAVAILABLE,
+                trust_status=_TRUST_STATUS_SERVICE_UNAVAILABLE,
             )
+        self.trust_service.trust_current_skill(
+            skill_name,
+            audit_event="trust_chatbook_mutation",
+        )
 
     def _require_record(self, skill_name: str, records: dict[str, dict[str, Any]]) -> dict[str, Any]:
         normalized_name = _normalize_skill_name(skill_name)
@@ -705,6 +735,7 @@ class LocalSkillsService:
         skill = await self.get_skill(skill_name)
         _, body = self._parse_front_matter(skill["content"])
         rendered_prompt = body.strip().replace("{{args}}", request.args or "")
+        self._require_trusted_skill(skill_name)
         return self._dump(
             SkillExecutionResult(
                 skill_name=skill["name"],

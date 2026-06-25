@@ -5,7 +5,7 @@ import zipfile
 import pytest
 
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
-from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError, SkillTrustStatus
 from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
 from tldw_chatbook.Skills_Interop.skill_trust_store import (
     FileSkillTrustGenerationMarkerStore,
@@ -57,12 +57,38 @@ def _trusted_local_service(tmp_path):
     return LocalSkillsService(store_dir=tmp_path, trust_service=trust_service), trust_service
 
 
+def _compat_local_service(store_dir):
+    return LocalSkillsService(
+        store_dir=store_dir,
+        allow_untrusted_without_trust_service=True,
+    )
+
+
+def _skill_trust_status(
+    skill_name: str,
+    *,
+    trust_status: str = "trusted",
+    trust_reason_code: str | None = None,
+    trust_blocked: bool = False,
+    changed_files: tuple[str, ...] = (),
+) -> SkillTrustStatus:
+    return SkillTrustStatus(
+        skill_name=skill_name,
+        trust_status=trust_status,
+        trust_reason_code=trust_reason_code,
+        trust_blocked=trust_blocked,
+        changed_files=changed_files,
+        manifest_generation=1,
+        last_verified_at="2026-06-25T00:00:00+00:00",
+    )
+
+
 @pytest.mark.asyncio
 async def test_local_skills_service_persists_skill_metadata(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
 
     created = await service.create_skill(name="summarize-notes", content=SKILL_WITH_METADATA)
-    reloaded = LocalSkillsService(store_dir=tmp_path)
+    reloaded = _compat_local_service(tmp_path)
     loaded = await reloaded.get_skill("summarize-notes")
     listed = await reloaded.list_skills()
     context = await reloaded.get_context()
@@ -87,7 +113,7 @@ async def test_local_skills_service_persists_skill_metadata(tmp_path):
 
 @pytest.mark.asyncio
 async def test_local_skills_service_validates_agent_skill_metadata_contract(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
 
     created = await service.create_skill(name="summarize-notes", content=AGENT_SKILL_WITH_METADATA)
     listed = await service.list_skills()
@@ -105,7 +131,7 @@ async def test_local_skills_service_validates_agent_skill_metadata_contract(tmp_
 
 @pytest.mark.asyncio
 async def test_local_skills_service_sanitizes_agent_skill_frontmatter_fields(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
     content = """---
 name: summarize-notes
 description: Summarize notes.
@@ -133,7 +159,7 @@ Summarize the selected notes.
 
 @pytest.mark.asyncio
 async def test_local_skills_service_accepts_agent_skill_name_starting_with_number(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
     content = """---
 name: 1-summary
 description: Summarize notes. Use when a user asks for a concise notes summary.
@@ -152,7 +178,7 @@ Summarize the selected notes.
 
 @pytest.mark.asyncio
 async def test_local_skills_service_import_preserves_digit_leading_agent_skill_name(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
     content = b"""---
 name: 1-summary
 description: Summarize notes. Use when a user asks for a concise notes summary.
@@ -175,7 +201,7 @@ Summarize the selected notes.
 
 @pytest.mark.asyncio
 async def test_local_skills_service_marks_over_schema_limit_description_invalid_without_crashing(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
     oversized_description = "x" * 1001
     content = f"""---
 name: summarize-notes
@@ -194,7 +220,7 @@ Summarize the selected notes.
 
 @pytest.mark.asyncio
 async def test_local_skills_service_reports_invalid_agent_skill_metadata_without_mutating_content(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
 
     created = await service.create_skill(name="summarize-notes", content=INVALID_AGENT_SKILL)
     listed = await service.list_skills()
@@ -209,7 +235,7 @@ async def test_local_skills_service_reports_invalid_agent_skill_metadata_without
 
 @pytest.mark.asyncio
 async def test_local_skills_service_uses_deterministic_metadata_defaults(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
 
     await service.create_skill(name="draft-helper", content="# Draft Helper\n\nHelps rewrite local drafts.")
     loaded = await service.get_skill("draft-helper")
@@ -225,7 +251,7 @@ async def test_local_skills_service_uses_deterministic_metadata_defaults(tmp_pat
 
 @pytest.mark.asyncio
 async def test_local_skills_service_blocks_stale_expected_version(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
     await service.create_skill(name="demo-skill", content="# Demo\nInitial")
 
     await service.update_skill("demo-skill", content="# Demo\nUpdated", expected_version=1)
@@ -236,7 +262,7 @@ async def test_local_skills_service_blocks_stale_expected_version(tmp_path):
 
 @pytest.mark.asyncio
 async def test_local_skills_service_serializes_concurrent_updates(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
     await service.create_skill(name="demo-skill", content="# Demo\nInitial")
 
     await asyncio.gather(
@@ -251,7 +277,7 @@ async def test_local_skills_service_serializes_concurrent_updates(tmp_path):
 
 @pytest.mark.asyncio
 async def test_local_skills_service_rejects_unsafe_supporting_file_names(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
 
     with pytest.raises(ValueError, match="Invalid supporting file name"):
         await service.create_skill(
@@ -263,7 +289,7 @@ async def test_local_skills_service_rejects_unsafe_supporting_file_names(tmp_pat
 
 @pytest.mark.asyncio
 async def test_local_skills_service_import_export_round_trip(tmp_path):
-    source = LocalSkillsService(store_dir=tmp_path / "source")
+    source = _compat_local_service(tmp_path / "source")
     created = await source.import_skill(
         name="rewrite-draft",
         content="# Rewrite\nRewrite {{args}}.",
@@ -276,7 +302,7 @@ async def test_local_skills_service_import_export_round_trip(tmp_path):
     with zipfile.ZipFile(io.BytesIO(exported["content"]), "r") as archive:
         assert sorted(archive.namelist()) == ["SKILL.md", "style.md"]
 
-    target = LocalSkillsService(store_dir=tmp_path / "target")
+    target = _compat_local_service(tmp_path / "target")
     imported = await target.import_skill_file(
         exported["content"],
         filename=exported["filename"],
@@ -290,7 +316,7 @@ async def test_local_skills_service_import_export_round_trip(tmp_path):
 
 @pytest.mark.asyncio
 async def test_local_skills_service_import_skill_file_derives_name_from_markdown_filename(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
 
     imported = await service.import_skill_file(
         b"# File Skill\nRender {{args}}",
@@ -303,7 +329,7 @@ async def test_local_skills_service_import_skill_file_derives_name_from_markdown
 
 @pytest.mark.asyncio
 async def test_local_skills_service_execute_renders_prompt_without_model_invocation(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
     await service.create_skill(name="summarize-notes", content=SKILL_WITH_METADATA)
 
     result = await service.execute_skill("summarize-notes", args="note-1")
@@ -320,9 +346,30 @@ async def test_local_skills_service_execute_renders_prompt_without_model_invocat
 
 @pytest.mark.asyncio
 async def test_local_skills_service_seed_builtin_skills_is_deterministic_when_empty(tmp_path):
-    service = LocalSkillsService(store_dir=tmp_path)
+    service = _compat_local_service(tmp_path)
 
     assert await service.seed_builtin_skills(overwrite=True) == {"seeded": [], "count": 0}
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_without_trust_service_fails_closed_by_default(tmp_path):
+    service = LocalSkillsService(store_dir=tmp_path)
+    await service.create_skill(name="demo-skill", content="# Demo\nRender {{args}}")
+
+    listed = await service.list_skills()
+    loaded = await service.get_skill("demo-skill")
+    context = await service.get_context()
+
+    assert listed["skills"][0]["trust_status"] == "trust_locked"
+    assert listed["skills"][0]["trust_reason_code"] == "trust_service_unavailable"
+    assert listed["skills"][0]["trust_blocked"] is True
+    assert loaded["trust_status"] == "trust_locked"
+    assert loaded["trust_reason_code"] == "trust_service_unavailable"
+    assert context["available_skills"] == []
+    assert context["blocked_skills"][0]["name"] == "demo-skill"
+    assert "demo-skill" not in context["context_text"]
+    with pytest.raises(SkillTrustBlockedError, match="trust_service_unavailable"):
+        await service.execute_skill("demo-skill", args="x")
 
 
 @pytest.mark.asyncio
@@ -391,3 +438,150 @@ async def test_local_skills_service_unapproved_update_remains_trust_blocked(tmp_
     assert context["available_skills"] == []
     assert context["blocked_skills"][0]["trust_status"] == "quarantined_modified"
     assert "demo-skill" not in context["context_text"]
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_create_requires_explicit_trust_approval_after_bootstrap(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    trust.bootstrap_trust()
+
+    unapproved = await service.create_skill(name="draft-skill", content="# Draft\nRender {{args}}")
+    approved = await service.create_skill(
+        name="approved-skill",
+        content="# Approved\nRender {{args}}",
+        trust_approved=True,
+    )
+    context = await service.get_context()
+
+    assert unapproved["trust_status"] == "quarantined_added"
+    assert unapproved["trust_blocked"] is True
+    assert approved["trust_status"] == "trusted"
+    assert approved["trust_blocked"] is False
+    assert [item["name"] for item in context["available_skills"]] == ["approved-skill"]
+    assert [item["name"] for item in context["blocked_skills"]] == ["draft-skill"]
+    with pytest.raises(SkillTrustBlockedError, match="skill_added"):
+        await service.execute_skill("draft-skill", args="x")
+    assert (await service.execute_skill("approved-skill", args="x"))["rendered_prompt"] == "# Approved\nRender x"
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_import_requires_explicit_trust_approval_after_bootstrap(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    trust.bootstrap_trust()
+
+    unapproved = await service.import_skill(
+        name="imported-draft",
+        content="# Imported Draft\nRender {{args}}",
+    )
+    approved = await service.import_skill(
+        name="imported-approved",
+        content="# Imported Approved\nRender {{args}}",
+        trust_approved=True,
+    )
+
+    assert unapproved["trust_status"] == "quarantined_added"
+    assert unapproved["trust_blocked"] is True
+    assert approved["trust_status"] == "trusted"
+    assert approved["trust_blocked"] is False
+    with pytest.raises(SkillTrustBlockedError, match="skill_added"):
+        await service.execute_skill("imported-draft", args="x")
+    assert (await service.execute_skill("imported-approved", args="x"))["rendered_prompt"] == (
+        "# Imported Approved\nRender x"
+    )
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_import_file_requires_explicit_trust_approval_after_bootstrap(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    trust.bootstrap_trust()
+
+    unapproved = await service.import_skill_file(
+        b"# File Draft\nRender {{args}}",
+        filename="file-draft.md",
+        content_type="text/markdown",
+    )
+    approved = await service.import_skill_file(
+        b"# File Approved\nRender {{args}}",
+        filename="file-approved.md",
+        content_type="text/markdown",
+        trust_approved=True,
+    )
+
+    assert unapproved["trust_status"] == "quarantined_added"
+    assert unapproved["trust_blocked"] is True
+    assert approved["trust_status"] == "trusted"
+    assert approved["trust_blocked"] is False
+    with pytest.raises(SkillTrustBlockedError, match="skill_added"):
+        await service.execute_skill("file-draft", args="x")
+    assert (await service.execute_skill("file-approved", args="x"))["rendered_prompt"] == "# File Approved\nRender x"
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_rebaseline_failure_leaves_mutation_applied_but_blocked(tmp_path):
+    class FailingTrustService:
+        def status_for_skill(self, skill_name):
+            return _skill_trust_status(
+                skill_name,
+                trust_status="quarantined_modified",
+                trust_reason_code="trust_rebaseline_failed",
+                trust_blocked=True,
+                changed_files=("SKILL.md",),
+            )
+
+        def trust_current_skill(self, skill_name, *, audit_event):
+            raise RuntimeError("trust store unavailable")
+
+        def ensure_skill_trusted(self, skill_name):
+            raise SkillTrustBlockedError(
+                skill_name=skill_name,
+                reason_code="trust_rebaseline_failed",
+                trust_status="quarantined_modified",
+                changed_files=("SKILL.md",),
+            )
+
+    service = LocalSkillsService(store_dir=tmp_path, trust_service=FailingTrustService())
+    await service.create_skill(name="demo-skill", content="# Demo\nInitial")
+
+    with pytest.raises(RuntimeError, match="trust store unavailable"):
+        await service.update_skill("demo-skill", content="# Demo\nUpdated", trust_approved=True)
+
+    loaded = await service.get_skill("demo-skill")
+    assert loaded["content"] == "# Demo\nUpdated"
+    assert loaded["trust_status"] == "quarantined_modified"
+    with pytest.raises(SkillTrustBlockedError, match="trust_rebaseline_failed"):
+        await service.execute_skill("demo-skill", args="x")
+
+
+@pytest.mark.asyncio
+async def test_local_skills_service_execute_rechecks_trust_after_reading_content(tmp_path):
+    class MutatingTrustService:
+        def __init__(self, skill_path):
+            self.skill_path = skill_path
+            self.checks = 0
+
+        def status_for_skill(self, skill_name):
+            return _skill_trust_status(skill_name)
+
+        def trust_current_skill(self, skill_name, *, audit_event):
+            return None
+
+        def ensure_skill_trusted(self, skill_name):
+            self.checks += 1
+            if self.checks == 1:
+                self.skill_path.write_text("# Demo\nChanged {{args}}", encoding="utf-8")
+                return
+            raise SkillTrustBlockedError(
+                skill_name=skill_name,
+                reason_code="skill_modified",
+                trust_status="quarantined_modified",
+                changed_files=("SKILL.md",),
+            )
+
+    skill_path = tmp_path / "skills" / "demo-skill" / "SKILL.md"
+    trust_service = MutatingTrustService(skill_path)
+    service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
+    await service.create_skill(name="demo-skill", content="# Demo\nRender {{args}}")
+
+    with pytest.raises(SkillTrustBlockedError, match="skill_modified"):
+        await service.execute_skill("demo-skill", args="x")
+    assert trust_service.checks == 2
