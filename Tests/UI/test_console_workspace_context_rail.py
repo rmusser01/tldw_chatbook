@@ -27,6 +27,8 @@ from tldw_chatbook.Workspaces import (
 )
 from tldw_chatbook.Workspaces.display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
+    ConsoleWorkspaceContextState,
+    ConsoleWorkspaceConversationRow,
     ConsoleWorkspaceConversationSectionState,
     ConsoleWorkspaceServerAdapterState,
     console_workspace_conversation_result_copy,
@@ -60,6 +62,53 @@ def _assert_status_row(
 ) -> None:
     assert _static_plain(screen, label_selector) == label
     assert value_contains in _static_plain(screen, value_selector)
+
+
+def _section_state(
+    *,
+    collapsed: bool = False,
+    rows: int = 6,
+) -> ConsoleWorkspaceConversationSectionState:
+    conversation_rows = tuple(
+        ConsoleWorkspaceConversationRow(
+            conversation_id=f"conv-{index}",
+            title=f"Conversation {index}",
+            status="workspace-thread",
+            selected=index == 2,
+        )
+        for index in range(rows)
+    )
+    return ConsoleWorkspaceConversationSectionState(
+        workspace_id="ws-a",
+        collapsed=collapsed,
+        query="",
+        selected_summary="Conversation 2 - saved workspace",
+        rows=conversation_rows,
+        workspace_total_count=rows,
+        result_total_count=None,
+        status_copy="",
+        empty_copy="No active workspace conversations.",
+    )
+
+
+def _base_workspace_state(
+    section: ConsoleWorkspaceConversationSectionState,
+) -> ConsoleWorkspaceContextState:
+    return ConsoleWorkspaceContextState(
+        heading="Convos & Workspaces",
+        workspace_label="Workspace: Test",
+        authority_label="Authority: local registry ready",
+        sync_label="Sync: not configured",
+        runtime_label="Runtime: none",
+        conversation_rows=section.rows,
+        conversation_section=section,
+        conversation_empty_copy="No active workspace conversations.",
+        change_workspace_enabled=True,
+        change_workspace_recovery="",
+        new_conversation_enabled=True,
+        new_conversation_recovery="",
+        recovery_copy="",
+    )
 
 
 def test_console_workspace_conversation_section_state_defaults() -> None:
@@ -112,6 +161,50 @@ def test_console_workspace_conversation_result_copy_is_explicit() -> None:
         )
         == ""
     )
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversations_render_bounded_expanded_section() -> None:
+    app = _build_test_app()
+    section = _section_state(collapsed=False, rows=8)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray.sync_state(_base_workspace_state(section))
+        await pilot.pause()
+
+        assert _static_plain(console, "#console-workspace-conversations-title") == "Conversations (8)"
+        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved workspace"
+        assert len(console.query("#console-workspace-conversation-search")) == 1
+        assert len(console.query("#console-workspace-conversation-search-clear")) == 1
+        assert len(console.query("#console-new-workspace-conversation")) == 1
+        conversation_list = console.query_one("#console-workspace-conversations")
+        rows = list(console.query(".console-workspace-conversation-row"))
+        assert len(rows) == 8
+        assert conversation_list.region.height <= 36
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversations_collapsed_shows_selected_summary_only() -> None:
+    app = _build_test_app()
+    section = _section_state(collapsed=True, rows=8)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray.sync_state(_base_workspace_state(section))
+        await pilot.pause()
+
+        assert _static_plain(console, "#console-workspace-conversations-title") == "Conversations (8)"
+        assert _static_plain(console, "#console-workspace-selected-conversation") == "Conversation 2 - saved workspace"
+        assert len(console.query("#console-workspace-conversation-search")) == 0
+        assert len(console.query("#console-workspace-conversations")) == 0
+        assert len(console.query("#console-new-workspace-conversation")) == 0
 
 
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):

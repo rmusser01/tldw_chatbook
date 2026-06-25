@@ -7,10 +7,14 @@ from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
+from tldw_chatbook.Workspaces.display_state import (
+    ConsoleWorkspaceContextState,
+    ConsoleWorkspaceConversationSectionState,
+    console_workspace_conversation_visible_rows,
+)
 
 
 _TRAILING_SHORT_ID_RE = re.compile(r"\s+\[[0-9a-fA-F]{8}\]$")
@@ -153,6 +157,47 @@ class ConsoleWorkspaceContextTray(Vertical):
             value_id=value_id,
         )
 
+    def _conversation_section(self) -> ConsoleWorkspaceConversationSectionState:
+        """Return section state, adapting legacy row-only snapshots."""
+        section = self.state.conversation_section
+        if section is not None:
+            return section
+        selected = next(
+            (row for row in self.state.conversation_rows if row.selected),
+            None,
+        )
+        selected_summary = (
+            (
+                f"{self._conversation_title(selected.title)} - "
+                f"{self._conversation_detail_status(selected.status) or 'conversation'}"
+            )
+            if selected is not None
+            else "No active conversation."
+        )
+        return ConsoleWorkspaceConversationSectionState(
+            workspace_id="",
+            collapsed=False,
+            query="",
+            selected_summary=selected_summary,
+            rows=self.state.conversation_rows,
+            workspace_total_count=len(self.state.conversation_rows),
+            result_total_count=None,
+            status_copy="",
+            empty_copy=self.state.conversation_empty_copy,
+            search_enabled=True,
+            new_conversation_enabled=self.state.new_conversation_enabled,
+        )
+
+    @staticmethod
+    def _conversation_count_title(
+        section: ConsoleWorkspaceConversationSectionState,
+    ) -> str:
+        """Return the Conversations heading with a stable workspace count."""
+        count = section.workspace_total_count
+        if count is None:
+            count = len(section.rows)
+        return f"Conversations ({count})"
+
     @staticmethod
     def _conversation_button(
         text: str,
@@ -205,52 +250,123 @@ class ConsoleWorkspaceContextTray(Vertical):
                 id="console-workspace-recovery",
                 classes="console-workspace-recovery",
             )
-        yield self._static(
-            "Conversations",
-            id="console-workspace-conversations-title",
-            classes="destination-section",
-        )
-        conversation_count = max(1, len(self.state.conversation_rows) * 3)
-        conversation_list = Vertical(id="console-workspace-conversations")
-        conversation_list.styles.height = conversation_count
-        conversation_list.styles.min_height = conversation_count
-        with conversation_list:
-            if self.state.conversation_rows:
-                for index, row in enumerate(self.state.conversation_rows):
-                    marker = "> " if row.selected else "  "
-                    title = self._conversation_title(row.title)
-                    visible_title = self._conversation_visible_title(title)
-                    status = self._conversation_status(row.status)
-                    detail = self._conversation_detail_status(row.status)
-                    status_suffix = f" [{status}]" if status else ""
-                    secondary = detail or "conversation"
-                    yield self._conversation_button(
-                        f"{marker}{visible_title}\n  {secondary}",
-                        id=f"console-workspace-conversation-{index}",
-                        conversation_id=row.conversation_id,
-                        tooltip_label=f"{title}{status_suffix}",
-                        selected=row.selected,
-                    )
-            else:
-                yield self._static(
-                    self.state.conversation_empty_copy,
-                    id="console-workspace-empty-conversations",
-                    classes="console-workspace-empty-copy",
-                )
 
-        if self.state.new_conversation_enabled:
-            yield Button(
-                "New conversation",
-                id="console-new-workspace-conversation",
-                classes="console-workspace-action",
+        section = self._conversation_section()
+        with Horizontal(
+            id="console-workspace-conversations-header",
+            classes="console-workspace-conversations-header",
+        ):
+            title = self._static(
+                self._conversation_count_title(section),
+                id="console-workspace-conversations-title",
+                classes="destination-section",
+            )
+            title.styles.width = "1fr"
+            yield title
+            toggle_label = "+" if section.collapsed else "-"
+            toggle = Button(
+                toggle_label,
+                id="console-workspace-conversations-toggle",
+                classes=(
+                    "console-workspace-action "
+                    "console-workspace-conversations-toggle"
+                ),
                 compact=True,
             )
-            if self.state.new_conversation_recovery:
+            toggle.tooltip = (
+                "Expand Conversations"
+                if section.collapsed
+                else "Collapse Conversations"
+            )
+            toggle.styles.width = 3
+            toggle.styles.min_width = 3
+            yield toggle
+        yield self._static(
+            section.selected_summary or "No active conversation.",
+            id="console-workspace-selected-conversation",
+            classes="console-workspace-selected-conversation",
+        )
+        if not section.collapsed:
+            with Horizontal(
+                id="console-workspace-conversation-search-row",
+                classes="console-workspace-conversation-search-row",
+            ):
+                search_input = Input(
+                    value=section.query,
+                    placeholder="Search workspace conversations",
+                    id="console-workspace-conversation-search",
+                    classes="console-workspace-conversation-search",
+                    disabled=not section.search_enabled,
+                )
+                search_input.styles.width = "1fr"
+                yield search_input
+                clear_button = Button(
+                    "Clear",
+                    id="console-workspace-conversation-search-clear",
+                    classes=(
+                        "console-workspace-action "
+                        "console-workspace-conversation-search-clear"
+                    ),
+                    compact=True,
+                    disabled=not bool(str(section.query or "").strip()),
+                )
+                clear_button.tooltip = "Clear conversation search"
+                yield clear_button
+            if section.status_copy:
                 yield self._static(
-                    self.state.new_conversation_recovery,
-                    id="console-new-workspace-conversation-recovery",
+                    section.status_copy,
+                    id="console-workspace-conversation-search-status",
+                    classes="console-workspace-empty-copy",
+                )
+            if section.error_copy:
+                yield self._static(
+                    section.error_copy,
+                    id="console-workspace-conversation-search-error",
                     classes="console-workspace-recovery",
                 )
+            parent_region = getattr(getattr(self, "parent", None), "region", None)
+            visible_rows = console_workspace_conversation_visible_rows(
+                parent_region.height if parent_region is not None else None
+            )
+            conversation_list = VerticalScroll(id="console-workspace-conversations")
+            conversation_list.styles.height = max(1, visible_rows * 3)
+            conversation_list.styles.min_height = max(1, visible_rows * 3)
+            with conversation_list:
+                if section.rows:
+                    for index, row in enumerate(section.rows):
+                        marker = "> " if row.selected else "  "
+                        title = self._conversation_title(row.title)
+                        visible_title = self._conversation_visible_title(title)
+                        status = self._conversation_status(row.status)
+                        detail = self._conversation_detail_status(row.status)
+                        status_suffix = f" [{status}]" if status else ""
+                        secondary = detail or "conversation"
+                        yield self._conversation_button(
+                            f"{marker}{visible_title}\n  {secondary}",
+                            id=f"console-workspace-conversation-{index}",
+                            conversation_id=row.conversation_id,
+                            tooltip_label=f"{title}{status_suffix}",
+                            selected=row.selected,
+                        )
+                else:
+                    yield self._static(
+                        section.empty_copy or self.state.conversation_empty_copy,
+                        id="console-workspace-empty-conversations",
+                        classes="console-workspace-empty-copy",
+                    )
+            if section.new_conversation_enabled:
+                yield Button(
+                    "New conversation",
+                    id="console-new-workspace-conversation",
+                    classes="console-workspace-action",
+                    compact=True,
+                )
+                if self.state.new_conversation_recovery:
+                    yield self._static(
+                        self.state.new_conversation_recovery,
+                        id="console-new-workspace-conversation-recovery",
+                        classes="console-workspace-recovery",
+                    )
         yield from self._status_pair(
             self._friendly_status_label(self.state.authority_label),
             label_id="console-workspace-authority-label",
