@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
 
 TRUST_STATUS_TRUSTED = "trusted"
@@ -54,8 +55,11 @@ class SkillDirectorySnapshot:
 
     skill_name: str
     fingerprints: tuple[SkillFileFingerprint, ...]
-    text_files: dict[str, str] = field(repr=False)
+    text_files: Mapping[str, str] = field(repr=False)
     unsupported_paths: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "text_files", MappingProxyType(dict(self.text_files)))
 
     @property
     def fingerprint_map(self) -> dict[str, SkillFileFingerprint]:

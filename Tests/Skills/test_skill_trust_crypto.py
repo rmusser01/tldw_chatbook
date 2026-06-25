@@ -168,6 +168,32 @@ def test_skill_directory_snapshot_repr_redacts_text_file_contents():
     assert "text_files" not in repr(snapshot)
 
 
+def test_skill_directory_snapshot_copies_text_files_on_construction():
+    text_files = {"SKILL.md": "trusted baseline"}
+    snapshot = SkillDirectorySnapshot(
+        skill_name="demo",
+        fingerprints=(),
+        text_files=text_files,
+    )
+
+    text_files["SKILL.md"] = "mutated after construction"
+    text_files["extra.md"] = "new file"
+
+    assert snapshot.text_files["SKILL.md"] == "trusted baseline"
+    assert "extra.md" not in snapshot.text_files
+
+
+def test_skill_directory_snapshot_text_files_are_immutable():
+    snapshot = SkillDirectorySnapshot(
+        skill_name="demo",
+        fingerprints=(),
+        text_files={"SKILL.md": "trusted baseline"},
+    )
+
+    with pytest.raises(TypeError):
+        snapshot.text_files["SKILL.md"] = "mutated"
+
+
 def test_trust_blocked_error_carries_safe_fields():
     error = SkillTrustBlockedError(
         skill_name="demo",
