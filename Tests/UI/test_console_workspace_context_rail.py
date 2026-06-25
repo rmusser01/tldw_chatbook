@@ -781,7 +781,11 @@ def test_console_workspace_conversation_subsection_styles_are_declared() -> None
     css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text()
 
     assert "#console-workspace-conversations-header {" in css
+    assert ".console-workspace-action.console-workspace-conversations-toggle {" in css
     assert "#console-workspace-selected-conversation {" in css
     assert "#console-workspace-conversation-search-row {" in css
-    assert "#console-workspace-conversations {" in css
-    assert "scrollbar-size: 1 1" in css
+    list_selector = "#console-workspace-conversations {"
+    assert list_selector in css
+
+    list_block = css.split(list_selector, 1)[1].split("}", 1)[0]
+    assert "scrollbar-size: 1 1" in list_block

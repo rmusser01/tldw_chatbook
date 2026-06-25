@@ -633,7 +633,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     align: left middle;
 }
 
-.console-workspace-conversations-toggle {
+.console-workspace-action.console-workspace-conversations-toggle {
     width: 3;
     min-width: 3;
     max-width: 3;
