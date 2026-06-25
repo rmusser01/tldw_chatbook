@@ -270,7 +270,17 @@ from tldw_chatbook.Research_Interop import (
 )
 from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
-from tldw_chatbook.Skills_Interop import LocalSkillsService, ServerSkillsService, SkillsScopeService
+from tldw_chatbook.Skills_Interop import (
+    LocalSkillsService,
+    ServerSkillsService,
+    SkillTrustService,
+    SkillsScopeService,
+)
+from tldw_chatbook.Skills_Interop.skill_trust_store import (
+    SkillTrustStore,
+    build_default_skill_trust_key_cache,
+    build_default_skill_trust_marker_store,
+)
 from tldw_chatbook.Sync_Interop import (
     LocalFirstSyncService,
     ManualSyncControlService,
@@ -2402,9 +2412,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
+        local_skills_store_dir = get_user_data_dir() / "skills"
+        self.local_skill_trust_service = SkillTrustService(
+            skills_dir=local_skills_store_dir / "skills",
+            trust_store=SkillTrustStore(
+                store_dir=local_skills_store_dir / "trust",
+                marker_store=build_default_skill_trust_marker_store(),
+            ),
+            key_cache=build_default_skill_trust_key_cache(),
+            keyring_convenience_enabled=False,
+            reduced_rollback_protection=False,
+        )
         self.local_skills_service = LocalSkillsService(
-            store_dir=get_user_data_dir() / "skills",
+            store_dir=local_skills_store_dir,
             policy_enforcer=self.service_policy_enforcer,
+            trust_service=self.local_skill_trust_service,
         )
         self.skills_scope_service = SkillsScopeService(
             local_service=self.local_skills_service,
