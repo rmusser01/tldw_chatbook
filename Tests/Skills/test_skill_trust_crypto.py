@@ -2,6 +2,7 @@ import pytest
 
 from tldw_chatbook.Skills_Interop import SkillTrustBlockedError, SkillTrustStatus
 from tldw_chatbook.Skills_Interop.skill_trust_crypto import (
+    SkillTrustKeys,
     canonical_json,
     decrypt_json_blob,
     derive_skill_trust_keys,
@@ -36,6 +37,23 @@ def test_skill_trust_key_derivation_separates_key_purposes():
 def test_skill_trust_key_derivation_requires_32_byte_salt():
     with pytest.raises(ValueError, match="salt must be 32 bytes"):
         derive_skill_trust_keys("passphrase", salt=b"short")
+
+
+def test_skill_trust_key_repr_redacts_key_material():
+    keys = SkillTrustKeys(
+        manifest_mac_key=b"m" * 32,
+        snapshot_key=b"s" * 32,
+        audit_mac_key=b"a" * 32,
+        wrapped_root_key=b"w" * 32,
+    )
+    rendered = repr(keys)
+
+    assert "SkillTrustKeys" in rendered
+    assert "redacted" in rendered
+    assert "mmmm" not in rendered
+    assert "ssss" not in rendered
+    assert "aaaa" not in rendered
+    assert "wwww" not in rendered
 
 
 def test_canonical_json_and_sha256_are_deterministic():
@@ -75,8 +93,20 @@ def test_snapshot_encryption_round_trips_and_authenticates_associated_data():
         decrypt_json_blob(encrypted, keys.snapshot_key, associated_data=b"demo:generation:2")
 
 
-def test_snapshot_decryption_rejects_non_object_payloads():
+def test_snapshot_encryption_requires_32_byte_keys():
     keys = derive_skill_trust_keys("passphrase", salt=b"3" * 32)
+    payload = {"files": {"SKILL.md": "# Demo\nTrusted"}}
+    encrypted = encrypt_json_blob(payload, keys.snapshot_key, associated_data=b"demo:generation:1")
+
+    with pytest.raises(ValueError, match="32 bytes"):
+        encrypt_json_blob(payload, b"short", associated_data=b"demo:generation:1")
+
+    with pytest.raises(ValueError, match="32 bytes"):
+        decrypt_json_blob(encrypted, b"short", associated_data=b"demo:generation:1")
+
+
+def test_snapshot_decryption_rejects_non_object_payloads():
+    keys = derive_skill_trust_keys("passphrase", salt=b"4" * 32)
     encrypted = encrypt_json_blob(  # type: ignore[arg-type]
         ["not", "an", "object"],
         keys.snapshot_key,
@@ -124,6 +154,18 @@ def test_trust_models_produce_json_safe_response_fields():
         "trust_manifest_generation": 3,
         "trust_last_verified_at": "2026-06-25T00:00:00+00:00",
     }
+
+
+def test_skill_directory_snapshot_repr_redacts_text_file_contents():
+    snapshot = SkillDirectorySnapshot(
+        skill_name="demo",
+        fingerprints=(),
+        text_files={"SKILL.md": "SECRET PROMPT CONTENT"},
+    )
+
+    assert snapshot.text_files["SKILL.md"] == "SECRET PROMPT CONTENT"
+    assert "SECRET PROMPT CONTENT" not in repr(snapshot)
+    assert "text_files" not in repr(snapshot)
 
 
 def test_trust_blocked_error_carries_safe_fields():

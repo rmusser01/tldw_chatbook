@@ -21,7 +21,7 @@ SKILL_TRUST_KEY_SIZE = 32
 SKILL_TRUST_NONCE_SIZE = 12
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class SkillTrustKeys:
     """Purpose-separated keys derived from the local skill trust passphrase."""
 
@@ -29,6 +29,15 @@ class SkillTrustKeys:
     snapshot_key: bytes
     audit_mac_key: bytes
     wrapped_root_key: bytes
+
+    def __repr__(self) -> str:
+        return (
+            "SkillTrustKeys("
+            "manifest_mac_key=<redacted>, "
+            "snapshot_key=<redacted>, "
+            "audit_mac_key=<redacted>, "
+            "wrapped_root_key=<redacted>)"
+        )
 
 
 def canonical_json(payload: Any) -> bytes:
@@ -73,6 +82,11 @@ def _derive_subkey(root: bytes, purpose: bytes) -> bytes:
     return hmac.new(root, purpose, hashlib.sha256).digest()
 
 
+def _require_aes_256_key(key: bytes) -> None:
+    if not isinstance(key, bytes) or len(key) != SKILL_TRUST_KEY_SIZE:
+        raise ValueError("skill trust AES-256-GCM key must be 32 bytes")
+
+
 def manifest_mac(manifest_payload: dict[str, Any], key: bytes) -> str:
     """Return an HMAC-SHA256 tag for a canonical manifest payload."""
 
@@ -87,6 +101,7 @@ def encrypt_json_blob(
 ) -> dict[str, str]:
     """Encrypt and authenticate a JSON payload with AES-256-GCM."""
 
+    _require_aes_256_key(key)
     nonce = os.urandom(SKILL_TRUST_NONCE_SIZE)
     cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
     cipher.update(associated_data)
@@ -107,6 +122,7 @@ def decrypt_json_blob(
 ) -> dict[str, Any]:
     """Decrypt and authenticate a JSON object encrypted by :func:`encrypt_json_blob`."""
 
+    _require_aes_256_key(key)
     try:
         if blob.get("alg") != "AES-256-GCM":
             raise ValueError("unsupported snapshot algorithm")

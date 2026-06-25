@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -54,7 +54,7 @@ class SkillDirectorySnapshot:
 
     skill_name: str
     fingerprints: tuple[SkillFileFingerprint, ...]
-    text_files: dict[str, str]
+    text_files: dict[str, str] = field(repr=False)
     unsupported_paths: tuple[str, ...] = ()
 
     @property
