@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import re
 from dataclasses import replace
 from types import SimpleNamespace
@@ -17,7 +18,11 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
+from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_GLOBAL_WORKSPACE_ID,
+    ConsoleMessageRole,
+    ConsoleRunStatus,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
@@ -97,6 +102,15 @@ def test_console_tree_messages_follow_latest_branch_only():
     )
 
     assert [row["id"] for row in rows] == ["root", "latest-assistant", "followup"]
+
+
+def test_console_workspace_conversation_search_worker_uses_dedicated_group():
+    source = inspect.getsource(
+        ChatScreen.on_console_workspace_conversation_search_changed
+    )
+
+    assert 'group="console-workspace-conversation-search"' in source
+    assert "exclusive=True" in source
 
 
 class _ReadyResolutionGateway:
@@ -2620,6 +2634,29 @@ async def test_console_workspace_conversation_search_filters_active_workspace_me
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_conversation_search_uses_current_workspace_context():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-search-a", name="Search A")
+    service.create_workspace(workspace_id="ws-search-b", name="Search B")
+    service.set_active_workspace("ws-search-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        store = console._ensure_console_chat_store()
+        assert store.workspace_context.active_workspace_id == "ws-search-a"
+
+        service.set_active_workspace("ws-search-b")
+
+        assert (
+            console._active_console_workspace_id_for_conversation_search()
+            == "ws-search-b"
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_conversation_list_reserves_two_line_rows_with_margin():
     """Verify conversation list height accounts for two-line rows plus margin."""
     app = _build_test_app()
@@ -3131,6 +3168,40 @@ async def test_console_workspace_rail_keeps_active_native_session_visible_when_s
             selected=True,
         )
         assert any("Chat 1" in text for text in row_texts), row_texts
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_search_keeps_selected_global_native_session():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session(
+            title="Global Search Chat",
+            workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
+        )
+        session.title = "Global Search Chat"
+        session.workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
+        await console._sync_native_console_chat_ui()
+
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        console.query_one("#console-workspace-conversation-search", Input).focus()
+        await pilot.press("g", "l", "o", "b", "a", "l")
+        await _wait_for_text(console, pilot, "1 match")
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Global Search Chat",
+            selected=True,
+        )
+
+        assert any(
+            text.startswith("> ") and "Global Search Chat" in text
+            for text in row_texts
+        )
 
 
 @pytest.mark.asyncio

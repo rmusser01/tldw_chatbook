@@ -363,6 +363,7 @@ class ChatScreen(BaseAppScreen):
                     query,
                     token,
                 ),
+                group="console-workspace-conversation-search",
                 exclusive=True,
             ),
         )
@@ -881,9 +882,18 @@ class ChatScreen(BaseAppScreen):
 
     def _active_console_workspace_id_for_conversation_search(self) -> str:
         """Return the current active workspace id for Console conversation search."""
-        store = self._console_chat_store
-        if store is not None and store.workspace_context.active_workspace_id:
-            return str(store.workspace_context.active_workspace_id)
+        try:
+            workspace_id = str(
+                self._current_console_workspace_context().active_workspace_id or ""
+            ).strip()
+        except Exception:
+            logger.debug(
+                "Unable to read current workspace context for conversation search",
+                exc_info=True,
+            )
+            workspace_id = ""
+        if workspace_id:
+            return workspace_id
         service = getattr(self.app_instance, "workspace_registry_service", None)
         get_active_workspace = getattr(service, "get_active_workspace", None)
         if callable(get_active_workspace):
@@ -891,8 +901,13 @@ class ChatScreen(BaseAppScreen):
                 workspace = get_active_workspace()
             except Exception:
                 logger.debug("Unable to read active workspace for conversation search", exc_info=True)
-                return ""
-            return str(getattr(workspace, "workspace_id", "") or "")
+                workspace = None
+            workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
+            if workspace_id:
+                return workspace_id
+        store = self._console_chat_store
+        if store is not None and store.workspace_context.active_workspace_id:
+            return str(store.workspace_context.active_workspace_id)
         return ""
 
     def _focus_console_workspace_conversation_search(self) -> None:
@@ -1527,8 +1542,16 @@ class ChatScreen(BaseAppScreen):
             return []
         needle = str(query or "").strip().lower()
         rows: list[ConsoleWorkspaceConversationRow] = []
+        active_session_id = store.active_session_id
         for session in store.sessions():
-            if workspace_id and str(session.workspace_id or "") != workspace_id:
+            selected = session.id == active_session_id
+            session_workspace_id = str(session.workspace_id or "").strip()
+            if (
+                workspace_id
+                and workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
+                and session_workspace_id != workspace_id
+                and not selected
+            ):
                 continue
             title = str(session.title or "Untitled conversation")
             if needle and needle not in title.lower():
@@ -1542,8 +1565,8 @@ class ChatScreen(BaseAppScreen):
                 ConsoleWorkspaceConversationRow(
                     conversation_id=conversation_id,
                     title=title,
-                    status="active" if session.id == store.active_session_id else "open",
-                    selected=session.id == store.active_session_id,
+                    status="active" if selected else "open",
+                    selected=selected,
                 )
             )
         return rows
