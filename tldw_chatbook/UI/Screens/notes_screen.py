@@ -13,6 +13,7 @@ from uuid import uuid4
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.message import Message
@@ -40,6 +41,7 @@ from ...Widgets.Note_Widgets.notes_workbench_panes import (
 from ...Widgets.Note_Widgets.workspace_context_panel import WorkspaceContextPanel
 from ...Widgets.Note_Widgets.workspace_source_picker import WorkspaceSourcePicker
 from ...Widgets.emoji_picker import EmojiPickerScreen, EmojiSelected
+from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
 from ..Navigation.base_app_screen import BaseAppScreen
 from .notes_scope_models import NotesScreenState, PendingNavigation, ScopeType, WorkspaceSubview
 from .study_scope_models import StudyScopeContext, StudyScopeType
@@ -93,11 +95,34 @@ class NotesScreen(BaseAppScreen):
     # convention: these fire when focus is outside text-entry widgets and are
     # surfaced in the footer.
     BINDINGS = [
+        *BaseAppScreen.BINDINGS,
+        Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
+        Binding(
+            "shift+f6",
+            "focus_previous_workbench_pane",
+            "Previous pane",
+            show=False,
+            priority=True,
+        ),
         ("s", "notes_save_note", "Save Note"),
         ("n", "notes_new_note", "New Note"),
         ("slash", "notes_focus_search", "Search Notes"),
         ("e", "notes_focus_editor", "Focus Editor"),
     ]
+    _WORKBENCH_FOCUS_TARGETS = (
+        WorkbenchPaneTarget(
+            "notes-navigator-pane",
+            ("notes-search-input", "notes-navigator-rail-collapse"),
+        ),
+        WorkbenchPaneTarget(
+            "notes-editor-pane",
+            ("notes-editor-area", "notes-title-input"),
+        ),
+        WorkbenchPaneTarget(
+            "notes-inspector-pane",
+            ("notes-inspector-rail-collapse", "notes-keywords-area"),
+        ),
+    )
 
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
@@ -2694,6 +2719,26 @@ class NotesScreen(BaseAppScreen):
             self.query_one("#notes-editor-area", TextArea).focus()
         except QueryError:
             return
+
+    def action_focus_next_workbench_pane(self) -> None:
+        """F6: move focus to the next Notes workbench pane."""
+        if self.state.active_mode != "notes":
+            self._set_state(active_mode="notes")
+        focus_relative_workbench_pane(
+            self,
+            self._WORKBENCH_FOCUS_TARGETS,
+            direction=1,
+        )
+
+    def action_focus_previous_workbench_pane(self) -> None:
+        """Shift+F6: move focus to the previous Notes workbench pane."""
+        if self.state.active_mode != "notes":
+            self._set_state(active_mode="notes")
+        focus_relative_workbench_pane(
+            self,
+            self._WORKBENCH_FOCUS_TARGETS,
+            direction=-1,
+        )
 
     @on(Button.Pressed, "#notes-navigator-rail-collapse")
     def handle_navigator_rail_collapse(self, event: Button.Pressed) -> None:

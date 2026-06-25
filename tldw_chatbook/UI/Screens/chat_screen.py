@@ -14,6 +14,7 @@ from loguru import logger
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.events import Click, Key, MouseUp, Paste
@@ -131,6 +132,7 @@ from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
+from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
 from ...Workspaces.display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
     ConsoleWorkspaceConversationRow,
@@ -277,6 +279,52 @@ class ChatScreen(BaseAppScreen):
     This screen preserves all chat state including tabs, messages,
     input text, and UI preferences when navigating away and returning.
     """
+
+    BINDINGS = [
+        *BaseAppScreen.BINDINGS,
+        Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
+        Binding(
+            "shift+f6",
+            "focus_previous_workbench_pane",
+            "Previous pane",
+            show=False,
+            priority=True,
+        ),
+    ]
+    _WORKBENCH_FOCUS_TARGETS = (
+        WorkbenchPaneTarget(
+            "console-left-rail",
+            ("console-context-rail-collapse",),
+        ),
+        WorkbenchPaneTarget(
+            "console-transcript-region",
+            ("console-native-transcript",),
+        ),
+        WorkbenchPaneTarget(
+            "console-right-rail",
+            ("console-inspector-rail-collapse",),
+        ),
+        WorkbenchPaneTarget(
+            "console-native-composer",
+            ("console-native-composer",),
+        ),
+    )
+
+    def action_focus_next_workbench_pane(self) -> None:
+        """F6: move focus to the next Console workbench pane."""
+        focus_relative_workbench_pane(
+            self,
+            self._WORKBENCH_FOCUS_TARGETS,
+            direction=1,
+        )
+
+    def action_focus_previous_workbench_pane(self) -> None:
+        """Shift+F6: move focus to the previous Console workbench pane."""
+        focus_relative_workbench_pane(
+            self,
+            self._WORKBENCH_FOCUS_TARGETS,
+            direction=-1,
+        )
     
     @on(Select.Changed, "#chat-api-provider")
     async def handle_provider_change(self, event: Select.Changed) -> None:
