@@ -127,6 +127,19 @@ def test_console_workspace_conversation_search_clear_button_stops_pending_timer(
     assert "_console_workspace_conversation_search_timer = None" in clear_branch
 
 
+def test_console_workspace_conversation_search_selection_refresh_invalidates_token():
+    source = inspect.getsource(
+        ChatScreen._refresh_console_workspace_conversation_search_after_selection
+    )
+    active_query_branch = source.split("if not query.strip():", 1)[1]
+    before_refresh = active_query_branch.split(
+        "await self._refresh_console_workspace_conversation_search",
+        1,
+    )[0]
+
+    assert "_console_workspace_conversation_search_token += 1" in before_refresh
+
+
 class _ReadyResolutionGateway:
     async def resolve_for_send(self, selection):
         return SimpleNamespace(
@@ -355,6 +368,49 @@ class SlowSearchConversationService(StaticConversationTreeService):
                 "total": 0,
                 "limit": int(kwargs.get("limit") or 50),
                 "offset": int(kwargs.get("offset") or 0),
+            },
+        }
+
+
+class SlowFirstSearchableConversationService(SearchableConversationService):
+    def __init__(self, conversations: dict[str, dict]) -> None:
+        super().__init__(conversations)
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def list_conversations(self, *, mode: str = "local", **kwargs):
+        self.list_calls.append({"mode": mode, **kwargs})
+        if len(self.list_calls) == 1:
+            self.started.set()
+            await self.release.wait()
+        query = str(kwargs.get("query") or "").strip().lower()
+        workspace_id = str(kwargs.get("workspace_id") or "").strip()
+        limit = int(kwargs.get("limit") or 50)
+        items = []
+        for conversation_id, tree in self.trees.items():
+            conversation = tree.get("conversation", {})
+            title = str(conversation.get("title") or "")
+            if (
+                workspace_id
+                and str(conversation.get("workspace_id") or "") != workspace_id
+            ):
+                continue
+            if query and query not in title.lower():
+                continue
+            items.append(
+                {
+                    "id": conversation_id,
+                    "title": title,
+                    "workspace_id": conversation.get("workspace_id"),
+                    "state": conversation.get("state", "active"),
+                }
+            )
+        return {
+            "items": items[:limit],
+            "pagination": {
+                "total": len(items),
+                "limit": limit,
+                "offset": 0,
             },
         }
 
@@ -2778,6 +2834,121 @@ async def test_console_workspace_conversation_search_selection_keeps_query_activ
         search = console.query_one("#console-workspace-conversation-search", Input)
         assert search.value == "alpha"
         assert "Select Alpha" in _static_plain_text(console.query_one("#console-workspace-selected-conversation", Static))
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_search_blank_selection_keeps_composer_focus():
+    app = _build_test_app()
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    service.link_membership(
+        active_workspace.workspace_id,
+        item_type="conversation",
+        item_id="blank-focus-chat",
+        role="workspace-thread",
+        title="Blank focus chat",
+    )
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "blank-focus-chat": {
+                "conversation": {
+                    "id": "blank-focus-chat",
+                    "title": "Blank focus chat",
+                    "workspace_id": active_workspace.workspace_id,
+                },
+                "root_threads": [
+                    {
+                        "id": "blank-focus-message",
+                        "conversation_id": "blank-focus-chat",
+                        "role": "user",
+                        "sender": "user",
+                        "content": "blank focus prompt",
+                        "children": [],
+                    }
+                ],
+            }
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Blank focus chat",
+            selected=False,
+        )
+
+        await _click_console_workspace_conversation_for_id(
+            console,
+            pilot,
+            "blank-focus-chat",
+        )
+
+        await _wait_for_text(console, pilot, "blank focus prompt")
+        await pilot.pause(0.2)
+        search = console.query_one("#console-workspace-conversation-search", Input)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert console.app.focused is composer
+        assert console.app.focused is not search
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversation_search_selection_invalidates_pending_worker():
+    app = _build_test_app()
+    app.chat_conversation_scope_service = SlowFirstSearchableConversationService({})
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Slow Alpha")
+        first.title = "Slow Alpha"
+        await console._sync_native_console_chat_ui()
+
+        await pilot.click("#console-new-chat-tab")
+        second = store.active_session_id
+        assert second != first.id
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
+        second_session = store.switch_session(second)
+        first.workspace_id = second_session.workspace_id
+        await console._sync_native_console_chat_ui()
+
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await pilot.click("#console-workspace-conversation-search")
+        await pilot.press("a", "l", "p", "h", "a")
+        await _wait_for_workspace_conversation_text(console, pilot, "Slow Alpha", selected=False)
+        for _ in range(40):
+            if app.chat_conversation_scope_service.started.is_set():
+                break
+            await pilot.pause(0.05)
+        assert app.chat_conversation_scope_service.started.is_set()
+        stale_token = console._console_workspace_conversation_search_token
+
+        await _click_console_workspace_conversation_for_session(
+            console,
+            pilot,
+            store,
+            first.id,
+        )
+
+        assert console._console_workspace_conversation_search_token > stale_token
+        app.chat_conversation_scope_service.release.set()
+        await pilot.pause(0.5)
+        assert "Slow Alpha" in _static_plain_text(
+            console.query_one("#console-workspace-selected-conversation", Static)
+        )
+        row_texts = await _wait_for_workspace_conversation_text(
+            console,
+            pilot,
+            "Slow Alpha",
+            selected=True,
+        )
+        assert any(text.startswith("> ") and "Slow Alpha" in text for text in row_texts)
 
 
 @pytest.mark.asyncio

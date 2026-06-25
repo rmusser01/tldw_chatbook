@@ -1785,12 +1785,16 @@ class ChatScreen(BaseAppScreen):
         """Refresh active search rows after a conversation row changes selection."""
         query = self._console_workspace_conversation_query
         if not query.strip():
-            self.call_after_refresh(self._focus_console_workspace_conversation_search)
             return
+        if self._console_workspace_conversation_search_timer is not None:
+            self._console_workspace_conversation_search_timer.stop()
+            self._console_workspace_conversation_search_timer = None
+        self._console_workspace_conversation_search_token += 1
+        token = self._console_workspace_conversation_search_token
         await self._refresh_console_workspace_conversation_search(
             self._active_console_workspace_id_for_conversation_search(),
             query,
-            self._console_workspace_conversation_search_token,
+            token,
         )
 
     def _with_native_console_session_rows(
@@ -5926,7 +5930,6 @@ class ChatScreen(BaseAppScreen):
                 resumed = await self._resume_console_workspace_conversation(conversation_id)
                 if resumed:
                     await self._refresh_console_workspace_conversation_search_after_selection()
-                    self.call_after_refresh(self._focus_console_workspace_conversation_search)
                     return
                 self.app_instance.notify(
                     "Open this workspace conversation from Library before switching here.",
@@ -5938,10 +5941,8 @@ class ChatScreen(BaseAppScreen):
                 self._set_active_workspace_for_console_session(session_id)
                 controller.switch_session(session_id)
                 await self._sync_native_console_chat_ui()
-                await self._refresh_console_workspace_conversation_search_after_selection()
-                self.call_after_refresh(self._focus_console_workspace_conversation_search)
             self._focus_console_composer_if_needed(force=True)
-            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+            await self._refresh_console_workspace_conversation_search_after_selection()
             return
         if button_id and button_id.startswith("console-close-session-tab-"):
             event.stop()
