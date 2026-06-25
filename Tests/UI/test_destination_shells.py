@@ -5,7 +5,7 @@ import inspect
 import logging
 import time
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
@@ -268,6 +268,28 @@ class StaticSkillsScopeService:
     async def list_skills(self, **kwargs):
         self.calls.append(kwargs)
         return {"skills": list(self.skills), "total": len(self.skills)}
+
+
+class RecordingSkillTrustService:
+    def __init__(self, review_id="review-id"):
+        self.review_id = review_id
+        self.bootstrap_calls = 0
+        self.reviewed_skill = None
+        self.trusted_review_id = None
+
+    def bootstrap_trust(self, *args, **kwargs):
+        self.bootstrap_calls += 1
+
+    def capture_review(self, skill_name):
+        self.reviewed_skill = skill_name
+        return {
+            "review_id": self.review_id,
+            "skill_name": skill_name,
+            "changed_files": ["SKILL.md"],
+        }
+
+    def trust_reviewed_snapshot(self, review_id):
+        self.trusted_review_id = review_id
 
 
 class RaisingSkillsScopeService:
@@ -1937,6 +1959,130 @@ async def test_skills_destination_distinguishes_valid_and_invalid_skill_readines
         assert "Execution: blocked" in text
         assert "Reason: description is required" in text
         assert attach_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_blocks_metadata_valid_trust_blocked_skill():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "record_id": "local:skill:summarize-notes",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "quarantined_modified",
+                "trust_reason_code": "skill_modified",
+                "trust_blocked": True,
+                "trust_changed_files": ["SKILL.md"],
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        text = _visible_text(screen)
+        button = screen.query_one("#skills-attach-to-console", Button)
+
+        assert "Trust: changed since trusted baseline" in text
+        assert "Reason code: skill_modified" in text
+        assert "Changed files: SKILL.md" in text
+        assert "Execution: blocked" in text
+        assert "Reason: trust blocked (skill_modified)" in text
+        assert button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_shows_uninitialized_bootstrap_action():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "new-skill",
+                "description": "New local skill",
+                "record_id": "local:skill:new-skill",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "trust_uninitialized",
+                "trust_reason_code": "trust_uninitialized",
+                "trust_blocked": True,
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        text = _visible_text(screen)
+
+        assert "Trust: not initialized" in text
+        assert screen.query_one("#skills-bootstrap-trust", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_bootstrap_action_calls_trust_service():
+    app = _build_test_app()
+    app.local_skill_trust_service = RecordingSkillTrustService()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "new-skill",
+                "description": "New local skill",
+                "record_id": "local:skill:new-skill",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "trust_uninitialized",
+                "trust_reason_code": "trust_uninitialized",
+                "trust_blocked": True,
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        screen._request_skill_trust_passphrase = AsyncMock(return_value="passphrase")
+        await pilot.click("#skills-bootstrap-trust")
+
+        assert app.local_skill_trust_service.bootstrap_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_review_action_enables_trust_reviewed_version():
+    app = _build_test_app()
+    app.local_skill_trust_service = RecordingSkillTrustService(review_id="review-1")
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "record_id": "local:skill:summarize-notes",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "quarantined_modified",
+                "trust_reason_code": "skill_modified",
+                "trust_blocked": True,
+                "trust_changed_files": ["SKILL.md"],
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        await pilot.click("#skills-review-diff")
+
+        assert app.local_skill_trust_service.reviewed_skill == "summarize-notes"
+        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+
+        await pilot.click("#skills-trust-reviewed-version")
+        assert app.local_skill_trust_service.trusted_review_id == "review-1"
 
 
 @pytest.mark.asyncio
