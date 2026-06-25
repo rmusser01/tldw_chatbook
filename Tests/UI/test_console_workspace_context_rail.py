@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
@@ -68,6 +68,8 @@ def _section_state(
     *,
     collapsed: bool = False,
     rows: int = 6,
+    query: str = "",
+    search_enabled: bool = True,
 ) -> ConsoleWorkspaceConversationSectionState:
     conversation_rows = tuple(
         ConsoleWorkspaceConversationRow(
@@ -81,13 +83,14 @@ def _section_state(
     return ConsoleWorkspaceConversationSectionState(
         workspace_id="ws-a",
         collapsed=collapsed,
-        query="",
+        query=query,
         selected_summary="Conversation 2 - saved workspace",
         rows=conversation_rows,
         workspace_total_count=rows,
         result_total_count=None,
         status_copy="",
         empty_copy="No active workspace conversations.",
+        search_enabled=search_enabled,
     )
 
 
@@ -205,6 +208,78 @@ async def test_console_workspace_conversations_collapsed_shows_selected_summary_
         assert len(console.query("#console-workspace-conversation-search")) == 0
         assert len(console.query("#console-workspace-conversations")) == 0
         assert len(console.query("#console-new-workspace-conversation")) == 0
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversations_fallback_disables_unowned_controls() -> None:
+    app = _build_test_app()
+    section = _section_state(collapsed=False, rows=3)
+    state = _base_workspace_state(section)
+    legacy_state = ConsoleWorkspaceContextState(
+        heading=state.heading,
+        workspace_label=state.workspace_label,
+        authority_label=state.authority_label,
+        sync_label=state.sync_label,
+        runtime_label=state.runtime_label,
+        conversation_rows=state.conversation_rows,
+        conversation_section=None,
+        conversation_empty_copy=state.conversation_empty_copy,
+        change_workspace_enabled=state.change_workspace_enabled,
+        change_workspace_recovery=state.change_workspace_recovery,
+        new_conversation_enabled=state.new_conversation_enabled,
+        new_conversation_recovery=state.new_conversation_recovery,
+        recovery_copy=state.recovery_copy,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray.sync_state(legacy_state)
+        await pilot.pause()
+
+        search_input = console.query_one("#console-workspace-conversation-search", Input)
+        clear_button = console.query_one(
+            "#console-workspace-conversation-search-clear",
+            Button,
+        )
+        toggle_button = console.query_one(
+            "#console-workspace-conversations-toggle",
+            Button,
+        )
+
+        assert search_input.disabled is True
+        assert clear_button.disabled is True
+        assert toggle_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_conversations_clear_requires_enabled_search() -> None:
+    app = _build_test_app()
+    section = _section_state(
+        collapsed=False,
+        rows=3,
+        query="research",
+        search_enabled=False,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray.sync_state(_base_workspace_state(section))
+        await pilot.pause()
+
+        search_input = console.query_one("#console-workspace-conversation-search", Input)
+        clear_button = console.query_one(
+            "#console-workspace-conversation-search-clear",
+            Button,
+        )
+
+        assert search_input.disabled is True
+        assert clear_button.disabled is True
 
 
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):

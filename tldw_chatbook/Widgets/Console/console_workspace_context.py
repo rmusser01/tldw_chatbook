@@ -184,7 +184,7 @@ class ConsoleWorkspaceContextTray(Vertical):
             result_total_count=None,
             status_copy="",
             empty_copy=self.state.conversation_empty_copy,
-            search_enabled=True,
+            search_enabled=False,
             new_conversation_enabled=self.state.new_conversation_enabled,
         )
 
@@ -252,6 +252,7 @@ class ConsoleWorkspaceContextTray(Vertical):
             )
 
         section = self._conversation_section()
+        section_controls_enabled = self.state.conversation_section is not None
         with Horizontal(
             id="console-workspace-conversations-header",
             classes="console-workspace-conversations-header",
@@ -272,6 +273,7 @@ class ConsoleWorkspaceContextTray(Vertical):
                     "console-workspace-conversations-toggle"
                 ),
                 compact=True,
+                disabled=not section_controls_enabled,
             )
             toggle.tooltip = (
                 "Expand Conversations"
@@ -308,7 +310,10 @@ class ConsoleWorkspaceContextTray(Vertical):
                         "console-workspace-conversation-search-clear"
                     ),
                     compact=True,
-                    disabled=not bool(str(section.query or "").strip()),
+                    disabled=(
+                        not section.search_enabled
+                        or not bool(str(section.query or "").strip())
+                    ),
                 )
                 clear_button.tooltip = "Clear conversation search"
                 yield clear_button
