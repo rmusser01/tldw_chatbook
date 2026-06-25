@@ -72,7 +72,7 @@ The expanded subsection contains:
 5. Bounded scrollable row list.
 6. Compact `New conversation` action.
 
-The bounded row list uses adaptive height. Target 45% of the mounted left-rail body height, clamp to 4-12 visible rows, and account for the existing two-line row plus margin geometry. If the mounted terminal is too short to satisfy both the list and lower status sections, preserve at least 4 visible rows and let the outer left rail scroll to the status/handoff rows.
+The bounded row list uses adaptive height. Target 45% of the mounted left-rail body height, clamp to 4-12 visible rows, and account for the existing two-line row plus margin geometry. Apply the calculated bound after mount and on resize; the initial compose path can use the minimum bound until layout dimensions are available. If the mounted terminal is too short to satisfy both the list and lower status sections, preserve at least 4 visible rows and let the outer left rail scroll to the status/handoff rows.
 
 ### Collapsed Conversations
 
@@ -114,7 +114,8 @@ class ConsoleWorkspaceConversationSectionState:
     query: str
     selected_summary: str
     rows: tuple[ConsoleWorkspaceConversationRow, ...]
-    total_count: int | None = None
+    workspace_total_count: int | None = None
+    result_total_count: int | None = None
     result_limit: int = 50
     status_copy: str = ""
     empty_copy: str = ""
@@ -146,11 +147,12 @@ Default rows come from:
 Search rows come from:
 
 - Matching open native Console sessions.
+- Active-workspace conversation memberships filtered by membership title and hydrated metadata when available.
 - `app.chat_conversation_scope_service.list_conversations(mode="local", query=..., scope_type="workspace", workspace_id=active_workspace_id, limit=50)`, which routes to the existing local `ChatConversationService.list_conversations(...)`.
 
 Rows are deduped by persisted conversation id when available. Native sessions without persisted conversation ids keep `native:<session-id>` identifiers so they remain switchable before first durable message persistence.
 
-Search must not bypass workspace scope. Results from other workspaces must never appear in the active workspace rail.
+Search must not bypass workspace scope. Results from other workspaces must never appear in the active workspace rail. A saved conversation is considered in the active workspace when it is either linked through the active workspace's conversation memberships or persisted with the active workspace id in the chat conversation store.
 
 ### Widget Rendering
 
@@ -181,7 +183,7 @@ Because the current tray uses `refresh(recompose=True)`, implementation must pre
 2. `ChatScreen` stores the query and starts a debounced search.
 3. The search captures workspace id and query.
 4. Results are applied only if captured workspace id and query still match current state.
-5. The tray renders capped results and count copy.
+5. The tray renders capped results and result count copy. Header count remains the active-workspace conversation count, not the current search result count.
 
 ### Row Selection
 
@@ -202,7 +204,7 @@ Because the current tray uses `refresh(recompose=True)`, implementation must pre
 - If the workspace registry cannot be read, keep existing workspace recovery copy and disable conversation search.
 - If persisted conversation search fails, keep selected summary and open/recent rows visible, then show a scoped warning inside the Conversations subsection.
 - Empty search results show `No matches in this workspace.`
-- Capped results show explicit copy such as `Showing 50 of 143`.
+- Capped results show explicit copy such as `Showing 50 of 143 matches`.
 - If a row points to a persisted conversation that no longer exists, use the existing resume failure path and refresh the current workspace/query state.
 - Membership-only rows still render in the default list even if persisted conversation search cannot find them.
 - Open native sessions remain reachable even before a persisted conversation id exists.
