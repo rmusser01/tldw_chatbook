@@ -601,23 +601,39 @@ async def test_local_skills_service_execute_rechecks_trust_after_reading_content
 
 
 @pytest.mark.asyncio
+async def test_local_skills_service_execute_preserves_crlf_for_exact_trust_verification(tmp_path):
+    service, trust = _trusted_local_service(tmp_path)
+    await service.create_skill(
+        name="crlf-skill",
+        content="# CRLF\r\nRender {{args}}\r\n",
+        supporting_files={"notes.md": "trusted notes\r\n"},
+    )
+    trust.bootstrap_trust()
+
+    assert trust.status_for_skill("crlf-skill").trust_status == "trusted"
+    result = await service.execute_skill("crlf-skill", args="x")
+
+    assert result["rendered_prompt"] == "# CRLF\r\nRender x"
+
+
+@pytest.mark.asyncio
 async def test_local_skills_service_execute_rejects_read_and_restore_content_race(tmp_path, monkeypatch):
     service, trust = _trusted_local_service(tmp_path)
     await service.create_skill(name="demo-skill", content="# Demo\nRender {{args}}")
     trust.bootstrap_trust()
     skill_path = tmp_path / "skills" / "demo-skill" / "SKILL.md"
-    trusted_content = skill_path.read_text(encoding="utf-8")
-    malicious_content = "# Demo\nMALICIOUS {{args}}"
-    original_read_text = Path.read_text
+    original_read_bytes = Path.read_bytes
+    trusted_content = original_read_bytes(skill_path)
+    malicious_content = b"# Demo\nMALICIOUS {{args}}"
 
     def read_malicious_then_restored(self, *args, **kwargs):
         if self == skill_path:
-            assert original_read_text(self, encoding="utf-8") == trusted_content
+            assert original_read_bytes(self) == trusted_content
             return malicious_content
-        return original_read_text(self, *args, **kwargs)
+        return original_read_bytes(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_text", read_malicious_then_restored)
+    monkeypatch.setattr(Path, "read_bytes", read_malicious_then_restored)
 
     with pytest.raises(SkillTrustBlockedError, match="skill_modified"):
         await service.execute_skill("demo-skill", args="x")
-    assert original_read_text(skill_path, encoding="utf-8") == trusted_content
+    assert original_read_bytes(skill_path) == trusted_content

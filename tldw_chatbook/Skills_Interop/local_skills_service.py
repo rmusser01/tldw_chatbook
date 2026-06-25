@@ -386,13 +386,17 @@ class LocalSkillsService:
         for path in sorted(skill_dir.iterdir(), key=lambda item: item.name):
             if not path.is_file() or path.name == _SKILL_FILENAME:
                 continue
-            supporting_files[path.name] = path.read_text(encoding="utf-8")
+            supporting_files[path.name] = LocalSkillsService._read_text_preserving_newlines(path)
         return supporting_files or None
+
+    @staticmethod
+    def _read_text_preserving_newlines(path: Path) -> str:
+        return path.read_bytes().decode("utf-8")
 
     def _response_for_record(self, record: dict[str, Any]) -> dict[str, Any]:
         skill_name = str(record["name"])
         skill_dir = self._skill_dir(skill_name)
-        content = (skill_dir / _SKILL_FILENAME).read_text(encoding="utf-8")
+        content = self._read_text_preserving_newlines(skill_dir / _SKILL_FILENAME)
         response = SkillResponse(
             **record,
             content=content,
@@ -625,7 +629,7 @@ class LocalSkillsService:
             if next_content is not None:
                 self._write_text_atomic(skill_content_path, next_content)
             else:
-                next_content = skill_content_path.read_text(encoding="utf-8")
+                next_content = self._read_text_preserving_newlines(skill_content_path)
             self._apply_supporting_files(skill_dir, request.supporting_files)
             next_record = self._metadata_from_content(
                 name=normalized_name,
