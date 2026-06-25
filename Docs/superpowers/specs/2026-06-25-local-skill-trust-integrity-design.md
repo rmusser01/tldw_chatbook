@@ -61,7 +61,8 @@ Core components:
 
 - `SkillTrustService`: scans skill directories, computes canonical file fingerprints, verifies the signed manifest, classifies drift, logically quarantines unsafe skills, and accepts reviewed baselines.
 - `SkillTrustManifest`: authenticated manifest stored with the local skills store, accepted only when its HMAC verifies with a key derived from the user's startup passphrase.
-- `SkillTrustKeyProvider`: passphrase/session key provider plus optional secure keyring cache. Plaintext fallback is forbidden.
+- `SkillTrustKeyProvider`: passphrase/session key provider plus optional secure keyring cache. Plaintext fallback is forbidden. Keyring convenience mode stores a secure-keyring-protected trust root or wrapped trust root, never the user's passphrase.
+- `SkillTrustGenerationMarkerStore`: stores the latest accepted manifest generation and manifest digest outside the local skills directory. The v1 target is the secure OS keyring. If no secure marker store is available, high-security mode fails closed; a user may explicitly choose reduced rollback protection, which must be visible in Settings and audit output.
 - `SkillTrustSnapshotStore`: encrypted and authenticated trusted copies of `SKILL.md` and supporting text files for trusted-vs-current diffs.
 - `LocalSkillsService` integration: `list_skills`, `get_skill`, `get_context`, and `execute_skill` include trust state and perform use-time trust checks.
 
@@ -71,19 +72,22 @@ Verify at use, not only at launch. Launch scan can populate visible status, but 
 
 Quarantine is logical in v1. Files stay in place for evidence and editor compatibility; the service marks the skill blocked.
 
-Manifest failure is a global safety event. Missing, malformed, downgraded, replayed, or MAC-invalid manifests block all local skills until recovery or explicit re-bootstrap.
+Manifest failure is a global safety event. Missing-after-initialization, malformed, downgraded, replayed, or MAC-invalid manifests block all local skills until recovery or explicit re-bootstrap.
 
 ## Data Flow
 
-On first enablement, Chatbook runs an explicit bootstrap flow. It shows the number of discovered local skills and asks the user to confirm that the current files should become the initial trusted baseline. This avoids silent trust-on-first-use.
+On first enablement, Chatbook runs an explicit bootstrap flow. If no manifest and no generation marker exist, skills enter `trust_uninitialized`: visible but not stageable/executable until the user bootstraps trust. The bootstrap flow shows the number of discovered local skills and asks the user to confirm that the current files should become the initial trusted baseline. This avoids silent trust-on-first-use.
 
-After confirmation, Chatbook asks for a trust passphrase, derives a root key, derives separate subkeys for manifest MAC and snapshot encryption/authentication, scans every local skill directory, writes encrypted trusted snapshots, writes the authenticated manifest, stores the latest accepted manifest generation marker where possible, and records `trust_bootstrap`.
+After confirmation, Chatbook asks for a trust passphrase, derives a root key, derives separate subkeys for manifest MAC and snapshot encryption/authentication, scans every local skill directory, writes encrypted trusted snapshots, writes the authenticated manifest, stores the latest accepted manifest generation marker, and records `trust_bootstrap`.
 
-On startup or first skill access, Chatbook unlocks trust using the passphrase, or secure keyring convenience mode if enabled. If unlock fails or is cancelled, skills remain visible but blocked as `trust_locked`. If unlock succeeds, Chatbook verifies the manifest MAC, schema version, generation, and rollback marker before trusting any skill status.
+On startup or first skill access, Chatbook unlocks trust using the passphrase, or the secure-keyring-protected trust root when convenience mode is enabled. If unlock fails or is cancelled, skills remain visible but blocked as `trust_locked`. If unlock succeeds, Chatbook verifies the manifest MAC, schema version, generation, and rollback marker before trusting any skill status.
+
+If a manifest exists but its generation marker is missing, lower than the manifest generation, or has a mismatched manifest digest, Chatbook treats it as `quarantined_manifest_error`. If the secure generation-marker store is unavailable at runtime, high-security mode blocks local skill use until the marker store is available. Reduced rollback protection mode may continue only if the user explicitly selected it during bootstrap or recovery; the UI must label that old full-store replay cannot be detected in that mode.
 
 Scan states:
 
 - `trusted`: current fingerprints match the trusted manifest.
+- `trust_uninitialized`: trust has not been bootstrapped; skill use is blocked until explicit bootstrap.
 - `trust_locked`: trust key unavailable, so use is blocked without claiming tampering.
 - `quarantined_modified`: trusted skill content changed.
 - `quarantined_added`: new file or skill appears without a trusted baseline.
@@ -91,9 +95,13 @@ Scan states:
 - `quarantined_manifest_error`: manifest cannot be authenticated or safely interpreted.
 - `quarantined_unsupported_path`: symlink, nested path, unsafe filename, crash temp file, or unsupported file type appears.
 
-On list/detail, skills remain visible with metadata and trust state. On context/stage/execute, the selected skill is verified again. If trusted, current behavior proceeds. If blocked, the service returns a deterministic trust-blocked state and UI disables attach/execute.
+On list/detail, skills remain visible with metadata and trust state. On context/stage/execute, the selected skill is verified again. If trusted, current behavior proceeds. If blocked, service behavior is deterministic:
 
-On review, Chatbook captures a current snapshot and diffs it against the encrypted trusted snapshot. If the user approves, Chatbook re-scans the live files and verifies they still match the reviewed snapshot before signing a new baseline.
+- `list_skills()` and `get_skill()` include `trust_status`, `trust_reason_code`, `trust_blocked`, `trust_changed_files`, `trust_manifest_generation`, and `trust_last_verified_at` fields.
+- `get_context()` excludes trust-blocked skills from `available_skills` and may include a `blocked_skills` extra field for UI diagnostics.
+- `execute_skill()` raises a typed `SkillTrustBlockedError` with `skill_name`, `reason_code`, `trust_status`, and changed relative file names. It does not return a rendered prompt for a blocked skill.
+
+On review, Chatbook captures a current snapshot and diffs it against the encrypted trusted snapshot. For a new skill with no trusted snapshot, the review compares current files against an empty baseline and shows every file as an addition. If the user approves, Chatbook re-scans the live files and verifies they still match the reviewed snapshot before signing a new baseline.
 
 Manifest/snapshot updates are atomic: write new encrypted snapshots, write a new manifest temp file, fsync/replace where practical, then update the generation marker. Partial writes resolve to blocked/quarantine states, not partial trust.
 
@@ -104,7 +112,7 @@ The Skills screen adds a trust/readiness layer without hiding metadata validatio
 Visible state is split:
 
 - Metadata: `valid` / `invalid`
-- Trust: `trusted` / `trust_locked` / `quarantined_*` / `quarantined_manifest_error`
+- Trust: `trusted` / `trust_uninitialized` / `trust_locked` / `quarantined_*` / `quarantined_manifest_error`
 - Action: stage/execute enabled only when metadata and trust are both valid
 
 For a quarantined skill, the detail/inspector pane shows plain-language reason, machine-readable reason code, changed files, last trusted timestamp, reviewed snapshot status, and recent trust audit events.
@@ -136,7 +144,9 @@ User copy avoids "infected" or "hacked." Use precise states such as "changed sin
 Trust failures are deterministic and non-destructive:
 
 - `trust_locked`: passphrase/key unavailable; block use without implying tampering.
+- `trust_uninitialized`: no manifest and no generation marker exist; block use until explicit bootstrap.
 - `manifest_invalid`: MAC/schema/generation/rollback check failed; global quarantine.
+- `rollback_marker_unavailable`: secure generation marker store is unavailable in high-security mode; block use until the marker store is available or the user explicitly accepts reduced rollback protection.
 - `skill_modified`: trusted file content changed.
 - `skill_added`: untrusted skill directory or file appeared.
 - `skill_deleted`: trusted file missing.
@@ -159,6 +169,8 @@ Policy defaults:
 
 - No plaintext key storage.
 - No silent downgrade from passphrase to insecure keyring backend.
+- Keyring convenience mode stores a protected trust root or wrapped trust root, never the user's passphrase.
+- A secure generation marker store is required for full rollback protection. Reduced rollback protection requires explicit user opt-in and visible posture reporting.
 - Approval, re-bootstrap, and key rotation require an unlocked passphrase-derived key.
 - Global re-bootstrap requires fresh passphrase confirmation.
 - Lost-passphrase recovery is high-friction re-bootstrap of current files, with prior trust history marked unrecoverable.
@@ -166,7 +178,7 @@ Policy defaults:
 - Audit events are authenticated as part of the trust store, even if v1 does not implement a full append-only hash chain.
 - UI/audit output uses skill names and relative file names by default; absolute paths appear only in explicit evidence export.
 - Trust-blocked skills cannot be staged or executed, even if metadata-valid.
-- Chatbook editor/import may update the trust baseline atomically only after explicit user approval for that mutation. Background or automatic edits do not silently re-trust.
+- Chatbook editor/import may update the trust baseline atomically only after explicit user approval for that mutation. The user's Save/Import confirmation can serve as the approval when the UI clearly states that the trusted baseline will be updated. Background or automatic edits do not silently re-trust.
 - Physical quarantine/move is out of scope for v1.
 - Server skills, Codex runtime skills, and sync semantics are out of scope.
 
@@ -178,12 +190,15 @@ Add focused tests around the trust layer before UI tests:
 
 - Manifest MAC verification rejects tampered manifest content.
 - Missing/malformed/downgraded/replayed manifest causes global quarantine.
+- No manifest and no generation marker produces `trust_uninitialized`, not per-skill quarantine.
+- Missing or mismatched generation marker after initialization causes global quarantine.
+- Secure generation marker store unavailability blocks high-security mode and produces visible reduced-protection posture only after explicit opt-in.
 - Passphrase unlock derives stable keys and separates manifest/snapshot purposes.
-- Secure keyring convenience mode refuses insecure/plaintext keyring backends.
+- Secure keyring convenience mode refuses insecure/plaintext keyring backends and never stores the user passphrase.
 - Trusted skill remains executable/stageable after unchanged scan.
 - Modified `SKILL.md` quarantines and blocks `get_context`/`execute_skill`.
 - Modified supporting file also quarantines and blocks use.
-- New out-of-band skill/file quarantines until reviewed and approved.
+- New out-of-band skill/file quarantines until reviewed and approved, with review showing all files as additions against an empty baseline.
 - Deleted trusted file quarantines.
 - Symlink, nested path, unsafe filename, crash temp file, and unsupported file type classify as `unsupported_path`.
 - Review approval fails with `snapshot_mismatch` if files change after diff capture.
@@ -196,9 +211,9 @@ Service integration tests:
 
 - `LocalSkillsService.list_skills()` includes trust state alongside metadata validation.
 - `get_skill()` exposes blocked reason but still returns safe detail for review.
-- `get_context()` excludes or marks blocked skills so they are not staged as available.
-- `execute_skill()` refuses trust-blocked skills deterministically.
-- Chatbook-approved create/update/import paths update the baseline only as part of explicit approved mutation.
+- `get_context()` excludes trust-blocked skills from `available_skills` and may include `blocked_skills` diagnostics without making blocked skills available to stage.
+- `execute_skill()` raises `SkillTrustBlockedError` and never returns a rendered prompt for trust-blocked skills.
+- Chatbook-approved create/update/import paths update the baseline only as part of explicit approved mutation, and Save/Import confirmation text states that the trusted baseline will be updated.
 
 UI tests:
 
