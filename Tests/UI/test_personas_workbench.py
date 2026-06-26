@@ -10,6 +10,12 @@ from textual.widgets import Button, Static
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
+from tldw_chatbook.Constants import (
+    LIBRARY_MODE_CONVERSATIONS,
+    LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_MODE,
+    TAB_LIBRARY,
+)
 from tldw_chatbook.tldw_api import PersonaProfileCreate
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
@@ -1261,9 +1267,11 @@ class _NavCaptureApp(PersonasTestApp):
     def __init__(self, mock_app_instance):
         super().__init__(mock_app_instance)
         self.nav_routes: list[str] = []
+        self.nav_contexts: list[dict[str, object]] = []
 
     def on_navigate_to_screen(self, message) -> None:
         self.nav_routes.append(message.screen_name)
+        self.nav_contexts.append(dict(getattr(message, "screen_context", {}) or {}))
 
 
 class TestConversationsPanel:
@@ -1480,7 +1488,32 @@ class TestConversationsPanel:
             await self._open_conversation(pilot)
             await pilot.click("#personas-conversation-open-library")
             await pilot.pause()
-            assert app.nav_routes == ["conversation"]
+            assert app.nav_routes == [TAB_LIBRARY]
+            assert app.nav_contexts == [
+                {
+                    LIBRARY_NAV_CONTEXT_MODE: LIBRARY_MODE_CONVERSATIONS,
+                    LIBRARY_NAV_CONTEXT_CONVERSATION_ID: "conv-1",
+                }
+            ]
+
+    async def test_open_in_library_requires_open_conversation(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        notifications: list[tuple[str, str]] = []
+        app = _NavCaptureApp(mock_app_instance)
+        app.notify = lambda message, severity="information", **kwargs: notifications.append(
+            (str(message), severity)
+        )
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            screen.conversations.open_in_library()
+            await pilot.pause()
+
+        assert app.nav_routes == []
+        assert any(
+            "Open a conversation" in message and severity == "warning"
+            for message, severity in notifications
+        )
 
     async def test_stale_conversation_rows_are_skipped(
         self, mock_app_instance, stub_characters, stub_conversations

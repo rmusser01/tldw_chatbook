@@ -16,6 +16,11 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Constants import (
+    LIBRARY_MODE_CONVERSATIONS,
+    LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_MODE,
+)
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_rag_service import (
@@ -456,6 +461,37 @@ class LibraryScreen(BaseAppScreen):
             self._apply_source_snapshot_timeout,
         )
         self._refresh_local_source_snapshot()
+
+    def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
+        """Apply route context supplied by shell navigation.
+
+        Args:
+            context: Navigation payload from ``NavigateToScreen``. A valid
+                Library mode switches the active mode. A ``conversation_id``
+                selects that conversation when the local source snapshot
+                arrives, defaulting the mode to Conversations when no valid
+                mode is supplied.
+        """
+        if not isinstance(context, Mapping):
+            return
+        requested_mode = self._safe_text(
+            context.get(LIBRARY_NAV_CONTEXT_MODE),
+            max_length=64,
+        )
+        conversation_id = self._safe_text(
+            context.get(LIBRARY_NAV_CONTEXT_CONVERSATION_ID),
+            max_length=200,
+        )
+        target_mode = requested_mode if requested_mode in LIBRARY_MODES else ""
+        if conversation_id and not target_mode:
+            target_mode = LIBRARY_MODE_CONVERSATIONS
+        if target_mode:
+            self._active_mode = target_mode
+            self._invalidate_library_workspace_depth_state()
+        if conversation_id:
+            self._selected_conversation_id = conversation_id
+        if self.is_mounted:
+            self.refresh(recompose=True)
 
     @work(exclusive=True)
     async def _refresh_local_source_snapshot(self) -> None:
