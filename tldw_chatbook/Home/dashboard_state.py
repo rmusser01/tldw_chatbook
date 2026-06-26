@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from tldw_chatbook.Constants import TAB_SETTINGS
+
 
 APPROVAL_RUN_STATUS = "approval"
 FAILED_RUN_STATUS = "failed"
@@ -123,7 +125,7 @@ def choose_next_best_action(state: HomeDashboardInput) -> HomeAction:
         return HomeAction(
             "fix_model_setup",
             "Set up Console model",
-            "llm",
+            TAB_SETTINGS,
             "Console needs a working model before live AI tasks.",
         )
     if _pending_approval_count(state):

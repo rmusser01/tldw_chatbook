@@ -5170,6 +5170,18 @@ def test_settings_config_path_validates_env_override(monkeypatch):
         screen._config_path()
 
 
+def test_settings_overview_config_path_label_hides_local_directory(monkeypatch, tmp_path):
+    config_path = tmp_path / "config" / "config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    screen = SettingsScreen(SimpleNamespace(app_config={}))
+
+    value = screen._config_path_overview_value()
+
+    assert "Override config: config.toml" in value
+    assert str(config_path) not in value
+    assert str(tmp_path) not in value
+
+
 def test_settings_advanced_config_save_reports_invalid_env_override(monkeypatch):
     app = SimpleNamespace(app_config={})
     screen = SettingsScreen(app)

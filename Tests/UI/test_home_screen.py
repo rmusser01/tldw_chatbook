@@ -14,6 +14,7 @@ from tldw_chatbook.Home.active_work_adapter import (
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
+from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from Tests.UI.test_screen_navigation import _build_test_app
 
 
@@ -31,12 +32,14 @@ class HomeHarness(App):
         super().__init__()
         self.app_instance = app_instance
         self.seen_routes = seen_routes if seen_routes is not None else []
+        self.seen_contexts = []
 
     async def on_mount(self) -> None:
         await self.push_screen(HomeScreen(self.app_instance))
 
     def on_navigate_to_screen(self, message) -> None:
         self.seen_routes.append(message.screen_name)
+        self.seen_contexts.append(dict(message.screen_context or {}))
 
 
 def _active_home_screen(host: HomeHarness):
@@ -288,7 +291,7 @@ async def test_home_selected_action_uses_user_facing_route_labels():
 
         selected_text = str(home.query_one("#home-selected-item-body").renderable)
         assert "Set up Console model" in selected_text
-        assert "Destination: Models" in selected_text
+        assert "Destination: Settings" in selected_text
         assert "Destination: Llm" not in selected_text
 
 
@@ -380,6 +383,7 @@ async def test_home_followup_row_stays_compact_below_dashboard_grid():
 @pytest.mark.asyncio
 async def test_home_primary_action_opens_target_route():
     app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(model_ready=False)
     seen = []
     host = HomeHarness(app, seen)
 
@@ -388,7 +392,10 @@ async def test_home_primary_action_opens_target_route():
         await pilot.click("#home-primary-action")
         await pilot.pause(HOME_MOUNT_PAUSE)
 
-    assert seen[-1] in {"chat", "llm", "library", "schedules", "subscriptions"}
+    assert seen[-1] == "settings"
+    assert host.seen_contexts[-1] == {
+        "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+    }
 
 
 @pytest.mark.asyncio

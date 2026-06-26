@@ -2664,6 +2664,15 @@ class SettingsScreen(BaseAppScreen):
         writable = os.access(target, os.W_OK) if target.exists() else os.access(target.parent, os.W_OK)
         return "writable" if writable else "not writable"
 
+    def _config_path_overview_value(self) -> str:
+        try:
+            config_path = self._config_path()
+        except (OSError, RuntimeError, ValueError) as exc:
+            return f"invalid path - {redact_secret_text(str(exc))}"
+        source = "Override config" if os.environ.get("TLDW_CONFIG_PATH") else "User config"
+        filename = config_path.name or "config.toml"
+        return f"{source}: {filename} ({self._config_writable_status()})"
+
     def _raw_config_text(self) -> str:
         try:
             config_path = self._config_path()
@@ -4883,7 +4892,7 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Storage", classes="destination-section")
             yield self._detail_row(
                 "Config path",
-                f"{self._config_path()} ({self._config_writable_status()})",
+                self._config_path_overview_value(),
                 identifier="settings-overview-storage",
             )
             yield Static("Privacy", classes="destination-section")
