@@ -14,6 +14,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import QueryError
+from textual.timer import Timer
 from textual.widgets import Button, Input, ListView, Static, TextArea
 
 from ...Character_Chat.Character_Chat_Lib import (
@@ -86,6 +87,7 @@ logger = logger.bind(module="PersonasScreen")
 MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "prompts", "dictionaries", "lore")
 
 PLACEHOLDER_COPY = "This mode is not available yet. Characters and Personas are the supported modes."
+PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 
 # 80-column terminals need a tighter three-pane split than the default
 # 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
@@ -320,6 +322,7 @@ class PersonasScreen(BaseAppScreen):
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
+        self._search_debounce_timer: Timer | None = None
         # Serializes library renders: the pane's update_rows has two
         # suspension points, so interleaved renders could double-mount rows.
         self._render_lock = asyncio.Lock()
@@ -459,6 +462,7 @@ class PersonasScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         super().on_unmount()
+        self._cancel_search_debounce()
         self._clear_footer_shortcuts()
         # Release the preview gateway's HTTP client; unmount must not crash.
         gateway = self._preview_gateway
@@ -550,8 +554,36 @@ class PersonasScreen(BaseAppScreen):
             if record.get("id") is not None
         )
 
-    async def _render_library_rows(self) -> None:
-        query = self.state.search_query
+    def _library_render_snapshot_is_current(
+        self,
+        *,
+        expected_query: str | None = None,
+        expected_mode: str | None = None,
+    ) -> bool:
+        """Return whether a delayed library render still matches live state."""
+
+        has_snapshot = expected_query is not None or expected_mode is not None
+        if has_snapshot and not self.is_mounted:
+            return False
+        if expected_mode is not None and expected_mode != self.state.active_mode:
+            return False
+        if expected_query is not None and expected_query != self.state.search_query:
+            return False
+        return True
+
+    async def _render_library_rows(
+        self,
+        *,
+        expected_query: str | None = None,
+        expected_mode: str | None = None,
+    ) -> None:
+        if not self._library_render_snapshot_is_current(
+            expected_query=expected_query,
+            expected_mode=expected_mode,
+        ):
+            return
+
+        query = expected_query if expected_query is not None else self.state.search_query
         total = len(self._characters)
         if query:
             if total >= self.LIBRARY_FTS_THRESHOLD:
@@ -571,7 +603,17 @@ class PersonasScreen(BaseAppScreen):
         else:
             matched = self._characters
             filtered = False
+        if not self._library_render_snapshot_is_current(
+            expected_query=expected_query,
+            expected_mode=expected_mode,
+        ):
+            return
         async with self._render_lock:
+            if not self._library_render_snapshot_is_current(
+                expected_query=expected_query,
+                expected_mode=expected_mode,
+            ):
+                return
             rows = self._build_library_rows(matched, "character")
             library = self.query_one(PersonasLibraryPane)
             await library.update_rows(rows, total=total, noun="characters", filtered=filtered)
@@ -630,8 +672,19 @@ class PersonasScreen(BaseAppScreen):
             # Tolerate refreshes that race screen teardown.
             logger.warning("Could not render the persona profile rows.", exc_info=True)
 
-    async def _render_profile_rows(self) -> None:
-        query = self.state.search_query
+    async def _render_profile_rows(
+        self,
+        *,
+        expected_query: str | None = None,
+        expected_mode: str | None = None,
+    ) -> None:
+        if not self._library_render_snapshot_is_current(
+            expected_query=expected_query,
+            expected_mode=expected_mode,
+        ):
+            return
+
+        query = expected_query if expected_query is not None else self.state.search_query
         total = len(self._profiles)
         if query:
             q_lower = query.lower()
@@ -641,6 +694,11 @@ class PersonasScreen(BaseAppScreen):
             matched = self._profiles
             filtered = False
         async with self._render_lock:
+            if not self._library_render_snapshot_is_current(
+                expected_query=expected_query,
+                expected_mode=expected_mode,
+            ):
+                return
             rows = self._build_library_rows(matched, "persona_profile")
             library = self.query_one(PersonasLibraryPane)
             recovery_state = self._profile_lookup_recovery_state
@@ -662,18 +720,57 @@ class PersonasScreen(BaseAppScreen):
                 library.mark_active_row("persona_profile", self.state.selected_entity_id)
 
     @on(PersonaSearchChanged)
-    async def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
+    def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
         message.stop()
         # Search does not change selection or center pane — no unsaved guard needed.
         self.state.search_query = message.query.strip()
-        if self.state.active_mode == "characters":
+        self._cancel_search_debounce()
+        query = self.state.search_query
+        mode = self.state.active_mode
+        self._search_debounce_timer = self.set_timer(
+            PERSONAS_SEARCH_DEBOUNCE_SECONDS,
+            lambda: self._start_debounced_search_render(query=query, mode=mode),
+        )
+
+    def _cancel_search_debounce(self) -> None:
+        """Cancel a pending search render when newer state supersedes it."""
+
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+            self._search_debounce_timer = None
+
+    def _start_debounced_search_render(self, *, query: str, mode: str) -> None:
+        """Start the debounced render after the active timer has fired."""
+
+        self._search_debounce_timer = None
+        self.run_worker(
+            self._render_search_query(query=query, mode=mode),
+            exclusive=True,
+            group="personas-library-search",
+        )
+
+    async def _render_search_query(self, *, query: str, mode: str) -> None:
+        """Render the latest debounced library search for the active mode."""
+
+        if not self._library_render_snapshot_is_current(
+            expected_query=query,
+            expected_mode=mode,
+        ):
+            return
+        if mode == "characters":
             try:
-                await self._render_library_rows()
+                await self._render_library_rows(
+                    expected_query=query,
+                    expected_mode=mode,
+                )
             except Exception:
                 logger.warning("Could not re-render character rows after search.", exc_info=True)
-        elif self.state.active_mode == "personas":
+        elif mode == "personas":
             try:
-                await self._render_profile_rows()
+                await self._render_profile_rows(
+                    expected_query=query,
+                    expected_mode=mode,
+                )
             except Exception:
                 logger.warning("Could not re-render profile rows after search.", exc_info=True)
 
@@ -754,6 +851,7 @@ class PersonasScreen(BaseAppScreen):
         self._sync_personas_rails()
 
     async def _apply_mode(self, mode: str) -> None:
+        self._cancel_search_debounce()
         self.state.switch_mode(mode)
         # switch_mode does not reset search_query; clear it explicitly and
         # reset the Input widget so the library starts unfiltered in the new mode.
