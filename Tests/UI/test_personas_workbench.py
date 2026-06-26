@@ -1,6 +1,8 @@
 # Tests/UI/test_personas_workbench.py
 """Mounted tests for the destination-native Personas workbench."""
 
+import inspect
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -110,9 +112,23 @@ class PersonasTestApp(App):
         self.push_screen(PersonasScreen(self))
 
 
+class StyledPersonasTestApp(PersonasTestApp):
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+
 def _row_text(item) -> str:
     """Visible text of a library/conversation row (the ListItem's inner Static)."""
     return str(item.query_one(Static).renderable)
+
+
+def _right_edge(widget) -> int:
+    """Right edge of a mounted widget region."""
+    return widget.region.x + widget.region.width
 
 
 async def _mounted(pilot):
@@ -148,6 +164,48 @@ class TestWorkbenchShell:
                 getattr(screen.character_handler.__class__, "_personas_character_enhanced", False)
                 is True
             )
+
+    async def test_workbench_columns_fit_80_column_terminal(
+        self, mock_app_instance, stub_characters
+    ):
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(80, 40)) as pilot:
+            screen = await _mounted(pilot)
+            workbench = screen.query_one("#personas-workbench")
+            library = screen.query_one("#personas-library-pane")
+            work_area = screen.query_one("#personas-work-area")
+            inspector = screen.query_one("#personas-inspector-pane")
+            readiness = screen.query_one("#personas-readiness-console", Static)
+
+            assert workbench.has_class("personas-workbench-compact")
+            assert library.size.width >= 12
+            assert work_area.size.width >= 34
+            assert inspector.size.width >= 18
+            assert _right_edge(inspector) <= _right_edge(workbench)
+            assert str(readiness.renderable).startswith("Console blocked:")
+
+    async def test_resize_sync_skips_work_when_compact_state_is_unchanged(
+        self, mock_app_instance, stub_characters, monkeypatch
+    ):
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(80, 40)) as pilot:
+            screen = await _mounted(pilot)
+            assert screen.query_one("#personas-workbench").has_class(
+                "personas-workbench-compact"
+            )
+
+            def fail_query(*_args, **_kwargs):
+                raise AssertionError("unchanged compact state should not query panes")
+
+            monkeypatch.setattr(screen, "query_one", fail_query)
+            screen._sync_responsive_workbench()
+
+    async def test_resize_hook_has_google_style_docstring(self):
+        docstring = inspect.getdoc(PersonasScreen.on_resize)
+
+        assert docstring is not None
+        assert "Args:" in docstring
+        assert "event:" in docstring
 
     async def test_characters_mode_lists_library_rows(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
@@ -285,7 +343,7 @@ class TestCharacterSelectionAndEdit:
             readiness = str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
-            assert "Blocked" in readiness
+            assert "blocked" in readiness
 
     async def test_ctrl_n_opens_editor_in_create_mode(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
@@ -1777,7 +1835,7 @@ class TestConsoleActions:
 
             assert screen.query_one("#personas-attach-to-console", Button).disabled is True
             assert screen.query_one("#personas-start-chat", Button).disabled is True
-            assert "Console: Blocked - prompts are not attachable" in str(
+            assert "Console blocked: prompts are not attachable" in str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
 

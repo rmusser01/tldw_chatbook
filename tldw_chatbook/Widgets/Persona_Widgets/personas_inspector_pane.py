@@ -29,6 +29,13 @@ class PersonasInspectorPane(Vertical):
         max-height: 10;
     }
 
+    PersonasInspectorPane #personas-readiness-console {
+        width: 100%;
+        min-width: 0;
+        height: auto;
+        text-wrap: wrap;
+    }
+
     PersonasInspectorPane .personas-conversation-row {
         width: 100%;
         min-width: 0;
@@ -77,7 +84,7 @@ class PersonasInspectorPane(Vertical):
         yield Static("Conversations", classes="destination-section")
         yield ListView(id="personas-conversations-list")
         yield Static("Readiness", classes="destination-section")
-        yield Static("Console: Blocked - select an item", id="personas-readiness-console")
+        yield Static("Console blocked: select an item", id="personas-readiness-console")
         with Vertical(id="personas-inspector-actions"):
             yield Button(
                 "Attach to Console",
@@ -231,10 +238,10 @@ class PersonasInspectorPane(Vertical):
         unsaved = self._is_unsaved
         readiness = self.query_one("#personas-readiness-console", Static)
         if self._console_actions_enabled:
-            readiness.update("Console: Ready")
+            readiness.update("Console ready")
         else:
             reason = self._console_action_block_reason or "unavailable"
-            readiness.update(f"Console: Blocked - {reason}")
+            readiness.update(f"Console blocked: {reason}")
         export_enabled = selected and not unsaved
         export_tooltip = _UNSAVED_TOOLTIP if (selected and unsaved) else None
         console_tooltip = None

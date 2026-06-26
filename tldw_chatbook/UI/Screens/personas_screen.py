@@ -86,6 +86,11 @@ MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "prompts", "dictio
 
 PLACEHOLDER_COPY = "This mode is not available yet. Characters and Personas are the supported modes."
 
+# 80-column terminals need a tighter three-pane split than the default
+# 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
+# task can replace it without changing pane widgets.
+PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH = 90
+
 #: Center-area widgets toggled by ``_show_center``.
 _CENTER_VIEW_IDS: tuple[str, ...] = (
     "#ccp-character-card-view",
@@ -223,6 +228,28 @@ class PersonasScreen(BaseAppScreen):
         width: 2fr;
     }
 
+    #personas-workbench.personas-workbench-compact {
+        padding: 0;
+    }
+
+    #personas-library-pane.personas-workbench-compact-pane {
+        width: 1fr;
+        min-width: 16;
+        padding: 0 1;
+    }
+
+    #personas-work-area.personas-workbench-compact-pane {
+        width: 3fr;
+        min-width: 34;
+        padding: 0 1;
+    }
+
+    #personas-inspector-pane.personas-workbench-compact-pane {
+        width: 1fr;
+        min-width: 22;
+        padding: 0 1;
+    }
+
     #personas-detail-stack {
         width: 100%;
         height: 1fr;
@@ -283,6 +310,7 @@ class PersonasScreen(BaseAppScreen):
         # invalidating in-flight preview workers whose snapshot is older
         # (the selection key alone cannot catch a Reset of the SAME selection).
         self._preview_generation: int = 0
+        self._workbench_compact: bool | None = None
         # Character id whose greeting last seeded the preview; the
         # CharacterMessage.Loaded handler uses it to avoid double-seeding.
         self._preview_seeded_for: str | None = None
@@ -359,6 +387,7 @@ class PersonasScreen(BaseAppScreen):
         setup_loading = getattr(loading_manager, "setup", None)
         if callable(setup_loading):
             await setup_loading()
+        self._sync_responsive_workbench()
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
         self._show_center(None)
         await self.character_handler.refresh_character_list()
@@ -375,6 +404,34 @@ class PersonasScreen(BaseAppScreen):
                 await gateway.aclose()
             except Exception:
                 logger.warning("Could not close the preview provider gateway.", exc_info=True)
+
+    def on_resize(self, event: Any) -> None:
+        """Refresh compact workbench classes after terminal size changes.
+
+        Args:
+            event: Textual resize event emitted when the screen size changes.
+        """
+        self._sync_responsive_workbench()
+
+    def _sync_responsive_workbench(self) -> None:
+        compact = self.size.width <= PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH
+        if self._workbench_compact == compact:
+            return
+        try:
+            workbench = self.query_one("#personas-workbench")
+        except QueryError:
+            return
+        self._workbench_compact = compact
+        workbench.set_class(compact, "personas-workbench-compact")
+        for pane_id in (
+            "#personas-library-pane",
+            "#personas-work-area",
+            "#personas-inspector-pane",
+        ):
+            try:
+                self.query_one(pane_id).set_class(compact, "personas-workbench-compact-pane")
+            except QueryError:
+                continue
 
     # ===== Library rendering =====
 

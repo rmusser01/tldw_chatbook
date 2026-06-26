@@ -316,5 +316,5 @@ async def test_personas_default_state_disables_false_console_handoff() -> None:
         button = screen.query_one("#personas-attach-to-console", Button)
 
         visible_text = _visible_text(screen)
-        assert "Console: Blocked - select an item" in visible_text
+        assert "Console blocked: select an item" in visible_text
         assert button.disabled is True
