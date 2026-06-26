@@ -1,6 +1,6 @@
 """CCP (Conversations, Characters & Prompts) modular handlers.
 
-This module provides modular handlers for the CCP window functionality,
+This module provides modular handlers for the Personas screen functionality,
 following the same pattern as the Chat window for consistency and maintainability.
 
 Now enhanced with:

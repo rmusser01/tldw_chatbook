@@ -133,6 +133,22 @@ class TestWorkbenchShell:
             assert screen.query_one("#personas-work-area")
             assert screen.query_one("#personas-inspector-pane")
 
+    async def test_personas_screen_sets_up_reused_ccp_enhancements(
+        self,
+        mock_app_instance,
+        stub_characters,
+    ):
+        """Verify PersonasScreen installs loading/decorator support for CCP handlers."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+
+            assert hasattr(screen, "loading_manager")
+            assert (
+                getattr(screen.character_handler.__class__, "_personas_character_enhanced", False)
+                is True
+            )
+
     async def test_characters_mode_lists_library_rows(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:

@@ -65,6 +65,7 @@ from ...Widgets.Persona_Widgets.personas_state import MODE_LABELS, PersonasWorkb
 from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
 from ..CCP_Modules import ccp_character_handler
 from ..CCP_Modules.ccp_character_handler import CCPCharacterHandler
+from ..CCP_Modules.ccp_enhanced_handlers import setup_ccp_enhancements
 from ..CCP_Modules.ccp_messages import CharacterMessage
 from ..CCP_Modules.ccp_persona_handler import CCPPersonaHandler
 from .destination_recovery import DestinationRecoveryState
@@ -289,6 +290,7 @@ class PersonasScreen(BaseAppScreen):
         self.character_handler = CCPCharacterHandler(self)
         self.persona_handler = CCPPersonaHandler(self)
         self.conversations = PersonasConversationsController(self)
+        setup_ccp_enhancements(self)
 
     # ===== Compose =====
 
@@ -353,6 +355,10 @@ class PersonasScreen(BaseAppScreen):
 
     async def on_mount(self) -> None:
         super().on_mount()
+        loading_manager = getattr(self, "loading_manager", None)
+        setup_loading = getattr(loading_manager, "setup", None)
+        if callable(setup_loading):
+            await setup_loading()
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
         self._show_center(None)
         await self.character_handler.refresh_character_list()
