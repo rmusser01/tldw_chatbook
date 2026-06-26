@@ -116,6 +116,44 @@ async def test_skills_scope_service_routes_local_operations_without_server_dispa
 
 
 @pytest.mark.asyncio
+async def test_skills_scope_service_preserves_blocked_local_context_trust_fields():
+    class FakeLocalSkillsService(FakeSkillsService):
+        async def get_context(self):
+            self.calls.append(("get_context",))
+            return {
+                "available_skills": [],
+                "blocked_skills": [
+                    {
+                        "name": "demo-skill",
+                        "trust_status": "quarantined_modified",
+                        "trust_reason_code": "skill_modified",
+                        "trust_blocked": True,
+                        "trust_changed_files": ["SKILL.md"],
+                        "trust_manifest_generation": 2,
+                        "trust_last_verified_at": "2026-06-25T00:00:00+00:00",
+                    }
+                ],
+                "context_text": "",
+            }
+
+    local = FakeLocalSkillsService()
+    scope = SkillsScopeService(local_service=local, server_service=FakeSkillsService())
+
+    context = await scope.get_context(mode="local")
+
+    blocked = context["blocked_skills"][0]
+    assert blocked["backend"] == "local"
+    assert blocked["record_id"] == "local:skill:demo-skill"
+    assert blocked["trust_status"] == "quarantined_modified"
+    assert blocked["trust_reason_code"] == "skill_modified"
+    assert blocked["trust_blocked"] is True
+    assert blocked["trust_changed_files"] == ["SKILL.md"]
+    assert blocked["trust_manifest_generation"] == 2
+    assert blocked["trust_last_verified_at"] == "2026-06-25T00:00:00+00:00"
+    assert context["available_skills"] == []
+
+
+@pytest.mark.asyncio
 async def test_skills_scope_service_reports_missing_local_backend_before_dispatch():
     server = FakeSkillsService()
     scope = SkillsScopeService(server_service=server, policy_enforcer=FakePolicyEnforcer())

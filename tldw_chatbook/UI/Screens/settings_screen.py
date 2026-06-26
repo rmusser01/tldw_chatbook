@@ -2879,13 +2879,58 @@ class SettingsScreen(BaseAppScreen):
         )
         self.app.call_from_thread(self._apply_storage_check_result, rows)
 
+    def _skill_trust_posture(self) -> dict[str, object]:
+        skill_trust_service = getattr(
+            self.app_instance,
+            "local_skill_trust_service",
+            None,
+        )
+        if skill_trust_service is None:
+            return {
+                "enabled": False,
+                "trust_status": "unavailable",
+                "keyring_convenience_enabled": False,
+                "reduced_rollback_protection": False,
+            }
+
+        trust_status = "unavailable"
+        overall_status = getattr(skill_trust_service, "overall_status", None)
+        if callable(overall_status):
+            try:
+                trust_status = overall_status()
+            except Exception:
+                logger.warning("Unable to read local skill trust posture.")
+                trust_status = "unavailable_error"
+
+        return {
+            "enabled": True,
+            "trust_status": trust_status,
+            "keyring_convenience_enabled": bool(
+                getattr(
+                    skill_trust_service,
+                    "keyring_convenience_enabled",
+                    False,
+                )
+            ),
+            "reduced_rollback_protection": bool(
+                getattr(
+                    skill_trust_service,
+                    "reduced_rollback_protection",
+                    False,
+                )
+            ),
+        }
+
     def _settings_privacy_posture(
         self,
         app_config: object | None = None,
     ) -> SettingsPrivacyPosture:
         if app_config is None:
             app_config = getattr(self.app_instance, "app_config", {}) or {}
-        return build_settings_privacy_posture(app_config)
+        return build_settings_privacy_posture(
+            app_config,
+            skill_trust=self._skill_trust_posture(),
+        )
 
     def _privacy_posture_rows(self, app_config: object | None = None) -> tuple[str, ...]:
         return build_privacy_posture_rows(self._settings_privacy_posture(app_config))
@@ -5849,6 +5894,22 @@ class SettingsScreen(BaseAppScreen):
                 yield self._detail_row(
                     "Recovery actions",
                     "Check Privacy | Open Providers & Models | Open Advanced Config",
+                )
+                yield self._detail_row(
+                    "Skill trust",
+                    posture.skill_trust_status if posture.skill_trust_enabled else "disabled",
+                )
+                yield self._detail_row(
+                    "Skill trust keyring convenience",
+                    "enabled"
+                    if posture.skill_trust_keyring_convenience_enabled
+                    else "disabled",
+                )
+                yield self._detail_row(
+                    "Skill trust rollback protection",
+                    "reduced"
+                    if posture.skill_trust_reduced_rollback_protection
+                    else "full",
                 )
                 with Horizontal(id="settings-privacy-actions", classes="settings-action-row"):
                     yield Button(

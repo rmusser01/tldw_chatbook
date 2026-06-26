@@ -88,7 +88,12 @@ from tldw_chatbook.LLM_Provider_Catalog import (
 )
 from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
-from tldw_chatbook.Skills_Interop import LocalSkillsService, ServerSkillsService, SkillsScopeService
+from tldw_chatbook.Skills_Interop import (
+    LocalSkillsService,
+    ServerSkillsService,
+    SkillTrustService,
+    SkillsScopeService,
+)
 from tldw_chatbook.Sync_Interop import (
     LocalFirstSyncService,
     ManualSyncControlService,
@@ -546,7 +551,7 @@ async def test_app_shutdown_helper_closes_server_context_provider_cached_client(
     assert provider.close_calls == 1
 
 
-def test_app_initializes_watchlists_and_notifications_services():
+def test_app_wires_local_and_server_skills_services():
     app = _build_test_app()
 
     assert isinstance(app.local_watchlists_service, LocalWatchlistsService)
@@ -611,6 +616,9 @@ def test_app_initializes_watchlists_and_notifications_services():
     assert isinstance(app.server_connectors_service, ServerConnectorsService)
     assert isinstance(app.connectors_scope_service, ConnectorsScopeService)
     assert isinstance(app.local_skills_service, LocalSkillsService)
+    assert isinstance(app.local_skill_trust_service, SkillTrustService)
+    assert app.local_skill_trust_service is app.local_skills_service.trust_service
+    assert app.local_skill_trust_service.skills_dir == app.local_skills_service.skills_dir
     assert isinstance(app.server_skills_service, ServerSkillsService)
     assert isinstance(app.skills_scope_service, SkillsScopeService)
     assert app.skills_scope_service.local_service is app.local_skills_service

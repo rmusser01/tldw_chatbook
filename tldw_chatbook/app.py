@@ -270,7 +270,17 @@ from tldw_chatbook.Research_Interop import (
 )
 from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
-from tldw_chatbook.Skills_Interop import LocalSkillsService, ServerSkillsService, SkillsScopeService
+from tldw_chatbook.Skills_Interop import (
+    LocalSkillsService,
+    ServerSkillsService,
+    SkillTrustService,
+    SkillsScopeService,
+)
+from tldw_chatbook.Skills_Interop.skill_trust_store import (
+    SkillTrustStore,
+    build_default_skill_trust_key_cache,
+    build_skill_trust_marker_store_with_fallback,
+)
 from tldw_chatbook.Sync_Interop import (
     LocalFirstSyncService,
     ManualSyncControlService,
@@ -2402,9 +2412,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
+        local_skills_store_dir = get_user_data_dir() / "skills"
+        skill_trust_marker_store, reduced_rollback_protection = (
+            build_skill_trust_marker_store_with_fallback(
+                fallback_marker_path=local_skills_store_dir / "trust" / "generation_marker.json"
+            )
+        )
+        self.local_skill_trust_service = SkillTrustService(
+            skills_dir=local_skills_store_dir / "skills",
+            trust_store=SkillTrustStore(
+                store_dir=local_skills_store_dir / "trust",
+                marker_store=skill_trust_marker_store,
+            ),
+            key_cache=build_default_skill_trust_key_cache(),
+            keyring_convenience_enabled=False,
+            reduced_rollback_protection=reduced_rollback_protection,
+        )
         self.local_skills_service = LocalSkillsService(
-            store_dir=get_user_data_dir() / "skills",
+            store_dir=local_skills_store_dir,
             policy_enforcer=self.service_policy_enforcer,
+            trust_service=self.local_skill_trust_service,
         )
         self.skills_scope_service = SkillsScopeService(
             local_service=self.local_skills_service,
