@@ -255,6 +255,17 @@ class PersonasConversationsController:
             screen._notify("Conversation staged in Console.", "information")
 
     def open_in_library(self) -> None:
-        """Route to the Library conversations screen."""
-        # "conversation" is the Library conversations route in screen_registry.
-        self.screen.post_message(NavigateToScreen("conversation"))
+        """Route to Library with the open conversation selected."""
+        conversation_id = str(self._open_conversation_id or "").strip()
+        if not conversation_id:
+            self.screen._notify("Open a conversation before opening it in Library.", "warning")
+            return
+        self.screen.post_message(
+            NavigateToScreen(
+                "library",
+                {
+                    "mode": "conversations",
+                    "conversation_id": conversation_id,
+                },
+            )
+        )

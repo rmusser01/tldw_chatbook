@@ -679,6 +679,43 @@ async def test_library_conversations_selection_shows_metadata_and_handoff_action
 
 
 @pytest.mark.asyncio
+async def test_library_navigation_context_opens_requested_conversation() -> None:
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        [
+            {
+                "title": "Planning Chat",
+                "conversation_id": "chat-1",
+                "message_count": 7,
+                "updated_at": "2026-06-01T10:00:00Z",
+            },
+            {
+                "title": "Design Review",
+                "conversation_id": "chat-2",
+                "message_count": 3,
+                "workspace_id": "ws-other",
+                "last_modified": "2026-06-02T09:30:00Z",
+            },
+        ]
+    )
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context({"conversation_id": "chat-2"})
+        await _wait_for_selector(screen, pilot, "#library-selected-conversation-title")
+
+        visible = _visible_text(screen)
+        assert getattr(screen, "_active_mode") == "conversations"
+        assert getattr(screen, "_selected_conversation_id") == "chat-2"
+        assert "Design Review" in visible
+        assert "Planning Chat" in visible
+        assert screen.query_one("#library-open-conversations", Button).has_class("is-active")
+
+
+@pytest.mark.asyncio
 async def test_library_conversations_empty_state_is_honest_and_blocks_actions() -> None:
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService([])

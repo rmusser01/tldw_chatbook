@@ -1261,9 +1261,11 @@ class _NavCaptureApp(PersonasTestApp):
     def __init__(self, mock_app_instance):
         super().__init__(mock_app_instance)
         self.nav_routes: list[str] = []
+        self.nav_contexts: list[dict[str, object]] = []
 
     def on_navigate_to_screen(self, message) -> None:
         self.nav_routes.append(message.screen_name)
+        self.nav_contexts.append(dict(getattr(message, "screen_context", {}) or {}))
 
 
 class TestConversationsPanel:
@@ -1480,7 +1482,27 @@ class TestConversationsPanel:
             await self._open_conversation(pilot)
             await pilot.click("#personas-conversation-open-library")
             await pilot.pause()
-            assert app.nav_routes == ["conversation"]
+            assert app.nav_routes == ["library"]
+            assert app.nav_contexts == [{"mode": "conversations", "conversation_id": "conv-1"}]
+
+    async def test_open_in_library_requires_open_conversation(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        notifications: list[tuple[str, str]] = []
+        app = _NavCaptureApp(mock_app_instance)
+        app.notify = lambda message, severity="information", **kwargs: notifications.append(
+            (str(message), severity)
+        )
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            screen.conversations.open_in_library()
+            await pilot.pause()
+
+        assert app.nav_routes == []
+        assert any(
+            "Open a conversation" in message and severity == "warning"
+            for message, severity in notifications
+        )
 
     async def test_stale_conversation_rows_are_skipped(
         self, mock_app_instance, stub_characters, stub_conversations

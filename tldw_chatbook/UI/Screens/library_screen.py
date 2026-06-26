@@ -457,6 +457,26 @@ class LibraryScreen(BaseAppScreen):
         )
         self._refresh_local_source_snapshot()
 
+    def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
+        """Apply route context supplied by shell navigation.
+
+        Args:
+            context: Navigation payload from ``NavigateToScreen``. A
+                ``conversation_id`` opens Conversations mode and selects that
+                conversation when the local source snapshot arrives.
+        """
+        if not isinstance(context, Mapping):
+            return
+        requested_mode = self._safe_text(context.get("mode"), max_length=64)
+        conversation_id = self._safe_text(context.get("conversation_id"), max_length=200)
+        if requested_mode == "conversations" or conversation_id:
+            self._active_mode = "conversations"
+            self._invalidate_library_workspace_depth_state()
+        if conversation_id:
+            self._selected_conversation_id = conversation_id
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
     @work(exclusive=True)
     async def _refresh_local_source_snapshot(self) -> None:
         (
