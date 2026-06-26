@@ -2359,6 +2359,9 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 }
 
 .console-rail-collapse-button {
+    width: 3;
+    min-width: 3;
+    max-width: 3;
     height: 1;
     min-height: 1;
     text-align: left;

@@ -148,6 +148,14 @@ class TestWorkbenchShell:
             assert screen.query_one("#personas-library-pane")
             assert screen.query_one("#personas-work-area")
             assert screen.query_one("#personas-inspector-pane")
+            assert (
+                screen.query_one("#personas-library-rail-open", Button).tooltip
+                == "Open Library rail"
+            )
+            assert (
+                screen.query_one("#personas-inspector-rail-open", Button).tooltip
+                == "Open Inspector rail"
+            )
 
     async def test_personas_screen_sets_up_reused_ccp_enhancements(
         self,
@@ -183,6 +191,72 @@ class TestWorkbenchShell:
             assert inspector.size.width >= 18
             assert _right_edge(inspector) <= _right_edge(workbench)
             assert str(readiness.renderable).startswith("Console blocked:")
+
+    async def test_library_rail_collapses_and_reopens_from_handle(
+        self,
+        mock_app_instance,
+        stub_characters,
+    ):
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+
+            await pilot.click("#personas-library-rail-collapse")
+            await pilot.pause()
+
+            assert screen.query_one("#personas-library-pane").display is False
+            assert screen.query_one("#personas-library-rail-handle").display is True
+            assert screen.query_one("#personas-work-area").display is True
+
+            await pilot.click("#personas-library-rail-open")
+            await pilot.pause()
+
+            assert screen.query_one("#personas-library-pane").display is True
+            assert screen.query_one("#personas-library-rail-handle").display is False
+
+    async def test_inspector_rail_collapses_and_reopens_from_handle(
+        self,
+        mock_app_instance,
+        stub_characters,
+    ):
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+
+            await pilot.click("#personas-inspector-rail-collapse")
+            await pilot.pause()
+
+            assert screen.query_one("#personas-inspector-pane").display is False
+            assert screen.query_one("#personas-inspector-rail-handle").display is True
+            assert screen.query_one("#personas-work-area").display is True
+
+            await pilot.click("#personas-inspector-rail-open")
+            await pilot.pause()
+
+            assert screen.query_one("#personas-inspector-pane").display is True
+            assert screen.query_one("#personas-inspector-rail-handle").display is False
+
+    async def test_collapsed_inspector_rail_handle_is_keyboard_reachable(
+        self,
+        mock_app_instance,
+        stub_characters,
+    ):
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.click("#personas-inspector-rail-collapse")
+            await pilot.pause()
+
+            open_button = screen.query_one("#personas-inspector-rail-open", Button)
+            await pilot.press("shift+f6")
+            await pilot.pause()
+            assert pilot.app.focused is open_button
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert screen.query_one("#personas-inspector-pane").display is True
+            assert screen.query_one("#personas-inspector-rail-handle").display is False
 
     async def test_resize_sync_skips_work_when_compact_state_is_unchanged(
         self, mock_app_instance, stub_characters, monkeypatch

@@ -6,7 +6,7 @@ import re
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, ListItem, ListView, Static
 
 from .personas_pane_messages import ConversationRowSelected
@@ -76,7 +76,26 @@ class PersonasInspectorPane(Vertical):
         self._conversation_lookup: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
-        yield Static("Inspector", classes="destination-section personas-column-title")
+        """Compose the Inspector pane summary, readiness, and actions.
+
+        Returns:
+            Textual compose result for the Inspector pane.
+        """
+        with Horizontal(classes="console-rail-header"):
+            title = Static(
+                "Inspector",
+                classes="destination-section personas-column-title console-rail-title",
+            )
+            title.styles.width = "1fr"
+            yield title
+            collapse_button = Button(
+                ">",
+                id="personas-inspector-rail-collapse",
+                classes="console-rail-collapse-button",
+                compact=True,
+            )
+            collapse_button.tooltip = "Collapse Inspector rail"
+            yield collapse_button
         yield Static("Selected: none", id="personas-selected-name")
         yield Static("Type: -", id="personas-selected-kind")
         yield Static("Authority: Local", id="personas-selected-authority")
