@@ -9,6 +9,11 @@ from unittest.mock import Mock
 import pytest
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_MODE,
+)
+
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     StaticLibraryConversationScopeService,
@@ -704,7 +709,7 @@ async def test_library_navigation_context_opens_requested_conversation() -> None
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
-        screen.apply_navigation_context({"conversation_id": "chat-2"})
+        screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_CONVERSATION_ID: "chat-2"})
         await _wait_for_selector(screen, pilot, "#library-selected-conversation-title")
 
         visible = _visible_text(screen)
@@ -713,6 +718,23 @@ async def test_library_navigation_context_opens_requested_conversation() -> None
         assert "Design Review" in visible
         assert "Planning Chat" in visible
         assert screen.query_one("#library-open-conversations", Button).has_class("is-active")
+
+
+@pytest.mark.asyncio
+async def test_library_navigation_context_opens_requested_valid_mode() -> None:
+    app = _build_test_app()
+    _seed_library_content(app)
+    host = DestinationHarness(app, "library")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_MODE: "search"})
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+
+        visible = _visible_text(screen)
+        assert getattr(screen, "_active_mode") == "search"
+        assert "Library | Search/RAG |" in visible
+        assert screen.query_one("#library-mode-search", Button).has_class("is-active")
 
 
 @pytest.mark.asyncio

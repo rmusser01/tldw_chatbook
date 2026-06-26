@@ -20,6 +20,12 @@ from ...Character_Chat.Character_Chat_Lib import (
     list_character_conversations,
     retrieve_conversation_messages_for_ui,
 )
+from ...Constants import (
+    LIBRARY_MODE_CONVERSATIONS,
+    LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_MODE,
+    TAB_LIBRARY,
+)
 from ...Widgets.Persona_Widgets.personas_conversation_transcript_widget import (
     PersonasConversationTranscriptWidget,
 )
@@ -255,17 +261,22 @@ class PersonasConversationsController:
             screen._notify("Conversation staged in Console.", "information")
 
     def open_in_library(self) -> None:
-        """Route to Library with the open conversation selected."""
+        """Route the open conversation to Library.
+
+        Returns:
+            None. Posts a navigation message when a conversation is open;
+            otherwise warns the user and leaves the current screen in place.
+        """
         conversation_id = str(self._open_conversation_id or "").strip()
         if not conversation_id:
             self.screen._notify("Open a conversation before opening it in Library.", "warning")
             return
         self.screen.post_message(
             NavigateToScreen(
-                "library",
+                TAB_LIBRARY,
                 {
-                    "mode": "conversations",
-                    "conversation_id": conversation_id,
+                    LIBRARY_NAV_CONTEXT_MODE: LIBRARY_MODE_CONVERSATIONS,
+                    LIBRARY_NAV_CONTEXT_CONVERSATION_ID: conversation_id,
                 },
             )
         )

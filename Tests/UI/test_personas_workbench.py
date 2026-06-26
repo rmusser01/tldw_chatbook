@@ -10,6 +10,12 @@ from textual.widgets import Button, Static
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
+from tldw_chatbook.Constants import (
+    LIBRARY_MODE_CONVERSATIONS,
+    LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_MODE,
+    TAB_LIBRARY,
+)
 from tldw_chatbook.tldw_api import PersonaProfileCreate
 from tldw_chatbook.UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
@@ -1482,8 +1488,13 @@ class TestConversationsPanel:
             await self._open_conversation(pilot)
             await pilot.click("#personas-conversation-open-library")
             await pilot.pause()
-            assert app.nav_routes == ["library"]
-            assert app.nav_contexts == [{"mode": "conversations", "conversation_id": "conv-1"}]
+            assert app.nav_routes == [TAB_LIBRARY]
+            assert app.nav_contexts == [
+                {
+                    LIBRARY_NAV_CONTEXT_MODE: LIBRARY_MODE_CONVERSATIONS,
+                    LIBRARY_NAV_CONTEXT_CONVERSATION_ID: "conv-1",
+                }
+            ]
 
     async def test_open_in_library_requires_open_conversation(
         self, mock_app_instance, stub_characters, stub_conversations
