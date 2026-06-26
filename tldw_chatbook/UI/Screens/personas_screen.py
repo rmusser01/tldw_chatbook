@@ -62,6 +62,7 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
 )
 from ...Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
 from ...Widgets.Persona_Widgets.personas_state import MODE_LABELS, PersonasWorkbenchState
+from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
 from ..CCP_Modules import ccp_character_handler
 from ..CCP_Modules.ccp_character_handler import CCPCharacterHandler
 from ..CCP_Modules.ccp_messages import CharacterMessage
@@ -110,6 +111,15 @@ class PersonasScreen(BaseAppScreen):
     # Esc inside an editor TextArea is cancel-with-guard by design (the
     # unsaved-changes dialog prompts before anything is discarded).
     BINDINGS = [
+        *BaseAppScreen.BINDINGS,
+        Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
+        Binding(
+            "shift+f6",
+            "focus_previous_workbench_pane",
+            "Previous pane",
+            show=False,
+            priority=True,
+        ),
         Binding("ctrl+n", "personas_new", "New"),
         Binding("ctrl+f", "personas_search", "Search"),
         Binding("ctrl+enter", "personas_attach", "Attach"),
@@ -130,6 +140,20 @@ class PersonasScreen(BaseAppScreen):
         Binding("left_square_bracket", "personas_mode_cycle(-1)", "Prev mode", show=False),
         Binding("right_square_bracket", "personas_mode_cycle(1)", "Next mode", show=False),
     ]
+    _WORKBENCH_FOCUS_TARGETS = (
+        WorkbenchPaneTarget(
+            "personas-library-pane",
+            ("personas-library-search", "personas-library-new"),
+        ),
+        WorkbenchPaneTarget(
+            "personas-work-area",
+            ("personas-preview-input", "personas-preview-toggle"),
+        ),
+        WorkbenchPaneTarget(
+            "personas-inspector-pane",
+            ("personas-conversations-list", "personas-attach-to-console"),
+        ),
+    )
 
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
@@ -2107,6 +2131,22 @@ class PersonasScreen(BaseAppScreen):
             self.query_one("#personas-library-rows", ListView).focus()
         except QueryError:
             pass
+
+    def action_focus_next_workbench_pane(self) -> None:
+        """F6: move focus to the next Personas workbench pane."""
+        focus_relative_workbench_pane(
+            self,
+            self._WORKBENCH_FOCUS_TARGETS,
+            direction=1,
+        )
+
+    def action_focus_previous_workbench_pane(self) -> None:
+        """Shift+F6: move focus to the previous Personas workbench pane."""
+        focus_relative_workbench_pane(
+            self,
+            self._WORKBENCH_FOCUS_TARGETS,
+            direction=-1,
+        )
 
     def _focus_conversations_list(self) -> None:
         """Focus the inspector's conversations list (transcript Back path)."""
