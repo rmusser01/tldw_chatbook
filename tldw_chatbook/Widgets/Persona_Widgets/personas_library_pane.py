@@ -114,7 +114,22 @@ class PersonasLibraryPane(Vertical):
         recovery_copy: str | None = None,
         recovery_id: str = "personas-library-recovery",
     ) -> None:
-        """Replace the visible rows and count line."""
+        """Replace the visible rows and count line.
+
+        Args:
+            rows: Selectable library rows to render when no recovery state is
+                active.
+            total: Total number of rows known for the current mode.
+            noun: User-facing noun used in empty and count copy.
+            filtered: Whether ``rows`` is a filtered subset of ``total``.
+            recovery_copy: Optional multi-line recovery copy. When present, the
+                pane renders a disabled recovery row instead of list or empty
+                rows.
+            recovery_id: Stable DOM id for the recovery copy widget.
+
+        Returns:
+            None.
+        """
         list_view = self.query_one("#personas-library-rows", ListView)
         await list_view.clear()
         self._row_lookup = {}

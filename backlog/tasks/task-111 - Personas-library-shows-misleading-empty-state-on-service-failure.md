@@ -38,6 +38,7 @@ Reason: bounded UI recovery-state bugfix; no storage/schema, sync policy, servic
 
 - Added strict persona profile list refresh handling for Personas workbench callers so missing or failing persona scope services produce a `DestinationRecoveryState` instead of being collapsed into an empty list.
 - Updated the Personas library pane to render a dedicated recovery row with a stable `#personas-service-error` selector; recovery replaces stale rows and the true empty copy remains unchanged for successful empty lists.
-- Added mounted regressions for service failure recovery, stale-row replacement, and true-empty state copy.
-- Verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_personas_workbench.py Tests/UI/test_ccp_handlers.py::TestCCPPersonaHandler::test_refresh_persona_list_routes_through_scope_service --tb=short` passed with 130 tests; `git diff --check` passed.
+- Added mounted regressions for service failure recovery, stale-row replacement, true-empty state copy, and post-save refresh failure status-row consistency.
+- Addressed PR review follow-up by clearing stale profile cache and refreshing `#personas-status-row` when a post-save list refresh enters recovery, and by documenting modified public methods with Google-style docstrings.
+- Verification: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/UI/test_personas_workbench.py Tests/UI/test_ccp_handlers.py::TestCCPPersonaHandler::test_refresh_persona_list_routes_through_scope_service --tb=short` passed with 131 tests; `git diff --check` passed.
 - ADR check completed: no ADR required for this bounded UI recovery-state bugfix.

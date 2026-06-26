@@ -1885,7 +1885,9 @@ class PersonasScreen(BaseAppScreen):
             self._profile_lookup_recovery_state = None
         except Exception as exc:
             logger.warning("Could not refresh persona profiles after a save.", exc_info=True)
+            self._profiles = []
             self._profile_lookup_recovery_state = self._profile_list_recovery_state(exc)
+        self._update_status_row()
         if not self.is_mounted or self.state.active_mode != "personas":
             # Leave the selection, inspector, and center pane alone.
             return

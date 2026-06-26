@@ -597,6 +597,30 @@ class TestPersonasMode:
             stub_scope_service.create_persona_profile.assert_awaited_once()
             assert screen._edit_mode == "view"
 
+    async def test_profile_save_refresh_failure_updates_status_row_and_recovery(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            assert "Personas: 1" in str(
+                screen.query_one("#personas-status-row", Static).renderable
+            )
+
+            stub_scope_service.list_persona_profiles.side_effect = RuntimeError("scope offline")
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert screen.query_one("#personas-service-error", Static)
+            assert not list(screen.query(".personas-library-row"))
+            assert "Personas: 0" in str(
+                screen.query_one("#personas-status-row", Static).renderable
+            )
+
     async def test_profile_edit_save_calls_update(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
