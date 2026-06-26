@@ -1,4 +1,4 @@
-"""Handler for character-related operations in the CCP window."""
+"""Handler for character-related operations in the Personas screen."""
 
 import base64
 import json
@@ -12,7 +12,7 @@ from textual.widgets import Select, Button, Input, TextArea, Static
 from .ccp_messages import CharacterMessage, ViewChangeMessage
 
 if TYPE_CHECKING:
-    from ..Conv_Char_Window import CCPWindow
+    from ..Screens.personas_screen import PersonasScreen
 
 logger = logger.bind(module="CCPCharacterHandler")
 CharacterId = Union[int, str]
@@ -152,13 +152,13 @@ def import_character_card(file_path: str) -> Any:
 
 
 class CCPCharacterHandler:
-    """Handles all character-related operations for the CCP window."""
+    """Handles all character-related operations for the Personas screen."""
     
-    def __init__(self, window: 'CCPWindow'):
+    def __init__(self, window: "PersonasScreen"):
         """Initialize the character handler.
         
         Args:
-            window: Reference to the parent CCP window
+            window: Reference to the parent Personas screen
         """
         self.window = window
         self.app_instance = window.app_instance

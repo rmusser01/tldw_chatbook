@@ -1,4 +1,4 @@
-"""Handler for dictionary/world book operations in the CCP window."""
+"""Handler for dictionary/world book operations in the Personas screen."""
 
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 from loguru import logger
@@ -8,19 +8,19 @@ from textual.widgets import Select, ListView, ListItem, Input, TextArea, Button,
 from .ccp_messages import DictionaryMessage, ViewChangeMessage
 
 if TYPE_CHECKING:
-    from ..Conv_Char_Window import CCPWindow
+    from ..Screens.personas_screen import PersonasScreen
 
 logger = logger.bind(module="CCPDictionaryHandler")
 
 
 class CCPDictionaryHandler:
-    """Handles all dictionary and world book operations for the CCP window."""
+    """Handles all dictionary and world book operations for the Personas screen."""
     
-    def __init__(self, window: 'CCPWindow'):
+    def __init__(self, window: "PersonasScreen"):
         """Initialize the dictionary handler.
         
         Args:
-            window: Reference to the parent CCP window
+            window: Reference to the parent Personas screen
         """
         self.window = window
         self.app_instance = window.app_instance
@@ -542,4 +542,9 @@ class CCPDictionaryHandler:
             logger.info("Prepared dictionary clone in editor")
             
         except Exception as e:
-            logger.error(f"Error cloning dictionary: {e}", exc_info=True)
+            dictionary_name = self.current_dictionary_data.get("name", "<unknown>")
+            logger.error(
+                f"Error cloning dictionary id={self.current_dictionary_id!r} "
+                f"name={dictionary_name!r}: {e}",
+                exc_info=True,
+            )

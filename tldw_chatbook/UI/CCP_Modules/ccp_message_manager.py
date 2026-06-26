@@ -1,4 +1,4 @@
-"""Manager for displaying conversation messages in the CCP window."""
+"""Manager for displaying conversation messages in the Personas screen."""
 
 from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
 from loguru import logger
@@ -8,7 +8,7 @@ from textual import work
 from ...config import get_chachanotes_db_lazy
 
 if TYPE_CHECKING:
-    from ..Conv_Char_Window import CCPWindow
+    from ..Screens.personas_screen import PersonasScreen
 
 logger = logger.bind(module="CCPMessageManager")
 ConversationId = Union[int, str]
@@ -23,13 +23,13 @@ def fetch_messages_for_conversation(conversation_id: ConversationId) -> List[Dic
 
 
 class CCPMessageManager:
-    """Manages the display of conversation messages in the CCP window."""
+    """Manages the display of conversation messages in the Personas screen."""
     
-    def __init__(self, window: 'CCPWindow'):
+    def __init__(self, window: "PersonasScreen"):
         """Initialize the message manager.
         
         Args:
-            window: Reference to the parent CCP window
+            window: Reference to the parent Personas screen
         """
         self.window = window
         self.app_instance = window.app_instance

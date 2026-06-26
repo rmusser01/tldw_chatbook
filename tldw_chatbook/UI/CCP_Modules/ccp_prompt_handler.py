@@ -1,4 +1,4 @@
-"""Handler for prompt-related operations in the CCP window."""
+"""Handler for prompt-related operations in the Personas screen."""
 
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 from loguru import logger
@@ -8,7 +8,7 @@ from textual.widgets import ListView, ListItem, Input, TextArea, Button, Static
 from .ccp_messages import PromptMessage, ViewChangeMessage
 
 if TYPE_CHECKING:
-    from ..Conv_Char_Window import CCPWindow
+    from ..Screens.personas_screen import PersonasScreen
 
 logger = logger.bind(module="CCPPromptHandler")
 
@@ -19,13 +19,13 @@ PROMPTS_EMPTY_STATE_TEXT = (
 
 
 class CCPPromptHandler:
-    """Handles all prompt-related operations for the CCP window."""
+    """Handles all prompt-related operations for the Personas screen."""
     
-    def __init__(self, window: 'CCPWindow'):
+    def __init__(self, window: "PersonasScreen"):
         """Initialize the prompt handler.
         
         Args:
-            window: Reference to the parent CCP window
+            window: Reference to the parent Personas screen
         """
         self.window = window
         self.app_instance = window.app_instance

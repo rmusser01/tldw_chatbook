@@ -1,4 +1,4 @@
-"""Message classes for CCP window inter-component communication."""
+"""Message classes for Personas screen inter-component communication."""
 
 from typing import Optional, Dict, Any, List, Union
 from textual.message import Message
