@@ -520,6 +520,53 @@ class TestPersonasMode:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Archivist"]
 
+    async def test_personas_mode_service_failure_shows_recovery_state(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        stub_scope_service.list_persona_profiles.side_effect = RuntimeError("scope offline")
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+
+            recovery = screen.query_one("#personas-service-error", Static)
+            copy = str(recovery.renderable)
+            assert "Persona profiles unavailable" in copy
+            assert "Unavailable:" in copy
+            assert "Recovery:" in copy
+            assert "scope offline" in copy
+            assert not list(screen.query("#personas-library-empty"))
+
+    async def test_personas_mode_service_failure_replaces_stale_rows(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            assert [_row_text(r) for r in screen.query(".personas-library-row")] == ["Archivist"]
+
+            stub_scope_service.list_persona_profiles.side_effect = RuntimeError("scope offline")
+            screen._refresh_profile_rows_worker()
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert screen.query_one("#personas-service-error", Static)
+            assert not list(screen.query(".personas-library-row"))
+
+    async def test_personas_mode_empty_state_copy_unchanged(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        stub_scope_service.list_persona_profiles.return_value = {"items": [], "total": 0}
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+
+            empty = screen.query_one("#personas-library-empty", Static)
+            assert str(empty.renderable) == "No persona profiles yet - use New to add one."
+            assert not list(screen.query("#personas-service-error"))
+
     async def test_profile_selection_shows_card(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
@@ -549,6 +596,30 @@ class TestPersonasMode:
             await pilot.pause()
             stub_scope_service.create_persona_profile.assert_awaited_once()
             assert screen._edit_mode == "view"
+
+    async def test_profile_save_refresh_failure_updates_status_row_and_recovery(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            assert "Personas: 1" in str(
+                screen.query_one("#personas-status-row", Static).renderable
+            )
+
+            stub_scope_service.list_persona_profiles.side_effect = RuntimeError("scope offline")
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert screen.query_one("#personas-service-error", Static)
+            assert not list(screen.query(".personas-library-row"))
+            assert "Personas: 0" in str(
+                screen.query_one("#personas-status-row", Static).renderable
+            )
 
     async def test_profile_edit_save_calls_update(
         self, mock_app_instance, stub_characters, stub_scope_service
