@@ -1570,6 +1570,13 @@ Button.notes-mode-chip {
     padding: 1;
 }
 
+#personas-readiness-console {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    text-wrap: wrap;
+}
+
 /* Workbench column split (2:4:2). Required here because the generic
    .destination-workbench-pane width (1fr) outranks the screen's DEFAULT_CSS,
    which would squeeze the work area to a third of its intended width. */
@@ -1581,6 +1588,28 @@ Button.notes-mode-chip {
 #personas-work-area {
     width: 4fr;
     min-width: 40;
+}
+
+#personas-workbench.personas-workbench-compact {
+    padding: 0;
+}
+
+#personas-library-pane.personas-workbench-compact-pane {
+    width: 1fr;
+    min-width: 16;
+    padding: 0 1;
+}
+
+#personas-work-area.personas-workbench-compact-pane {
+    width: 3fr;
+    min-width: 34;
+    padding: 0 1;
+}
+
+#personas-inspector-pane.personas-workbench-compact-pane {
+    width: 1fr;
+    min-width: 22;
+    padding: 0 1;
 }
 
 #schedules-list-pane,

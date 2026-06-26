@@ -38,9 +38,27 @@ async def test_default_state_shows_no_selection_and_disabled_actions():
             "#personas-delete",
         ):
             assert pilot.app.query_one(button_id, Button).disabled is True
-        assert "Console: Blocked" in str(
+        assert "Console blocked" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
+
+
+async def test_readiness_copy_is_compact_for_narrow_inspector():
+    app = InspectorApp()
+    async with app.run_test(size=(24, 20)) as pilot:
+        pane = pilot.app.query_one(PersonasInspectorPane)
+        readiness = pilot.app.query_one("#personas-readiness-console", Static)
+
+        default_copy = str(readiness.renderable)
+        assert default_copy == "Console blocked: select an item"
+        assert " - " not in default_copy
+
+        pane.set_console_actions_enabled(False, reason="prompts are not attachable")
+        await pilot.pause()
+
+        blocked_copy = str(readiness.renderable)
+        assert blocked_copy == "Console blocked: prompts are not attachable"
+        assert " - " not in blocked_copy
 
 
 async def test_action_buttons_carry_shared_flat_button_classes():
@@ -95,7 +113,7 @@ async def test_show_selection_enables_export_and_shows_authority():
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
         assert pilot.app.query_one("#personas-export-json", Button).disabled is False
         assert pilot.app.query_one("#personas-export-png", Button).disabled is False
-        assert "Console: Blocked - select an item" in str(
+        assert "Console blocked: select an item" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -123,7 +141,7 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
         assert pilot.app.query_one("#personas-delete", Button).disabled is False
         assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
-        assert "Console: Blocked - select an item" in str(
+        assert "Console blocked: select an item" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -132,7 +150,7 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
 
         assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is False
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is False
-        assert "Console: Ready" in str(
+        assert "Console ready" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -143,7 +161,7 @@ async def test_console_action_enablement_is_explicitly_screen_owned():
         assert pilot.app.query_one("#personas-delete", Button).disabled is False
         assert pilot.app.query_one("#personas-attach-to-console", Button).disabled is True
         assert pilot.app.query_one("#personas-start-chat", Button).disabled is True
-        assert "Console: Blocked - prompts are not attachable" in str(
+        assert "Console blocked: prompts are not attachable" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
 
@@ -161,7 +179,7 @@ async def test_unsaved_disables_attach_and_export_with_reason():
         assert attach.disabled is True
         assert "unsaved" in str(attach.tooltip).lower()
         assert pilot.app.query_one("#personas-export-json", Button).disabled is True
-        assert "Console: Blocked - unsaved edits" in str(
+        assert "Console blocked: unsaved edits" in str(
             pilot.app.query_one("#personas-readiness-console", Static).renderable
         )
         pane.set_unsaved(False)
