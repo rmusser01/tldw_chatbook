@@ -210,7 +210,7 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
         assert "Console" in text
         assert "Transcript / Event Stream" in text
         assert "Staged Context" in text
-        assert "Console Settings" in text
+        assert "Choose model" in text or "Open Settings" in text
         assert "Inspector" in text
 
 
@@ -248,7 +248,7 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         source_detail = screen.query_one("#library-source-detail")
 
         screen.query_one("#library-mode-search", Button).press()
-        await _wait_for_visible_text(screen, pilot, "Search/RAG mode")
+        await _wait_for_visible_text(screen, pilot, "Search/RAG Workbench")
 
         assert screen.query_one("#library-source-detail")
         assert screen.query_one("#library-source-inspector")
@@ -256,18 +256,16 @@ async def test_library_core_loop_modes_are_actionable_without_leaving_library():
         assert screen.query_one("#library-source-detail") is source_detail
         assert screen.query_one("#library-mode-search").has_class("is-active")
         text = _visible_text(screen)
-        assert "Search/RAG mode" in text
+        assert "Library | Search/RAG |" in text
         assert "Ask in Console" in text or "Use in Console" in text
 
         screen.query_one("#library-mode-collections", Button).press()
-        await _wait_for_visible_text(screen, pilot, "Collections mode")
+        await _wait_for_visible_text(screen, pilot, "Collections Reader")
 
         text = _visible_text(screen)
         assert screen.query_one("#library-source-browser") is source_browser
         assert screen.query_one("#library-source-detail") is source_detail
         assert screen.query_one("#library-mode-collections").has_class("is-active")
-        assert "Collections mode" in text
-        assert "Library-owned" in text
-        assert "citations/snippets" in text
-
-
+        assert "Library | Collections |" in text
+        assert "Collections Reader" in text
+        assert "saved content" in text

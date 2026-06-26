@@ -837,7 +837,7 @@ async def test_library_destination_lists_local_source_snapshot_from_services():
         button = screen.query_one("#library-use-in-console", Button)
 
         assert "Library Content Hub" in text
-        assert "Landing page for ingested content" in text
+        assert "Source overview, retrieval readiness, movement paths, and next action." in text
         assert "Notes: 2" in text
         assert "Media: 1" in text
         assert "Conversations: 1" in text
@@ -905,16 +905,16 @@ async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await _wait_for_visible_text(screen, pilot, "Notes (showing up to 5): 5")
+        await _wait_for_visible_text(screen, pilot, "Notes 5+")
         text = _visible_text(screen)
 
-        assert "Notes (showing up to 5): 5" in text
-        assert "Notes: 5" not in text
+        assert "Notes 5+" in text
+        assert "Notes: 5+" in text
+        assert "Notes (showing up to 5): 5" not in text
         assert "Research Note 1" in text
-        assert "Research Note 5" in text
         assert "Research Note 6" not in text
 
-        await pilot.click("#library-use-in-console")
+        screen.query_one("#library-use-in-console", Button).press()
         await pilot.pause(0.1)
 
     app.open_chat_with_handoff.assert_called_once()
@@ -1106,7 +1106,7 @@ async def test_library_import_export_action_switches_to_native_mode_without_rout
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-open-import-export")
-        await pilot.click("#library-open-import-export")
+        screen.query_one("#library-open-import-export", Button).press()
         await _wait_for_selector(screen, pilot, "#library-import-export-workflow-title")
 
         assert getattr(screen, "_active_mode") == "import-export"
@@ -1127,9 +1127,9 @@ async def test_library_import_export_dedicated_import_action_emits_ingest_route(
     async with host.run_test(size=(160, 40)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await pilot.click("#library-open-import-export")
+        screen.query_one("#library-open-import-export", Button).press()
         await _wait_for_selector(screen, pilot, "#library-import-export-open-ingest")
-        await pilot.click("#library-import-export-open-ingest")
+        screen.query_one("#library-import-export-open-ingest", Button).press()
         await _wait_for_route(seen_routes, "ingest", pilot)
 
     assert seen_routes[-1] == "ingest"
@@ -1148,7 +1148,7 @@ async def test_library_search_action_switches_to_search_mode_without_route_hando
         await pilot.pause(0.1)
 
         assert getattr(screen, "_active_mode") == "search"
-        assert "Search/RAG mode" in _visible_text(screen)
+        assert "Library | Search/RAG |" in _visible_text(screen)
 
     assert seen_routes == []
 

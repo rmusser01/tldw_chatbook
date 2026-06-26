@@ -173,7 +173,7 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
             app.screen.query_one("#library-mode-search", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library" and "Search/RAG mode" in _screen_text(app),
+                lambda: app.current_tab == "library" and "Search/RAG Workbench" in _screen_text(app),
             )
 
             app.screen.query_one("#nav-library", Button).press()
@@ -229,5 +229,4 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
                 assert subscription_window is not None
                 assert subscription_window.initial_tab == "watchlist-runs"
                 assert subscription_window._selected_watchlist_run_id == "local:watchlist_run:91"
-
 

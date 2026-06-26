@@ -952,12 +952,6 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
 
     def _parse_optional_text_input(self, input_id: str) -> str | None:
         raw_value = self.query_one(f"#{input_id}", Input).value.strip()
-        if raw_value and not validate_text_input(
-            raw_value,
-            max_length=PROVIDER_CHOICE_INPUT_MAX_LENGTH,
-            allow_html=False,
-        ):
-            return raw_value
         return raw_value or None
 
     def _parse_optional_choice_input(self, input_id: str) -> str | None:

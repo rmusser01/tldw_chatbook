@@ -132,9 +132,12 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Workspaces.display_state import (
+    CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
     ConsoleWorkspaceConversationRow,
+    ConsoleWorkspaceConversationSectionState,
     ConsoleWorkspaceContextState,
     build_console_workspace_state,
+    console_workspace_conversation_result_copy,
 )
 from ...Workspaces import DEFAULT_WORKSPACE_ID
 from ...Widgets.compact_model_bar import CompactModelBar
@@ -341,6 +344,51 @@ class ChatScreen(BaseAppScreen):
         """Mirror sidebar temperature changes into the compact shell controls."""
         self._sync_compact_shell_controls(temperature=event.value)
 
+    @on(Input.Changed, "#console-workspace-conversation-search")
+    def on_console_workspace_conversation_search_changed(self, event: Input.Changed) -> None:
+        """Debounce active-workspace conversation search in the Console rail."""
+        event.stop()
+        self._console_workspace_conversation_query = str(event.value or "")
+        self._console_workspace_conversation_search_token += 1
+        token = self._console_workspace_conversation_search_token
+        workspace_id = self._active_console_workspace_id_for_conversation_search()
+        query = self._console_workspace_conversation_query
+        if self._console_workspace_conversation_search_timer is not None:
+            self._console_workspace_conversation_search_timer.stop()
+            self._console_workspace_conversation_search_timer = None
+        if not query.strip():
+            self._console_workspace_conversation_search_rows = ()
+            self._console_workspace_conversation_search_total = None
+            self._console_workspace_conversation_search_error = ""
+            self._sync_console_workspace_context()
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+            return
+        native_rows = self._native_console_rows_for_workspace_search(
+            workspace_id,
+            query,
+        )
+        membership_rows = self._membership_console_rows_for_workspace_search(
+            workspace_id,
+            query,
+        )
+        self._console_workspace_conversation_search_rows = tuple(
+            self._merge_console_workspace_rows(native_rows, membership_rows)
+        )
+        self._console_workspace_conversation_search_total = None
+        self._console_workspace_conversation_search_error = ""
+        self._console_workspace_conversation_search_timer = self.set_timer(
+            0.2,
+            lambda: self.run_worker(
+                self._refresh_console_workspace_conversation_search(
+                    workspace_id,
+                    query,
+                    token,
+                ),
+                group="console-workspace-conversation-search",
+                exclusive=True,
+            ),
+        )
+
     @on(Select.Changed, "#compact-api-provider")
     def on_console_compact_provider_changed(self, event: Select.Changed) -> None:
         """Mirror native compact provider changes into Console-owned labels."""
@@ -525,6 +573,15 @@ class ChatScreen(BaseAppScreen):
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
         self._console_chat_store: ConsoleChatStore | None = None
+        self._console_workspace_conversation_query = ""
+        self._console_workspace_conversation_search_timer: Any | None = None
+        self._console_workspace_conversation_search_token = 0
+        self._console_workspace_conversation_search_rows: tuple[
+            ConsoleWorkspaceConversationRow, ...
+        ] = ()
+        self._console_workspace_conversation_search_total: int | None = None
+        self._console_workspace_conversation_search_error = ""
+        self._console_workspace_conversation_workspace_id: str | None = None
         self._console_visible_draft_session_id: str | None = None
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
@@ -848,6 +905,44 @@ class ChatScreen(BaseAppScreen):
             active_workspace_id=workspace_id,
             staged_sources=tuple(staged_sources),
         )
+
+    def _active_console_workspace_id_for_conversation_search(self) -> str:
+        """Return the current active workspace id for Console conversation search."""
+        try:
+            workspace_id = str(
+                self._current_console_workspace_context().active_workspace_id or ""
+            ).strip()
+        except Exception:
+            logger.debug(
+                "Unable to read current workspace context for conversation search",
+                exc_info=True,
+            )
+            workspace_id = ""
+        if workspace_id:
+            return workspace_id
+        service = getattr(self.app_instance, "workspace_registry_service", None)
+        get_active_workspace = getattr(service, "get_active_workspace", None)
+        if callable(get_active_workspace):
+            try:
+                workspace = get_active_workspace()
+            except Exception:
+                logger.debug("Unable to read active workspace for conversation search", exc_info=True)
+                workspace = None
+            workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
+            if workspace_id:
+                return workspace_id
+        store = self._console_chat_store
+        if store is not None and store.workspace_context.active_workspace_id:
+            return str(store.workspace_context.active_workspace_id)
+        return ""
+
+    def _focus_console_workspace_conversation_search(self) -> None:
+        """Restore focus to the conversation search input when it is mounted."""
+        try:
+            search = self.query_one("#console-workspace-conversation-search", Input)
+        except (NoMatches, QueryError):
+            return
+        search.focus()
 
     def _build_console_provider_selection(self) -> ConsoleProviderSelection:
         """Return the effective native Console provider selection for sends."""
@@ -1429,7 +1524,278 @@ class ChatScreen(BaseAppScreen):
                 None,
             ),
         )
-        return self._with_native_console_session_rows(state)
+        state = self._with_native_console_session_rows(state)
+        return self._with_console_workspace_conversation_section(state)
+
+    @staticmethod
+    def _console_workspace_row_key(row: ConsoleWorkspaceConversationRow) -> str:
+        return str(row.conversation_id or "").strip()
+
+    def _selected_console_workspace_conversation_summary(
+        self,
+        rows: list[ConsoleWorkspaceConversationRow],
+    ) -> str:
+        selected = next((row for row in rows if row.selected), None)
+        if selected is None:
+            return "No active conversation."
+        title = ConsoleWorkspaceContextTray._conversation_title(selected.title)
+        detail = ConsoleWorkspaceContextTray._conversation_detail_status(selected.status)
+        return f"{title} - {detail or 'conversation'}"
+
+    def _merge_console_workspace_rows(
+        self,
+        primary: list[ConsoleWorkspaceConversationRow],
+        secondary: list[ConsoleWorkspaceConversationRow],
+    ) -> list[ConsoleWorkspaceConversationRow]:
+        merged: list[ConsoleWorkspaceConversationRow] = []
+        seen: set[str] = set()
+        for row in primary + secondary:
+            key = self._console_workspace_row_key(row)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(row)
+        return merged
+
+    def _native_console_rows_for_workspace_search(
+        self,
+        workspace_id: str,
+        query: str,
+    ) -> list[ConsoleWorkspaceConversationRow]:
+        """Return matching open native sessions for the active workspace search."""
+        store = self._console_chat_store
+        if store is None:
+            return []
+        needle = str(query or "").strip().lower()
+        rows: list[ConsoleWorkspaceConversationRow] = []
+        active_session_id = store.active_session_id
+        for session in store.sessions():
+            selected = session.id == active_session_id
+            session_workspace_id = str(session.workspace_id or "").strip()
+            if (
+                workspace_id
+                and workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
+                and session_workspace_id != workspace_id
+                and not selected
+            ):
+                continue
+            title = str(session.title or "Untitled conversation")
+            if needle and needle not in title.lower():
+                continue
+            conversation_id = (
+                str(session.persisted_conversation_id)
+                if session.persisted_conversation_id
+                else f"native:{session.id}"
+            )
+            rows.append(
+                ConsoleWorkspaceConversationRow(
+                    conversation_id=conversation_id,
+                    title=title,
+                    status="active" if selected else "open",
+                    selected=selected,
+                )
+            )
+        return rows
+
+    def _membership_console_rows_for_workspace_search(
+        self,
+        workspace_id: str,
+        query: str,
+    ) -> list[ConsoleWorkspaceConversationRow]:
+        """Return matching workspace conversation membership rows."""
+        service = getattr(self.app_instance, "workspace_registry_service", None)
+        list_conversations = getattr(service, "list_workspace_conversations", None)
+        if not callable(list_conversations) or not workspace_id:
+            return []
+        needle = str(query or "").strip().lower()
+        try:
+            memberships = list_conversations(workspace_id)
+        except Exception:
+            logger.debug("Unable to search workspace conversation memberships", exc_info=True)
+            return []
+        rows: list[ConsoleWorkspaceConversationRow] = []
+        current_conversation = self._current_console_conversation_id()
+        for membership in memberships:
+            title = str(getattr(membership, "title", "") or getattr(membership, "item_id", ""))
+            if needle and needle not in title.lower():
+                continue
+            conversation_id = str(getattr(membership, "item_id", "") or "")
+            rows.append(
+                ConsoleWorkspaceConversationRow(
+                    conversation_id=conversation_id,
+                    title=title,
+                    status=str(getattr(membership, "role", "") or "workspace-thread"),
+                    selected=bool(current_conversation and conversation_id == current_conversation),
+                )
+            )
+        return rows
+
+    async def _persisted_console_rows_for_workspace_search(
+        self,
+        workspace_id: str,
+        query: str,
+    ) -> tuple[list[ConsoleWorkspaceConversationRow], int | None, str]:
+        """Return persisted workspace conversation search rows, total, and error copy."""
+        scope_service = getattr(
+            self.app_instance,
+            "chat_conversation_scope_service",
+            None,
+        )
+        list_conversations = getattr(scope_service, "list_conversations", None)
+        if not callable(list_conversations) or not workspace_id:
+            return [], None, ""
+        if (
+            hasattr(scope_service, "local_service")
+            and getattr(scope_service, "local_service", None) is None
+        ):
+            return [], None, ""
+        try:
+            result = list_conversations(
+                mode="local",
+                query=query,
+                scope_type="workspace",
+                workspace_id=workspace_id,
+                limit=CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
+                offset=0,
+            )
+            result = await result if inspect.isawaitable(result) else result
+        except Exception as exc:
+            if (
+                isinstance(exc, ValueError)
+                and "service is unavailable" in str(exc).lower()
+            ):
+                logger.debug("Local persisted conversation search service is unavailable")
+                return [], None, ""
+            logger.exception("Unable to search Console workspace conversations")
+            return [], None, "Workspace conversation search is unavailable."
+        if not isinstance(result, dict):
+            return [], 0, ""
+        items = result.get("items")
+        if not isinstance(items, list):
+            items = []
+        total = result.get("total")
+        if total is None:
+            pagination = result.get("pagination")
+            if isinstance(pagination, dict):
+                total = pagination.get("total")
+        try:
+            total_count = int(total)
+        except (TypeError, ValueError):
+            total_count = len(items)
+        current_conversation = self._current_console_conversation_id()
+        rows: list[ConsoleWorkspaceConversationRow] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            conversation_id = str(item.get("id") or "").strip()
+            if not conversation_id:
+                continue
+            rows.append(
+                ConsoleWorkspaceConversationRow(
+                    conversation_id=conversation_id,
+                    title=str(item.get("title") or "Untitled conversation"),
+                    status=str(item.get("state") or "workspace-thread"),
+                    selected=bool(
+                        current_conversation and current_conversation == conversation_id
+                    ),
+                )
+            )
+        return rows, total_count, ""
+
+    def _refresh_console_workspace_conversation_search_if_current(
+        self,
+        workspace_id: str,
+        query: str,
+        token: int,
+        *,
+        restore_focus: bool = False,
+    ) -> bool:
+        """Refresh search results when workspace, query, and token still match."""
+        if token != self._console_workspace_conversation_search_token:
+            return False
+        if workspace_id != self._active_console_workspace_id_for_conversation_search():
+            return False
+        if query != self._console_workspace_conversation_query:
+            return False
+        self._sync_console_workspace_context()
+        if restore_focus:
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+        return True
+
+    async def _refresh_console_workspace_conversation_search(
+        self,
+        workspace_id: str,
+        query: str,
+        token: int,
+    ) -> None:
+        """Refresh search results only if workspace and query are still current."""
+        if token != self._console_workspace_conversation_search_token:
+            return
+        if workspace_id != self._active_console_workspace_id_for_conversation_search():
+            return
+        if query != self._console_workspace_conversation_query:
+            return
+        if not str(query or "").strip():
+            self._console_workspace_conversation_search_rows = ()
+            self._console_workspace_conversation_search_total = None
+            self._console_workspace_conversation_search_error = ""
+            self._sync_console_workspace_context()
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+            return
+        native_rows = self._native_console_rows_for_workspace_search(
+            workspace_id,
+            query,
+        )
+        membership_rows = self._membership_console_rows_for_workspace_search(
+            workspace_id,
+            query,
+        )
+        local_rows = self._merge_console_workspace_rows(native_rows, membership_rows)
+        self._console_workspace_conversation_search_rows = tuple(local_rows)
+        self._console_workspace_conversation_search_total = len(local_rows)
+        self._console_workspace_conversation_search_error = ""
+        self._sync_console_workspace_context()
+        self.call_after_refresh(self._focus_console_workspace_conversation_search)
+        persisted_rows, persisted_total, error_copy = (
+            await self._persisted_console_rows_for_workspace_search(
+                workspace_id,
+                query,
+            )
+        )
+        if token != self._console_workspace_conversation_search_token:
+            return
+        if workspace_id != self._active_console_workspace_id_for_conversation_search():
+            return
+        if query != self._console_workspace_conversation_query:
+            return
+        merged = self._merge_console_workspace_rows(
+            local_rows,
+            persisted_rows,
+        )
+        result_total = persisted_total
+        if result_total is None or result_total < len(merged):
+            result_total = len(merged)
+        self._console_workspace_conversation_search_rows = tuple(merged)
+        self._console_workspace_conversation_search_total = result_total
+        self._console_workspace_conversation_search_error = error_copy
+        self._sync_console_workspace_context()
+        self.call_after_refresh(self._focus_console_workspace_conversation_search)
+
+    async def _refresh_console_workspace_conversation_search_after_selection(self) -> None:
+        """Refresh active search rows after a conversation row changes selection."""
+        query = self._console_workspace_conversation_query
+        if not query.strip():
+            return
+        if self._console_workspace_conversation_search_timer is not None:
+            self._console_workspace_conversation_search_timer.stop()
+            self._console_workspace_conversation_search_timer = None
+        self._console_workspace_conversation_search_token += 1
+        token = self._console_workspace_conversation_search_token
+        await self._refresh_console_workspace_conversation_search(
+            self._active_console_workspace_id_for_conversation_search(),
+            query,
+            token,
+        )
 
     def _with_native_console_session_rows(
         self,
@@ -1483,7 +1849,80 @@ class ChatScreen(BaseAppScreen):
         if not native_rows:
             return state
         native_rows.sort(key=lambda row: 0 if row.selected else 1)
-        return replace(state, conversation_rows=tuple(native_rows + rows))
+        return replace(
+            state,
+            conversation_rows=tuple(
+                self._merge_console_workspace_rows(native_rows, rows)
+            ),
+        )
+
+    def _with_console_workspace_conversation_section(
+        self,
+        state: ConsoleWorkspaceContextState,
+    ) -> ConsoleWorkspaceContextState:
+        """Attach renderable Conversations subsection state to workspace context."""
+        workspace_id = ""
+        try:
+            workspace_id = str(
+                self._current_console_workspace_context().active_workspace_id or ""
+            ).strip()
+        except Exception:
+            workspace_id = ""
+        store = self._console_chat_store
+        if not workspace_id:
+            if store is not None and store.workspace_context.active_workspace_id:
+                workspace_id = str(store.workspace_context.active_workspace_id)
+            elif state.workspace_label.startswith("Workspace: "):
+                workspace_id = state.workspace_label.removeprefix("Workspace: ").strip()
+
+        if self._console_workspace_conversation_workspace_id != workspace_id:
+            self._console_workspace_conversation_query = ""
+            self._console_workspace_conversation_search_token += 1
+            self._console_workspace_conversation_search_rows = ()
+            self._console_workspace_conversation_search_total = None
+            self._console_workspace_conversation_search_error = ""
+            self._console_workspace_conversation_workspace_id = workspace_id
+
+        rows = list(state.conversation_rows)
+        if self._console_workspace_conversation_query.strip():
+            rows = list(self._console_workspace_conversation_search_rows)
+        selected_summary = self._selected_console_workspace_conversation_summary(rows)
+        query = self._console_workspace_conversation_query
+        result_total = (
+            self._console_workspace_conversation_search_total
+            if query.strip()
+            else None
+        )
+        if (
+            query.strip()
+            and result_total is None
+            and not self._console_workspace_conversation_search_error
+        ):
+            result_total = len(rows)
+        status_copy = console_workspace_conversation_result_copy(
+            query=query,
+            result_total_count=result_total,
+            result_limit=CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
+        )
+        section = ConsoleWorkspaceConversationSectionState(
+            workspace_id=workspace_id,
+            collapsed=self._console_workspace_conversations_collapsed(workspace_id),
+            query=query,
+            selected_summary=selected_summary,
+            rows=tuple(rows),
+            workspace_total_count=len(rows),
+            result_total_count=result_total,
+            status_copy=status_copy,
+            empty_copy=(
+                "No matches in this workspace."
+                if query.strip()
+                else state.conversation_empty_copy
+            ),
+            search_enabled=True,
+            new_conversation_enabled=state.new_conversation_enabled,
+            error_copy=self._console_workspace_conversation_search_error,
+        )
+        return replace(state, conversation_section=section)
 
     def _console_config(self) -> dict[str, Any]:
         """Return mutable Console app config, initializing the section if needed."""
@@ -1496,6 +1935,43 @@ class ChatScreen(BaseAppScreen):
             console_config = {}
             app_config["console"] = console_config
         return console_config
+
+    def _console_conversation_section_config(self) -> dict[str, Any]:
+        """Return mutable Console conversation-section UI preferences."""
+        console_config = self._console_config()
+        section_config = console_config.get("conversation_section")
+        if not isinstance(section_config, dict):
+            section_config = {}
+            console_config["conversation_section"] = section_config
+        return section_config
+
+    def _console_workspace_conversations_collapsed(
+        self,
+        workspace_id: str | None,
+    ) -> bool:
+        """Return stored collapse preference for one workspace."""
+        key = str(workspace_id or "global").strip() or "global"
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            return False
+        console_config = app_config.get("console")
+        if not isinstance(console_config, dict):
+            return False
+        section_config = console_config.get("conversation_section")
+        if not isinstance(section_config, dict):
+            return False
+        value = section_config.get(key)
+        return bool(value.get("collapsed")) if isinstance(value, dict) else False
+
+    def _set_console_workspace_conversations_collapsed(
+        self,
+        workspace_id: str | None,
+        collapsed: bool,
+    ) -> None:
+        """Store collapse preference for one workspace in memory."""
+        key = str(workspace_id or "global").strip() or "global"
+        section_config = self._console_conversation_section_config()
+        section_config[key] = {"collapsed": bool(collapsed)}
 
     def _console_rail_state_config(self) -> dict[str, Any]:
         """Return mutable Console rail-state config, initializing it if needed."""
@@ -2682,7 +3158,11 @@ class ChatScreen(BaseAppScreen):
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
                 with self._frame_console_region(left_rail):
-                    with Horizontal(classes="console-rail-header"):
+                    left_rail_header = Horizontal(classes="console-rail-header")
+                    left_rail_header.styles.height = 1
+                    left_rail_header.styles.min_height = 1
+                    left_rail_header.styles.max_height = 1
+                    with left_rail_header:
                         rail_label = Static(
                             "Context",
                             id="console-context-rail-title",
@@ -2817,7 +3297,11 @@ class ChatScreen(BaseAppScreen):
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
                 with self._frame_console_region(right_rail):
-                    with Horizontal(classes="console-rail-header"):
+                    right_rail_header = Horizontal(classes="console-rail-header")
+                    right_rail_header.styles.height = 1
+                    right_rail_header.styles.min_height = 1
+                    right_rail_header.styles.max_height = 1
+                    with right_rail_header:
                         rail_label = Static(
                             "Inspector",
                             id="console-inspector-rail-title",
@@ -5420,9 +5904,31 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             await self._create_native_console_session_from_active_context()
             return
+        if button_id == "console-workspace-conversations-toggle":
+            event.stop()
+            state = self._build_console_workspace_context_state()
+            section = state.conversation_section
+            workspace_id = section.workspace_id if section is not None else None
+            collapsed = not bool(section.collapsed if section is not None else False)
+            self._set_console_workspace_conversations_collapsed(workspace_id, collapsed)
+            self._sync_console_workspace_context()
+            return
         if button_id == "console-new-workspace-conversation":
             event.stop()
             await self._create_native_console_session_from_active_context()
+            return
+        if button_id == "console-workspace-conversation-search-clear":
+            event.stop()
+            if self._console_workspace_conversation_search_timer is not None:
+                self._console_workspace_conversation_search_timer.stop()
+                self._console_workspace_conversation_search_timer = None
+            self._console_workspace_conversation_query = ""
+            self._console_workspace_conversation_search_token += 1
+            self._console_workspace_conversation_search_rows = ()
+            self._console_workspace_conversation_search_total = None
+            self._console_workspace_conversation_search_error = ""
+            self._sync_console_workspace_context()
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
             return
         if button_id and button_id.startswith("console-workspace-conversation-"):
             event.stop()
@@ -5431,6 +5937,7 @@ class ChatScreen(BaseAppScreen):
             if session_id is None:
                 resumed = await self._resume_console_workspace_conversation(conversation_id)
                 if resumed:
+                    await self._refresh_console_workspace_conversation_search_after_selection()
                     return
                 self.app_instance.notify(
                     "Open this workspace conversation from Library before switching here.",
@@ -5443,6 +5950,7 @@ class ChatScreen(BaseAppScreen):
                 controller.switch_session(session_id)
                 await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)
+            await self._refresh_console_workspace_conversation_search_after_selection()
             return
         if button_id and button_id.startswith("console-close-session-tab-"):
             event.stop()

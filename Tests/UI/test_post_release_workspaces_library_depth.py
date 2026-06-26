@@ -89,8 +89,8 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         await _wait_for_selector(screen, pilot, "#library-workspaces-depth-panel")
 
         visible = _visible_text(screen)
-        assert "Workspace Sources" in visible
-        assert "Scope & Eligibility" in visible
+        assert "Workspace Rules" in visible
+        assert "Stage only active-workspace sources into Console, RAG, or agents." in visible
         assert "Handoff Rules" in visible
         assert "Workspace: Workspace A" in visible
         assert "Browse/search: all Library and Notes items remain visible" in visible
@@ -131,7 +131,8 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         assert "Action: Copy/link blocked sources before staging." in visible
         assert "Blocked: some sources are outside Workspace A" in visible
         assert "Fix: Copy/link blocked sources to Workspace A" in visible
-        assert "Study Dashboard" not in visible
+        assert "Study Dashboard actions" not in visible
+        assert len(screen.query("#library-action-region #library-open-study")) == 0
         snapshot_region = screen.query_one("#library-local-snapshot-region")
         assert snapshot_region.display is False
         assert screen.query_one("#library-use-in-console", Button).disabled is True
@@ -159,7 +160,7 @@ async def test_library_workspaces_empty_state_keeps_recovery_copy_compact() -> N
         assert "No workspace sources yet." in visible
         assert "Browse/search still shows every Library and Notes item." in visible
         assert "Active workspace: Local Default" in visible
-        assert "Browse/search: all workspaces" in visible
+        assert "Browse: all workspaces" in visible
         assert "Handoff unavailable until sources exist or are assigned here." in visible
         assert "Console/RAG handoff: unavailable until sources exist" in visible
         assert "Blocked: no workspace sources" in visible

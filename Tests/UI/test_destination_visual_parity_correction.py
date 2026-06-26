@@ -459,10 +459,10 @@ async def test_library_source_browser_collections_action_switches_to_collections
         library.query_one("#library-open-collections", Button).press()
         await _wait_for_selector(library, pilot, "#library-collections-panel")
 
-        active_mode_title = str(library.query_one("#library-active-mode-title", Static).renderable)
+        detail_title = str(library.query_one("#library-source-detail-title", Static).renderable)
         active_chip = library.query_one("#library-mode-collections", Button)
 
-    assert active_mode_title == "Collections mode"
+    assert detail_title == "Collections Reader"
     assert active_chip.has_class("is-active")
 
 
@@ -477,12 +477,12 @@ async def test_library_source_browser_search_action_switches_to_search_mode():
         library.query_one("#library-open-search", Button).press()
         await _wait_for_selector(library, pilot, "#library-search-rag-panel")
 
-        active_mode_title = str(library.query_one("#library-active-mode-title", Static).renderable)
+        detail_title = str(library.query_one("#library-source-detail-title", Static).renderable)
         active_chip = library.query_one("#library-mode-search", Button)
         inspector_title = str(library.query_one("#library-rag-inspector-title", Static).renderable)
         assert not list(library.query("#library-inspector-title"))
 
-    assert active_mode_title == "Search/RAG mode"
+    assert detail_title == "Search/RAG Workbench"
     assert active_chip.has_class("is-active")
     assert inspector_title == "Retrieval Inspector"
 

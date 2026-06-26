@@ -2236,6 +2236,7 @@ async def test_console_left_rail_sections_use_available_space():
         workspace_context = console.query_one("#console-workspace-context")
 
         assert body.parent is left_rail
+        assert header.region.height == 1
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
         assert staged_context.parent is body
