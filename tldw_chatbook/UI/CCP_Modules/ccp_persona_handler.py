@@ -93,11 +93,15 @@ class CCPPersonaHandler:
         except Exception:
             logger.debug("Persona editor widget unavailable during load", exc_info=True)
 
-    async def refresh_persona_list(self) -> List[Dict[str, Any]]:
+    async def refresh_persona_list(
+        self, *, raise_on_unavailable: bool = False
+    ) -> List[Dict[str, Any]]:
         """Refresh the available persona profile list from the shared scope service."""
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         if service is None or not hasattr(service, "list_persona_profiles"):
             logger.debug("Persona scope service unavailable; returning empty persona list")
+            if raise_on_unavailable:
+                raise RuntimeError("Persona profile service is unavailable.")
             self.persona_list = []
             return self.persona_list
 
@@ -105,6 +109,8 @@ class CCPPersonaHandler:
             personas = await service.list_persona_profiles(mode=self._current_mode())
         except ValueError:
             logger.debug("Persona list unavailable in current mode", exc_info=True)
+            if raise_on_unavailable:
+                raise
             self.persona_list = []
             return self.persona_list
 

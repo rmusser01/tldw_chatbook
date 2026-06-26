@@ -67,6 +67,7 @@ from ..CCP_Modules import ccp_character_handler
 from ..CCP_Modules.ccp_character_handler import CCPCharacterHandler
 from ..CCP_Modules.ccp_messages import CharacterMessage
 from ..CCP_Modules.ccp_persona_handler import CCPPersonaHandler
+from .destination_recovery import DestinationRecoveryState
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.shortcut_context import ShortcutAction, ShortcutContext
 from ..Persona_Modules.personas_conversations_controller import (
@@ -271,6 +272,7 @@ class PersonasScreen(BaseAppScreen):
         self._profile_save_inflight: bool = False
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
+        self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         # Serializes library renders: the pane's update_rows has two
         # suspension points, so interleaved renders could double-mount rows.
         self._render_lock = asyncio.Lock()
@@ -431,14 +433,39 @@ class PersonasScreen(BaseAppScreen):
                 return record
         return None
 
+    def _profile_list_recovery_state(self, exc: Exception) -> DestinationRecoveryState:
+        """Build recovery copy when persona profile listing is unavailable."""
+
+        reason = str(exc).strip() or "The current backend did not return persona profiles."
+        disabled_tooltip = (
+            f"{reason} Retry Personas or use Characters until persona profiles are available."
+        )
+        return DestinationRecoveryState(
+            status_label="Persona profiles unavailable",
+            unavailable_what="Browse persona profiles in Personas",
+            why=reason,
+            next_action=(
+                "Check the current runtime backend or retry after persona profile support is available"
+            ),
+            recovery_action="Retry Personas or use Characters",
+            authority_owner="persona scope service",
+            stable_selector="personas-service-error",
+            disabled_tooltip=disabled_tooltip,
+        )
+
     @work(exclusive=True, group="personas-list-refresh")
     async def _refresh_profile_rows_worker(self) -> None:
         """Fetch persona profile rows and render them while still in Personas mode."""
         try:
-            profiles = await self.persona_handler.refresh_persona_list()
-        except Exception:
+            profiles = await self.persona_handler.refresh_persona_list(
+                raise_on_unavailable=True
+            )
+        except Exception as exc:
             logger.warning("Could not refresh the persona profile list.", exc_info=True)
+            self._profile_lookup_recovery_state = self._profile_list_recovery_state(exc)
             profiles = []
+        else:
+            self._profile_lookup_recovery_state = None
         self._profiles = [dict(record) for record in (profiles or [])]
         self._update_status_row()
         if not self.is_mounted or self.state.active_mode != "personas":
@@ -463,7 +490,21 @@ class PersonasScreen(BaseAppScreen):
         async with self._render_lock:
             rows = self._build_library_rows(matched, "persona_profile")
             library = self.query_one(PersonasLibraryPane)
-            await library.update_rows(rows, total=total, noun="persona profiles", filtered=filtered)
+            recovery_state = self._profile_lookup_recovery_state
+            await library.update_rows(
+                rows,
+                total=total,
+                noun="persona profiles",
+                filtered=filtered,
+                recovery_copy=(
+                    recovery_state.visible_copy if recovery_state is not None else None
+                ),
+                recovery_id=(
+                    recovery_state.stable_selector
+                    if recovery_state is not None
+                    else "personas-library-recovery"
+                ),
+            )
             if self.state.selected_entity_kind == "persona_profile" and self.state.selected_entity_id:
                 library.mark_active_row("persona_profile", self.state.selected_entity_id)
 
@@ -560,6 +601,7 @@ class PersonasScreen(BaseAppScreen):
             await self._render_library_rows()
             self._show_center(None)
         elif mode == "personas":
+            self._profile_lookup_recovery_state = None
             await library.update_rows((), total=0, noun="persona profiles")
             self._show_center(None)
             self._refresh_profile_rows_worker()
@@ -1836,10 +1878,14 @@ class PersonasScreen(BaseAppScreen):
         # Refresh the cached profile list tolerantly even when the user has
         # already left the screen or switched modes during the save.
         try:
-            profiles = await self.persona_handler.refresh_persona_list()
+            profiles = await self.persona_handler.refresh_persona_list(
+                raise_on_unavailable=True
+            )
             self._profiles = [dict(record) for record in (profiles or [])]
-        except Exception:
+            self._profile_lookup_recovery_state = None
+        except Exception as exc:
             logger.warning("Could not refresh persona profiles after a save.", exc_info=True)
+            self._profile_lookup_recovery_state = self._profile_list_recovery_state(exc)
         if not self.is_mounted or self.state.active_mode != "personas":
             # Leave the selection, inspector, and center pane alone.
             return
