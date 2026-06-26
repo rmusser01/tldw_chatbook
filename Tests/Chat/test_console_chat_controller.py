@@ -622,6 +622,26 @@ async def test_shutdown_stops_and_awaits_active_stream_task():
 
 
 @pytest.mark.asyncio
+async def test_shutdown_ignores_failed_active_stream_task():
+    async def fail_before_shutdown():
+        raise RuntimeError("stream task failed before shutdown")
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    task = asyncio.create_task(fail_before_shutdown())
+    await asyncio.sleep(0)
+    assert task.done()
+
+    controller._active_stream_task = task
+    controller._stop_requested = True
+
+    await controller.shutdown()
+
+    assert controller._active_stream_task is None
+    assert controller._stop_requested is False
+
+
+@pytest.mark.asyncio
 async def test_close_streaming_session_stops_run_without_key_error():
     class WaitingGateway(StreamingGateway):
         def __init__(self):

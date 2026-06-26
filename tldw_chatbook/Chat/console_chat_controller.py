@@ -275,6 +275,14 @@ class ConsoleChatController:
             await task
         except asyncio.CancelledError:
             pass
+        except Exception:
+            # Shutdown is a teardown path; stale task failures should not crash owner cleanup.
+            pass
+        finally:
+            if self._active_stream_task is task:
+                self._active_assistant_message_id = None
+                self._active_stream_task = None
+                self._stop_requested = False
 
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""
