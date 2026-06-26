@@ -1876,17 +1876,18 @@ class PersonasScreen(BaseAppScreen):
 
     async def _after_profile_save(self, saved: dict) -> None:
         # Refresh the cached profile list tolerantly even when the user has
-        # already left the screen or switched modes during the save.
         try:
             profiles = await self.persona_handler.refresh_persona_list(
                 raise_on_unavailable=True
             )
-            self._profiles = [dict(record) for record in (profiles or [])]
-            self._profile_lookup_recovery_state = None
         except Exception as exc:
             logger.warning("Could not refresh persona profiles after a save.", exc_info=True)
-            self._profiles = []
             self._profile_lookup_recovery_state = self._profile_list_recovery_state(exc)
+            profiles = []
+        else:
+            self._profile_lookup_recovery_state = None
+        self._profiles = [dict(record) for record in (profiles or [])]
+        self._update_status_row()
         self._update_status_row()
         if not self.is_mounted or self.state.active_mode != "personas":
             # Leave the selection, inspector, and center pane alone.
