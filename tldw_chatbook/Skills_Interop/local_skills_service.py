@@ -28,6 +28,7 @@ from ..tldw_api import (
 )
 from ..tldw_api.skills_schemas import _normalize_skill_name
 from ..Utils.input_validation import sanitize_string, validate_text_input
+from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
 from .skill_trust_models import SkillTrustBlockedError
 
 
@@ -386,17 +387,31 @@ class LocalSkillsService:
         for path in sorted(skill_dir.iterdir(), key=lambda item: item.name):
             if not path.is_file() or path.name == _SKILL_FILENAME:
                 continue
-            supporting_files[path.name] = LocalSkillsService._read_text_preserving_newlines(path)
+            supporting_files[path.name] = LocalSkillsService._read_text_preserving_newlines(
+                path,
+                base_dir=skill_dir,
+            )
         return supporting_files or None
 
     @staticmethod
-    def _read_text_preserving_newlines(path: Path) -> str:
-        return path.read_bytes().decode("utf-8")
+    def _read_text_preserving_newlines(path: Path, *, base_dir: Path | None = None) -> str:
+        base_dir = validate_path_simple(base_dir or path.parent)
+        if base_dir.is_symlink():
+            raise ValueError("unsafe local skill path")
+        safe_path = validate_path_simple(path)
+        if safe_path.is_symlink():
+            raise ValueError("unsafe local skill path")
+        if get_safe_relative_path(safe_path, base_dir) is None:
+            raise ValueError("unsafe local skill path")
+        return safe_path.read_bytes().decode("utf-8")
 
     def _response_for_record(self, record: dict[str, Any]) -> dict[str, Any]:
         skill_name = str(record["name"])
         skill_dir = self._skill_dir(skill_name)
-        content = self._read_text_preserving_newlines(skill_dir / _SKILL_FILENAME)
+        content = self._read_text_preserving_newlines(
+            skill_dir / _SKILL_FILENAME,
+            base_dir=skill_dir,
+        )
         response = SkillResponse(
             **record,
             content=content,

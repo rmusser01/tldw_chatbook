@@ -84,6 +84,19 @@ def test_bootstrap_trusts_current_files_and_detects_modification(tmp_path):
         service.ensure_skill_trusted("demo")
 
 
+def test_bootstrap_uses_canonical_skill_name_for_mixed_case_directory(tmp_path):
+    service, skills_dir = _service(tmp_path)
+    _write_skill(skills_dir, name="MySkill", content="# Demo\n")
+
+    service.bootstrap_trust()
+
+    status = service.status_for_skill("myskill")
+    manifest = service.trust_store.load_manifest(service._require_keys())
+    assert set(manifest["skills"]) == {"myskill"}
+    assert status.trust_status == "trusted"
+    service.ensure_skill_trusted("MySkill")
+
+
 def test_verify_skill_content_accepts_exact_trusted_content_and_supporting_files(tmp_path):
     service, skills_dir = _service(tmp_path)
     skill_dir = _write_skill(skills_dir, content="# Demo\nRender {{args}}\n")

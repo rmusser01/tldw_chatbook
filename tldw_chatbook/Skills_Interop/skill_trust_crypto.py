@@ -41,7 +41,14 @@ class SkillTrustKeys:
 
 
 def canonical_json(payload: Any) -> bytes:
-    """Return deterministic UTF-8 JSON bytes for authenticated payloads."""
+    """Return deterministic UTF-8 JSON bytes for authenticated payloads.
+
+    Args:
+        payload: JSON-serializable payload to canonicalize.
+
+    Returns:
+        UTF-8 encoded JSON bytes with stable key ordering and separators.
+    """
 
     return json.dumps(
         payload,
@@ -52,13 +59,31 @@ def canonical_json(payload: Any) -> bytes:
 
 
 def sha256_hex(data: bytes) -> str:
-    """Return the SHA-256 digest of bytes as lowercase hexadecimal."""
+    """Return the SHA-256 digest of bytes as lowercase hexadecimal.
+
+    Args:
+        data: Bytes to hash.
+
+    Returns:
+        Lowercase hexadecimal SHA-256 digest.
+    """
 
     return hashlib.sha256(data).hexdigest()
 
 
 def derive_skill_trust_keys(passphrase: str, *, salt: bytes) -> SkillTrustKeys:
-    """Derive purpose-separated local skill trust keys from a passphrase."""
+    """Derive purpose-separated local skill trust keys from a passphrase.
+
+    Args:
+        passphrase: User-provided trust passphrase.
+        salt: 32-byte salt bound to the local trust manifest.
+
+    Returns:
+        Purpose-separated keys for manifests, snapshots, audit entries, and key wrapping.
+
+    Raises:
+        ValueError: If ``salt`` is not exactly 32 bytes.
+    """
 
     if not isinstance(salt, bytes) or len(salt) != 32:
         raise ValueError("skill trust salt must be 32 bytes")
@@ -88,7 +113,15 @@ def _require_aes_256_key(key: bytes) -> None:
 
 
 def manifest_mac(manifest_payload: dict[str, Any], key: bytes) -> str:
-    """Return an HMAC-SHA256 tag for a canonical manifest payload."""
+    """Return an HMAC-SHA256 tag for a canonical manifest payload.
+
+    Args:
+        manifest_payload: Manifest payload to authenticate.
+        key: HMAC key derived for manifest authentication.
+
+    Returns:
+        Lowercase hexadecimal HMAC-SHA256 tag.
+    """
 
     return hmac.new(key, canonical_json(manifest_payload), hashlib.sha256).hexdigest()
 
@@ -99,7 +132,19 @@ def encrypt_json_blob(
     *,
     associated_data: bytes,
 ) -> dict[str, str]:
-    """Encrypt and authenticate a JSON payload with AES-256-GCM."""
+    """Encrypt and authenticate a JSON payload with AES-256-GCM.
+
+    Args:
+        payload: JSON object to encrypt.
+        key: 32-byte AES-256-GCM key.
+        associated_data: Additional authenticated data bound to the ciphertext.
+
+    Returns:
+        JSON-safe encrypted blob containing algorithm, nonce, ciphertext, and tag.
+
+    Raises:
+        ValueError: If ``key`` is not exactly 32 bytes.
+    """
 
     _require_aes_256_key(key)
     nonce = os.urandom(SKILL_TRUST_NONCE_SIZE)
@@ -120,7 +165,19 @@ def decrypt_json_blob(
     *,
     associated_data: bytes,
 ) -> dict[str, Any]:
-    """Decrypt and authenticate a JSON object encrypted by :func:`encrypt_json_blob`."""
+    """Decrypt and authenticate a JSON object encrypted by :func:`encrypt_json_blob`.
+
+    Args:
+        blob: JSON-safe encrypted blob produced by ``encrypt_json_blob``.
+        key: 32-byte AES-256-GCM key.
+        associated_data: Additional authenticated data expected for the ciphertext.
+
+    Returns:
+        Decrypted JSON object.
+
+    Raises:
+        ValueError: If the key, algorithm, authentication tag, or plaintext shape is invalid.
+    """
 
     _require_aes_256_key(key)
     try:

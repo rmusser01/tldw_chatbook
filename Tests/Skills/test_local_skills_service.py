@@ -407,6 +407,20 @@ async def test_local_skills_service_blocks_execute_when_skill_changes_on_disk_af
 
 
 @pytest.mark.asyncio
+async def test_local_skills_service_rejects_symlinked_skill_file_reads(tmp_path):
+    service = _compat_local_service(tmp_path)
+    await service.create_skill(name="demo-skill", content="# Demo\nRender {{args}}")
+    outside = tmp_path / "outside.md"
+    outside.write_text("# Outside\nsecret", encoding="utf-8")
+    skill_path = tmp_path / "skills" / "demo-skill" / "SKILL.md"
+    skill_path.unlink()
+    skill_path.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="unsafe local skill path"):
+        await service.get_skill("demo-skill")
+
+
+@pytest.mark.asyncio
 async def test_local_skills_service_retrusts_explicitly_approved_update(tmp_path):
     service, trust = _trusted_local_service(tmp_path)
     await service.create_skill(name="demo-skill", content="# Demo\nRender {{args}}")

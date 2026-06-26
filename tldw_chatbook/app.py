@@ -279,7 +279,7 @@ from tldw_chatbook.Skills_Interop import (
 from tldw_chatbook.Skills_Interop.skill_trust_store import (
     SkillTrustStore,
     build_default_skill_trust_key_cache,
-    build_default_skill_trust_marker_store,
+    build_skill_trust_marker_store_with_fallback,
 )
 from tldw_chatbook.Sync_Interop import (
     LocalFirstSyncService,
@@ -2413,15 +2413,20 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 policy_enforcer=self.service_policy_enforcer,
             )
         local_skills_store_dir = get_user_data_dir() / "skills"
+        skill_trust_marker_store, reduced_rollback_protection = (
+            build_skill_trust_marker_store_with_fallback(
+                fallback_marker_path=local_skills_store_dir / "trust" / "generation_marker.json"
+            )
+        )
         self.local_skill_trust_service = SkillTrustService(
             skills_dir=local_skills_store_dir / "skills",
             trust_store=SkillTrustStore(
                 store_dir=local_skills_store_dir / "trust",
-                marker_store=build_default_skill_trust_marker_store(),
+                marker_store=skill_trust_marker_store,
             ),
             key_cache=build_default_skill_trust_key_cache(),
             keyring_convenience_enabled=False,
-            reduced_rollback_protection=False,
+            reduced_rollback_protection=reduced_rollback_protection,
         )
         self.local_skills_service = LocalSkillsService(
             store_dir=local_skills_store_dir,

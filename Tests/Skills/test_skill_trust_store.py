@@ -10,6 +10,7 @@ from tldw_chatbook.Skills_Interop.skill_trust_store import (
     KeyringSkillTrustKeyCache,
     SkillTrustMarkerUnavailable,
     SkillTrustStore,
+    build_skill_trust_marker_store_with_fallback,
 )
 
 
@@ -45,6 +46,17 @@ class FailingMarkerStore:
         if self.save_count == self.fail_on_save_number:
             raise SkillTrustMarkerUnavailable("simulated marker failure")
         self.wrapped.save_marker(generation=generation, manifest_digest=manifest_digest)
+
+
+class AlwaysFailingMarkerStore:
+    def __init__(self, marker):
+        self.marker = marker
+
+    def load_marker(self):
+        return self.marker
+
+    def save_marker(self, *, generation, manifest_digest):
+        raise SkillTrustMarkerUnavailable("original marker failure")
 
 
 def test_trust_store_round_trips_manifest_snapshot_marker_and_salt(tmp_path):
@@ -154,6 +166,64 @@ def test_trust_store_marker_failure_preserves_previous_manifest_and_marker(tmp_p
         "generation": 1,
         "manifest_digest": store.manifest_digest(previous_manifest),
     }
+
+
+def test_trust_store_marker_rollback_preserves_original_failure(tmp_path):
+    keys = derive_skill_trust_keys("passphrase", salt=b"7" * 32)
+    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
+    previous_manifest = {"version": 1, "generation": 1, "skills": {}, "audit": []}
+    advanced_manifest = {"version": 1, "generation": 2, "skills": {}, "audit": []}
+
+    store.save_manifest(previous_manifest, keys, salt=b"7" * 32)
+    store.marker_store = AlwaysFailingMarkerStore({"invalid": "previous-marker"})
+
+    with pytest.raises(SkillTrustMarkerUnavailable, match="original marker failure"):
+        store.save_manifest(advanced_manifest, keys, salt=b"7" * 32)
+
+    store.marker_store = marker
+    assert store.load_manifest(keys) == previous_manifest
+
+
+def test_trust_store_rejects_snapshot_directory_symlink_escape(tmp_path):
+    keys = derive_skill_trust_keys("passphrase", salt=b"7" * 32)
+    marker = FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json")
+    store_dir = tmp_path / "trust"
+    outside_dir = tmp_path / "outside"
+    store_dir.mkdir()
+    outside_dir.mkdir()
+    (store_dir / "snapshots").symlink_to(outside_dir, target_is_directory=True)
+    store = SkillTrustStore(store_dir=store_dir, marker_store=marker)
+
+    with pytest.raises(ValueError, match="unsafe skill trust path"):
+        store.save_snapshot("demo-1", {"files": {"SKILL.md": "# Demo"}}, keys, generation=1)
+
+    assert not (outside_dir / "demo-1.json").exists()
+
+
+def test_file_marker_store_rejects_marker_parent_symlink_escape(tmp_path):
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    marker_parent = tmp_path / "marker-parent"
+    marker_parent.symlink_to(outside_dir, target_is_directory=True)
+    marker = FileSkillTrustGenerationMarkerStore(marker_parent / "marker.json")
+
+    with pytest.raises(ValueError, match="unsafe skill trust path"):
+        marker.save_marker(generation=1, manifest_digest="digest")
+
+    assert not (outside_dir / "marker.json").exists()
+
+
+def test_marker_store_builder_falls_back_to_reduced_protection_file_marker(tmp_path):
+    marker_store, reduced = build_skill_trust_marker_store_with_fallback(
+        fallback_marker_path=tmp_path / "trust" / "marker.json",
+        keyring_backend=FakePlaintextKeyring(),
+    )
+
+    assert isinstance(marker_store, FileSkillTrustGenerationMarkerStore)
+    assert reduced is True
+    marker_store.save_marker(generation=1, manifest_digest="digest")
+    assert marker_store.load_marker() == {"generation": 1, "manifest_digest": "digest"}
 
 
 def test_trust_store_load_salt_requires_32_bytes(tmp_path):

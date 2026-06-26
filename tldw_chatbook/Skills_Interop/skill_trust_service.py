@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..tldw_api.skills_schemas import _normalize_skill_name as _normalize_api_skill_name
 from .skill_trust_crypto import (
     SkillTrustKeys,
     canonical_json,
@@ -135,18 +136,18 @@ class SkillTrustService:
         generation = 1
         skills: dict[str, Any] = {}
 
-        for skill_dir in self._iter_skill_dirs():
-            snapshot = scan_skill_directory(skill_dir.name, skill_dir)
+        for normalized_name, skill_dir in self._iter_skill_dirs():
+            snapshot = scan_skill_directory(normalized_name, skill_dir)
             if snapshot.unsupported_paths:
                 raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
-            snapshot_id = self._snapshot_id(skill_dir.name, generation)
+            snapshot_id = self._snapshot_id(normalized_name, generation)
             self.trust_store.save_snapshot(
                 snapshot_id,
                 {"files": dict(snapshot.text_files)},
                 keys,
                 generation=generation,
             )
-            skills[skill_dir.name] = self._manifest_skill_entry(
+            skills[normalized_name] = self._manifest_skill_entry(
                 snapshot=snapshot,
                 snapshot_id=snapshot_id,
                 snapshot_generation=generation,
@@ -443,16 +444,20 @@ class SkillTrustService:
         )
         self.trust_store.save_manifest(manifest, keys, salt=self._require_salt())
 
-    def _iter_skill_dirs(self) -> list[Path]:
+    def _iter_skill_dirs(self) -> list[tuple[str, Path]]:
         if not self.skills_dir.exists():
             return []
-        skill_dirs: list[Path] = []
+        skill_dirs: list[tuple[str, Path]] = []
+        seen: set[str] = set()
         for child in sorted(self.skills_dir.iterdir(), key=lambda item: item.name):
             if child.is_symlink():
                 raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
             if child.is_dir():
-                self._normalize_skill_name(child.name)
-                skill_dirs.append(child)
+                normalized_name = self._normalize_skill_name(child.name)
+                if normalized_name in seen:
+                    raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
+                seen.add(normalized_name)
+                skill_dirs.append((normalized_name, child))
         return skill_dirs
 
     def _known_and_current_skill_names(self, manifest: dict[str, Any]) -> set[str]:
@@ -461,11 +466,16 @@ class SkillTrustService:
             names.add(self._normalize_skill_name(skill_name))
         if not self.skills_dir.exists():
             return names
+        current_names: set[str] = set()
         for child in sorted(self.skills_dir.iterdir(), key=lambda item: item.name):
             if child.is_symlink():
                 raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
             if child.is_dir():
-                names.add(self._normalize_skill_name(child.name))
+                normalized_name = self._normalize_skill_name(child.name)
+                if normalized_name in current_names:
+                    raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
+                current_names.add(normalized_name)
+                names.add(normalized_name)
         return names
 
     def _load_valid_manifest(self) -> dict[str, Any]:
@@ -496,7 +506,15 @@ class SkillTrustService:
 
     def _scan_skill(self, skill_name: str) -> SkillDirectorySnapshot:
         normalized_name = self._normalize_skill_name(skill_name)
-        skill_dir = self.skills_dir / normalized_name
+        try:
+            skill_dir = self._skill_dir_for_normalized_name(normalized_name)
+        except ValueError:
+            return SkillDirectorySnapshot(
+                skill_name=normalized_name,
+                fingerprints=(),
+                text_files={},
+                unsupported_paths=(normalized_name,),
+            )
         if skill_dir.is_symlink():
             return SkillDirectorySnapshot(
                 skill_name=normalized_name,
@@ -520,18 +538,30 @@ class SkillTrustService:
         return scan_skill_directory(normalized_name, skill_dir)
 
     def _normalize_skill_name(self, skill_name: str) -> str:
-        if not isinstance(skill_name, str):
+        try:
+            return _normalize_api_skill_name(skill_name)
+        except (AttributeError, ValueError) as exc:
+            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH) from exc
+
+    def _skill_dir_for_normalized_name(self, normalized_name: str) -> Path:
+        direct = self.skills_dir / normalized_name
+        if direct.exists() or direct.is_symlink() or not self.skills_dir.exists():
+            return direct
+        matches: list[Path] = []
+        for child in sorted(self.skills_dir.iterdir(), key=lambda item: item.name):
+            if not (child.is_dir() or child.is_symlink()):
+                continue
+            try:
+                child_name = self._normalize_skill_name(child.name)
+            except ValueError:
+                continue
+            if child_name == normalized_name:
+                matches.append(child)
+        if len(matches) > 1:
             raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
-        if not skill_name or skill_name in {".", ".."}:
-            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
-        if "\x00" in skill_name or "/" in skill_name or "\\" in skill_name:
-            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
-        path = Path(skill_name)
-        if path.is_absolute() or len(path.parts) != 1:
-            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
-        if any(part in {"", ".", ".."} for part in path.parts):
-            raise ValueError(TRUST_REASON_UNSUPPORTED_PATH)
-        return skill_name
+        if matches:
+            return matches[0]
+        return direct
 
     def _manifest_missing_status(self, skill_name: str) -> SkillTrustStatus:
         try:

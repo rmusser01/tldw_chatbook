@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from loguru import logger
+
+from ..Utils.path_validation import get_safe_relative_path, validate_path_simple
 from ..runtime_policy.server_credentials import is_secure_keyring_backend
 from .skill_trust_crypto import (
     SkillTrustKeys,
@@ -62,9 +65,13 @@ class FileSkillTrustGenerationMarkerStore:
     def load_marker(self) -> dict[str, Any] | None:
         """Load the file-backed generation marker if it exists."""
 
-        if not self.marker_path.exists():
+        marker_path = _validated_trust_file_path(
+            self.marker_path,
+            base_dir=self.marker_path.parent,
+        )
+        if not marker_path.exists():
             return None
-        payload = json.loads(self.marker_path.read_text(encoding="utf-8"))
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             return None
         return payload
@@ -72,12 +79,11 @@ class FileSkillTrustGenerationMarkerStore:
     def save_marker(self, *, generation: int, manifest_digest: str) -> None:
         """Atomically save the file-backed generation marker."""
 
-        self.marker_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "generation": generation,
             "manifest_digest": manifest_digest,
         }
-        _atomic_write_json(self.marker_path, payload)
+        _atomic_write_json(self.marker_path, payload, base_dir=self.marker_path.parent)
 
 
 class UnavailableSkillTrustGenerationMarkerStore:
@@ -154,6 +160,19 @@ def build_default_skill_trust_marker_store(
         return KeyringSkillTrustGenerationMarkerStore(keyring_backend=keyring_backend)
     except Exception as exc:
         return UnavailableSkillTrustGenerationMarkerStore(str(exc))
+
+
+def build_skill_trust_marker_store_with_fallback(
+    *,
+    fallback_marker_path: Path,
+    keyring_backend: Any | None = None,
+) -> tuple[SkillTrustGenerationMarkerStore, bool]:
+    """Return a marker store and whether reduced rollback protection is active."""
+
+    try:
+        return KeyringSkillTrustGenerationMarkerStore(keyring_backend=keyring_backend), False
+    except Exception:
+        return FileSkillTrustGenerationMarkerStore(fallback_marker_path), True
 
 
 @dataclass(slots=True, repr=False)
@@ -239,7 +258,7 @@ class SkillTrustStore:
     def has_manifest(self) -> bool:
         """Return whether a trust manifest payload exists on disk."""
 
-        return self.manifest_path.exists()
+        return self._validated_manifest_path().exists()
 
     def manifest_digest(self, manifest: dict[str, Any]) -> str:
         """Return the canonical JSON SHA-256 digest for a manifest."""
@@ -249,7 +268,7 @@ class SkillTrustStore:
     def load_salt(self) -> bytes:
         """Load and validate the 32-byte KDF salt stored with the manifest."""
 
-        payload = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        payload = json.loads(self._validated_manifest_path().read_text(encoding="utf-8"))
         encoded = payload.get("kdf_salt")
         if not isinstance(encoded, str):
             raise ValueError("skill trust salt missing")
@@ -284,10 +303,11 @@ class SkillTrustStore:
             "manifest": manifest_payload,
             "mac": manifest_mac(manifest_payload, keys.manifest_mac_key),
         }
-        self.store_dir.mkdir(parents=True, exist_ok=True)
-        previous_manifest_bytes = self.manifest_path.read_bytes() if self.has_manifest() else None
+        _ensure_trust_directory(self.store_dir)
+        manifest_path = self._validated_manifest_path()
+        previous_manifest_bytes = manifest_path.read_bytes() if self.has_manifest() else None
         previous_marker = self.marker_store.load_marker() if previous_manifest_bytes is not None else None
-        _atomic_write_json(self.manifest_path, payload, indent=2)
+        _atomic_write_json(manifest_path, payload, indent=2, base_dir=self.store_dir)
         try:
             self.marker_store.save_marker(
                 generation=int(manifest_payload["generation"]),
@@ -295,20 +315,16 @@ class SkillTrustStore:
             )
         except Exception:
             if previous_manifest_bytes is None:
-                self.manifest_path.unlink(missing_ok=True)
+                manifest_path.unlink(missing_ok=True)
             else:
-                _atomic_write_bytes(self.manifest_path, previous_manifest_bytes)
-            if previous_marker is not None:
-                self.marker_store.save_marker(
-                    generation=int(previous_marker["generation"]),
-                    manifest_digest=str(previous_marker["manifest_digest"]),
-                )
+                _atomic_write_bytes(manifest_path, previous_manifest_bytes, base_dir=self.store_dir)
+            _restore_previous_marker(self.marker_store, previous_marker)
             raise
 
     def load_manifest(self, keys: SkillTrustKeys) -> dict[str, Any]:
         """Load a manifest after verifying its HMAC and generation marker."""
 
-        payload = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        payload = json.loads(self._validated_manifest_path().read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("manifest authentication failed")
         manifest = payload.get("manifest")
@@ -341,13 +357,18 @@ class SkillTrustStore:
         snapshot_payload = _json_safe_payload(payload)
         if not isinstance(snapshot_payload, dict):
             raise ValueError("skill trust snapshot payload must be an object")
-        self.snapshots_dir.mkdir(parents=True, exist_ok=True)
+        snapshots_dir = _ensure_trust_directory(self.snapshots_dir)
         encrypted = encrypt_json_blob(
             snapshot_payload,
             keys.snapshot_key,
             associated_data=_snapshot_associated_data(snapshot_id, generation),
         )
-        _atomic_write_json(self._snapshot_path(snapshot_id), encrypted, indent=2)
+        _atomic_write_json(
+            self._snapshot_path(snapshot_id),
+            encrypted,
+            indent=2,
+            base_dir=snapshots_dir,
+        )
 
     def load_snapshot(
         self,
@@ -358,7 +379,11 @@ class SkillTrustStore:
     ) -> dict[str, Any]:
         """Load and decrypt a trusted snapshot payload."""
 
-        encrypted = json.loads(self._snapshot_path(snapshot_id).read_text(encoding="utf-8"))
+        snapshot_path = _validated_trust_file_path(
+            self._snapshot_path(snapshot_id),
+            base_dir=self.snapshots_dir,
+        )
+        encrypted = json.loads(snapshot_path.read_text(encoding="utf-8"))
         if not isinstance(encrypted, dict):
             raise ValueError("snapshot authentication failed")
         return decrypt_json_blob(
@@ -373,6 +398,9 @@ class SkillTrustStore:
         if "/" in snapshot_id or "\\" in snapshot_id:
             raise ValueError("skill trust snapshot id invalid")
         return self.snapshots_dir / f"{snapshot_id}.json"
+
+    def _validated_manifest_path(self) -> Path:
+        return _validated_trust_file_path(self.manifest_path, base_dir=self.store_dir)
 
 
 def _resolve_keyring_backend(keyring_backend: Any | None) -> Any:
@@ -390,19 +418,68 @@ def _snapshot_associated_data(snapshot_id: str, generation: int) -> bytes:
     return f"snapshot:{snapshot_id}:generation:{generation}".encode("utf-8")
 
 
-def _atomic_write_json(path: Path, payload: Any, *, indent: int | None = None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _atomic_write_json(
+    path: Path,
+    payload: Any,
+    *,
+    indent: int | None = None,
+    base_dir: Path | None = None,
+) -> None:
+    base_dir = _ensure_trust_directory(base_dir or path.parent)
+    path = _validated_trust_file_path(path, base_dir=base_dir)
     temp_path = path.with_name(f".{path.name}.tmp")
+    temp_path = _validated_trust_file_path(temp_path, base_dir=base_dir)
     text = json.dumps(payload, indent=indent, sort_keys=True) + "\n"
     temp_path.write_text(text, encoding="utf-8")
     temp_path.replace(path)
 
 
-def _atomic_write_bytes(path: Path, payload: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _atomic_write_bytes(path: Path, payload: bytes, *, base_dir: Path | None = None) -> None:
+    base_dir = _ensure_trust_directory(base_dir or path.parent)
+    path = _validated_trust_file_path(path, base_dir=base_dir)
     temp_path = path.with_name(f".{path.name}.tmp")
+    temp_path = _validated_trust_file_path(temp_path, base_dir=base_dir)
     temp_path.write_bytes(payload)
     temp_path.replace(path)
+
+
+def _ensure_trust_directory(path: Path) -> Path:
+    directory = validate_path_simple(path)
+    if directory.is_symlink():
+        raise ValueError("unsafe skill trust path")
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _validated_trust_file_path(path: Path, *, base_dir: Path) -> Path:
+    base = validate_path_simple(base_dir)
+    if base.is_symlink():
+        raise ValueError("unsafe skill trust path")
+    candidate = validate_path_simple(path)
+    if candidate.is_symlink():
+        raise ValueError("unsafe skill trust path")
+    if get_safe_relative_path(candidate, base) is None:
+        raise ValueError("unsafe skill trust path")
+    return candidate
+
+
+def _restore_previous_marker(
+    marker_store: SkillTrustGenerationMarkerStore,
+    previous_marker: dict[str, Any] | None,
+) -> None:
+    if previous_marker is None:
+        return
+    generation = previous_marker.get("generation")
+    manifest_digest = previous_marker.get("manifest_digest")
+    if not isinstance(generation, int) or not isinstance(manifest_digest, str):
+        logger.warning("Skipping invalid previous skill trust generation marker during rollback.")
+        return
+    try:
+        marker_store.save_marker(generation=generation, manifest_digest=manifest_digest)
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Failed to restore previous skill trust generation marker during rollback."
+        )
 
 
 def _encode_bytes(value: bytes) -> str:
