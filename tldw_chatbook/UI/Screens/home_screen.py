@@ -19,6 +19,7 @@ from tldw_chatbook.Home.dashboard_state import (
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.shell_destinations import get_shell_destination, resolve_shell_route
+from .settings_config_models import SettingsCategoryId
 
 
 HOME_CONTROL_METHODS = {
@@ -65,6 +66,12 @@ def _home_runtime_status_label(state: HomeDashboardInput) -> str:
         return "Local"
     server_label = str(state.server_label or "").strip()
     return f"Server: {server_label}" if server_label else "Server"
+
+
+def _home_primary_action_context(action: object) -> dict[str, object]:
+    if getattr(action, "action_id", None) == "fix_model_setup":
+        return {"category": SettingsCategoryId.PROVIDERS_MODELS.value}
+    return {}
 
 
 class HomeActionButton(Button):
@@ -274,7 +281,12 @@ class HomeScreen(BaseAppScreen):
         prepare = getattr(self.app_instance, "prepare_home_primary_action", None)
         if callable(prepare):
             prepare(dashboard.next_action)
-        self.post_message(NavigateToScreen(dashboard.next_action.target_route))
+        self.post_message(
+            NavigateToScreen(
+                dashboard.next_action.target_route,
+                screen_context=_home_primary_action_context(dashboard.next_action),
+            )
+        )
 
     def _activate_home_control(self, button_id: str) -> None:
         dashboard = self._current_dashboard
