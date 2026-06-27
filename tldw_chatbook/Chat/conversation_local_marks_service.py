@@ -30,8 +30,8 @@ class ConversationLocalMarksService:
 
     @classmethod
     def _mark_type(cls, mark_type: str | None) -> str:
-        normalized = str(mark_type or cls.STARRED).strip().lower()
-        if normalized not in cls._ALLOWED_MARK_TYPES:
+        normalized = cls.STARRED if mark_type is None else str(mark_type).strip().lower()
+        if not normalized or normalized not in cls._ALLOWED_MARK_TYPES:
             raise ValueError(f"Unsupported conversation mark_type: {mark_type!r}")
         return normalized
 
@@ -101,7 +101,9 @@ class ConversationLocalMarksService:
         limit: int = 100,
     ) -> tuple[str, ...]:
         mark_type = self._mark_type(mark_type)
-        safe_limit = max(1, int(limit))
+        safe_limit = int(limit)
+        if safe_limit <= 0:
+            raise ValueError("limit must be positive")
         rows = self.db.get_connection().execute(
             """
             SELECT conversation_id
