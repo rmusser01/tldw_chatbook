@@ -479,6 +479,63 @@ class SyncSearchableConversationService(SearchableConversationService):
         }
 
 
+class NoModeSyncSearchableConversationService(SearchableConversationService):
+    def list_conversations(
+        self,
+        *,
+        query: str = "",
+        scope_type: str = "",
+        workspace_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ):
+        self.list_calls.append(
+            {
+                "query": query,
+                "scope_type": scope_type,
+                "workspace_id": workspace_id,
+                "limit": limit,
+                "offset": offset,
+            }
+        )
+        normalized_query = str(query or "").strip().lower()
+        normalized_scope_type = str(scope_type or "").strip()
+        normalized_workspace_id = str(workspace_id or "").strip()
+        items = []
+        for conversation_id, tree in self.trees.items():
+            conversation = tree.get("conversation", {})
+            title = str(conversation.get("title") or "")
+            conversation_workspace_id = str(conversation.get("workspace_id") or "").strip()
+            conversation_scope = str(conversation.get("scope_type") or "").strip()
+            if normalized_scope_type == "global":
+                if conversation_scope != "global" and conversation_workspace_id:
+                    continue
+            elif normalized_scope_type == "workspace":
+                if conversation_workspace_id != normalized_workspace_id:
+                    continue
+            elif normalized_workspace_id and conversation_workspace_id != normalized_workspace_id:
+                continue
+            if normalized_query and normalized_query not in title.lower():
+                continue
+            items.append(
+                {
+                    "id": conversation_id,
+                    "title": title,
+                    "workspace_id": conversation.get("workspace_id"),
+                    "scope_type": conversation.get("scope_type"),
+                    "state": conversation.get("state", "active"),
+                }
+            )
+        return {
+            "items": items[:limit],
+            "pagination": {
+                "total": len(items),
+                "limit": limit,
+                "offset": offset,
+            },
+        }
+
+
 class FakeConversationLocalMarksService:
     def __init__(self, starred: tuple[str, ...] = ()) -> None:
         self.starred = set(starred)
@@ -3232,6 +3289,71 @@ async def test_console_conversation_browser_default_prefers_sync_local_service()
         )
         assert any(
             call.get("scope_type") == "workspace" and call.get("workspace_id") == "ws-a"
+            for call in app.local_chat_conversation_service.list_calls
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_browser_default_omits_mode_for_local_service():
+    app = _build_test_app()
+    app.conversation_local_marks_service = None
+    _configure_grouped_browser_workspaces(app)
+    app.chat_conversation_scope_service = SearchableConversationService(
+        {
+            "async-scope-default": {
+                "conversation": {
+                    "id": "async-scope-default",
+                    "title": "Async scope fallback",
+                    "scope_type": "global",
+                    "workspace_id": None,
+                },
+                "root_threads": [],
+            },
+        }
+    )
+    app.local_chat_conversation_service = NoModeSyncSearchableConversationService(
+        {
+            "local-no-mode-global": {
+                "conversation": {
+                    "id": "local-no-mode-global",
+                    "title": "No mode local global",
+                    "scope_type": "global",
+                    "workspace_id": None,
+                },
+                "root_threads": [],
+            },
+            "local-no-mode-workspace": {
+                "conversation": {
+                    "id": "local-no-mode-workspace",
+                    "title": "No mode Workspace A",
+                    "scope_type": "workspace",
+                    "workspace_id": "ws-a",
+                },
+                "root_threads": [],
+            },
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+
+        global_row = await _wait_for_browser_conversation_row(
+            console,
+            pilot,
+            "local-no-mode-global",
+        )
+        workspace_row = await _wait_for_browser_conversation_row(
+            console,
+            pilot,
+            "local-no-mode-workspace",
+        )
+
+        assert "No mode local global" in _widget_text(global_row)
+        assert "No mode Workspace" in _widget_text(workspace_row)
+        assert all(
+            "mode" not in call
             for call in app.local_chat_conversation_service.list_calls
         )
 

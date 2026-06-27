@@ -1888,7 +1888,7 @@ class ChatScreen(BaseAppScreen):
         current_conversation_id: str | None = None,
     ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
         """Return persisted rows when the local listing seam is synchronous."""
-        services: list[Any] = []
+        services: list[tuple[Any, bool]] = []
         local_service = getattr(self.app_instance, "local_chat_conversation_service", None)
         scope_service = getattr(
             self.app_instance,
@@ -1896,16 +1896,16 @@ class ChatScreen(BaseAppScreen):
             None,
         )
 
-        def add_service(candidate: Any) -> None:
+        def add_service(candidate: Any, *, include_mode: bool) -> None:
             if candidate is None:
                 return
-            if any(candidate is existing for existing in services):
+            if any(candidate is existing for existing, _include_mode in services):
                 return
-            services.append(candidate)
+            services.append((candidate, include_mode))
 
-        add_service(local_service)
-        add_service(getattr(scope_service, "local_service", None))
-        add_service(scope_service)
+        add_service(local_service, include_mode=False)
+        add_service(getattr(scope_service, "local_service", None), include_mode=False)
+        add_service(scope_service, include_mode=True)
         if not services:
             return [], None, ""
 
@@ -1917,7 +1917,7 @@ class ChatScreen(BaseAppScreen):
             if str(record.workspace_id or "").strip()
         )
         last_error = ""
-        for service in services:
+        for service, include_mode in services:
             list_conversations = getattr(service, "list_conversations", None)
             if not callable(list_conversations):
                 continue
@@ -1930,15 +1930,17 @@ class ChatScreen(BaseAppScreen):
             )
             starred_ids = self._starred_console_conversation_ids()
             for scope_type, workspace_id in scopes:
+                list_kwargs: dict[str, Any] = {
+                    "query": query,
+                    "scope_type": scope_type,
+                    "workspace_id": workspace_id,
+                    "limit": 25,
+                    "offset": 0,
+                }
+                if include_mode:
+                    list_kwargs["mode"] = "local"
                 try:
-                    result = list_conversations(
-                        mode="local",
-                        query=query,
-                        scope_type=scope_type,
-                        workspace_id=workspace_id,
-                        limit=25,
-                        offset=0,
-                    )
+                    result = list_conversations(**list_kwargs)
                 except Exception as exc:
                     if (
                         isinstance(exc, ValueError)
