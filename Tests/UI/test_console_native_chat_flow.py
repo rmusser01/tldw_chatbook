@@ -318,16 +318,22 @@ class SearchableConversationService(StaticConversationTreeService):
     async def list_conversations(self, *, mode: str = "local", **kwargs):
         self.list_calls.append({"mode": mode, **kwargs})
         query = str(kwargs.get("query") or "").strip().lower()
+        scope_type = str(kwargs.get("scope_type") or "").strip()
         workspace_id = str(kwargs.get("workspace_id") or "").strip()
         limit = int(kwargs.get("limit") or 50)
         items = []
         for conversation_id, tree in self.trees.items():
             conversation = tree.get("conversation", {})
             title = str(conversation.get("title") or "")
-            if (
-                workspace_id
-                and str(conversation.get("workspace_id") or "") != workspace_id
-            ):
+            conversation_workspace_id = str(conversation.get("workspace_id") or "").strip()
+            conversation_scope = str(conversation.get("scope_type") or "").strip()
+            if scope_type == "global":
+                if conversation_scope != "global" and conversation_workspace_id:
+                    continue
+            elif scope_type == "workspace":
+                if conversation_workspace_id != workspace_id:
+                    continue
+            elif workspace_id and conversation_workspace_id != workspace_id:
                 continue
             if query and query not in title.lower():
                 continue
@@ -336,6 +342,7 @@ class SearchableConversationService(StaticConversationTreeService):
                     "id": conversation_id,
                     "title": title,
                     "workspace_id": conversation.get("workspace_id"),
+                    "scope_type": conversation.get("scope_type"),
                     "state": conversation.get("state", "active"),
                 }
             )
@@ -392,16 +399,22 @@ class SlowFirstSearchableConversationService(SearchableConversationService):
             self.started.set()
             await self.release.wait()
         query = str(kwargs.get("query") or "").strip().lower()
+        scope_type = str(kwargs.get("scope_type") or "").strip()
         workspace_id = str(kwargs.get("workspace_id") or "").strip()
         limit = int(kwargs.get("limit") or 50)
         items = []
         for conversation_id, tree in self.trees.items():
             conversation = tree.get("conversation", {})
             title = str(conversation.get("title") or "")
-            if (
-                workspace_id
-                and str(conversation.get("workspace_id") or "") != workspace_id
-            ):
+            conversation_workspace_id = str(conversation.get("workspace_id") or "").strip()
+            conversation_scope = str(conversation.get("scope_type") or "").strip()
+            if scope_type == "global":
+                if conversation_scope != "global" and conversation_workspace_id:
+                    continue
+            elif scope_type == "workspace":
+                if conversation_workspace_id != workspace_id:
+                    continue
+            elif workspace_id and conversation_workspace_id != workspace_id:
                 continue
             if query and query not in title.lower():
                 continue
@@ -410,6 +423,7 @@ class SlowFirstSearchableConversationService(SearchableConversationService):
                     "id": conversation_id,
                     "title": title,
                     "workspace_id": conversation.get("workspace_id"),
+                    "scope_type": conversation.get("scope_type"),
                     "state": conversation.get("state", "active"),
                 }
             )
@@ -421,6 +435,23 @@ class SlowFirstSearchableConversationService(SearchableConversationService):
                 "offset": 0,
             },
         }
+
+
+class FakeConversationLocalMarksService:
+    def __init__(self, starred: tuple[str, ...] = ()) -> None:
+        self.starred = set(starred)
+
+    def star_conversation(self, conversation_id: str) -> None:
+        self.starred.add(conversation_id)
+
+    def unstar_conversation(self, conversation_id: str) -> None:
+        self.starred.discard(conversation_id)
+
+    def is_starred(self, conversation_id: str) -> bool:
+        return conversation_id in self.starred
+
+    def list_marked_conversation_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self.starred))
 
 
 class FailThenRecoverGateway(_ReadyResolutionGateway):
@@ -2708,6 +2739,338 @@ async def test_console_workspace_conversation_switch_restores_transcript_message
         await _wait_for_active_session(store, pilot, first.id)
         await _wait_for_text(console, pilot, "workspace row user prompt")
         await _wait_for_text(console, pilot, "workspace row assistant reply")
+
+
+def _configure_grouped_browser_workspaces(app):
+    app.app_config.setdefault("console", {}).setdefault("conversation_browser", {})[
+        "enabled"
+    ] = True
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    return service
+
+
+def _browser_group_toggle(console, group_id: str) -> Button:
+    for button in console.query(Button):
+        if getattr(button, "group_id", None) == group_id:
+            return button
+    groups = [
+        (getattr(button, "id", None), getattr(button, "group_id", None))
+        for button in console.query(Button)
+        if str(getattr(button, "id", "")).startswith("console-conversation-browser")
+    ]
+    raise AssertionError(f"Browser group toggle {group_id!r} not found. Groups: {groups!r}")
+
+
+def _browser_star_button(console, conversation_id: str) -> Button:
+    for button in console.query(".console-conversation-star"):
+        if getattr(button, "conversation_id", None) == conversation_id:
+            return button
+    stars = [
+        (getattr(button, "id", None), getattr(button, "conversation_id", None))
+        for button in console.query(".console-conversation-star")
+    ]
+    raise AssertionError(f"Star button for {conversation_id!r} not found. Stars: {stars!r}")
+
+
+class _InputChangedEvent:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def stop(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_browser_lists_all_workspace_groups():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="workspace-a-chat",
+        role="workspace-thread",
+        title="Workspace A saved",
+    )
+    service.link_membership(
+        "ws-b",
+        item_type="conversation",
+        item_id="workspace-b-chat",
+        role="workspace-thread",
+        title="Workspace B saved",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        store = console._ensure_console_chat_store()
+        default_session = store.create_session(
+            title="Global chat",
+            workspace_id=DEFAULT_WORKSPACE_ID,
+        )
+        store.switch_session(default_session.id)
+        await console._sync_native_console_chat_ui()
+
+        visible_text = _visible_text(console)
+        assert "Starred" in visible_text
+        assert "Workspaces" in visible_text
+        assert "Workspace A" in visible_text
+        assert "Workspace B" in visible_text
+        assert "Chats" in visible_text
+        assert "Global chat" in visible_text
+        assert "Storage" in visible_text
+        assert "Server handoff" in visible_text
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_browser_search_filters_all_groups():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="alpha-a",
+        role="workspace-thread",
+        title="Alpha in Workspace A",
+    )
+    service.link_membership(
+        "ws-b",
+        item_type="conversation",
+        item_id="needle-b",
+        role="workspace-thread",
+        title="Needle in Workspace B",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await pilot.click("#console-workspace-conversation-search")
+        search = console.query_one("#console-workspace-conversation-search", Input)
+        search.value = "needle"
+        console.on_console_workspace_conversation_search_changed(_InputChangedEvent("needle"))
+        for _ in range(40):
+            row_texts = _console_workspace_conversation_texts(console)
+            if any(getattr(row, "conversation_id", None) == "needle-b" for row in console.query(".console-workspace-conversation-row")):
+                break
+            await pilot.pause(0.05)
+        else:
+            raise AssertionError(f"Needle row not found. Rows: {row_texts!r}")
+        row_texts = _console_workspace_conversation_texts(console)
+
+        assert any("Needle in Workspa" in text for text in row_texts)
+        assert any("Workspace B" in text for text in row_texts)
+        assert all("Alpha in Workspace A" not in text for text in row_texts)
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_browser_search_ignores_stale_results():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    _configure_grouped_browser_workspaces(app)
+    app.chat_conversation_scope_service = SlowFirstSearchableConversationService(
+        {
+            "stale-alpha": {
+                "conversation": {
+                    "id": "stale-alpha",
+                    "title": "Stale Alpha",
+                    "workspace_id": "ws-a",
+                },
+                "root_threads": [],
+            },
+            "fresh-beta": {
+                "conversation": {
+                    "id": "fresh-beta",
+                    "title": "Fresh Beta",
+                    "workspace_id": "ws-b",
+                },
+                "root_threads": [],
+            },
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        console._console_conversation_browser_query = "alpha"
+        console._console_conversation_browser_search_token += 1
+        stale_token = console._console_conversation_browser_search_token
+        stale_task = asyncio.create_task(
+            console._refresh_console_conversation_browser_search("alpha", stale_token)
+        )
+        for _ in range(40):
+            if app.chat_conversation_scope_service.started.is_set():
+                break
+            await pilot.pause(0.05)
+        assert app.chat_conversation_scope_service.started.is_set()
+
+        console._console_conversation_browser_query = "beta"
+        console._console_conversation_browser_search_token += 1
+        fresh_token = console._console_conversation_browser_search_token
+        app.chat_conversation_scope_service.release.set()
+        await stale_task
+        await console._refresh_console_conversation_browser_search("beta", fresh_token)
+        row_texts = await _wait_for_workspace_conversation_text(console, pilot, "Fresh Beta")
+        assert all("Stale Alpha" not in text for text in row_texts)
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_browser_group_collapse_persists_locally():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="collapse-chat",
+        role="workspace-thread",
+        title="Collapse Target",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        assert "Collapse Target" in _visible_text(console)
+
+        _browser_group_toggle(console, "workspace:ws-a").press()
+        await pilot.pause(0.1)
+
+        assert all(
+            "Collapse Target" not in text
+            for text in _console_workspace_conversation_texts(console)
+        )
+        collapsed_groups = app.app_config["console"]["conversation_browser"][
+            "collapsed_groups"
+        ]
+        assert collapsed_groups["workspace:ws-a"] is True
+
+        console._sync_console_workspace_context()
+        await pilot.pause(0.1)
+        assert all(
+            "Collapse Target" not in text
+            for text in _console_workspace_conversation_texts(console)
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_browser_starred_section_updates_from_row_action():
+    app = _build_test_app()
+    marks = FakeConversationLocalMarksService()
+    app.conversation_local_marks_service = marks
+    service = _configure_grouped_browser_workspaces(app)
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="star-target",
+        role="workspace-thread",
+        title="Star Target",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        _browser_star_button(console, "star-target").press()
+        await pilot.pause(0.1)
+
+        assert marks.is_starred("star-target") is True
+        rows = [
+            _widget_text(row)
+            for row in console.query(".console-workspace-conversation-row")
+            if getattr(row, "conversation_id", None) == "star-target"
+        ]
+        assert len(rows) >= 2
+        assert any("Star Target" in row for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_browser_keeps_starred_row_in_normal_group():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService(
+        ("starred-normal",)
+    )
+    service = _configure_grouped_browser_workspaces(app)
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="starred-normal",
+        role="workspace-thread",
+        title="Starred Normal",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        rows = [
+            _widget_text(row)
+            for row in console.query(".console-workspace-conversation-row")
+            if getattr(row, "conversation_id", None) == "starred-normal"
+        ]
+        assert len(rows) == 2
+        assert all("Starred Normal" in row for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_browser_marks_unavailable_keeps_browsing_enabled():
+    app = _build_test_app()
+    app.conversation_local_marks_service = None
+    service = _configure_grouped_browser_workspaces(app)
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="marks-unavailable-chat",
+        role="workspace-thread",
+        title="Marks Unavailable Chat",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+
+        visible_text = _visible_text(console)
+        assert "Local stars unavailable" in visible_text
+        assert "Marks Unavailable Chat" in visible_text
+        star = _browser_star_button(console, "marks-unavailable-chat")
+        assert star.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_browser_long_list_keeps_readiness_rows_reachable():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    for index in range(30):
+        service.link_membership(
+            "ws-a",
+            item_type="conversation",
+            item_id=f"long-chat-{index}",
+            role="workspace-thread",
+            title=f"Long Chat {index:02d}",
+        )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        conversation_list = console.query_one("#console-workspace-conversations")
+        server_label = console.query_one("#console-workspace-server-readiness-label")
+        server_value = console.query_one("#console-workspace-server-readiness-value")
+
+        assert conversation_list.region.height > 0
+        assert server_label.region.y > conversation_list.region.y
+        assert server_value.region.y >= server_label.region.y
+        visible_text = _visible_text(console)
+        assert "Storage" in visible_text
+        assert "Server handoff" in visible_text
 
 
 @pytest.mark.asyncio
