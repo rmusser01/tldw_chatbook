@@ -111,7 +111,7 @@ Reason: This feature adds durable local metadata and explicitly excludes it from
 - Test: `Tests/Chat/test_conversation_local_marks_service.py`
 - Test: `Tests/Chat/test_chat_conversation_service.py`
 
-- [ ] **Step 1: Write failing service and schema tests**
+- [x] **Step 1: Write failing service and schema tests**
 
 Create `Tests/Chat/test_conversation_local_marks_service.py` with these tests:
 
@@ -201,7 +201,7 @@ def test_conversation_metadata_does_not_include_local_marks(tmp_path):
     assert "local_marks" not in metadata
 ```
 
-- [ ] **Step 2: Run the focused tests and verify they fail for the right reason**
+- [x] **Step 2: Run the focused tests and verify they fail for the right reason**
 
 Run:
 
@@ -211,7 +211,7 @@ pytest Tests/Chat/test_conversation_local_marks_service.py -q
 
 Expected: fail with import error for `ConversationLocalMarksService` or missing `conversation_local_marks` table.
 
-- [ ] **Step 3: Add ChaChaNotes schema version 17**
+- [x] **Step 3: Add ChaChaNotes schema version 17**
 
 In `tldw_chatbook/DB/ChaChaNotes_DB.py`:
 
@@ -257,7 +257,7 @@ UPDATE db_schema_version
 5. Add `16: self._migrate_from_v16_to_v17` to `migration_steps`.
 6. Confirm no `conversation_local_marks_*sync*` triggers are added.
 
-- [ ] **Step 4: Implement `ConversationLocalMarksService`**
+- [x] **Step 4: Implement `ConversationLocalMarksService`**
 
 Create `tldw_chatbook/Chat/conversation_local_marks_service.py`:
 
@@ -379,7 +379,7 @@ class ConversationLocalMarksService:
         return tuple(str(row["conversation_id"]) for row in rows)
 ```
 
-- [ ] **Step 5: Export and wire the service**
+- [x] **Step 5: Export and wire the service**
 
 In `tldw_chatbook/Chat/__init__.py`, import and add `ConversationLocalMarksService` and `ConversationLocalMark` to `__all__`.
 
@@ -395,7 +395,7 @@ self.conversation_local_marks_service = (
 
 Place this next to `self.local_chat_conversation_service` because it has the same local DB ownership.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -405,7 +405,7 @@ pytest Tests/Chat/test_conversation_local_marks_service.py -q
 
 Expected: pass.
 
-- [ ] **Step 7: Commit Task 1**
+- [x] **Step 7: Commit Task 1**
 
 Run:
 
@@ -424,7 +424,7 @@ git commit -m "feat: add local conversation marks service"
 - Modify: `tldw_chatbook/Workspaces/__init__.py`
 - Test: `Tests/Workspaces/test_console_conversation_browser_state.py`
 
-- [ ] **Step 1: Write failing pure tests**
+- [x] **Step 1: Write failing pure tests**
 
 Create `Tests/Workspaces/test_console_conversation_browser_state.py` with tests covering:
 
@@ -549,7 +549,7 @@ Also add tests for:
 - titles are plain strings and do not render markup control data
 - capped groups expose hidden-count/status copy
 
-- [ ] **Step 2: Run pure tests and verify they fail**
+- [x] **Step 2: Run pure tests and verify they fail**
 
 Run:
 
@@ -559,7 +559,7 @@ pytest Tests/Workspaces/test_console_conversation_browser_state.py -q
 
 Expected: fail because `conversation_browser_state.py` does not exist.
 
-- [ ] **Step 3: Implement browser state dataclasses**
+- [x] **Step 3: Implement browser state dataclasses**
 
 Create `tldw_chatbook/Workspaces/conversation_browser_state.py` with these public constants and dataclasses:
 
@@ -639,7 +639,7 @@ class ConsoleConversationBrowserState:
     result_limit: int = CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT
 ```
 
-- [ ] **Step 4: Implement the pure builder**
+- [x] **Step 4: Implement the pure builder**
 
 Implement:
 
@@ -682,7 +682,7 @@ Builder rules:
 - Build `selected_summary` from the selected row, preferring `"{title} - {workspace_label}"`.
 - Build `status_copy` as `"N matches"` for query results, plus `"Showing X of Y"` when capped. Use `result_total_count` when supplied; otherwise use the filtered row count.
 
-- [ ] **Step 5: Attach the browser state to workspace context state**
+- [x] **Step 5: Attach the browser state to workspace context state**
 
 In `tldw_chatbook/Workspaces/display_state.py`, import `ConsoleConversationBrowserState` under `TYPE_CHECKING` or directly if no cycle exists, and add this field to `ConsoleWorkspaceContextState`:
 
@@ -702,7 +702,7 @@ In `tldw_chatbook/Workspaces/__init__.py`, export:
 - `ConsoleConversationBrowserState`
 - `build_console_conversation_browser_state`
 
-- [ ] **Step 6: Run pure tests**
+- [x] **Step 6: Run pure tests**
 
 Run:
 
@@ -712,7 +712,7 @@ pytest Tests/Workspaces/test_console_conversation_browser_state.py -q
 
 Expected: pass.
 
-- [ ] **Step 7: Commit Task 2**
+- [x] **Step 7: Commit Task 2**
 
 Run:
 
@@ -731,7 +731,7 @@ git commit -m "feat: add console conversation browser state"
 - Modify: `tldw_chatbook/css/tldw_cli_modular.tcss`
 - Test: `Tests/UI/test_console_workspace_context_rail.py`
 
-- [ ] **Step 1: Write failing widget rendering tests**
+- [x] **Step 1: Write failing widget rendering tests**
 
 Add tests to `Tests/UI/test_console_workspace_context_rail.py` that build `ConsoleWorkspaceContextState(conversation_browser=...)` directly.
 
@@ -758,7 +758,7 @@ assert _static_plain(console, "#console-workspace-sync-label") == "Sync"
 
 For marks unavailable, build a browser state with `marks_available=False`, assert rows still render, star buttons are disabled, and scoped warning copy such as `"Local stars unavailable"` is visible inside the rail.
 
-- [ ] **Step 2: Run widget tests and verify they fail**
+- [x] **Step 2: Run widget tests and verify they fail**
 
 Run:
 
@@ -768,7 +768,7 @@ pytest Tests/UI/test_console_workspace_context_rail.py -k "grouped_conversation_
 
 Expected: fail because the tray still renders only `conversation_section`.
 
-- [ ] **Step 3: Add grouped render branch**
+- [x] **Step 3: Add grouped render branch**
 
 In `ConsoleWorkspaceContextTray.compose()`:
 
@@ -830,7 +830,7 @@ Star labels:
 
 Keep row title rendering through `_conversation_title()` and `_conversation_visible_title()` to avoid markup interpretation and long-title overflow.
 
-- [ ] **Step 4: Add CSS for grouped browser**
+- [x] **Step 4: Add CSS for grouped browser**
 
 In both TCSS files, add selectors:
 
@@ -882,7 +882,7 @@ In both TCSS files, add selectors:
 
 Keep `#console-workspace-conversations` bounded with `overflow-y: auto`.
 
-- [ ] **Step 5: Run widget tests**
+- [x] **Step 5: Run widget tests**
 
 Run:
 
@@ -892,7 +892,7 @@ pytest Tests/UI/test_console_workspace_context_rail.py -q
 
 Expected: pass.
 
-- [ ] **Step 6: Commit Task 3**
+- [x] **Step 6: Commit Task 3**
 
 Run:
 
@@ -909,7 +909,7 @@ git commit -m "feat: render grouped console conversation browser"
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 - Test: `Tests/UI/test_console_native_chat_flow.py`
 
-- [ ] **Step 1: Write failing mounted integration tests**
+- [x] **Step 1: Write failing mounted integration tests**
 
 Add tests to `Tests/UI/test_console_native_chat_flow.py`:
 
@@ -954,7 +954,7 @@ assert "Needle in Workspace B" in _visible_text(console)
 assert "Workspace B" in _visible_text(console)
 ```
 
-- [ ] **Step 2: Run mounted tests and verify they fail**
+- [x] **Step 2: Run mounted tests and verify they fail**
 
 Run:
 
@@ -964,7 +964,7 @@ pytest Tests/UI/test_console_native_chat_flow.py -k "conversation_browser" -q
 
 Expected: fail because `ChatScreen` has not attached `conversation_browser`.
 
-- [ ] **Step 3: Add browser state fields**
+- [x] **Step 3: Add browser state fields**
 
 In `ChatScreen.__init__`, add these browser-wide fields and update all grouped-browser code to read from them instead of the old active-workspace-only `_console_workspace_conversation_*` search/cache fields:
 
@@ -979,7 +979,7 @@ self._console_conversation_browser_error = ""
 
 The existing DOM ids can stay `console-workspace-*`, but Python state for the grouped browser should use the new `_console_conversation_browser_*` names.
 
-- [ ] **Step 4: Add row-source helpers**
+- [x] **Step 4: Add row-source helpers**
 
 Add these helpers to `ChatScreen`:
 
@@ -1020,7 +1020,7 @@ Implementation details:
 - Dedupe precedence: native rows first, membership rows second, persisted rows third.
 - Default workspace rows use `workspace_label="Chats"` for display grouping but keep `workspace_id=DEFAULT_WORKSPACE_ID`.
 
-- [ ] **Step 5: Attach browser state instead of active-workspace section**
+- [x] **Step 5: Attach browser state instead of active-workspace section**
 
 Replace `_with_console_workspace_conversation_section(state)` usage in `_build_console_workspace_context_state()` with `_with_console_conversation_browser_state(state)`.
 
@@ -1045,7 +1045,7 @@ def _with_console_conversation_browser_state(
     return replace(state, conversation_browser=browser)
 ```
 
-- [ ] **Step 6: Update search handler**
+- [x] **Step 6: Update search handler**
 
 Keep selector handler:
 
@@ -1073,7 +1073,7 @@ async def _refresh_console_conversation_browser_after_selection(self) -> None:
     ...
 ```
 
-- [ ] **Step 7: Add collapse preference helpers**
+- [x] **Step 7: Add collapse preference helpers**
 
 Store preferences under `app_config["console"]["conversation_browser"]`:
 
@@ -1105,7 +1105,7 @@ def _set_console_conversation_browser_group_collapsed(self, group_id: str, colla
 
 Keep old `_console_workspace_conversations_collapsed()` only for legacy fallback or remove after tests are updated.
 
-- [ ] **Step 8: Add button handling for group toggles and stars**
+- [x] **Step 8: Add button handling for group toggles and stars**
 
 In `on_button_pressed`, add branches before the row-selection branch:
 
@@ -1129,7 +1129,7 @@ Star handling:
 - Rebuild browser state.
 - On storage error, show warning and keep browsing usable.
 
-- [ ] **Step 9: Run mounted browser tests**
+- [x] **Step 9: Run mounted browser tests**
 
 Run:
 
@@ -1139,7 +1139,7 @@ pytest Tests/UI/test_console_native_chat_flow.py -k "conversation_browser" -q
 
 Expected: pass.
 
-- [ ] **Step 10: Commit Task 4**
+- [x] **Step 10: Commit Task 4**
 
 Run:
 
@@ -1156,7 +1156,7 @@ git commit -m "feat: assemble console conversation browser"
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 - Test: `Tests/UI/test_console_native_chat_flow.py`
 
-- [ ] **Step 1: Write failing row-selection matrix tests**
+- [x] **Step 1: Write failing row-selection matrix tests**
 
 Add tests to `Tests/UI/test_console_native_chat_flow.py`:
 
@@ -1195,7 +1195,7 @@ after = app.workspace_registry_service.get_active_workspace().workspace_id
 assert after == before
 ```
 
-- [ ] **Step 2: Run matrix tests and verify they fail**
+- [x] **Step 2: Run matrix tests and verify they fail**
 
 Run:
 
@@ -1205,7 +1205,7 @@ pytest Tests/UI/test_console_native_chat_flow.py -k "selecting_non_default_works
 
 Expected: fail because row selection still assumes active workspace or switches after persisted load.
 
-- [ ] **Step 3: Add row lookup and workspace activation helpers**
+- [x] **Step 3: Add row lookup and workspace activation helpers**
 
 Add:
 
@@ -1225,7 +1225,7 @@ Rules for `_activate_console_workspace_for_browser_row`:
 - For any other workspace id, call `workspace_registry_service.set_active_workspace(row.workspace_id)`.
 - After changing active workspace, update `ConsoleChatStore.workspace_context` from `_current_console_workspace_context()`.
 
-- [ ] **Step 4: Update persisted resume to accept target scope**
+- [x] **Step 4: Update persisted resume to accept target scope**
 
 Change:
 
@@ -1247,7 +1247,7 @@ async def _resume_console_workspace_conversation(
 
 Use `target_workspace_id` when present for the restored session workspace. Fall back to persisted metadata, then active workspace. Update user-facing warnings from `"workspace conversation"` to `"saved conversation"` where the row may be global.
 
-- [ ] **Step 5: Replace row-selection button branch**
+- [x] **Step 5: Replace row-selection button branch**
 
 In the `if button_id and button_id.startswith("console-workspace-conversation-")` branch:
 
@@ -1263,7 +1263,7 @@ In the `if button_id and button_id.startswith("console-workspace-conversation-")
 6. Else warn that the native row is unavailable.
 7. Refresh browser search/results after selection.
 
-- [ ] **Step 6: Run row-selection tests**
+- [x] **Step 6: Run row-selection tests**
 
 Run:
 
@@ -1273,7 +1273,7 @@ pytest Tests/UI/test_console_native_chat_flow.py -k "selecting_non_default_works
 
 Expected: pass.
 
-- [ ] **Step 7: Commit Task 5**
+- [x] **Step 7: Commit Task 5**
 
 Run:
 
