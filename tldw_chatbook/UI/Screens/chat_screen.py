@@ -6744,6 +6744,37 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-workspace-conversations-toggle":
             event.stop()
+            try:
+                workspace_context = self.query_one(
+                    "#console-workspace-context",
+                    ConsoleWorkspaceContextTray,
+                )
+            except (NoMatches, QueryError):
+                self._sync_console_workspace_context()
+                return
+            state = getattr(workspace_context, "state", None)
+            if (
+                state is not None
+                and getattr(state, "conversation_browser", None) is None
+            ):
+                section = getattr(state, "conversation_section", None)
+                if section is None:
+                    return
+                collapsed = not bool(section.collapsed)
+                self._set_console_workspace_conversations_collapsed(
+                    section.workspace_id,
+                    collapsed,
+                )
+                workspace_context.sync_state(
+                    replace(
+                        state,
+                        conversation_section=replace(
+                            section,
+                            collapsed=collapsed,
+                        ),
+                    )
+                )
+                return
             self._sync_console_workspace_context()
             return
         if button_id == "console-new-workspace-conversation":

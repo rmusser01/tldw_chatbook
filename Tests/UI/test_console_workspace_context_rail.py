@@ -565,6 +565,45 @@ async def test_console_workspace_conversations_collapsed_shows_selected_summary_
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_legacy_conversation_toggle_collapses_and_expands() -> None:
+    app = _build_test_app()
+    section = _section_state(collapsed=False, rows=3)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray.sync_state(_base_workspace_state(section))
+        await pilot.pause()
+
+        toggle = console.query_one("#console-workspace-conversations-toggle", Button)
+        assert toggle.disabled is False
+        assert len(console.query("#console-workspace-conversations")) == 1
+        assert any("Conversation 0" in text for text in _conversation_row_texts(console))
+
+        toggle.press()
+        await pilot.pause(0.1)
+        assert len(console.query("#console-workspace-conversations-toggle")) == 1
+        assert len(console.query("#console-workspace-conversations")) == 0
+        assert _static_plain(
+            console,
+            "#console-workspace-selected-conversation",
+        ) == "Conversation 2 - saved workspace"
+        assert app.app_config["console"]["conversation_section"]["ws-a"][
+            "collapsed"
+        ] is True
+
+        console.query_one("#console-workspace-conversations-toggle", Button).press()
+        await pilot.pause(0.1)
+        assert len(console.query("#console-workspace-conversations")) == 1
+        assert any("Conversation 0" in text for text in _conversation_row_texts(console))
+        assert app.app_config["console"]["conversation_section"]["ws-a"][
+            "collapsed"
+        ] is False
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_conversations_fallback_disables_unowned_controls() -> None:
     app = _build_test_app()
     section = _section_state(collapsed=False, rows=3)
