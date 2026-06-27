@@ -268,6 +268,70 @@ async def test_console_workspace_context_renders_grouped_conversation_browser() 
         assert len(console.query(".console-conversation-star")) >= 1
         assert len(console.query(".console-workspace-conversation-row")) >= 1
 
+        section_toggle = console.query_one(
+            "#console-conversation-browser-section-toggle-starred",
+            Button,
+        )
+        workspace_toggle = console.query_one(
+            "#console-conversation-browser-group-toggle-0",
+            Button,
+        )
+        row_button = console.query_one("#console-workspace-conversation-0", Button)
+        star_button = console.query_one("#console-conversation-star-0", Button)
+
+        assert section_toggle.group_id == "section:starred"
+        assert workspace_toggle.group_id == "workspace:ws-a"
+        assert row_button.row_key == "conv-starred"
+        assert row_button.conversation_id == "conv-starred"
+        assert row_button.native_session_id is None
+        assert row_button.scope_type == "workspace"
+        assert row_button.workspace_id == "ws-a"
+        assert star_button.row_key == "conv-starred"
+        assert star_button.conversation_id == "conv-starred"
+        assert star_button.starred is True
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_context_preserves_duplicate_starred_workspace_row_keys() -> None:
+    rows = (
+        _browser_row(
+            "conv-duplicate",
+            "Appears twice",
+            starred=True,
+            starred_sort="2026-06-27T10:00:00",
+            updated_sort="2026-06-27T09:00:00",
+        ),
+    )
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-context")
+        tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
+        tray.sync_state(_base_grouped_workspace_state(rows=rows))
+        await pilot.pause()
+
+        row_buttons = list(console.query(".console-workspace-conversation-row"))
+        star_buttons = list(console.query(".console-conversation-star"))
+        duplicate_rows = [
+            button
+            for button in row_buttons
+            if getattr(button, "row_key", None) == "conv-duplicate"
+        ]
+        duplicate_stars = [
+            button
+            for button in star_buttons
+            if getattr(button, "row_key", None) == "conv-duplicate"
+        ]
+
+        assert len({button.id for button in row_buttons}) == len(row_buttons)
+        assert len({button.id for button in star_buttons}) == len(star_buttons)
+        assert len(duplicate_rows) == 2
+        assert len(duplicate_stars) == 2
+        assert all(button.conversation_id == "conv-duplicate" for button in duplicate_rows)
+        assert all(button.conversation_id == "conv-duplicate" for button in duplicate_stars)
+
 
 @pytest.mark.asyncio
 async def test_console_workspace_context_keeps_status_rows_below_grouped_browser() -> None:
@@ -289,11 +353,26 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
         tray.sync_state(_base_grouped_workspace_state(rows=rows))
         await pilot.pause()
 
+        workspace_context = console.query_one("#console-workspace-context")
         conversation_list = console.query_one("#console-workspace-conversations")
         sync_label = console.query_one("#console-workspace-sync-label")
+        server_readiness = console.query_one("#console-workspace-server-readiness-label")
+        handoff_label = console.query_one("#console-workspace-handoff-label")
+        composer = console.query_one("#console-native-composer")
+        workspace_bottom = workspace_context.region.y + workspace_context.region.height
 
         assert _static_plain(console, "#console-workspace-sync-label") == "Sync"
         assert sync_label.region.y > conversation_list.region.y
+        assert server_readiness.region.y > conversation_list.region.y
+
+        assert workspace_context.max_scroll_y > 0
+        workspace_context.scroll_end(animate=False)
+        await pilot.pause(0.1)
+
+        assert workspace_context.scroll_y > 0
+        assert handoff_label.region.y >= workspace_context.region.y
+        assert handoff_label.region.y + handoff_label.region.height <= workspace_bottom
+        assert handoff_label.region.y + handoff_label.region.height <= composer.region.y
 
 
 @pytest.mark.asyncio
