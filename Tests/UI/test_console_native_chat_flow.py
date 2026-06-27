@@ -3202,6 +3202,48 @@ async def test_console_conversation_browser_group_collapse_persists_locally():
 
 
 @pytest.mark.asyncio
+async def test_console_conversation_browser_workspaces_section_collapse_persists_locally():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="section-collapse-chat",
+        role="workspace-thread",
+        title="Section Collapse Target",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        assert any(
+            "Section Collapse" in text
+            for text in _console_workspace_conversation_texts(console)
+        )
+
+        _browser_group_toggle(console, "section:workspaces").press()
+        await pilot.pause(0.1)
+
+        assert all(
+            "Section Collapse" not in text
+            for text in _console_workspace_conversation_texts(console)
+        )
+        collapsed_groups = app.app_config["console"]["conversation_browser"][
+            "collapsed_groups"
+        ]
+        assert collapsed_groups["section:workspaces"] is True
+
+        console._sync_console_workspace_context()
+        await pilot.pause(0.1)
+        assert all(
+            "Section Collapse" not in text
+            for text in _console_workspace_conversation_texts(console)
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_conversation_browser_starred_section_updates_from_row_action():
     app = _build_test_app()
     marks = FakeConversationLocalMarksService()

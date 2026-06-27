@@ -133,6 +133,57 @@ def test_active_workspace_group_is_expanded_by_default():
     assert group.preference_collapsed is False
 
 
+def test_workspaces_section_is_expanded_by_default_when_it_has_rows():
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-a", "Alpha", workspace_id="ws-a", workspace_label="Workspace A"),
+        ),
+        active_workspace_id="ws-a",
+    )
+
+    workspaces = _section(state, "workspaces")
+    assert workspaces.collapsed is False
+    assert workspaces.count == 1
+    assert [group.group_id for group in workspaces.groups] == ["workspace:ws-a"]
+
+
+def test_workspaces_section_can_be_collapsed_by_preference():
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-a", "Alpha", workspace_id="ws-a", workspace_label="Workspace A"),
+            _row("conv-b", "Beta", workspace_id="ws-b", workspace_label="Workspace B"),
+        ),
+        active_workspace_id="ws-a",
+        group_collapse_preferences={
+            "section:workspaces": True,
+            "workspace:ws-b": False,
+        },
+    )
+
+    workspaces = _section(state, "workspaces")
+    assert workspaces.collapsed is True
+    assert workspaces.count == 2
+    assert _workspace_group(state, "workspace:ws-b").collapsed is False
+
+
+def test_search_exposes_workspaces_section_matches_when_section_preference_collapsed():
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-a", "Alpha", workspace_id="ws-a", workspace_label="Workspace A"),
+            _row("conv-b", "Needle", workspace_id="ws-b", workspace_label="Workspace B"),
+        ),
+        active_workspace_id="ws-a",
+        group_collapse_preferences={"section:workspaces": True},
+        query="needle",
+    )
+
+    workspaces = _section(state, "workspaces")
+    assert workspaces.collapsed is False
+    assert [row.title for row in _workspace_group(state, "workspace:ws-b").rows] == [
+        "Needle"
+    ]
+
+
 def test_inactive_workspace_groups_are_collapsed_by_default():
     state = build_console_conversation_browser_state(
         rows=(

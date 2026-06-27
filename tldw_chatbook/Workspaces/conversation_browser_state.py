@@ -167,13 +167,25 @@ def build_console_conversation_browser_state(
         query_active=query_active,
         group_row_limit=safe_group_row_limit,
     )
+    workspaces_preference_collapsed = _resolve_collapsed(
+        preferences,
+        "section:workspaces",
+        default_collapsed=False,
+    )
+    workspaces_collapsed = workspaces_preference_collapsed and not (
+        query_active and bool(workspace_groups)
+    )
     workspaces_section = ConsoleConversationBrowserSection(
         section_id="workspaces",
         label="Workspaces",
-        collapsed=False,
+        collapsed=workspaces_collapsed,
         groups=workspace_groups,
         count=sum(group.count for group in workspace_groups),
-        hidden_count=sum(group.hidden_count for group in workspace_groups),
+        hidden_count=(
+            sum(group.count for group in workspace_groups)
+            if workspaces_collapsed
+            else sum(group.hidden_count for group in workspace_groups)
+        ),
         empty_copy="No workspace conversations.",
     )
     chat_input_rows = _sort_normal_rows(_dedupe_rows(chat_rows))
@@ -461,6 +473,8 @@ def _displayed_row_count(
 ) -> int:
     total = 0
     for section in sections:
+        if section.collapsed:
+            continue
         total += len(section.rows)
         total += sum(len(group.rows) for group in section.groups)
     return total
