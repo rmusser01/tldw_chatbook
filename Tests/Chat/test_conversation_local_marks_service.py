@@ -38,6 +38,18 @@ def _assert_local_marks_schema(db):
         "updated_at",
         "conversation_id",
     ]
+    index_xinfo_columns = conn.execute(
+        "PRAGMA index_xinfo(idx_conversation_local_marks_type)"
+    ).fetchall()
+    indexed_columns = [row for row in index_xinfo_columns if row["key"]]
+    assert [
+        (row["name"], row["desc"])
+        for row in indexed_columns
+    ] == [
+        ("mark_type", 0),
+        ("updated_at", 1),
+        ("conversation_id", 0),
+    ]
 
 
 def test_local_marks_table_exists_on_fresh_schema_with_expected_shape(tmp_path):
@@ -116,6 +128,15 @@ def test_local_marks_reject_blank_and_unsupported_mark_types(tmp_path, mark_type
 
     with pytest.raises(ValueError, match="Unsupported conversation mark_type"):
         service.set_mark("conv-a", mark_type)
+
+
+@pytest.mark.parametrize("conversation_id", ["", "   ", None])
+def test_local_marks_reject_blank_conversation_ids(tmp_path, conversation_id):
+    db = _db(tmp_path)
+    service = ConversationLocalMarksService(db)
+
+    with pytest.raises(ValueError, match="conversation_id is required"):
+        service.star_conversation(conversation_id)
 
 
 @pytest.mark.parametrize("limit", [0, -1])
