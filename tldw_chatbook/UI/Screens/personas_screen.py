@@ -585,6 +585,7 @@ class PersonasScreen(BaseAppScreen):
 
         query = expected_query if expected_query is not None else self.state.search_query
         total = len(self._characters)
+        filtered_total_unbounded = False
         if query:
             if total >= self.LIBRARY_FTS_THRESHOLD:
                 # Large library: use FTS so the full DB corpus is searched
@@ -595,6 +596,7 @@ class PersonasScreen(BaseAppScreen):
                 matched = await asyncio.to_thread(
                     ccp_character_handler.search_characters_fts, query
                 )
+                filtered_total_unbounded = True
             else:
                 # Small library: filter in-memory, case-insensitively on name.
                 q_lower = query.lower()
@@ -616,7 +618,13 @@ class PersonasScreen(BaseAppScreen):
                 return
             rows = self._build_library_rows(matched, "character")
             library = self.query_one(PersonasLibraryPane)
-            await library.update_rows(rows, total=total, noun="characters", filtered=filtered)
+            await library.update_rows(
+                rows,
+                total=total,
+                noun="characters",
+                filtered=filtered,
+                filtered_total_unbounded=filtered_total_unbounded,
+            )
             if self.state.selected_entity_kind == "character" and self.state.selected_entity_id:
                 library.mark_active_row("character", self.state.selected_entity_id)
 

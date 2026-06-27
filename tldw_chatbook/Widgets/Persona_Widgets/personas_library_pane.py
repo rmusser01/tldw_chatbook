@@ -24,6 +24,16 @@ def _row_dom_id(kind: str, item_id: str) -> str:
     return f"personas-library-row-{kind}-{_ID_SAFE.sub('-', str(item_id))}"
 
 
+def _singular_noun(noun: str) -> str:
+    """Return a compact singular label for count copy."""
+
+    if noun.endswith("ies"):
+        return f"{noun[:-3]}y"
+    if noun.endswith("s"):
+        return noun[:-1]
+    return noun
+
+
 @dataclass(frozen=True)
 class LibraryRow:
     """One selectable row in the workbench library list."""
@@ -130,6 +140,7 @@ class PersonasLibraryPane(Vertical):
         total: int,
         noun: str,
         filtered: bool = False,
+        filtered_total_unbounded: bool = False,
         recovery_copy: str | None = None,
         recovery_id: str = "personas-library-recovery",
     ) -> None:
@@ -141,6 +152,8 @@ class PersonasLibraryPane(Vertical):
             total: Total number of rows known for the current mode.
             noun: User-facing noun used in empty and count copy.
             filtered: Whether ``rows`` is a filtered subset of ``total``.
+            filtered_total_unbounded: Whether filtered rows came from a
+                full-library search whose total match denominator is unknown.
             recovery_copy: Optional multi-line recovery copy. When present, the
                 pane renders a disabled recovery row instead of list or empty
                 rows.
@@ -193,6 +206,12 @@ class PersonasLibraryPane(Vertical):
         await list_view.extend(items)
         if recovery_copy:
             count = f"{noun.capitalize()} unavailable"
+        elif filtered and filtered_total_unbounded:
+            match_word = "match" if len(rows) == 1 else "matches"
+            count = (
+                f"Showing {len(rows)} {_singular_noun(noun)} "
+                f"{match_word} from full library"
+            )
         else:
             count = f"{len(rows)} of {total} {noun}" if filtered else f"{total} {noun}"
         self.query_one("#personas-library-count", Static).update(count)

@@ -1087,6 +1087,39 @@ class TestSearch:
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam"]
 
+    async def test_fts_search_count_uses_unbounded_full_library_copy(
+        self,
+        mock_app_instance: Any,
+        stub_characters: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FTS search copy must not use the truncated loaded-page denominator.
+
+        Args:
+            mock_app_instance: Mounted test app fixture.
+            stub_characters: Character-list fixture for the Personas library.
+            monkeypatch: Pytest monkeypatch fixture used to force the FTS path.
+
+        Returns:
+            None.
+        """
+
+        def fake_fts(search_term: str, limit: int = 50) -> list[dict[str, Any]]:
+            return [{"id": 1, "name": "Detective Sam"}]
+
+        monkeypatch.setattr(character_handler_module, "search_characters_fts", fake_fts)
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            screen.LIBRARY_FTS_THRESHOLD = 2
+            screen.query_one("#personas-library-search").value = "sam"
+            await self._wait_for_search_render(pilot)
+
+            count = str(screen.query_one("#personas-library-count", Static).renderable)
+            assert count == "Showing 1 character match from full library"
+
     async def test_fts_search_runs_off_the_event_loop(
         self, mock_app_instance, stub_characters, monkeypatch
     ):
