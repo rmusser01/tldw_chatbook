@@ -10,6 +10,12 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    ConsoleConversationBrowserGroup,
+    ConsoleConversationBrowserRow,
+    ConsoleConversationBrowserSection,
+    ConsoleConversationBrowserState,
+)
 from tldw_chatbook.Workspaces.display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT,
     ConsoleWorkspaceContextState,
@@ -277,6 +283,16 @@ class ConsoleWorkspaceContextTray(VerticalScroll):
                 classes="console-workspace-recovery",
             )
 
+        browser = self.state.conversation_browser
+        if browser is not None:
+            yield from self._compose_conversation_browser(browser)
+        else:
+            yield from self._compose_legacy_conversation_section()
+        yield from self._compose_status_rows()
+
+    def _compose_legacy_conversation_section(self) -> ComposeResult:
+        """Render the transitional active-workspace conversation section."""
+
         section = self._conversation_section()
         section_controls_enabled = self.state.conversation_section is not None
         with Horizontal(
@@ -395,6 +411,258 @@ class ConsoleWorkspaceContextTray(VerticalScroll):
                         id="console-new-workspace-conversation-recovery",
                         classes="console-workspace-recovery",
                     )
+
+    def _compose_conversation_browser(
+        self,
+        browser: ConsoleConversationBrowserState,
+    ) -> ComposeResult:
+        """Render the grouped all-workspaces conversation browser."""
+
+        with Horizontal(
+            id="console-workspace-conversations-header",
+            classes="console-workspace-conversations-header",
+        ):
+            title = self._static(
+                "Conversations",
+                id="console-workspace-conversations-title",
+                classes="destination-section",
+            )
+            title.styles.width = "1fr"
+            yield title
+        yield self._static(
+            browser.selected_summary or "No active conversation.",
+            id="console-workspace-selected-conversation",
+            classes="console-workspace-selected-conversation",
+        )
+        with Horizontal(
+            id="console-workspace-conversation-search-row",
+            classes="console-workspace-conversation-search-row",
+        ):
+            search_input = Input(
+                value=browser.query,
+                placeholder="Search conversations",
+                id="console-workspace-conversation-search",
+                classes="console-workspace-conversation-search",
+            )
+            search_input.styles.width = "1fr"
+            yield search_input
+            clear_button = Button(
+                "Clear",
+                id="console-workspace-conversation-search-clear",
+                classes=(
+                    "console-workspace-action "
+                    "console-workspace-conversation-search-clear"
+                ),
+                compact=True,
+                disabled=not bool(str(browser.query or "").strip()),
+            )
+            clear_button.tooltip = "Clear conversation search"
+            yield clear_button
+        if browser.status_copy:
+            yield self._static(
+                browser.status_copy,
+                id="console-workspace-conversation-search-status",
+                classes="console-workspace-empty-copy",
+            )
+        if browser.error_copy:
+            yield self._static(
+                browser.error_copy,
+                id="console-workspace-conversation-search-error",
+                classes="console-workspace-recovery",
+            )
+        if not browser.marks_available:
+            yield self._static(
+                "Local stars unavailable",
+                id="console-conversation-browser-marks-unavailable",
+                classes="console-workspace-recovery",
+            )
+
+        row_index = 0
+        visible_rows = self._visible_conversation_rows()
+        conversation_list = VerticalScroll(id="console-workspace-conversations")
+        conversation_list.styles.height = max(1, visible_rows * 3)
+        conversation_list.styles.min_height = max(1, visible_rows * 3)
+        with conversation_list:
+            for section in browser.sections:
+                yield from self._compose_conversation_browser_section_header(section)
+                if section.collapsed:
+                    continue
+                if section.groups:
+                    for group_index, group in enumerate(section.groups):
+                        yield from self._compose_conversation_browser_group_header(
+                            group,
+                            group_index,
+                        )
+                        if group.collapsed:
+                            continue
+                        if group.rows:
+                            for row in group.rows:
+                                yield from self._compose_conversation_browser_row(
+                                    row,
+                                    row_index,
+                                    marks_available=browser.marks_available,
+                                )
+                                row_index += 1
+                        elif group.empty_copy:
+                            yield self._static(
+                                group.empty_copy,
+                                id=(
+                                    "console-conversation-browser-group-empty-"
+                                    f"{group_index}"
+                                ),
+                                classes="console-workspace-empty-copy",
+                            )
+                    if not section.groups and section.empty_copy:
+                        yield self._static(
+                            section.empty_copy,
+                            id=(
+                                "console-conversation-browser-"
+                                f"{section.section_id}-empty"
+                            ),
+                            classes="console-workspace-empty-copy",
+                        )
+                    continue
+                if section.rows:
+                    for row in section.rows:
+                        yield from self._compose_conversation_browser_row(
+                            row,
+                            row_index,
+                            marks_available=browser.marks_available,
+                        )
+                        row_index += 1
+                elif section.empty_copy:
+                    yield self._static(
+                        section.empty_copy,
+                        id=f"console-conversation-browser-{section.section_id}-empty",
+                        classes="console-workspace-empty-copy",
+                    )
+
+    def _compose_conversation_browser_section_header(
+        self,
+        section: ConsoleConversationBrowserSection,
+    ) -> ComposeResult:
+        """Render one grouped browser section header."""
+
+        with Horizontal(classes="console-conversation-browser-section-header"):
+            title = self._static(
+                section.label,
+                id=f"console-conversation-browser-{section.section_id}-title",
+                classes="console-conversation-browser-section-title",
+            )
+            yield title
+            toggle = Button(
+                "+" if section.collapsed else "-",
+                id=f"console-conversation-browser-section-toggle-{section.section_id}",
+                classes=(
+                    "console-workspace-action "
+                    "console-workspace-conversations-toggle"
+                ),
+                compact=True,
+            )
+            toggle.group_id = f"section:{section.section_id}"
+            toggle.tooltip = (
+                f"Expand {section.label}"
+                if section.collapsed
+                else f"Collapse {section.label}"
+            )
+            yield toggle
+
+    def _compose_conversation_browser_group_header(
+        self,
+        group: ConsoleConversationBrowserGroup,
+        index: int,
+    ) -> ComposeResult:
+        """Render one workspace group header."""
+
+        with Horizontal(classes="console-conversation-browser-group-header"):
+            title = self._static(
+                group.label,
+                id=f"console-conversation-browser-group-title-{index}",
+                classes="console-conversation-browser-group-title",
+            )
+            yield title
+            toggle = Button(
+                "+" if group.collapsed else "-",
+                id=f"console-conversation-browser-group-toggle-{index}",
+                classes=(
+                    "console-workspace-action "
+                    "console-workspace-conversations-toggle"
+                ),
+                compact=True,
+            )
+            toggle.group_id = group.group_id
+            toggle.tooltip = (
+                f"Expand {group.label}"
+                if group.collapsed
+                else f"Collapse {group.label}"
+            )
+            yield toggle
+
+    def _compose_conversation_browser_row(
+        self,
+        row: ConsoleConversationBrowserRow,
+        index: int,
+        *,
+        marks_available: bool,
+    ) -> ComposeResult:
+        """Render one grouped browser row plus its local star control."""
+
+        with Horizontal(classes="console-conversation-browser-row-line"):
+            title = self._conversation_title(row.title)
+            visible_title = self._conversation_visible_title(title)
+            status = self._conversation_status(row.status)
+            detail = self._conversation_detail_status(row.status)
+            secondary_parts = [
+                part
+                for part in (row.workspace_label, detail, row.updated_label)
+                if str(part or "").strip()
+            ]
+            secondary = " - ".join(secondary_parts) or "conversation"
+            marker = "> " if row.selected else "  "
+            status_suffix = f" [{status}]" if status else ""
+            row_button = Button(
+                Text(f"{marker}{visible_title}\n  {secondary}"),
+                id=f"console-workspace-conversation-{index}",
+                classes="console-workspace-conversation-row",
+                compact=True,
+            )
+            row_button.tooltip = f"Switch to {title}{status_suffix}"
+            row_button.row_key = row.row_key
+            row_button.conversation_id = row.conversation_id or row.row_key
+            row_button.native_session_id = row.native_session_id
+            row_button.scope_type = row.scope_type
+            row_button.workspace_id = row.workspace_id
+            row_button.set_class(row.selected, "console-workspace-conversation-row-selected")
+            row_button.styles.height = 2
+            row_button.styles.min_height = 2
+            row_button.styles.width = "1fr"
+            row_button.styles.min_width = 0
+            yield row_button
+
+            star_disabled = not marks_available or not row.star_enabled
+            star_button = Button(
+                "*" if row.starred else ".",
+                id=f"console-conversation-star-{index}",
+                classes="console-workspace-action console-conversation-star",
+                compact=True,
+                disabled=star_disabled,
+            )
+            if not marks_available:
+                star_button.tooltip = "Local stars unavailable"
+            elif not row.star_enabled:
+                star_button.tooltip = "Send or save this conversation before starring."
+            else:
+                star_button.tooltip = (
+                    "Unstar conversation" if row.starred else "Star conversation"
+                )
+            star_button.row_key = row.row_key
+            star_button.conversation_id = row.conversation_id
+            star_button.starred = row.starred
+            yield star_button
+
+    def _compose_status_rows(self) -> ComposeResult:
+        """Render workspace status, readiness, runtime, and handoff rows."""
+
         yield from self._status_pair(
             self._friendly_status_label(self.state.authority_label),
             label_id="console-workspace-authority-label",
