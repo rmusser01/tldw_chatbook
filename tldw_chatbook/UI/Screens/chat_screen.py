@@ -1687,13 +1687,15 @@ class ChatScreen(BaseAppScreen):
         browser = state.conversation_browser
         if browser is None:
             return None
+        allow_conversation_fallback = not target_row_key
         fallback: ConsoleConversationBrowserRow | None = None
         for section in browser.sections:
             for row in section.rows:
                 if target_row_key and row.row_key == target_row_key:
                     return row
                 if (
-                    fallback is None
+                    allow_conversation_fallback
+                    and fallback is None
                     and target_conversation_id
                     and row.conversation_id == target_conversation_id
                 ):
@@ -1703,7 +1705,8 @@ class ChatScreen(BaseAppScreen):
                     if target_row_key and row.row_key == target_row_key:
                         return row
                     if (
-                        fallback is None
+                        allow_conversation_fallback
+                        and fallback is None
                         and target_conversation_id
                         and row.conversation_id == target_conversation_id
                     ):
@@ -1893,8 +1896,6 @@ class ChatScreen(BaseAppScreen):
             )
             row_key = persisted_id or f"native:{session.id}"
             selected = session.id == active_session_id
-            if persisted_id and current_conversation_id:
-                selected = persisted_id == current_conversation_id
             row = ConsoleConversationBrowserInputRow(
                 row_key=row_key,
                 conversation_id=persisted_id or None,
@@ -1923,6 +1924,12 @@ class ChatScreen(BaseAppScreen):
         labels = self._console_browser_workspace_labels()
         starred_ids = self._starred_console_conversation_ids()
         current_conversation = current_conversation_id or self._current_console_conversation_id()
+        active_session = self._active_native_console_session()
+        active_workspace_id = (
+            str(active_session.workspace_id or "").strip()
+            if active_session is not None
+            else str(self._current_console_workspace_context().active_workspace_id or "").strip()
+        )
         rows: list[ConsoleConversationBrowserInputRow] = []
         for record in self._console_browser_workspace_records():
             workspace_id = str(record.workspace_id or "").strip()
@@ -1950,7 +1957,11 @@ class ChatScreen(BaseAppScreen):
                     workspace_id=workspace_id,
                     workspace_label=self._console_browser_workspace_label(workspace_id, labels),
                     status=str(getattr(membership, "role", "") or "workspace-thread"),
-                    selected=bool(current_conversation and current_conversation == conversation_id),
+                    selected=bool(
+                        current_conversation
+                        and current_conversation == conversation_id
+                        and active_workspace_id == workspace_id
+                    ),
                     source_kind="membership",
                     updated_sort=str(getattr(membership, "created_at", "") or ""),
                 )

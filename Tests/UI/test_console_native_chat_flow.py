@@ -687,6 +687,13 @@ def _workspace_conversation_row_by_id(console, conversation_id: str):
     return None
 
 
+def _workspace_conversation_row_by_key(console, row_key: str):
+    for row in console.query(".console-workspace-conversation-row"):
+        if getattr(row, "row_key", None) == row_key:
+            return row
+    return None
+
+
 def _console_workspace_conversation_row_id_for_session(console, session_id: str) -> str:
     target_conversation_id = f"native:{session_id}"
     for row in console.query(".console-workspace-conversation-row"):
@@ -3165,6 +3172,20 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
         open_ws_a.persisted_conversation_id = "shared-open-chat"
         store.switch_session(open_ws_a.id)
         await console._sync_native_console_chat_ui()
+        ws_b_row = _workspace_conversation_row_by_key(
+            console,
+            "workspace:ws-b:conversation:shared-open-chat",
+        )
+
+        assert ws_b_row is not None
+        assert not _widget_text(ws_b_row).startswith("> ")
+        assert (
+            console._find_console_browser_row(
+                "workspace:missing:conversation:shared-open-chat",
+                conversation_id="shared-open-chat",
+            )
+            is None
+        )
 
         await _click_console_workspace_conversation_for_row_key(
             console,
@@ -3181,6 +3202,28 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
 
         assert len(sessions) == 2
         assert active_session.workspace_id == "ws-b"
+        selected_shared_rows = [
+            row
+            for row in console.query(".console-workspace-conversation-row")
+            if getattr(row, "conversation_id", None) == "shared-open-chat"
+            and _widget_text(row).startswith("> ")
+        ]
+        assert len(selected_shared_rows) == 1
+        assert getattr(selected_shared_rows[0], "native_session_id", None) == active_session.id
+        selected_native_rows = [
+            row
+            for row in console._native_console_browser_rows("shared-open-chat")
+            if row.conversation_id == "shared-open-chat" and row.selected
+        ]
+        assert len(selected_native_rows) == 1
+        assert selected_native_rows[0].native_session_id == active_session.id
+        selected_membership_rows = [
+            row
+            for row in console._membership_console_browser_rows("shared-open-chat")
+            if row.conversation_id == "shared-open-chat" and row.selected
+        ]
+        assert len(selected_membership_rows) == 1
+        assert selected_membership_rows[0].workspace_id == "ws-b"
         active = service.get_active_workspace()
         assert active is not None
         assert active.workspace_id == "ws-b"
