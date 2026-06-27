@@ -3,6 +3,7 @@
 
 import inspect
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -880,6 +881,93 @@ PROFILES_FOR_SEARCH = [
 
 
 class TestSearch:
+    async def _wait_for_search_render(self, pilot: Any) -> None:
+        await pilot.pause(personas_screen_module.PERSONAS_SEARCH_DEBOUNCE_SECONDS + 0.05)
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+    async def test_search_input_debounces_rapid_changes(
+        self,
+        mock_app_instance: Any,
+        stub_characters: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Rapid search edits render only the final query after the debounce window."""
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+
+            rendered_queries: list[str] = []
+            original_render = screen._render_library_rows
+
+            async def observe_render(
+                *,
+                expected_query: str | None = None,
+                expected_mode: str | None = None,
+            ) -> None:
+                rendered_queries.append(screen.state.search_query)
+                await original_render(
+                    expected_query=expected_query,
+                    expected_mode=expected_mode,
+                )
+
+            monkeypatch.setattr(screen, "_render_library_rows", observe_render)
+
+            search_input = screen.query_one("#personas-library-search")
+            search_input.value = "s"
+            search_input.value = "sa"
+            search_input.value = "sam"
+
+            await pilot.pause(0.05)
+            assert rendered_queries == []
+
+            await self._wait_for_search_render(pilot)
+            assert rendered_queries == ["sam"]
+            rows = screen.query(".personas-library-row")
+            assert [_row_text(r) for r in rows] == ["Detective Sam"]
+
+    async def test_stale_fts_search_result_does_not_update_library_rows(
+        self,
+        mock_app_instance: Any,
+        stub_characters: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A slower search result is dropped if the query changes while it awaits."""
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+
+            screen.LIBRARY_FTS_THRESHOLD = 2
+            library = screen.query_one("#personas-library-pane")
+            original_update_rows = library.update_rows
+            rendered_rows: list[tuple[str, ...]] = []
+
+            async def observe_update_rows(rows: tuple[Any, ...], **kwargs: Any) -> None:
+                rendered_rows.append(tuple(row.name for row in rows))
+                await original_update_rows(rows, **kwargs)
+
+            async def fake_to_thread(
+                function: Any,
+                query: str,
+                *args: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                screen.state.search_query = "lab"
+                return [{"id": 1, "name": "Detective Sam"}]
+
+            monkeypatch.setattr(library, "update_rows", observe_update_rows)
+            monkeypatch.setattr(personas_screen_module.asyncio, "to_thread", fake_to_thread)
+
+            screen.state.search_query = "sam"
+            await screen._render_search_query(query="sam", mode="characters")
+            await pilot.pause()
+
+            assert rendered_rows == []
+
     async def test_search_filters_loaded_characters_locally(self, mock_app_instance, stub_characters):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
@@ -888,7 +976,7 @@ class TestSearch:
             # Type into the search input
             search_input = screen.query_one("#personas-library-search")
             search_input.value = "sam"
-            await pilot.pause()
+            await self._wait_for_search_render(pilot)
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
@@ -902,10 +990,10 @@ class TestSearch:
             search_input = screen.query_one("#personas-library-search")
             # Filter first
             search_input.value = "sam"
-            await pilot.pause()
+            await self._wait_for_search_render(pilot)
             # Then clear
             search_input.value = ""
-            await pilot.pause()
+            await self._wait_for_search_render(pilot)
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam", "Lab Assistant"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
@@ -919,7 +1007,7 @@ class TestSearch:
             await pilot.pause()
             search_input = screen.query_one("#personas-library-search")
             search_input.value = "LAB"
-            await pilot.pause()
+            await self._wait_for_search_render(pilot)
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Lab Assistant"]
 
@@ -942,7 +1030,7 @@ class TestSearch:
             # Two profiles loaded; now search for "nav"
             search_input = screen.query_one("#personas-library-search")
             search_input.value = "nav"
-            await pilot.pause()
+            await self._wait_for_search_render(pilot)
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Navigator"]
             count = str(screen.query_one("#personas-library-count", Static).renderable)
@@ -958,7 +1046,7 @@ class TestSearch:
             # Search in characters mode
             search_input = screen.query_one("#personas-library-search")
             search_input.value = "sam"
-            await pilot.pause()
+            await self._wait_for_search_render(pilot)
             assert len(screen.query(".personas-library-row")) == 1
             # Switch to personas mode and back
             await pilot.click("#personas-mode-personas")
@@ -994,7 +1082,7 @@ class TestSearch:
             screen.LIBRARY_FTS_THRESHOLD = 2
             search_input = screen.query_one("#personas-library-search")
             search_input.value = "sam"
-            await pilot.pause()
+            await self._wait_for_search_render(pilot)
             assert fts_calls == ["sam"]
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam"]
@@ -1023,9 +1111,7 @@ class TestSearch:
             await pilot.pause()
             screen.LIBRARY_FTS_THRESHOLD = 2
             screen.query_one("#personas-library-search").value = "sam"
-            await pilot.pause()
-            await app.workers.wait_for_complete()
-            await pilot.pause()
+            await self._wait_for_search_render(pilot)
             assert loop_seen == [False]
             rows = screen.query(".personas-library-row")
             assert [_row_text(r) for r in rows] == ["Detective Sam"]
