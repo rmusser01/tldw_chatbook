@@ -1757,7 +1757,7 @@ class ChatScreen(BaseAppScreen):
                     continue
                 title = str(getattr(membership, "title", "") or conversation_id)
                 row = ConsoleConversationBrowserInputRow(
-                    row_key=conversation_id,
+                    row_key=f"workspace:{workspace_id}:conversation:{conversation_id}",
                     conversation_id=conversation_id,
                     native_session_id=None,
                     title=title,

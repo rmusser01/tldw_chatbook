@@ -2988,6 +2988,64 @@ async def test_console_conversation_browser_search_filters_all_groups():
 
 
 @pytest.mark.asyncio
+async def test_console_conversation_browser_keeps_multi_workspace_memberships():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    app.app_config["console"]["conversation_browser"]["collapsed_groups"][
+        "workspace:ws-b"
+    ] = False
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="shared-conversation",
+        role="workspace-thread",
+        title="Shared Conversation",
+    )
+    service.link_membership(
+        "ws-b",
+        item_type="conversation",
+        item_id="shared-conversation",
+        role="workspace-thread",
+        title="Shared Conversation",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+
+        rows = [
+            row
+            for row in console.query(".console-workspace-conversation-row")
+            if getattr(row, "conversation_id", None) == "shared-conversation"
+        ]
+        stars = [
+            button
+            for button in console.query(".console-conversation-star")
+            if getattr(button, "conversation_id", None) == "shared-conversation"
+        ]
+
+        assert len(rows) == 2
+        assert {
+            getattr(row, "workspace_id", None)
+            for row in rows
+        } == {"ws-a", "ws-b"}
+        assert {
+            getattr(row, "row_key", None)
+            for row in rows
+        } == {
+            "workspace:ws-a:conversation:shared-conversation",
+            "workspace:ws-b:conversation:shared-conversation",
+        }
+        assert len(stars) == 2
+        assert {getattr(button, "row_key", None) for button in stars} == {
+            "workspace:ws-a:conversation:shared-conversation",
+            "workspace:ws-b:conversation:shared-conversation",
+        }
+
+
+@pytest.mark.asyncio
 async def test_console_conversation_browser_search_ignores_stale_results():
     app = _build_test_app()
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
