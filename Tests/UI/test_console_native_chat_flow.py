@@ -2943,6 +2943,12 @@ async def test_console_conversation_browser_lists_all_workspace_groups():
         assert "Global chat" in visible_text
         assert "Storage" in visible_text
         assert "Server handoff" in visible_text
+        assert len(console.query("#console-workspace-conversations-toggle")) == 0
+        assert len(console.query("#console-conversation-browser-section-toggle-workspaces")) == 1
+        assert any(
+            getattr(button, "group_id", None) == "workspace:ws-a"
+            for button in console.query(".console-workspace-conversations-toggle")
+        )
 
 
 @pytest.mark.asyncio
@@ -3043,6 +3049,65 @@ async def test_console_conversation_browser_keeps_multi_workspace_memberships():
             "workspace:ws-a:conversation:shared-conversation",
             "workspace:ws-b:conversation:shared-conversation",
         }
+
+
+@pytest.mark.asyncio
+async def test_console_conversation_browser_dedupes_membership_and_persisted_same_workspace():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="same-workspace-conversation",
+        role="workspace-thread",
+        title="Membership Title",
+    )
+    app.local_chat_conversation_service = SyncSearchableConversationService(
+        {
+            "same-workspace-conversation": {
+                "conversation": {
+                    "id": "same-workspace-conversation",
+                    "title": "Persisted Title",
+                    "scope_type": "workspace",
+                    "workspace_id": "ws-a",
+                },
+                "root_threads": [],
+            },
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+
+        rows = [
+            row
+            for row in console.query(".console-workspace-conversation-row")
+            if (
+                getattr(row, "conversation_id", None)
+                == "same-workspace-conversation"
+                and getattr(row, "workspace_id", None) == "ws-a"
+            )
+        ]
+        stars = [
+            button
+            for button in console.query(".console-conversation-star")
+            if (
+                getattr(button, "conversation_id", None)
+                == "same-workspace-conversation"
+                and getattr(button, "row_key", None)
+                == "workspace:ws-a:conversation:same-workspace-conversation"
+            )
+        ]
+
+        assert len(rows) == 1
+        assert getattr(rows[0], "row_key", None) == (
+            "workspace:ws-a:conversation:same-workspace-conversation"
+        )
+        assert "Membership Title" in _widget_text(rows[0])
+        assert len(stars) == 1
 
 
 @pytest.mark.asyncio

@@ -50,6 +50,25 @@ def _visible_text(screen) -> str:
     return " ".join(visible_chunks)
 
 
+def _browser_group_toggle(screen, group_id: str) -> Button:
+    for button in screen.query(".console-workspace-conversations-toggle"):
+        if getattr(button, "group_id", None) == group_id:
+            return button
+    toggles = [
+        (getattr(button, "id", None), getattr(button, "group_id", None))
+        for button in screen.query(".console-workspace-conversations-toggle")
+    ]
+    raise AssertionError(f"Browser group toggle {group_id!r} not found: {toggles!r}")
+
+
+def _conversation_row_texts(screen) -> list[str]:
+    return [
+        str(getattr(row, "label", ""))
+        for row in screen.query(".console-workspace-conversation-row")
+        if row.display
+    ]
+
+
 def _static_plain(screen, selector: str) -> str:
     widget = screen.query_one(selector, Static)
     return getattr(widget.render(), "plain", str(widget.render()))
@@ -665,7 +684,7 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_conversation_collapse_persists_per_workspace() -> None:
+async def test_console_workspace_browser_group_collapse_persists_locally() -> None:
     app = _build_test_app()
     service = app.workspace_registry_service
     default_workspace = service.get_active_workspace()
@@ -681,7 +700,7 @@ async def test_console_workspace_conversation_collapse_persists_per_workspace() 
 
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-workspace-conversations-toggle")
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
         assert (
             console.query_one(
                 "#console-workspace-conversation-search",
@@ -689,21 +708,28 @@ async def test_console_workspace_conversation_collapse_persists_per_workspace() 
             ).disabled
             is False
         )
+        assert len(console.query("#console-workspace-conversations-toggle")) == 0
+        assert any("Collapse Chat A" in text for text in _conversation_row_texts(console))
 
-        await pilot.click("#console-workspace-conversations-toggle")
+        _browser_group_toggle(console, "section:chats").press()
         await pilot.pause(0.1)
-        assert len(console.query("#console-workspace-conversations")) == 0
-        assert "Collapse Chat A" in _visible_text(console)
+        assert all("Collapse Chat A" not in text for text in _conversation_row_texts(console))
+        collapsed_groups = app.app_config["console"]["conversation_browser"][
+            "collapsed_groups"
+        ]
+        assert collapsed_groups["section:chats"] is True
 
         service.set_active_workspace("ws-collapse-b")
         console._sync_console_workspace_context()
         await pilot.pause(0.1)
         assert len(console.query("#console-workspace-conversations")) == 1
+        assert all("Collapse Chat A" not in text for text in _conversation_row_texts(console))
 
         service.set_active_workspace(default_workspace.workspace_id)
         console._sync_console_workspace_context()
         await pilot.pause(0.1)
-        assert len(console.query("#console-workspace-conversations")) == 0
+        assert len(console.query("#console-workspace-conversations")) == 1
+        assert all("Collapse Chat A" not in text for text in _conversation_row_texts(console))
 
 
 async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):

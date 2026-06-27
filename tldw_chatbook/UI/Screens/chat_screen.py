@@ -652,7 +652,6 @@ class ChatScreen(BaseAppScreen):
         ] = ()
         self._console_conversation_browser_total: int | None = None
         self._console_conversation_browser_error = ""
-        self._console_legacy_list_collapsed_workspaces: set[str] = set()
         self._console_visible_draft_session_id: str | None = None
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
@@ -1609,6 +1608,22 @@ class ChatScreen(BaseAppScreen):
     def _console_browser_row_key(row: ConsoleConversationBrowserInputRow) -> str:
         return str(row.row_key or row.conversation_id or "").strip()
 
+    @staticmethod
+    def _console_browser_display_identity(
+        row: ConsoleConversationBrowserInputRow,
+    ) -> tuple[str, str, str, str] | tuple[str, str]:
+        """Return the display identity used to dedupe grouped browser rows."""
+        conversation_id = str(row.conversation_id or "").strip()
+        if conversation_id:
+            scope_type = str(row.scope_type or "").strip() or "workspace"
+            workspace_id = (
+                ""
+                if scope_type == "global"
+                else str(row.workspace_id or "").strip()
+            )
+            return ("conversation", scope_type, workspace_id, conversation_id)
+        return ("row", ChatScreen._console_browser_row_key(row))
+
     def _console_browser_workspace_records(self) -> tuple[WorkspaceRecord, ...]:
         """Return all local workspace records visible to the Console browser."""
         service = getattr(self.app_instance, "workspace_registry_service", None)
@@ -2045,15 +2060,15 @@ class ChatScreen(BaseAppScreen):
     ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
         """Merge browser rows with native, membership, then persisted precedence."""
         merged: list[ConsoleConversationBrowserInputRow] = []
-        seen: set[str] = set()
+        seen: set[tuple[str, ...]] = set()
         starred_ids = self._starred_console_conversation_ids()
         for group in row_groups:
             for raw_row in group:
                 row = self._apply_console_browser_star_state(raw_row, starred_ids)
-                key = self._console_browser_row_key(row)
-                if not key or key in seen:
+                identity = self._console_browser_display_identity(row)
+                if not identity[-1] or identity in seen:
                     continue
-                seen.add(key)
+                seen.add(identity)
                 merged.append(row)
         return tuple(merged)
 
@@ -2999,18 +3014,7 @@ class ChatScreen(BaseAppScreen):
                 ConsoleWorkspaceContextTray,
             )
             state = self._build_console_workspace_context_state(session_data)
-            section = state.conversation_section
-            workspace_id = str(section.workspace_id if section is not None else "")
-            legacy_collapsed = (
-                bool(section.collapsed if section is not None else False)
-                and workspace_id in self._console_legacy_list_collapsed_workspaces
-            )
-            display_state = (
-                replace(state, conversation_browser=None)
-                if legacy_collapsed
-                else state
-            )
-            workspace_context.sync_state(display_state)
+            workspace_context.sync_state(state)
             self.call_after_refresh(
                 lambda: self.run_worker(
                     self._sync_console_legacy_workspace_context_aliases,
@@ -3022,7 +3026,7 @@ class ChatScreen(BaseAppScreen):
             logger.debug("No Console workspace context tray available for sync")
 
     async def _sync_console_legacy_workspace_context_aliases(self) -> None:
-        """Expose transitional legacy controls while grouped browser is active."""
+        """Expose transitional legacy new-conversation control while grouped browser is active."""
         try:
             workspace_context = self.query_one(
                 "#console-workspace-context",
@@ -3032,39 +3036,6 @@ class ChatScreen(BaseAppScreen):
             return
 
         state = self._build_console_workspace_context_state()
-        section = state.conversation_section
-        legacy_collapsed = bool(section.collapsed if section is not None else False)
-        workspace_id = str(section.workspace_id if section is not None else "")
-        collapsed = (
-            legacy_collapsed
-            and workspace_id in self._console_legacy_list_collapsed_workspaces
-        )
-
-        if not self.query("#console-workspace-conversations-toggle"):
-            before_toggle = None
-            for toggle in self.query(".console-workspace-conversations-toggle"):
-                if getattr(toggle, "group_id", None) == "section:chats":
-                    before_toggle = toggle
-                    break
-            legacy_toggle = Button(
-                "+" if collapsed else "-",
-                id="console-workspace-conversations-toggle",
-                classes=(
-                    "console-workspace-action "
-                    "console-workspace-conversations-toggle"
-                ),
-                compact=True,
-            )
-            legacy_toggle.tooltip = (
-                "Expand Conversations" if collapsed else "Collapse Conversations"
-            )
-            legacy_toggle.styles.width = 3
-            legacy_toggle.styles.min_width = 3
-            legacy_toggle.styles.offset = (-4, 0)
-            if before_toggle is not None:
-                await workspace_context.mount(legacy_toggle, before=before_toggle)
-            else:
-                await workspace_context.mount(legacy_toggle)
 
         if not self.query("#console-new-workspace-conversation"):
             new_button = Button(
@@ -6773,16 +6744,6 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-workspace-conversations-toggle":
             event.stop()
-            state = self._build_console_workspace_context_state()
-            section = state.conversation_section
-            workspace_id = section.workspace_id if section is not None else None
-            collapsed = not bool(section.collapsed if section is not None else False)
-            self._set_console_workspace_conversations_collapsed(workspace_id, collapsed)
-            workspace_key = str(workspace_id or "")
-            if collapsed:
-                self._console_legacy_list_collapsed_workspaces.add(workspace_key)
-            else:
-                self._console_legacy_list_collapsed_workspaces.discard(workspace_key)
             self._sync_console_workspace_context()
             return
         if button_id == "console-new-workspace-conversation":
