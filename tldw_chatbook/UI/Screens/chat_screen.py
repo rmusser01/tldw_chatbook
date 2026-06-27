@@ -144,6 +144,7 @@ from ...Workspaces.display_state import (
 from ...Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     ConsoleConversationBrowserInputRow,
+    ConsoleConversationBrowserRow,
     DEFAULT_WORKSPACE_ID,
     WorkspaceRecord,
     build_console_conversation_browser_state,
@@ -1512,8 +1513,14 @@ class ChatScreen(BaseAppScreen):
             )
         return messages
 
-    async def _resume_console_workspace_conversation(self, conversation_id: str) -> bool:
-        """Load a persisted workspace conversation into a native Console session."""
+    async def _resume_console_workspace_conversation(
+        self,
+        conversation_id: str,
+        *,
+        target_scope_type: str | None = None,
+        target_workspace_id: str | None = None,
+    ) -> bool:
+        """Load a persisted saved conversation into a native Console session."""
         target = str(conversation_id or "").strip()
         if not target:
             return False
@@ -1535,17 +1542,17 @@ class ChatScreen(BaseAppScreen):
             tree = await maybe_tree if inspect.isawaitable(maybe_tree) else maybe_tree
         except Exception:
             logger.exception(
-                f"Unable to resume Console workspace conversation: conversation_id={target}"
+                f"Unable to resume Console saved conversation: conversation_id={target}"
             )
             self.app_instance.notify(
-                "Unable to load this saved workspace conversation.",
+                "Unable to load this saved conversation.",
                 severity="error",
             )
             return False
 
         if not isinstance(tree, dict) or not tree.get("conversation"):
             self.app_instance.notify(
-                "Saved workspace conversation was not found.",
+                "Saved conversation was not found.",
                 severity="warning",
             )
             return False
@@ -1560,7 +1567,21 @@ class ChatScreen(BaseAppScreen):
             if conversation.get("workspace_id") is not None
             else ""
         )
-        workspace_id = persisted_workspace_id or active_workspace_id or None
+        target_scope = str(target_scope_type or "").strip()
+        requested_workspace_id = (
+            str(target_workspace_id).strip()
+            if target_workspace_id is not None
+            else ""
+        )
+        if target_scope == "global":
+            workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
+        else:
+            workspace_id = (
+                persisted_workspace_id
+                or requested_workspace_id
+                or active_workspace_id
+                or None
+            )
         title = str(conversation.get("title") or "Saved conversation").strip()
         if not title:
             title = "Saved conversation"
@@ -1650,6 +1671,112 @@ class ChatScreen(BaseAppScreen):
             for row in row_tuple
             if self._console_browser_row_matches_query(row, normalized_query)
         )
+
+    def _find_console_browser_row(
+        self,
+        row_key: str,
+        *,
+        conversation_id: str | None = None,
+    ) -> ConsoleConversationBrowserRow | None:
+        """Return the current grouped browser row for a rendered row key."""
+        target_row_key = str(row_key or "").strip()
+        target_conversation_id = str(conversation_id or "").strip()
+        if not target_row_key and not target_conversation_id:
+            return None
+        state = self._build_console_workspace_context_state()
+        browser = state.conversation_browser
+        if browser is None:
+            return None
+        fallback: ConsoleConversationBrowserRow | None = None
+        for section in browser.sections:
+            for row in section.rows:
+                if target_row_key and row.row_key == target_row_key:
+                    return row
+                if (
+                    fallback is None
+                    and target_conversation_id
+                    and row.conversation_id == target_conversation_id
+                ):
+                    fallback = row
+            for group in section.groups:
+                for row in group.rows:
+                    if target_row_key and row.row_key == target_row_key:
+                        return row
+                    if (
+                        fallback is None
+                        and target_conversation_id
+                        and row.conversation_id == target_conversation_id
+                    ):
+                        fallback = row
+        return fallback
+
+    def _activate_console_workspace_for_browser_row(
+        self,
+        row: ConsoleConversationBrowserRow,
+    ) -> None:
+        """Align active workspace context before opening a browser row."""
+        scope_type = str(row.scope_type or "").strip()
+        if scope_type == "global":
+            return
+        workspace_id = str(row.workspace_id or "").strip()
+        if not workspace_id or workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
+            return
+        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry_service is None:
+            return
+        try:
+            active_workspace = registry_service.get_active_workspace()
+            if (
+                active_workspace is None
+                or active_workspace.workspace_id != workspace_id
+            ):
+                registry_service.set_active_workspace(workspace_id)
+            self._ensure_console_chat_store().set_workspace_context(
+                self._current_console_workspace_context()
+            )
+        except Exception:
+            logger.warning(
+                "Unable to activate Console workspace for browser row",
+                exc_info=True,
+            )
+
+    def _console_session_id_for_browser_row(
+        self,
+        row: ConsoleConversationBrowserRow,
+    ) -> str | None:
+        """Return an open session matching a grouped browser row's identity."""
+        store = self._console_chat_store
+        if store is None:
+            return None
+        native_session_id = str(row.native_session_id or "").strip()
+        if native_session_id:
+            if any(session.id == native_session_id for session in store.sessions()):
+                return native_session_id
+            return None
+        row_key = str(row.row_key or "").strip()
+        if row_key.startswith("native:"):
+            return self._console_session_id_for_workspace_conversation(row_key)
+        conversation_id = str(row.conversation_id or "").strip()
+        if not conversation_id:
+            return None
+        scope_type = str(row.scope_type or "").strip()
+        expected_workspace_id = (
+            CONSOLE_GLOBAL_WORKSPACE_ID
+            if scope_type == "global"
+            else str(row.workspace_id or "").strip()
+        )
+        fallback_session_id: str | None = None
+        for session in store.sessions():
+            if str(session.persisted_conversation_id or "").strip() != conversation_id:
+                continue
+            session_workspace_id = str(session.workspace_id or "").strip()
+            if expected_workspace_id and session_workspace_id == expected_workspace_id:
+                return session.id
+            if fallback_session_id is None:
+                fallback_session_id = session.id
+        if str(row.source_kind or "").strip() == "membership" and expected_workspace_id:
+            return None
+        return fallback_session_id
 
     @staticmethod
     def _console_browser_display_identity(
@@ -6850,21 +6977,51 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id and button_id.startswith("console-workspace-conversation-"):
             event.stop()
-            conversation_id = str(getattr(event.button, "conversation_id", "") or "")
-            session_id = self._console_session_id_for_workspace_conversation(conversation_id)
+            conversation_id = str(
+                getattr(event.button, "conversation_id", "") or ""
+            ).strip()
+            row_key = str(getattr(event.button, "row_key", "") or "").strip()
+            browser_row = self._find_console_browser_row(
+                row_key or conversation_id,
+                conversation_id=conversation_id,
+            )
+            if browser_row is not None:
+                self._activate_console_workspace_for_browser_row(browser_row)
+                row_conversation_id = str(browser_row.conversation_id or "").strip()
+                session_id = self._console_session_id_for_browser_row(browser_row)
+            else:
+                row_conversation_id = conversation_id
+                session_id = self._console_session_id_for_workspace_conversation(
+                    conversation_id
+                )
             if session_id is None:
-                resumed = await self._resume_console_workspace_conversation(conversation_id)
+                if not row_conversation_id:
+                    self.app_instance.notify(
+                        "This conversation row is no longer available.",
+                        severity="warning",
+                    )
+                    return
+                resumed = await self._resume_console_workspace_conversation(
+                    row_conversation_id,
+                    target_scope_type=(
+                        browser_row.scope_type if browser_row is not None else None
+                    ),
+                    target_workspace_id=(
+                        browser_row.workspace_id if browser_row is not None else None
+                    ),
+                )
                 if resumed:
                     await self._refresh_console_conversation_browser_after_selection()
                     return
                 self.app_instance.notify(
-                    "Open this workspace conversation from Library before switching here.",
+                    "Open this saved conversation from Library before switching here.",
                     severity="warning",
                 )
                 return
             controller = self._ensure_console_chat_controller()
             if controller.store.active_session_id != session_id:
-                self._set_active_workspace_for_console_session(session_id)
+                if browser_row is None:
+                    self._set_active_workspace_for_console_session(session_id)
                 controller.switch_session(session_id)
                 await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)

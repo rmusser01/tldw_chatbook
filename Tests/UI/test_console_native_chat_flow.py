@@ -759,6 +759,36 @@ async def _click_console_workspace_conversation_for_id(
     )
 
 
+async def _click_console_workspace_conversation_for_row_key(
+    console,
+    pilot,
+    row_key: str,
+    *,
+    attempts: int = 40,
+) -> str:
+    """Click a workspace conversation row by grouped browser row key."""
+    for _ in range(attempts):
+        for row in console.query(".console-workspace-conversation-row"):
+            if getattr(row, "row_key", None) == row_key:
+                row_id = str(row.id)
+                await pilot.click(f"#{row_id}")
+                return row_id
+        await pilot.pause(0.05)
+    rows = [
+        (
+            getattr(row, "id", ""),
+            getattr(row, "row_key", None),
+            getattr(row, "conversation_id", None),
+            _widget_text(row),
+        )
+        for row in console.query(".console-workspace-conversation-row")
+    ]
+    raise AssertionError(
+        f"Workspace conversation row key {row_key!r} not found. "
+        f"Rows: {rows!r}"
+    )
+
+
 async def _wait_for_workspace_conversation_text(
     console,
     pilot,
@@ -2991,6 +3021,331 @@ async def test_console_conversation_browser_search_filters_all_groups():
         assert any("Needle in Workspa" in text for text in row_texts)
         assert any("Workspace B" in text for text in row_texts)
         assert all("Alpha in Workspace A" not in text for text in row_texts)
+
+
+@pytest.mark.asyncio
+async def test_console_browser_selecting_non_default_workspace_native_session_switches_active_workspace():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    service.set_active_workspace("ws-a")
+    app.app_config["console"]["conversation_browser"]["collapsed_groups"][
+        "workspace:ws-b"
+    ] = False
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Workspace A Chat", workspace_id="ws-a")
+        second = store.create_session(title="Workspace B Chat", workspace_id="ws-b")
+        store.append_message(
+            second.id,
+            role=ConsoleMessageRole.USER,
+            content="Workspace B prompt",
+        )
+        store.switch_session(first.id)
+        await console._sync_native_console_chat_ui()
+
+        await _click_console_workspace_conversation_for_id(
+            console,
+            pilot,
+            f"native:{second.id}",
+        )
+        await _wait_for_active_session(store, pilot, second.id)
+        await _wait_for_text(console, pilot, "Workspace B prompt")
+
+        active = service.get_active_workspace()
+        assert active is not None
+        assert active.workspace_id == "ws-b"
+        assert store.workspace_context.active_workspace_id == "ws-b"
+
+
+@pytest.mark.asyncio
+async def test_console_browser_selecting_non_default_workspace_persisted_row_switches_active_workspace_before_resume():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    service.set_active_workspace("ws-a")
+    app.app_config["console"]["conversation_browser"]["collapsed_groups"][
+        "workspace:ws-b"
+    ] = False
+    service.link_membership(
+        "ws-b",
+        item_type="conversation",
+        item_id="persisted-ws-b",
+        role="workspace-thread",
+        title="Workspace B saved",
+    )
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "persisted-ws-b": {
+                "conversation": {
+                    "id": "persisted-ws-b",
+                    "title": "Workspace B saved",
+                },
+                "root_threads": [
+                    {
+                        "id": "message-ws-b",
+                        "role": "user",
+                        "content": "Workspace B prompt",
+                    }
+                ],
+            },
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        store = console._ensure_console_chat_store()
+
+        await _click_console_workspace_conversation_for_id(
+            console,
+            pilot,
+            "persisted-ws-b",
+        )
+        await _wait_for_text(console, pilot, "Workspace B prompt")
+        session = next(
+            session
+            for session in store.sessions()
+            if session.persisted_conversation_id == "persisted-ws-b"
+        )
+
+        active = service.get_active_workspace()
+        assert active is not None
+        assert active.workspace_id == "ws-b"
+        assert store.workspace_context.active_workspace_id == "ws-b"
+        assert session.workspace_id == "ws-b"
+
+
+@pytest.mark.asyncio
+async def test_console_browser_selecting_duplicate_membership_row_ignores_other_workspace_open_session():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    service.set_active_workspace("ws-a")
+    app.app_config["console"]["conversation_browser"]["collapsed_groups"][
+        "workspace:ws-b"
+    ] = False
+    for workspace_id in ("ws-a", "ws-b"):
+        service.link_membership(
+            workspace_id,
+            item_type="conversation",
+            item_id="shared-open-chat",
+            role="workspace-thread",
+            title="Shared open chat",
+        )
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "shared-open-chat": {
+                "conversation": {
+                    "id": "shared-open-chat",
+                    "title": "Shared open chat",
+                },
+                "root_threads": [
+                    {
+                        "id": "shared-open-message",
+                        "role": "user",
+                        "content": "Workspace B shared prompt",
+                    }
+                ],
+            },
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        store = console._ensure_console_chat_store()
+        open_ws_a = store.ensure_session(title="Shared open chat", workspace_id="ws-a")
+        open_ws_a.persisted_conversation_id = "shared-open-chat"
+        store.switch_session(open_ws_a.id)
+        await console._sync_native_console_chat_ui()
+
+        await _click_console_workspace_conversation_for_row_key(
+            console,
+            pilot,
+            "workspace:ws-b:conversation:shared-open-chat",
+        )
+        await _wait_for_text(console, pilot, "Workspace B shared prompt")
+        sessions = [
+            session
+            for session in store.sessions()
+            if session.persisted_conversation_id == "shared-open-chat"
+        ]
+        active_session = store.switch_session(store.active_session_id)
+
+        assert len(sessions) == 2
+        assert active_session.workspace_id == "ws-b"
+        active = service.get_active_workspace()
+        assert active is not None
+        assert active.workspace_id == "ws-b"
+        assert store.workspace_context.active_workspace_id == "ws-b"
+
+
+@pytest.mark.asyncio
+async def test_console_browser_selecting_default_native_session_switches_to_default_and_keeps_file_tools_disabled():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Workspace A Chat", workspace_id="ws-a")
+        second = store.create_session(
+            title="Default Chat",
+            workspace_id=DEFAULT_WORKSPACE_ID,
+        )
+        store.append_message(
+            second.id,
+            role=ConsoleMessageRole.USER,
+            content="Default prompt",
+        )
+        store.switch_session(first.id)
+        await console._sync_native_console_chat_ui()
+
+        await _click_console_workspace_conversation_for_id(
+            console,
+            pilot,
+            f"native:{second.id}",
+        )
+        await _wait_for_active_session(store, pilot, second.id)
+        await _wait_for_text(console, pilot, "Default prompt")
+
+        active = service.get_active_workspace()
+        assert active is not None
+        assert active.workspace_id == DEFAULT_WORKSPACE_ID
+        assert store.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
+        assert _static_plain_text(
+            console.query_one("#console-workspace-runtime-label", Static)
+        ) == "File tools"
+        assert "Off in Default workspace" in _static_plain_text(
+            console.query_one("#console-workspace-runtime-value", Static)
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_browser_selecting_default_persisted_row_switches_to_default_and_keeps_file_tools_disabled():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    service.set_active_workspace("ws-a")
+    service.link_membership(
+        DEFAULT_WORKSPACE_ID,
+        item_type="conversation",
+        item_id="persisted-default",
+        role="workspace-thread",
+        title="Default saved",
+    )
+    app.chat_conversation_scope_service = StaticConversationTreeService(
+        {
+            "persisted-default": {
+                "conversation": {
+                    "id": "persisted-default",
+                    "title": "Default saved",
+                },
+                "root_threads": [
+                    {
+                        "id": "message-default",
+                        "role": "user",
+                        "content": "Default persisted prompt",
+                    }
+                ],
+            },
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        store = console._ensure_console_chat_store()
+
+        await _click_console_workspace_conversation_for_id(
+            console,
+            pilot,
+            "persisted-default",
+        )
+        await _wait_for_text(console, pilot, "Default persisted prompt")
+        session = next(
+            session
+            for session in store.sessions()
+            if session.persisted_conversation_id == "persisted-default"
+        )
+
+        active = service.get_active_workspace()
+        assert active is not None
+        assert active.workspace_id == DEFAULT_WORKSPACE_ID
+        assert store.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
+        assert session.workspace_id == DEFAULT_WORKSPACE_ID
+        assert _static_plain_text(
+            console.query_one("#console-workspace-runtime-label", Static)
+        ) == "File tools"
+        assert "Off in Default workspace" in _static_plain_text(
+            console.query_one("#console-workspace-runtime-value", Static)
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_browser_selecting_global_persisted_row_preserves_active_workspace():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    service.set_active_workspace("ws-a")
+    app.chat_conversation_scope_service = SyncSearchableConversationService(
+        {
+            "global-persisted": {
+                "conversation": {
+                    "id": "global-persisted",
+                    "title": "Global saved",
+                    "scope_type": "global",
+                    "workspace_id": None,
+                },
+                "root_threads": [
+                    {
+                        "id": "message-global",
+                        "role": "user",
+                        "content": "Global persisted prompt",
+                    }
+                ],
+            },
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        store = console._ensure_console_chat_store()
+        before = service.get_active_workspace()
+        assert before is not None
+        assert before.workspace_id == "ws-a"
+
+        await _click_console_workspace_conversation_for_id(
+            console,
+            pilot,
+            "global-persisted",
+        )
+        await _wait_for_text(console, pilot, "Global persisted prompt")
+        session = next(
+            session
+            for session in store.sessions()
+            if session.persisted_conversation_id == "global-persisted"
+        )
+
+        after = service.get_active_workspace()
+        assert after is not None
+        assert after.workspace_id == "ws-a"
+        assert store.workspace_context.active_workspace_id == "ws-a"
+        assert session.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
 
 
 @pytest.mark.asyncio
