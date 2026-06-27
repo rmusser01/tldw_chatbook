@@ -1888,20 +1888,25 @@ class ChatScreen(BaseAppScreen):
         current_conversation_id: str | None = None,
     ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
         """Return persisted rows when the local listing seam is synchronous."""
+        services: list[Any] = []
+        local_service = getattr(self.app_instance, "local_chat_conversation_service", None)
         scope_service = getattr(
             self.app_instance,
             "chat_conversation_scope_service",
             None,
         )
-        if scope_service is None:
-            scope_service = getattr(self.app_instance, "local_chat_conversation_service", None)
-        list_conversations = getattr(scope_service, "list_conversations", None)
-        if not callable(list_conversations):
-            return [], None, ""
-        if (
-            hasattr(scope_service, "local_service")
-            and getattr(scope_service, "local_service", None) is None
-        ):
+
+        def add_service(candidate: Any) -> None:
+            if candidate is None:
+                return
+            if any(candidate is existing for existing in services):
+                return
+            services.append(candidate)
+
+        add_service(local_service)
+        add_service(getattr(scope_service, "local_service", None))
+        add_service(scope_service)
+        if not services:
             return [], None, ""
 
         labels = self._console_browser_workspace_labels()
@@ -1911,92 +1916,109 @@ class ChatScreen(BaseAppScreen):
             for record in self._console_browser_workspace_records()
             if str(record.workspace_id or "").strip()
         )
-        rows: list[ConsoleConversationBrowserInputRow] = []
-        total_count = 0
-        saw_total = False
-        current_conversation = current_conversation_id or self._current_console_conversation_id()
-        starred_ids = self._starred_console_conversation_ids()
-        for scope_type, workspace_id in scopes:
-            try:
-                result = list_conversations(
-                    mode="local",
-                    query=query,
-                    scope_type=scope_type,
-                    workspace_id=workspace_id,
-                    limit=25,
-                    offset=0,
-                )
-            except Exception as exc:
-                if (
-                    isinstance(exc, ValueError)
-                    and "service is unavailable" in str(exc).lower()
-                ):
-                    logger.debug("Local persisted conversation service is unavailable")
-                    return rows, None if not saw_total else total_count, ""
-                logger.exception("Unable to list Console conversation browser")
-                return rows, None if not saw_total else total_count, (
-                    "Workspace conversation search is unavailable."
-                )
-            if inspect.isawaitable(result):
+        last_error = ""
+        for service in services:
+            list_conversations = getattr(service, "list_conversations", None)
+            if not callable(list_conversations):
+                continue
+            rows: list[ConsoleConversationBrowserInputRow] = []
+            total_count = 0
+            saw_total = False
+            saw_sync_result = False
+            current_conversation = (
+                current_conversation_id or self._current_console_conversation_id()
+            )
+            starred_ids = self._starred_console_conversation_ids()
+            for scope_type, workspace_id in scopes:
                 try:
-                    result.close()
-                except AttributeError:
-                    pass
-                continue
-            if not isinstance(result, dict):
-                continue
-            items = result.get("items")
-            if not isinstance(items, list):
-                items = []
-            total = result.get("total")
-            if total is None:
-                pagination = result.get("pagination")
-                if isinstance(pagination, dict):
-                    total = pagination.get("total")
-            try:
-                total_count += int(total)
-                saw_total = True
-            except (TypeError, ValueError):
-                total_count += len(items)
-                saw_total = True
-            for item in items:
-                if not isinstance(item, dict):
+                    result = list_conversations(
+                        mode="local",
+                        query=query,
+                        scope_type=scope_type,
+                        workspace_id=workspace_id,
+                        limit=25,
+                        offset=0,
+                    )
+                except Exception as exc:
+                    if (
+                        isinstance(exc, ValueError)
+                        and "service is unavailable" in str(exc).lower()
+                    ):
+                        logger.debug(
+                            "Local persisted conversation service is unavailable"
+                        )
+                        last_error = ""
+                        break
+                    logger.exception("Unable to list Console conversation browser")
+                    return rows, None if not saw_total else total_count, (
+                        "Workspace conversation search is unavailable."
+                    )
+                if inspect.isawaitable(result):
+                    try:
+                        result.close()
+                    except AttributeError:
+                        pass
                     continue
-                conversation_id = str(item.get("id") or "").strip()
-                if not conversation_id:
+                saw_sync_result = True
+                if not isinstance(result, dict):
                     continue
-                item_scope_type = str(item.get("scope_type") or scope_type or "workspace")
-                item_workspace_id = item.get("workspace_id", workspace_id)
-                normalized_workspace_id = (
-                    None
-                    if item_scope_type == "global"
-                    else str(item_workspace_id or workspace_id or "").strip()
-                )
-                row = ConsoleConversationBrowserInputRow(
-                    row_key=conversation_id,
-                    conversation_id=conversation_id,
-                    native_session_id=None,
-                    title=str(item.get("title") or "Untitled conversation"),
-                    scope_type=item_scope_type,
-                    workspace_id=normalized_workspace_id,
-                    workspace_label=self._console_browser_workspace_label(
-                        normalized_workspace_id,
-                        labels,
-                    ),
-                    status=str(item.get("state") or "workspace-thread"),
-                    selected=bool(
-                        current_conversation and current_conversation == conversation_id
-                    ),
-                    source_kind="persisted",
-                    updated_sort=str(
-                        item.get("updated_at")
-                        or item.get("created_at")
-                        or item.get("last_updated")
-                        or ""
-                    ),
-                )
-                rows.append(self._apply_console_browser_star_state(row, starred_ids))
-        return rows, total_count if saw_total else None, ""
+                items = result.get("items")
+                if not isinstance(items, list):
+                    items = []
+                total = result.get("total")
+                if total is None:
+                    pagination = result.get("pagination")
+                    if isinstance(pagination, dict):
+                        total = pagination.get("total")
+                try:
+                    total_count += int(total)
+                    saw_total = True
+                except (TypeError, ValueError):
+                    total_count += len(items)
+                    saw_total = True
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    conversation_id = str(item.get("id") or "").strip()
+                    if not conversation_id:
+                        continue
+                    item_scope_type = str(
+                        item.get("scope_type") or scope_type or "workspace"
+                    )
+                    item_workspace_id = item.get("workspace_id", workspace_id)
+                    normalized_workspace_id = (
+                        None
+                        if item_scope_type == "global"
+                        else str(item_workspace_id or workspace_id or "").strip()
+                    )
+                    row = ConsoleConversationBrowserInputRow(
+                        row_key=conversation_id,
+                        conversation_id=conversation_id,
+                        native_session_id=None,
+                        title=str(item.get("title") or "Untitled conversation"),
+                        scope_type=item_scope_type,
+                        workspace_id=normalized_workspace_id,
+                        workspace_label=self._console_browser_workspace_label(
+                            normalized_workspace_id,
+                            labels,
+                        ),
+                        status=str(item.get("state") or "workspace-thread"),
+                        selected=bool(
+                            current_conversation
+                            and current_conversation == conversation_id
+                        ),
+                        source_kind="persisted",
+                        updated_sort=str(
+                            item.get("updated_at")
+                            or item.get("created_at")
+                            or item.get("last_updated")
+                            or ""
+                        ),
+                    )
+                    rows.append(self._apply_console_browser_star_state(row, starred_ids))
+            if saw_sync_result:
+                return rows, total_count if saw_total else None, last_error
+        return [], None, last_error
 
     def _merge_console_browser_rows(
         self,

@@ -3168,6 +3168,75 @@ async def test_console_conversation_browser_default_includes_sync_persisted_rows
 
 
 @pytest.mark.asyncio
+async def test_console_conversation_browser_default_prefers_sync_local_service():
+    app = _build_test_app()
+    app.conversation_local_marks_service = None
+    _configure_grouped_browser_workspaces(app)
+    app.chat_conversation_scope_service = SearchableConversationService(
+        {
+            "async-scope-default": {
+                "conversation": {
+                    "id": "async-scope-default",
+                    "title": "Async scope default should not block local rows",
+                    "scope_type": "global",
+                    "workspace_id": None,
+                },
+                "root_threads": [],
+            },
+        }
+    )
+    app.local_chat_conversation_service = SyncSearchableConversationService(
+        {
+            "local-global-default": {
+                "conversation": {
+                    "id": "local-global-default",
+                    "title": "Local global default",
+                    "scope_type": "global",
+                    "workspace_id": None,
+                },
+                "root_threads": [],
+            },
+            "local-workspace-default": {
+                "conversation": {
+                    "id": "local-workspace-default",
+                    "title": "Local Workspace A default",
+                    "scope_type": "workspace",
+                    "workspace_id": "ws-a",
+                },
+                "root_threads": [],
+            },
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+
+        global_row = await _wait_for_browser_conversation_row(
+            console,
+            pilot,
+            "local-global-default",
+        )
+        workspace_row = await _wait_for_browser_conversation_row(
+            console,
+            pilot,
+            "local-workspace-default",
+        )
+
+        assert "Local global default" in _widget_text(global_row)
+        assert "Local Workspace" in _widget_text(workspace_row)
+        assert any(
+            call.get("scope_type") == "global"
+            for call in app.local_chat_conversation_service.list_calls
+        )
+        assert any(
+            call.get("scope_type") == "workspace" and call.get("workspace_id") == "ws-a"
+            for call in app.local_chat_conversation_service.list_calls
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_conversation_browser_long_list_keeps_readiness_rows_reachable():
     app = _build_test_app()
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
