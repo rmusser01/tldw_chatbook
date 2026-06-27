@@ -1289,10 +1289,11 @@ git commit -m "fix: route console browser resume by row scope"
 **Files:**
 - Modify: `Tests/Chat/test_chat_conversation_scope_service.py`
 - Modify: `Tests/Chat/test_server_chat_conversation_service.py`
-- Modify: `Docs/superpowers/qa/console-grouped-conversation-browser/2026-06-27-console-grouped-conversation-browser.md`
+- Add: `Docs/superpowers/qa/console-grouped-conversation-browser/2026-06-27-console-grouped-conversation-browser.md`
+- Add: `Docs/superpowers/qa/console-grouped-conversation-browser/*.png`
 - Modify: existing tests only if regressions reveal stale assumptions
 
-- [ ] **Step 1: Add explicit mirror and server payload exclusion regressions**
+- [x] **Step 1: Add explicit mirror and server payload exclusion regressions**
 
 In `Tests/Chat/test_chat_conversation_scope_service.py`, add a test that verifies `record_sync_mirror_report()` passes only explicit records and does not consult marks:
 
@@ -1379,7 +1380,7 @@ async def test_server_chat_conversation_update_payload_does_not_forward_local_ma
 
 This complements the Task 1 `sync_log` test.
 
-- [ ] **Step 2: Run focused regression suite**
+- [x] **Step 2: Run focused regression suite**
 
 Run:
 
@@ -1392,7 +1393,7 @@ pytest Tests/Chat/test_console_chat_store.py Tests/Chat/test_chat_conversation_s
 
 Expected: all pass.
 
-- [ ] **Step 3: Run broader safety tests**
+- [x] **Step 3: Run broader safety tests**
 
 Run:
 
@@ -1402,7 +1403,7 @@ pytest Tests/Chat Tests/Workspaces Tests/UI/test_console_workspace_context_rail.
 
 Expected: all pass. If unrelated pre-existing failures appear, document exact test names, command output summaries, and why they are unrelated before continuing.
 
-- [ ] **Step 4: Capture rendered visual evidence**
+- [x] **Step 4: Capture rendered visual evidence**
 
 Follow `Docs/superpowers/handoffs/2026-05-08-ui-screenshot-approval-workflow-handoff.md`.
 
@@ -1421,7 +1422,7 @@ Docs/superpowers/qa/console-grouped-conversation-browser/
 
 If using textual-web, start the app with the repo's web serve path and capture the browser state. If textual-web is unavailable, use a running Textual app screenshot. Do not treat ASCII snapshots as visual approval.
 
-- [ ] **Step 5: Write QA evidence note**
+- [x] **Step 5: Write QA evidence note**
 
 Create `Docs/superpowers/qa/console-grouped-conversation-browser/2026-06-27-console-grouped-conversation-browser.md`:
 
@@ -1454,7 +1455,7 @@ Date: 2026-06-27
 
 Use those filenames unless the capture tooling requires different names; if so, record the actual PNG paths.
 
-- [ ] **Step 6: Self-review implementation**
+- [x] **Step 6: Self-review implementation**
 
 Check:
 
@@ -1472,7 +1473,7 @@ Review for:
 - browser overflow hiding status/readiness rows
 - stale search token checks tied to active workspace
 
-- [ ] **Step 7: Commit Task 6**
+- [x] **Step 7: Commit Task 6**
 
 Run:
 
