@@ -196,7 +196,7 @@ def build_console_conversation_browser_state(
     effective_total_count = (
         _safe_non_negative_int(result_total_count)
         if result_total_count is not None
-        else len(filtered_rows)
+        else len(_dedupe_rows(filtered_rows))
     )
     status_copy = _build_status_copy(
         query_active=query_active,
@@ -355,34 +355,42 @@ def _dedupe_rows(
 def _sort_normal_rows(
     rows: tuple[ConsoleConversationBrowserInputRow, ...],
 ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
-    indexed_rows = tuple(enumerate(rows))
-    ordered = sorted(indexed_rows, key=lambda item: item[0])
-    if any(row.title and row.updated_sort for _index, row in indexed_rows):
-        ordered = sorted(ordered, key=lambda item: item[1].title.casefold())
-    ordered = sorted(ordered, key=lambda item: item[1].updated_sort, reverse=True)
-    ordered = sorted(ordered, key=lambda item: item[1].selected, reverse=True)
-    return tuple(row for _index, row in ordered)
+    return tuple(
+        sorted(
+            rows,
+            key=lambda row: (
+                not row.selected,
+                _reverse_string_key(row.updated_sort),
+                row.title.casefold(),
+                row.row_key,
+            ),
+        )
+    )
 
 
 def _sort_starred_rows(
     rows: tuple[ConsoleConversationBrowserInputRow, ...],
 ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
-    indexed_rows = tuple(enumerate(rows))
-    ordered = sorted(indexed_rows, key=lambda item: item[0])
-    if any(row.title and (row.starred_sort or row.updated_sort) for _index, row in indexed_rows):
-        ordered = sorted(ordered, key=lambda item: item[1].title.casefold())
-    ordered = sorted(ordered, key=lambda item: item[1].updated_sort, reverse=True)
-    ordered = sorted(ordered, key=lambda item: item[1].starred_sort, reverse=True)
-    return tuple(row for _index, row in ordered)
+    return tuple(
+        sorted(
+            rows,
+            key=lambda row: (
+                _reverse_string_key(row.starred_sort),
+                _reverse_string_key(row.updated_sort),
+                row.title.casefold(),
+                row.row_key,
+            ),
+        )
+    )
 
 
 def _workspace_group_sort_key(
     group: tuple[str, str, str, tuple[ConsoleConversationBrowserInputRow, ...]],
     active_workspace_id: str | None,
-) -> tuple[bool, str, str]:
+) -> tuple[bool, str, str, str]:
     group_id, label, latest_sort, _rows = group
     is_active = group_id == f"workspace:{active_workspace_id}" if active_workspace_id else False
-    return (not is_active, _reverse_string_key(latest_sort), label.casefold())
+    return (not is_active, _reverse_string_key(latest_sort), label.casefold(), group_id)
 
 
 def _row_matches(row: ConsoleConversationBrowserInputRow, normalized_query: str) -> bool:

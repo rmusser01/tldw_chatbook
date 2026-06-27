@@ -63,9 +63,9 @@ def test_browser_groups_starred_workspaces_and_chats():
     assert [section.section_id for section in state.sections] == ["starred", "workspaces", "chats"]
     assert state.sections[0].rows[0].row_key == "conv-a"
     assert state.sections[1].groups[0].group_id == "workspace:ws-a"
-    assert [row.row_key for row in state.sections[2].rows] == ["conv-b", "conv-c"]
-    assert state.sections[2].rows[0].scope_type == "global"
-    assert state.sections[2].rows[1].workspace_id == DEFAULT_WORKSPACE_ID
+    assert [row.row_key for row in state.sections[2].rows] == ["conv-c", "conv-b"]
+    assert state.sections[2].rows[0].workspace_id == DEFAULT_WORKSPACE_ID
+    assert state.sections[2].rows[1].scope_type == "global"
 
 
 def test_search_exposes_matching_rows_from_collapsed_groups_without_changing_preference():
@@ -294,3 +294,67 @@ def test_selected_summary_prefers_title_and_workspace_label():
     )
 
     assert state.selected_summary == "Beta - Workspace B"
+
+
+def test_all_empty_sort_fields_order_by_title_then_row_key_not_input_order():
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-c", "Zulu"),
+            _row("conv-b", "Alpha"),
+            _row("conv-a", "Alpha"),
+        ),
+        active_workspace_id="ws-a",
+    )
+
+    group = _workspace_group(state, "workspace:ws-a")
+    assert [row.row_key for row in group.rows] == ["conv-a", "conv-b", "conv-c"]
+
+
+def test_equal_title_order_by_row_key():
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-c", "Same"),
+            _row("conv-a", "Same"),
+            _row("conv-b", "Same"),
+        ),
+        active_workspace_id="ws-a",
+    )
+
+    group = _workspace_group(state, "workspace:ws-a")
+    assert [row.row_key for row in group.rows] == ["conv-a", "conv-b", "conv-c"]
+
+
+def test_workspace_group_label_tie_breaks_by_group_id():
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-c", "Gamma", workspace_id="ws-c", workspace_label="Shared"),
+            _row("conv-b", "Beta", workspace_id="ws-b", workspace_label="Shared"),
+            _row("conv-a", "Alpha", workspace_id="ws-a", workspace_label="Shared"),
+        ),
+        active_workspace_id=None,
+    )
+
+    workspaces = _section(state, "workspaces")
+    assert [group.group_id for group in workspaces.groups] == [
+        "workspace:ws-a",
+        "workspace:ws-b",
+        "workspace:ws-c",
+    ]
+
+
+def test_duplicate_filtered_rows_produce_status_copy_from_deduped_matches():
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-a", "Needle", updated_sort="2026-06-02"),
+            _row("conv-a", "Needle duplicate", updated_sort="2026-06-01"),
+        ),
+        active_workspace_id="ws-a",
+        query="needle",
+        group_row_limit=1,
+    )
+
+    group = _workspace_group(state, "workspace:ws-a")
+    assert group.count == 1
+    assert group.hidden_count == 0
+    assert state.result_total_count == 1
+    assert state.status_copy == "1 match"
