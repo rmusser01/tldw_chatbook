@@ -429,9 +429,12 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_workspace_context()
             self.call_after_refresh(self._focus_console_workspace_conversation_search)
             return
-        self._console_conversation_browser_rows = self._merge_console_browser_rows(
-            self._native_console_browser_rows(),
-            self._membership_console_browser_rows(),
+        self._console_conversation_browser_rows = self._filter_console_browser_rows_for_query(
+            self._merge_console_browser_rows(
+                self._native_console_browser_rows(),
+                self._membership_console_browser_rows(),
+            ),
+            query,
         )
         self._console_conversation_browser_total = None
         self._console_conversation_browser_error = ""
@@ -1609,6 +1612,46 @@ class ChatScreen(BaseAppScreen):
         return str(row.row_key or row.conversation_id or "").strip()
 
     @staticmethod
+    def _console_browser_row_scope_copy(row: ConsoleConversationBrowserInputRow) -> str:
+        if row.scope_type == "global":
+            return "global chats"
+        if row.workspace_id == DEFAULT_WORKSPACE_ID:
+            return "default workspace chats"
+        if row.workspace_id:
+            return f"workspace {row.workspace_label}"
+        return "chats"
+
+    @staticmethod
+    def _console_browser_row_matches_query(
+        row: ConsoleConversationBrowserInputRow,
+        normalized_query: str,
+    ) -> bool:
+        haystack = " ".join(
+            (
+                str(row.title or ""),
+                str(row.workspace_label or ""),
+                str(row.status or ""),
+                ChatScreen._console_browser_row_scope_copy(row),
+            )
+        ).lower()
+        return normalized_query in haystack
+
+    def _filter_console_browser_rows_for_query(
+        self,
+        rows: Iterable[ConsoleConversationBrowserInputRow],
+        query: str,
+    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        normalized_query = str(query or "").strip().lower()
+        row_tuple = tuple(rows)
+        if not normalized_query:
+            return row_tuple
+        return tuple(
+            row
+            for row in row_tuple
+            if self._console_browser_row_matches_query(row, normalized_query)
+        )
+
+    @staticmethod
     def _console_browser_display_identity(
         row: ConsoleConversationBrowserInputRow,
     ) -> tuple[str, str, str, str] | tuple[str, str]:
@@ -2382,9 +2425,12 @@ class ChatScreen(BaseAppScreen):
             self.call_after_refresh(self._focus_console_workspace_conversation_search)
             return
 
-        local_rows = self._merge_console_browser_rows(
-            self._native_console_browser_rows(),
-            self._membership_console_browser_rows(),
+        local_rows = self._filter_console_browser_rows_for_query(
+            self._merge_console_browser_rows(
+                self._native_console_browser_rows(),
+                self._membership_console_browser_rows(),
+            ),
+            query,
         )
         self._console_conversation_browser_rows = local_rows
         self._console_conversation_browser_total = None

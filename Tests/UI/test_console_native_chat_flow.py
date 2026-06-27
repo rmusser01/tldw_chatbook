@@ -2994,6 +2994,51 @@ async def test_console_conversation_browser_search_filters_all_groups():
 
 
 @pytest.mark.asyncio
+async def test_console_conversation_browser_search_counts_only_matching_local_rows():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    service = _configure_grouped_browser_workspaces(app)
+    app.chat_conversation_scope_service = None
+    app.local_chat_conversation_service = None
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="needle-local",
+        role="workspace-thread",
+        title="Needle Local Match",
+    )
+    service.link_membership(
+        "ws-a",
+        item_type="conversation",
+        item_id="other-local",
+        role="workspace-thread",
+        title="Other Local Row",
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _set_console_conversation_browser_search(console, pilot, "needle")
+
+        for _ in range(80):
+            status = console.query_one(
+                "#console-workspace-conversation-search-status",
+                Static,
+            )
+            if _static_plain_text(status):
+                break
+            await pilot.pause(0.05)
+        else:
+            raise AssertionError("Conversation browser search status did not render")
+
+        row_texts = _console_workspace_conversation_texts(console)
+        assert _static_plain_text(status) == "1 match"
+        assert any("Needle Local" in text for text in row_texts)
+        assert all("Other Local Row" not in text for text in row_texts)
+
+
+@pytest.mark.asyncio
 async def test_console_conversation_browser_keeps_multi_workspace_memberships():
     app = _build_test_app()
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
