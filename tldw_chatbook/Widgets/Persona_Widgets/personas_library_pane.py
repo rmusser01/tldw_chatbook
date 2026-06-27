@@ -81,7 +81,26 @@ class PersonasLibraryPane(Vertical):
         self._import_visible: bool = True
 
     def compose(self) -> ComposeResult:
-        yield Static("Library", classes="destination-section personas-column-title")
+        """Compose the Library pane header, search controls, and rows.
+
+        Returns:
+            Textual compose result for the Library pane.
+        """
+        with Horizontal(classes="console-rail-header"):
+            title = Static(
+                "Library",
+                classes="destination-section personas-column-title console-rail-title",
+            )
+            title.styles.width = "1fr"
+            yield title
+            collapse_button = Button(
+                "<",
+                id="personas-library-rail-collapse",
+                classes="console-rail-collapse-button",
+                compact=True,
+            )
+            collapse_button.tooltip = "Collapse Library rail"
+            yield collapse_button
         yield Input(placeholder="Search...", id="personas-library-search")
         with Horizontal(id="personas-library-toolbar", classes="ds-toolbar"):
             yield Button(

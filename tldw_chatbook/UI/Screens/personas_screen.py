@@ -27,6 +27,7 @@ from ...Chat.console_chat_models import ConsoleProviderSelection
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
+from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import PersonaProfileCardWidget
@@ -90,6 +91,8 @@ PLACEHOLDER_COPY = "This mode is not available yet. Characters and Personas are 
 # 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
 # task can replace it without changing pane widgets.
 PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH = 90
+PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH = 13
+PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH = 11
 
 #: Center-area widgets toggled by ``_show_center``.
 _CENTER_VIEW_IDS: tuple[str, ...] = (
@@ -149,8 +152,16 @@ class PersonasScreen(BaseAppScreen):
     ]
     _WORKBENCH_FOCUS_TARGETS = (
         WorkbenchPaneTarget(
+            "personas-library-rail-handle",
+            ("personas-library-rail-open",),
+        ),
+        WorkbenchPaneTarget(
             "personas-library-pane",
-            ("personas-library-search", "personas-library-new"),
+            (
+                "personas-library-search",
+                "personas-library-rail-collapse",
+                "personas-library-new",
+            ),
         ),
         WorkbenchPaneTarget(
             "personas-work-area",
@@ -158,7 +169,15 @@ class PersonasScreen(BaseAppScreen):
         ),
         WorkbenchPaneTarget(
             "personas-inspector-pane",
-            ("personas-conversations-list", "personas-attach-to-console"),
+            (
+                "personas-conversations-list",
+                "personas-inspector-rail-collapse",
+                "personas-attach-to-console",
+            ),
+        ),
+        WorkbenchPaneTarget(
+            "personas-inspector-rail-handle",
+            ("personas-inspector-rail-open",),
         ),
     )
 
@@ -311,6 +330,8 @@ class PersonasScreen(BaseAppScreen):
         # (the selection key alone cannot catch a Reset of the SAME selection).
         self._preview_generation: int = 0
         self._workbench_compact: bool | None = None
+        self._library_rail_collapsed: bool = False
+        self._inspector_rail_collapsed: bool = False
         # Character id whose greeting last seeded the preview; the
         # CharacterMessage.Loaded handler uses it to avoid double-seeding.
         self._preview_seeded_for: str | None = None
@@ -323,6 +344,11 @@ class PersonasScreen(BaseAppScreen):
     # ===== Compose =====
 
     def compose_content(self) -> ComposeResult:
+        """Compose the Personas destination shell and workbench rails.
+
+        Returns:
+            Textual compose result for the Personas content tree.
+        """
         with Vertical(id="personas-shell"):
             yield Static(
                 self._title_text(),
@@ -353,10 +379,28 @@ class PersonasScreen(BaseAppScreen):
                         tooltip=f"Switch the workbench to {MODE_LABELS[mode]}.",
                     )
             with Horizontal(id="personas-workbench", classes="ds-panel destination-workbench"):
-                yield PersonasLibraryPane(
+                library_handle = ConsoleRailHandle(
+                    label="Library",
+                    button_id="personas-library-rail-open",
+                    badge_id="personas-library-rail-badge",
+                    side="left",
+                    id="personas-library-rail-handle",
+                )
+                library_handle.styles.width = PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH
+                library_handle.styles.min_width = PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH
+                library_handle.styles.max_width = PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH
+                if not self._library_rail_collapsed:
+                    library_handle.display = False
+                yield library_handle
+
+                library_pane = PersonasLibraryPane(
                     id="personas-library-pane",
                     classes="destination-workbench-pane",
                 )
+                if self._library_rail_collapsed:
+                    library_pane.display = False
+                yield library_pane
+
                 with Vertical(id="personas-work-area", classes="destination-workbench-pane"):
                     with Container(id="personas-detail-stack"):
                         yield PersonasCharacterCardWidget()
@@ -376,10 +420,28 @@ class PersonasScreen(BaseAppScreen):
                         yield PersonasConversationTranscriptWidget()
                         yield Static(PLACEHOLDER_COPY, id="personas-mode-placeholder")
                     yield PersonasPreviewPane(id="personas-preview-pane")
-                yield PersonasInspectorPane(
+
+                inspector_pane = PersonasInspectorPane(
                     id="personas-inspector-pane",
                     classes="destination-workbench-pane ds-inspector",
                 )
+                if self._inspector_rail_collapsed:
+                    inspector_pane.display = False
+                yield inspector_pane
+
+                inspector_handle = ConsoleRailHandle(
+                    label="Inspector",
+                    button_id="personas-inspector-rail-open",
+                    badge_id="personas-inspector-rail-badge",
+                    side="right",
+                    id="personas-inspector-rail-handle",
+                )
+                inspector_handle.styles.width = PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH
+                inspector_handle.styles.min_width = PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH
+                inspector_handle.styles.max_width = PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH
+                if not self._inspector_rail_collapsed:
+                    inspector_handle.display = False
+                yield inspector_handle
 
     async def on_mount(self) -> None:
         super().on_mount()
@@ -388,6 +450,8 @@ class PersonasScreen(BaseAppScreen):
         if callable(setup_loading):
             await setup_loading()
         self._sync_responsive_workbench()
+        self._sync_personas_rails()
+        self._sync_personas_rail_tooltips()
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
         self._show_center(None)
         await self.character_handler.refresh_character_list()
@@ -432,6 +496,32 @@ class PersonasScreen(BaseAppScreen):
                 self.query_one(pane_id).set_class(compact, "personas-workbench-compact-pane")
             except QueryError:
                 continue
+
+    def _sync_personas_rails(self) -> None:
+        """Mirror Console/Notes collapsible rails for Library and Inspector."""
+        if not self.is_mounted:
+            return
+        try:
+            library_open = not self._library_rail_collapsed
+            inspector_open = not self._inspector_rail_collapsed
+            self.query_one("#personas-library-pane").display = library_open
+            self.query_one("#personas-library-rail-handle").display = not library_open
+            self.query_one("#personas-inspector-pane").display = inspector_open
+            self.query_one("#personas-inspector-rail-handle").display = not inspector_open
+        except QueryError:
+            return
+
+    def _sync_personas_rail_tooltips(self) -> None:
+        """Set Personas-specific collapsed rail tooltips on shared handles."""
+        try:
+            self.query_one("#personas-library-rail-open", Button).tooltip = (
+                "Open Library rail"
+            )
+            self.query_one("#personas-inspector-rail-open", Button).tooltip = (
+                "Open Inspector rail"
+            )
+        except QueryError:
+            return
 
     # ===== Library rendering =====
 
@@ -638,6 +728,30 @@ class PersonasScreen(BaseAppScreen):
         if mode not in MODE_CHIP_ORDER or mode == self.state.active_mode:
             return
         await self._run_guarded(lambda: self._apply_mode(mode))
+
+    @on(Button.Pressed, "#personas-library-rail-collapse")
+    def _handle_library_rail_collapse(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._library_rail_collapsed = True
+        self._sync_personas_rails()
+
+    @on(Button.Pressed, "#personas-library-rail-open")
+    def _handle_library_rail_open(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._library_rail_collapsed = False
+        self._sync_personas_rails()
+
+    @on(Button.Pressed, "#personas-inspector-rail-collapse")
+    def _handle_inspector_rail_collapse(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._inspector_rail_collapsed = True
+        self._sync_personas_rails()
+
+    @on(Button.Pressed, "#personas-inspector-rail-open")
+    def _handle_inspector_rail_open(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._inspector_rail_collapsed = False
+        self._sync_personas_rails()
 
     async def _apply_mode(self, mode: str) -> None:
         self.state.switch_mode(mode)
