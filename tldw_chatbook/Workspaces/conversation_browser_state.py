@@ -223,7 +223,7 @@ def _normalize_input_row(
     conversation_id = _text_or_none(row.conversation_id)
     native_session_id = _text_or_none(row.native_session_id)
     source_kind = str(row.source_kind or "persisted")
-    star_enabled = bool(row.star_enabled and conversation_id and source_kind != "native")
+    star_enabled = bool(row.star_enabled and conversation_id)
     return ConsoleConversationBrowserInputRow(
         row_key=str(row.row_key or ""),
         conversation_id=conversation_id,

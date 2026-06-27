@@ -211,6 +211,32 @@ def test_native_rows_have_star_enabled_false():
     assert row.star_enabled is False
 
 
+def test_persisted_native_rows_keep_star_enabled_true():
+    state = build_console_conversation_browser_state(
+        rows=(
+            ConsoleConversationBrowserInputRow(
+                row_key="conv-native-a",
+                conversation_id="conv-native-a",
+                native_session_id="session-a",
+                title="Saved native session",
+                scope_type="workspace",
+                workspace_id="ws-a",
+                workspace_label="Workspace A",
+                status="active",
+                star_enabled=True,
+                source_kind="native",
+            ),
+        ),
+        active_workspace_id="ws-a",
+    )
+
+    row = _workspace_group(state, "workspace:ws-a").rows[0]
+    assert row.conversation_id == "conv-native-a"
+    assert row.native_session_id == "session-a"
+    assert row.source_kind == "native"
+    assert row.star_enabled is True
+
+
 def test_titles_are_plain_strings_and_do_not_render_markup_control_data():
     title = "[bold red]Do not style[/bold red]"
     state = build_console_conversation_browser_state(

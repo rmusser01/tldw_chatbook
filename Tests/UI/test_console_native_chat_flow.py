@@ -3359,6 +3359,72 @@ async def test_console_conversation_browser_default_omits_mode_for_local_service
 
 
 @pytest.mark.asyncio
+async def test_console_conversation_browser_search_omits_mode_for_local_service():
+    app = _build_test_app()
+    app.conversation_local_marks_service = FakeConversationLocalMarksService()
+    _configure_grouped_browser_workspaces(app)
+    app.chat_conversation_scope_service = None
+    app.local_chat_conversation_service = NoModeSyncSearchableConversationService(
+        {
+            "local-search-global": {
+                "conversation": {
+                    "id": "local-search-global",
+                    "title": "Needle local global",
+                    "scope_type": "global",
+                    "workspace_id": None,
+                },
+                "root_threads": [],
+            },
+            "local-search-workspace": {
+                "conversation": {
+                    "id": "local-search-workspace",
+                    "title": "Needle local Workspace A",
+                    "scope_type": "workspace",
+                    "workspace_id": "ws-a",
+                },
+                "root_threads": [],
+            },
+        }
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        await _set_console_conversation_browser_search(console, pilot, "needle")
+
+        global_row = await _wait_for_browser_conversation_row(
+            console,
+            pilot,
+            "local-search-global",
+        )
+        workspace_row = await _wait_for_browser_conversation_row(
+            console,
+            pilot,
+            "local-search-workspace",
+        )
+
+        assert "Needle local global" in _widget_text(global_row)
+        assert "Needle local Wor" in _widget_text(workspace_row)
+        for _ in range(80):
+            if console._console_conversation_browser_total is not None:
+                break
+            await pilot.pause(0.05)
+        else:
+            raise AssertionError("Debounced persisted search did not finish")
+        cached_row_ids = {
+            row.conversation_id for row in console._console_conversation_browser_rows
+        }
+        assert console._console_conversation_browser_error == ""
+        assert "local-search-global" in cached_row_ids
+        assert "local-search-workspace" in cached_row_ids
+        assert all(
+            "mode" not in call
+            for call in app.local_chat_conversation_service.list_calls
+        )
+
+
+@pytest.mark.asyncio
 async def test_console_conversation_browser_long_list_keeps_readiness_rows_reachable():
     app = _build_test_app()
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
