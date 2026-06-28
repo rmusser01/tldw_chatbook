@@ -48,6 +48,10 @@ class CharacterEditorCancelled(Message):
     """
 
 
+class CharacterImageUploadRequested(Message):
+    """User requested to choose an image for the active character editor."""
+
+
 class EditPersonaRequested(Message):
     """Edit was requested for the displayed persona profile."""
 

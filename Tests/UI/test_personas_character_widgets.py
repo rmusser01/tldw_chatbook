@@ -6,8 +6,10 @@ from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterEditorCancelled,
+    CharacterImageUploadRequested,
     CharacterSaveRequested,
     EditCharacterRequested,
+    EditorContentChanged,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_card_widget import (
     PersonasCharacterCardWidget,
@@ -404,14 +406,41 @@ class TestCharacterEditor:
             assert advanced.display is False
             assert str(toggle.label) == "Advanced ▸"
 
-    async def test_no_upload_button_and_avatar_status_is_read_only(self):
-        """No handler exists for avatar upload, so the editor must not offer it."""
-        app = WidgetApp()
+    async def test_upload_button_posts_image_upload_request(self):
+        received = []
+
+        class CaptureApp(WidgetApp):
+            def on_character_image_upload_requested(
+                self, message: CharacterImageUploadRequested
+            ) -> None:
+                received.append(message)
+
+        app = CaptureApp()
         async with app.run_test() as pilot:
-            assert not list(pilot.app.query("#personas-char-editor-avatar-upload"))
-            editor = pilot.app.query_one(PersonasCharacterEditorWidget)
-            editor.load_character(dict(CHARACTER))
+            button = pilot.app.query_one("#personas-char-editor-avatar-upload", Button)
+            button.press()
             await pilot.pause()
+            assert len(received) == 1
+
+    async def test_set_avatar_image_stages_bytes_updates_status_and_marks_dirty(self):
+        dirty_events = []
+
+        class CaptureApp(WidgetApp):
+            def on_editor_content_changed(self, message: EditorContentChanged) -> None:
+                dirty_events.append(message)
+
+        app = CaptureApp()
+        async with app.run_test() as pilot:
+            editor = pilot.app.query_one(PersonasCharacterEditorWidget)
+            record = dict(CHARACTER)
+            record.pop("image", None)
+            editor.load_character(record)
+            await pilot.pause()
+
+            editor.set_avatar_image(b"\x89PNG staged")
+            await pilot.pause()
+
+            assert editor.get_character_data()["image"] == b"\x89PNG staged"
             assert (
                 str(
                     pilot.app.query_one(
@@ -420,6 +449,7 @@ class TestCharacterEditor:
                 )
                 == "Avatar: embedded"
             )
+            assert len(dirty_events) == 1
 
     async def test_default_id_matches_screen_query(self):
         app = WidgetApp()
