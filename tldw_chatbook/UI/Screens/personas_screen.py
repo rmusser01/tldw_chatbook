@@ -28,6 +28,7 @@ from ...Chat.console_chat_models import ConsoleProviderSelection
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
+from ...Utils.path_validation import validate_path_simple
 from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
@@ -51,6 +52,7 @@ from ...Widgets.Persona_Widgets.personas_messages import (
 )
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterEditorCancelled,
+    CharacterImageUploadRequested,
     CharacterSaveRequested,
     ConversationRowSelected,
     EditCharacterRequested,
@@ -88,6 +90,10 @@ MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "prompts", "dictio
 
 PLACEHOLDER_COPY = "This mode is not available yet. Characters and Personas are the supported modes."
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
+PERSONAS_AVATAR_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
+PERSONAS_AVATAR_IMAGE_SUFFIX_COPY = "PNG, JPG, JPEG, WEBP, or GIF"
+PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
+PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
 
 # 80-column terminals need a tighter three-pane split than the default
 # 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
@@ -318,6 +324,7 @@ class PersonasScreen(BaseAppScreen):
         self._io_dialog_active: bool = False
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
+        self._character_editor_generation: int = 0
         self._profile_save_inflight: bool = False
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
@@ -1512,6 +1519,7 @@ class PersonasScreen(BaseAppScreen):
         # Delete and the rest are wired in follow-up tasks.
 
     async def _begin_create_character(self) -> None:
+        self._character_editor_generation += 1
         self._edit_mode = "create"
         self.state.clear_selection()
         # Change-based dirty tracking: the session starts clean; the editor
@@ -1569,6 +1577,7 @@ class PersonasScreen(BaseAppScreen):
         if record is None:
             self._notify("Character data is not loaded yet.", severity="warning")
             return
+        self._character_editor_generation += 1
         self._edit_mode = "edit"
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
@@ -1630,6 +1639,84 @@ class PersonasScreen(BaseAppScreen):
             return dict(loaded)
         return None
 
+    def _character_editor_is_active(self) -> bool:
+        """Return whether the visible edit session is the character editor."""
+        if self._edit_mode not in ("create", "edit"):
+            return False
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return False
+        return editor.display is True
+
+    def _character_editor_session_token(
+        self,
+    ) -> tuple[int, str, str, str | None, str | None] | None:
+        """Return the current character edit session identity, if visible."""
+        if not self._character_editor_is_active():
+            return None
+        return (
+            self._character_editor_generation,
+            self._edit_mode,
+            self.state.active_mode,
+            self.state.selected_entity_kind,
+            self.state.selected_entity_id,
+        )
+
+    def _read_avatar_image_bytes(self, path: str) -> bytes:
+        candidate = validate_path_simple(path, require_exists=True)
+        if not candidate.is_file():
+            raise ValueError("Choose an existing avatar image file.")
+        if candidate.suffix.lower() not in PERSONAS_AVATAR_IMAGE_SUFFIXES:
+            raise ValueError(
+                f"Unsupported avatar image type. Use {PERSONAS_AVATAR_IMAGE_SUFFIX_COPY}."
+            )
+        if candidate.stat().st_size > PERSONAS_AVATAR_MAX_BYTES:
+            raise ValueError(
+                f"Avatar image must be {PERSONAS_AVATAR_MAX_SIZE_COPY} or smaller."
+            )
+        data = candidate.read_bytes()
+        if not data:
+            raise ValueError("Avatar image file is empty.")
+        return data
+
+    async def _stage_character_avatar_from_path(self, path: str) -> None:
+        session_token = self._character_editor_session_token()
+        if session_token is None:
+            self._notify("Open a character editor before uploading an avatar.", "warning")
+            return
+        try:
+            image_data = await asyncio.to_thread(self._read_avatar_image_bytes, path)
+        except ValueError as exc:
+            self._notify(str(exc), "error")
+            return
+        except OSError as exc:
+            logger.error(f"Error reading avatar image from {path}: {exc}", exc_info=True)
+            self._notify(f"Avatar upload failed: {exc}", "error")
+            return
+        if self._character_editor_session_token() != session_token:
+            logger.debug(
+                "Avatar upload result ignored because the character editor session "
+                f"changed. path={path!r}, original_session={session_token!r}, "
+                f"current_session={self._character_editor_session_token()!r}"
+            )
+            return
+        try:
+            self.query_one(PersonasCharacterEditorWidget).set_avatar_image(image_data)
+        except Exception as exc:
+            logger.error(
+                "Could not stage avatar image in editor. "
+                f"path={path!r}, edit_mode={self._edit_mode!r}, "
+                f"active_mode={self.state.active_mode!r}, "
+                f"selected_kind={self.state.selected_entity_kind!r}, "
+                f"selected_id={self.state.selected_entity_id!r}, "
+                f"image_size_bytes={len(image_data)}: {exc}",
+                exc_info=True,
+            )
+            self._notify(f"Avatar upload failed: {exc}", "error")
+            return
+        self._notify("Avatar staged. Save the character to persist it.", "information")
+
     # ===== Import / export =====
     #
     # Dialog flows run in workers (push_screen_wait requires one); the
@@ -1637,6 +1724,48 @@ class PersonasScreen(BaseAppScreen):
     # directly. Sync DB/file work runs via asyncio.to_thread instead of a
     # threaded Textual worker because import and export need their result
     # awaited inline for the follow-up selection/notification steps.
+
+    @on(CharacterImageUploadRequested)
+    def _handle_character_image_upload_requested(
+        self, message: CharacterImageUploadRequested
+    ) -> None:
+        message.stop()
+        if not self._character_editor_is_active():
+            self._notify("Open a character editor before uploading an avatar.", "warning")
+            return
+        if self._io_dialog_active:
+            logger.debug("Import/export dialog already active; ignoring avatar upload request.")
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._avatar_upload_dialog_worker(), group="personas-io")
+
+    async def _avatar_upload_dialog_worker(self) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            picker = EnhancedFileOpen(
+                title="Upload Character Avatar",
+                filters=Filters(
+                    (
+                        "Image Files",
+                        lambda p: p.suffix.lower() in PERSONAS_AVATAR_IMAGE_SUFFIXES,
+                    ),
+                    ("PNG Files", lambda p: p.suffix.lower() == ".png"),
+                    ("JPEG Files", lambda p: p.suffix.lower() in (".jpg", ".jpeg")),
+                    ("WEBP Files", lambda p: p.suffix.lower() == ".webp"),
+                    ("GIF Files", lambda p: p.suffix.lower() == ".gif"),
+                ),
+                context="character_avatar_upload",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.warning("Could not show the avatar upload file dialog.", exc_info=True)
+                return
+            if file_path:
+                await self._stage_character_avatar_from_path(str(file_path))
+        finally:
+            self._io_dialog_active = False
 
     async def _open_import_dialog(self) -> None:
         """Continuation for the guarded import action: launch the dialog worker."""
@@ -1655,8 +1784,16 @@ class PersonasScreen(BaseAppScreen):
             picker = EnhancedFileOpen(
                 title="Import Character Card",
                 filters=Filters(
-                    ("Character Cards", lambda p: p.suffix.lower() in (".json", ".png")),
+                    (
+                        "Character Cards",
+                        lambda p: p.suffix.lower()
+                        in (".json", ".md", ".markdown", ".png"),
+                    ),
                     ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                    (
+                        "Markdown Files",
+                        lambda p: p.suffix.lower() in (".md", ".markdown"),
+                    ),
                     ("PNG Files (with embedded data)", lambda p: p.suffix.lower() == ".png"),
                     ("All Files", lambda p: True),
                 ),
@@ -2069,6 +2206,7 @@ class PersonasScreen(BaseAppScreen):
             except Exception:
                 logger.warning("Could not refresh characters after a late save.", exc_info=True)
             return
+        self._character_editor_generation += 1
         self._edit_mode = "view"
         self._set_active_row_unsaved(False)
         await self.character_handler.refresh_character_list()
@@ -2207,6 +2345,7 @@ class PersonasScreen(BaseAppScreen):
         await self._run_guarded(_finish)
 
     def _finish_cancel_edit(self) -> None:
+        self._character_editor_generation += 1
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)

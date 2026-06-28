@@ -5,8 +5,8 @@ the legacy widget's external contract — the ``ccp-character-editor-view``
 default id, the ``load_character``/``new_character``/``get_character_data``
 API, and the legacy ``CharacterSaveRequested``/``CharacterEditorCancelled``
 messages — while rendering with the workbench's flat ds vocabulary (primary
-fields up top, an Advanced section for the long tail, a read-only avatar
-status line, no image box).
+fields up top, an Advanced section for the long tail, an avatar upload/status
+line, no image box).
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from textual.widgets import Button, Input, Label, Static, TextArea
 
 from .personas_pane_messages import (
     CharacterEditorCancelled,
+    CharacterImageUploadRequested,
     CharacterSaveRequested,
     EditorContentChanged,
 )
@@ -93,6 +94,15 @@ class PersonasCharacterEditorWidget(Container):
     PersonasCharacterEditorWidget #personas-char-editor-avatar-status {
         width: auto;
         margin-right: 2;
+    }
+
+    PersonasCharacterEditorWidget #personas-char-editor-avatar-upload {
+        width: auto;
+        min-width: 0;
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        border: none;
     }
 
     PersonasCharacterEditorWidget .ds-toolbar {
@@ -182,6 +192,11 @@ class PersonasCharacterEditorWidget(Container):
                     yield TextArea(id="personas-char-editor-alt-greetings")
             with Horizontal(id="personas-char-editor-avatar-row"):
                 yield Static("Avatar: none", id="personas-char-editor-avatar-status")
+                yield Button(
+                    "Upload",
+                    id="personas-char-editor-avatar-upload",
+                    classes="console-action-subdued",
+                )
         yield Static("", id="personas-char-editor-validation")
         with Horizontal(classes="ds-toolbar"):
             yield Button(
@@ -244,16 +259,28 @@ class PersonasCharacterEditorWidget(Container):
         ]
         self._loaded_greetings_text = "\n".join(self._loaded_greetings)
         self._area("alt-greetings").text = self._loaded_greetings_text
-        avatar = "embedded" if (record.get("image") or record.get("avatar")) else "none"
-        self.query_one("#personas-char-editor-avatar-status", Static).update(
-            f"Avatar: {avatar}"
-        )
+        self._set_avatar_status_from_record()
         self.query_one("#personas-char-editor-validation", Static).update("")
         self._set_advanced_open(False)
 
     def new_character(self) -> None:
         """Clear the form for a new (unsaved) character; version defaults 1.0."""
         self.load_character({})
+
+    def set_avatar_image(self, image_data: bytes) -> None:
+        """Stage avatar image bytes for persistence on the next Save.
+
+        Args:
+            image_data: Non-empty avatar image bytes selected by the upload flow.
+
+        Raises:
+            ValueError: If ``image_data`` is not non-empty bytes.
+        """
+        if not isinstance(image_data, bytes) or not image_data:
+            raise ValueError("Avatar image data must be non-empty bytes.")
+        self._character_data["image"] = image_data
+        self._set_avatar_status_from_record()
+        self._mark_dirty()
 
     def show_validation(self, errors: tuple[str, ...]) -> None:
         """Render screen-side validation errors in the editor footer.
@@ -337,6 +364,20 @@ class PersonasCharacterEditorWidget(Container):
             "Advanced ▾" if open_ else "Advanced ▸"
         )
 
+    def _set_avatar_status_from_record(self) -> None:
+        avatar = "embedded" if (
+            self._character_data.get("image") or self._character_data.get("avatar")
+        ) else "none"
+        self.query_one("#personas-char-editor-avatar-status", Static).update(
+            f"Avatar: {avatar}"
+        )
+
+    def _mark_dirty(self) -> None:
+        if self._loading or self._dirty_posted or self._loaded_snapshot is None:
+            return
+        self._dirty_posted = True
+        self.post_message(EditorContentChanged())
+
     # ===== Events =====
 
     @on(Input.Changed)
@@ -356,8 +397,7 @@ class PersonasCharacterEditorWidget(Container):
             return
         if self._form_snapshot() == self._loaded_snapshot:
             return
-        self._dirty_posted = True
-        self.post_message(EditorContentChanged())
+        self._mark_dirty()
 
     @on(Button.Pressed, "#personas-char-editor-advanced-toggle")
     def _toggle_advanced(self, event: Button.Pressed) -> None:
@@ -365,6 +405,11 @@ class PersonasCharacterEditorWidget(Container):
         self._set_advanced_open(
             not self.query_one("#personas-char-editor-advanced").display
         )
+
+    @on(Button.Pressed, "#personas-char-editor-avatar-upload")
+    def _upload_avatar_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(CharacterImageUploadRequested())
 
     @on(Button.Pressed, "#personas-char-editor-save")
     def _save_pressed(self, event: Button.Pressed) -> None:
