@@ -2718,9 +2718,14 @@ class TestPreviewIntegration:
     async def test_reset_after_character_reload_uses_updated_greeting(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """A same-character reload refreshes Reset's stored greeting seed."""
-        from textual.widgets import Button as _Button
+        """A same-character reload refreshes Reset's stored greeting seed.
 
+        Args:
+            mock_app_instance: Fixture providing the app object used by the
+                mounted Personas test app.
+            stub_characters: Fixture stubbing local character list/load data.
+            stub_conversations: Fixture stubbing character conversation data.
+        """
         from tldw_chatbook.UI.CCP_Modules.ccp_messages import CharacterMessage
         from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
             PersonasPreviewPane,
@@ -2750,7 +2755,7 @@ class TestPreviewIntegration:
             assert pane.transcript_text() == (
                 "character: The name's Detective Sam. Who's asking?"
             )
-            screen.query_one("#personas-preview-reset", _Button).press()
+            screen.query_one("#personas-preview-reset", Button).press()
             await pilot.pause()
 
             assert pane.transcript_text() == (

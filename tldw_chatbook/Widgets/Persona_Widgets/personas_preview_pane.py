@@ -137,7 +137,12 @@ class PersonasPreviewPane(Vertical):
         await self._render_seed_lines()
 
     def refresh_greeting_seed(self, text: str) -> None:
-        """Update the greeting Reset restores without changing the transcript."""
+        """Update the greeting Reset restores without changing the transcript.
+
+        Args:
+            text: Greeting text that future Reset actions should restore. Empty
+                values clear the stored greeting seed.
+        """
         self._greeting = str(text or "")
 
     def append_user(self, text: str) -> None:
