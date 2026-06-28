@@ -1,5 +1,15 @@
 """Workspace operating-context APIs."""
 
+from .conversation_browser_state import (
+    CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
+    CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+    ConsoleConversationBrowserGroup,
+    ConsoleConversationBrowserInputRow,
+    ConsoleConversationBrowserRow,
+    ConsoleConversationBrowserSection,
+    ConsoleConversationBrowserState,
+    build_console_conversation_browser_state,
+)
 from .display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
     ConsoleWorkspaceACPHandoffState,
@@ -33,7 +43,14 @@ from .models import (
 from .registry_service import LocalWorkspaceRegistryService
 
 __all__ = [
+    "CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT",
+    "CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT",
     "CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT",
+    "ConsoleConversationBrowserGroup",
+    "ConsoleConversationBrowserInputRow",
+    "ConsoleConversationBrowserRow",
+    "ConsoleConversationBrowserSection",
+    "ConsoleConversationBrowserState",
     "ConsoleWorkspaceContextState",
     "ConsoleWorkspaceConversationRow",
     "ConsoleWorkspaceConversationSectionState",
@@ -55,6 +72,7 @@ __all__ = [
     "WorkspaceRuntimeBinding",
     "WorkspaceSyncStatus",
     "WorkspaceTransferPolicy",
+    "build_console_conversation_browser_state",
     "build_library_workspace_depth_state",
     "build_console_workspace_state",
     "console_workspace_conversation_result_copy",

@@ -290,6 +290,30 @@ def test_scope_service_routes_chat_metadata_sync_mirror_report_to_sync_scope():
     ]
 
 
+def test_scope_service_chat_metadata_mirror_report_does_not_add_local_marks():
+    sync_scope = FakeSyncScopeService()
+    service = ChatConversationScopeService(
+        local_service=FakeConversationService(),
+        server_service=FakeServerConversationService(),
+        sync_scope_service=sync_scope,
+    )
+
+    service.record_sync_mirror_report(
+        mode="server",
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope="workspace-1",
+        local_records=[{"id": "conv-1", "title": "Plain"}],
+        remote_records=[],
+    )
+
+    local_records = sync_scope.calls[0]["local_records"]
+    assert local_records == [{"id": "conv-1", "title": "Plain"}]
+    assert "starred" not in local_records[0]
+    assert "marks" not in local_records[0]
+    assert "local_marks" not in local_records[0]
+
+
 def test_scope_service_rejects_local_chat_metadata_sync_mirror_report():
     service = ChatConversationScopeService(
         local_service=FakeConversationService(),

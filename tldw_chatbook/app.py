@@ -83,6 +83,7 @@ from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_L
     get_tab_display_label
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.conversation_local_marks_service import ConversationLocalMarksService
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
@@ -1868,6 +1869,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.chachanotes_db,
                 rag_context_store_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
             )
+            if getattr(self, "chachanotes_db", None) is not None
+            else None
+        )
+        self.conversation_local_marks_service = (
+            ConversationLocalMarksService(self.chachanotes_db)
             if getattr(self, "chachanotes_db", None) is not None
             else None
         )

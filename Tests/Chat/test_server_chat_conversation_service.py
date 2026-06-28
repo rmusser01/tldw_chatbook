@@ -338,6 +338,63 @@ async def test_server_chat_conversation_service_routes_character_session_create_
 
 
 @pytest.mark.asyncio
+async def test_server_chat_conversation_create_payload_does_not_forward_local_marks():
+    client = FakeChatClient()
+    service = ServerChatConversationService(client=client)
+
+    await service.create_conversation(
+        title="Server Plain",
+        character_id=1,
+        starred=True,
+        local_marks={"starred": True},
+        marks=["starred"],
+    )
+
+    call = next(
+        call
+        for call in client.calls
+        if call[0] == "create_character_chat_session"
+    )
+    request_data = call[1][0]
+    payload = request_data.model_dump(exclude_none=True, mode="json")
+
+    assert payload["title"] == "Server Plain"
+    assert "starred" not in payload
+    assert "local_marks" not in payload
+    assert "marks" not in payload
+
+
+@pytest.mark.asyncio
+async def test_server_chat_conversation_update_payload_does_not_forward_local_marks():
+    client = FakeChatClient()
+    service = ServerChatConversationService(client=client)
+
+    await service.update_conversation(
+        "conv-1",
+        {
+            "version": 3,
+            "state": "resolved",
+            "starred": True,
+            "local_marks": {"starred": True},
+            "marks": ["starred"],
+        },
+    )
+
+    call = next(
+        call
+        for call in client.calls
+        if call[0] == "update_chat_conversation"
+    )
+    request_data = call[1][1]
+    payload = request_data.model_dump(exclude_none=True, mode="json")
+
+    assert payload == {"version": 3, "state": "resolved"}
+    assert "starred" not in payload
+    assert "local_marks" not in payload
+    assert "marks" not in payload
+
+
+@pytest.mark.asyncio
 async def test_server_chat_conversation_service_rejects_generic_server_create_without_assistant_identity():
     client = FakeChatClient()
     policy = RecordingPolicy()

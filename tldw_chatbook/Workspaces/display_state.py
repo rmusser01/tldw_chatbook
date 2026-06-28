@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from loguru import logger
 
@@ -26,6 +26,9 @@ from .models import (
     WorkspaceTransferPolicy,
 )
 from .eligibility import evaluate_workspace_eligibility
+
+if TYPE_CHECKING:
+    from .conversation_browser_state import ConsoleConversationBrowserState
 
 logger = logger.bind(module="WorkspaceDisplayState")
 
@@ -190,6 +193,10 @@ class ConsoleWorkspaceContextState:
     conversation_rows: tuple[ConsoleWorkspaceConversationRow, ...]
     conversation_empty_copy: str
     conversation_section: ConsoleWorkspaceConversationSectionState | None = field(
+        default=None,
+        kw_only=True,
+    )
+    conversation_browser: ConsoleConversationBrowserState | None = field(
         default=None,
         kw_only=True,
     )
