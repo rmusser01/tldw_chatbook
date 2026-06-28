@@ -3520,6 +3520,36 @@ class TestKeyboardInteraction:
             assert screen._edit_mode == "view"
         assert created and created[0]["name"] == "New Hero"
 
+    async def test_save_persists_staged_avatar_bytes(
+        self, mock_app_instance, stub_characters, monkeypatch, tmp_path
+    ):
+        avatar = tmp_path / "avatar.png"
+        avatar.write_bytes(b"\x89PNG staged avatar")
+        created: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            character_handler_module,
+            "create_character",
+            lambda data: created.append(dict(data)) or 99,
+        )
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            screen.query_one("#personas-char-editor-name", Input).value = "Avatar Hero"
+            await screen._stage_character_avatar_from_path(str(avatar))
+            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+        assert created
+        assert created[0]["name"] == "Avatar Hero"
+        assert created[0]["image"] == b"\x89PNG staged avatar"
+
     async def test_ctrl_s_noop_in_view_mode(
         self, mock_app_instance, stub_characters, monkeypatch
     ):
