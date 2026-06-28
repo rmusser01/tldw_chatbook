@@ -1268,18 +1268,19 @@ class PersonasScreen(BaseAppScreen):
             pane = self.query_one(PersonasPreviewPane)
         except QueryError:
             return
-        # Seeding rule: seed only when the pane transcript is empty OR the
-        # loaded id differs from the last-seeded id. A re-load of the same
-        # already-previewed character (e.g. after a save) mid-conversation
-        # must not wipe the in-progress preview, and the instant path in
-        # _select_character must not be double-seeded.
-        if self._preview_seeded_for == character_id and pane.transcript_text():
-            return
         record = dict(message.card_data or {})
         name = str(record.get("name") or self.state.selected_entity_name or "")
         greeting = replace_placeholders(
             str(record.get("first_message") or ""), name, "User"
         )
+        # Seeding rule: seed only when the pane transcript is empty OR the
+        # loaded id differs from the last-seeded id. A re-load of the same
+        # already-previewed character (e.g. after a save) mid-conversation
+        # must not wipe the in-progress preview. It still refreshes the
+        # stored reset seed so Reset reflects saved greeting edits.
+        if self._preview_seeded_for == character_id and pane.transcript_text():
+            pane.refresh_greeting_seed(greeting)
+            return
         # Greeting reseed implies fresh preview state (history + workers).
         self._invalidate_preview()
         await pane.seed_greeting(greeting)

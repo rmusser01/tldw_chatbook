@@ -2715,6 +2715,53 @@ class TestPreviewIntegration:
             lines = [line for line in pane.transcript_text().splitlines() if line]
             assert lines == [greeting_line]
 
+    async def test_reset_after_character_reload_uses_updated_greeting(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """A same-character reload refreshes Reset's stored greeting seed.
+
+        Args:
+            mock_app_instance: Fixture providing the app object used by the
+                mounted Personas test app.
+            stub_characters: Fixture stubbing local character list/load data.
+            stub_conversations: Fixture stubbing character conversation data.
+        """
+        from tldw_chatbook.UI.CCP_Modules.ccp_messages import CharacterMessage
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._select_first_character(pilot)
+            pane = screen.query_one(PersonasPreviewPane)
+            assert (
+                "character: The name's Detective Sam. Who's asking?"
+                in pane.transcript_text()
+            )
+
+            screen.post_message(
+                CharacterMessage.Loaded(
+                    "1",
+                    {
+                        "id": 1,
+                        "name": "Detective Sam",
+                        "first_message": "Edited opener from {{char}} to {{user}}.",
+                        "version": 2,
+                    },
+                )
+            )
+            await pilot.pause()
+            assert pane.transcript_text() == (
+                "character: The name's Detective Sam. Who's asking?"
+            )
+            screen.query_one("#personas-preview-reset", Button).press()
+            await pilot.pause()
+
+            assert pane.transcript_text() == (
+                "character: Edited opener from Detective Sam to User."
+            )
+
     async def test_blocked_provider_shows_readable_status(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
