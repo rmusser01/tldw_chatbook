@@ -136,6 +136,10 @@ class PersonasPreviewPane(Vertical):
         self.set_status("")
         await self._render_seed_lines()
 
+    def refresh_greeting_seed(self, text: str) -> None:
+        """Update the greeting Reset restores without changing the transcript."""
+        self._greeting = str(text or "")
+
     def append_user(self, text: str) -> None:
         """Append a "you: ..." transcript line."""
         self._append_line(f"you: {text}", "personas-preview-line-you")
