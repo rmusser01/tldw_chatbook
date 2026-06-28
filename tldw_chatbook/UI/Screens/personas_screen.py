@@ -1634,6 +1634,16 @@ class PersonasScreen(BaseAppScreen):
             return dict(loaded)
         return None
 
+    def _character_editor_is_active(self) -> bool:
+        """Return whether the visible edit session is the character editor."""
+        if self._edit_mode not in ("create", "edit"):
+            return False
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return False
+        return editor.display is True
+
     def _read_avatar_image_bytes(self, path: str) -> bytes:
         candidate = validate_path_simple(path, require_exists=True)
         if not candidate.is_file():
@@ -1648,7 +1658,7 @@ class PersonasScreen(BaseAppScreen):
         return data
 
     async def _stage_character_avatar_from_path(self, path: str) -> None:
-        if self._edit_mode not in ("create", "edit"):
+        if not self._character_editor_is_active():
             self._notify("Open a character editor before uploading an avatar.", "warning")
             return
         try:
@@ -1681,7 +1691,7 @@ class PersonasScreen(BaseAppScreen):
         self, message: CharacterImageUploadRequested
     ) -> None:
         message.stop()
-        if self._edit_mode not in ("create", "edit"):
+        if not self._character_editor_is_active():
             self._notify("Open a character editor before uploading an avatar.", "warning")
             return
         if self._io_dialog_active:

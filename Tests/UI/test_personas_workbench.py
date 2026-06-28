@@ -1384,6 +1384,75 @@ class TestImportExport:
             assert screen.state.has_unsaved_changes is False
             assert any("Open a character editor" in msg for msg, _ in notifications)
 
+    @staticmethod
+    async def _open_persona_editor(pilot, mode: str):
+        screen = await _mounted(pilot)
+        await pilot.pause()
+        await pilot.click("#personas-mode-personas")
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        if mode == "create":
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+        else:
+            await pilot.click("#personas-library-row-persona_profile-p-1")
+            await pilot.pause()
+            screen.post_message(EditPersonaRequested("p-1"))
+            await pilot.pause()
+        assert screen._edit_mode == mode
+        assert screen.state.has_unsaved_changes is False
+        return screen
+
+    @pytest.mark.parametrize("mode", ["create", "edit"])
+    async def test_stage_character_avatar_ignores_persona_editor_session(
+        self, mock_app_instance, stub_characters, stub_scope_service, tmp_path, mode
+    ):
+        avatar = tmp_path / f"persona-{mode}.png"
+        avatar.write_bytes(b"\x89PNG persona editor avatar")
+        app = PersonasTestApp(mock_app_instance)
+        notifications = TestImportExport._capture_notifications(app)
+
+        async with app.run_test() as pilot:
+            screen = await self._open_persona_editor(pilot, mode)
+
+            await screen._stage_character_avatar_from_path(str(avatar))
+            await pilot.pause()
+
+            editor = screen.query_one(PersonasCharacterEditorWidget)
+            assert "image" not in editor.get_character_data()
+            assert screen.state.has_unsaved_changes is False
+            assert any("Open a character editor" in msg for msg, _ in notifications)
+
+    @pytest.mark.parametrize("mode", ["create", "edit"])
+    async def test_avatar_upload_request_ignores_persona_editor_session(
+        self, mock_app_instance, stub_characters, stub_scope_service, mode
+    ):
+        calls: list[int] = []
+        app = PersonasTestApp(mock_app_instance)
+        notifications = TestImportExport._capture_notifications(app)
+
+        async with app.run_test() as pilot:
+            screen = await self._open_persona_editor(pilot, mode)
+
+            def worker():
+                calls.append(1)
+
+                async def _noop():
+                    pass
+
+                return _noop()
+
+            screen._avatar_upload_dialog_worker = worker
+            screen.post_message(CharacterImageUploadRequested())
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+
+            assert calls == []
+            assert screen._io_dialog_active is False
+            assert screen.state.has_unsaved_changes is False
+            assert any("Open a character editor" in msg for msg, _ in notifications)
+
     async def test_avatar_upload_request_launches_dialog_worker(
         self, mock_app_instance, stub_characters
     ):
@@ -3879,3 +3948,42 @@ class TestImportExportFilters:
                 pilot, screen, lambda: screen._export_dialog_worker("png")
             )
             self._assert_filters_callable(picker.filters)
+
+    @pytest.mark.parametrize("outcome", ["cancel", "error", "selection"])
+    async def test_avatar_upload_worker_resets_flag_and_uses_avatar_context(
+        self, mock_app_instance, stub_characters, tmp_path, outcome
+    ):
+        avatar = tmp_path / "avatar.png"
+        avatar.write_bytes(b"\x89PNG selected avatar")
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+            captured: dict = {}
+
+            async def _fake_push_screen_wait(picker):
+                captured["picker"] = picker
+                if outcome == "error":
+                    raise RuntimeError("dialog failed")
+                if outcome == "selection":
+                    return avatar
+                return None
+
+            pilot.app.push_screen_wait = AsyncMock(side_effect=_fake_push_screen_wait)
+            screen._io_dialog_active = True
+
+            await screen._avatar_upload_dialog_worker()
+            await pilot.pause()
+
+            assert screen._io_dialog_active is False
+            picker = captured["picker"]
+            assert picker.context == "character_avatar_upload"
+            self._assert_filters_callable(picker.filters)
+            editor = screen.query_one(PersonasCharacterEditorWidget)
+            if outcome == "selection":
+                assert editor.get_character_data()["image"] == b"\x89PNG selected avatar"
+            else:
+                assert "image" not in editor.get_character_data()
