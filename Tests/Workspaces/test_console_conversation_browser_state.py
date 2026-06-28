@@ -336,6 +336,29 @@ def test_result_total_count_is_used_for_capped_status_copy():
     assert state.status_copy == "10 matches. Showing 3 of 10"
 
 
+def test_status_copy_reports_actual_visible_rows_when_groups_exceed_result_limit():
+    state = build_console_conversation_browser_state(
+        rows=tuple(
+            _row(
+                f"conv-{workspace_index}-{row_index}",
+                f"Needle {workspace_index}-{row_index}",
+                workspace_id=f"ws-{workspace_index}",
+                workspace_label=f"Workspace {workspace_index}",
+                updated_sort=f"2026-06-{row_index:02d}",
+            )
+            for workspace_index in range(4)
+            for row_index in range(2)
+        ),
+        active_workspace_id="ws-0",
+        query="needle",
+        result_total_count=20,
+        result_limit=3,
+        group_row_limit=2,
+    )
+
+    assert state.status_copy == "20 matches. Showing 8 of 20"
+
+
 def test_query_matches_workspace_label_status_and_scope_copy():
     state = build_console_conversation_browser_state(
         rows=(
@@ -385,6 +408,37 @@ def test_all_empty_sort_fields_order_by_title_then_row_key_not_input_order():
 
     group = _workspace_group(state, "workspace:ws-a")
     assert [row.row_key for row in group.rows] == ["conv-a", "conv-b", "conv-c"]
+
+
+def test_missing_sort_values_are_ordered_after_timestamped_rows():
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-missing", "Missing", updated_sort=""),
+            _row("conv-old", "Old", updated_sort="2026-06-01T00:00:00Z"),
+            _row("conv-new", "New", updated_sort="2026-06-02T00:00:00Z"),
+        ),
+        active_workspace_id="ws-a",
+    )
+
+    group = _workspace_group(state, "workspace:ws-a")
+    assert [row.row_key for row in group.rows] == [
+        "conv-new",
+        "conv-old",
+        "conv-missing",
+    ]
+
+
+def test_sort_keys_accept_supplementary_plane_text_without_surrogate_error():
+    state = build_console_conversation_browser_state(
+        rows=(
+            _row("conv-plane", "Plane", updated_sort="\U00102000"),
+            _row("conv-normal", "Normal", updated_sort="2026-06-01T00:00:00Z"),
+        ),
+        active_workspace_id="ws-a",
+    )
+
+    group = _workspace_group(state, "workspace:ws-a")
+    assert {row.row_key for row in group.rows} == {"conv-plane", "conv-normal"}
 
 
 def test_equal_title_order_by_row_key():

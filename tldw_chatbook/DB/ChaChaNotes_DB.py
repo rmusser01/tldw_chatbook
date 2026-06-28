@@ -2086,6 +2086,8 @@ UPDATE db_schema_version
    AND version = 15;
 """
 
+    # Keep this runner SQL aligned with
+    # tldw_chatbook/DB/migrations/chachanotes_v16_to_v17_conversation_local_marks.sql.
     _MIGRATE_V16_TO_V17_SQL = """
 CREATE TABLE IF NOT EXISTS conversation_local_marks (
   conversation_id TEXT NOT NULL,

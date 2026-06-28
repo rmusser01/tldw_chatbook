@@ -1939,7 +1939,9 @@ class ChatScreen(BaseAppScreen):
                 memberships = list_conversations(workspace_id)
             except Exception:
                 logger.debug(
-                    "Unable to list Console browser workspace conversations",
+                    "Unable to list Console browser workspace conversations "
+                    "workspace_id={}",
+                    workspace_id,
                     exc_info=True,
                 )
                 continue
@@ -2033,7 +2035,14 @@ class ChatScreen(BaseAppScreen):
                         logger.debug("Local persisted conversation service is unavailable")
                         last_error = ""
                         break
-                    logger.exception("Unable to search Console conversation browser")
+                    logger.exception(
+                        "Unable to search Console conversation browser "
+                        "query={!r} scope_type={} workspace_id={} include_mode={}",
+                        query,
+                        scope_type,
+                        workspace_id,
+                        include_mode,
+                    )
                     return rows, None if not saw_total else total_count, (
                         "Workspace conversation search is unavailable."
                     )
@@ -2164,7 +2173,14 @@ class ChatScreen(BaseAppScreen):
                         )
                         last_error = ""
                         break
-                    logger.exception("Unable to list Console conversation browser")
+                    logger.exception(
+                        "Unable to list Console conversation browser "
+                        "query={!r} scope_type={} workspace_id={} include_mode={}",
+                        query,
+                        scope_type,
+                        workspace_id,
+                        include_mode,
+                    )
                     return rows, None if not saw_total else total_count, (
                         "Workspace conversation search is unavailable."
                     )
@@ -6906,6 +6922,7 @@ class ChatScreen(BaseAppScreen):
                     severity="warning",
                 )
                 return
+            star_action = "resolve"
             try:
                 is_starred = getattr(marks_service, "is_starred", None)
                 currently_starred = (
@@ -6913,12 +6930,18 @@ class ChatScreen(BaseAppScreen):
                     if callable(is_starred)
                     else bool(getattr(event.button, "starred", False))
                 )
+                star_action = "unstar" if currently_starred else "star"
                 if currently_starred:
                     marks_service.unstar_conversation(conversation_id)
                 else:
                     marks_service.star_conversation(conversation_id)
             except Exception:
-                logger.exception("Unable to update local conversation star")
+                logger.exception(
+                    "Unable to update local conversation star "
+                    "conversation_id={} action={}",
+                    conversation_id,
+                    star_action,
+                )
                 self.app_instance.notify(
                     "Unable to update local star.",
                     severity="warning",

@@ -9,6 +9,15 @@ from typing import Any
 
 @dataclass(frozen=True)
 class ConversationLocalMark:
+    """A durable local-only organization mark for one conversation.
+
+    Attributes:
+        conversation_id: Local conversation identifier the mark belongs to.
+        mark_type: Type of local mark, such as ``"starred"``.
+        created_at: UTC timestamp for first creation.
+        updated_at: UTC timestamp for the latest mark update.
+    """
+
     conversation_id: str
     mark_type: str
     created_at: str
@@ -16,12 +25,22 @@ class ConversationLocalMark:
 
 
 class ConversationLocalMarksService:
-    """Manage durable local-only marks for conversations."""
+    """Manage durable local-only marks for conversations.
+
+    The service stores organization metadata that should remain local to this
+    client and must not be serialized into conversation sync payloads.
+    """
 
     STARRED = "starred"
     _ALLOWED_MARK_TYPES = frozenset({STARRED})
 
     def __init__(self, db: Any):
+        """Initialize the service.
+
+        Args:
+            db: Database object that exposes the project ``transaction()``
+                context manager.
+        """
         self.db = db
 
     @staticmethod
@@ -43,15 +62,52 @@ class ConversationLocalMarksService:
         return normalized
 
     def star_conversation(self, conversation_id: str) -> None:
+        """Mark a conversation as starred locally.
+
+        Args:
+            conversation_id: Conversation identifier to star.
+
+        Raises:
+            ValueError: If ``conversation_id`` is blank.
+        """
         self.set_mark(conversation_id, self.STARRED)
 
     def unstar_conversation(self, conversation_id: str) -> None:
+        """Remove the local starred mark from a conversation.
+
+        Args:
+            conversation_id: Conversation identifier to unstar.
+
+        Raises:
+            ValueError: If ``conversation_id`` is blank.
+        """
         self.clear_mark(conversation_id, self.STARRED)
 
     def is_starred(self, conversation_id: str) -> bool:
+        """Return whether a conversation is locally starred.
+
+        Args:
+            conversation_id: Conversation identifier to check.
+
+        Returns:
+            True when the conversation has the local starred mark.
+
+        Raises:
+            ValueError: If ``conversation_id`` is blank.
+        """
         return self.has_mark(conversation_id, self.STARRED)
 
     def set_mark(self, conversation_id: str, mark_type: str | None = None) -> None:
+        """Create or refresh a local conversation mark.
+
+        Args:
+            conversation_id: Conversation identifier to mark.
+            mark_type: Supported mark type. Defaults to ``"starred"``.
+
+        Raises:
+            ValueError: If ``conversation_id`` is blank or ``mark_type`` is
+                unsupported.
+        """
         conversation_id = self._conversation_id(conversation_id)
         mark_type = self._mark_type(mark_type)
         now = self._now()
@@ -69,6 +125,16 @@ class ConversationLocalMarksService:
             )
 
     def clear_mark(self, conversation_id: str, mark_type: str | None = None) -> None:
+        """Remove a local conversation mark if present.
+
+        Args:
+            conversation_id: Conversation identifier to update.
+            mark_type: Supported mark type. Defaults to ``"starred"``.
+
+        Raises:
+            ValueError: If ``conversation_id`` is blank or ``mark_type`` is
+                unsupported.
+        """
         conversation_id = self._conversation_id(conversation_id)
         mark_type = self._mark_type(mark_type)
         with self.db.transaction() as conn:
@@ -81,17 +147,31 @@ class ConversationLocalMarksService:
             )
 
     def has_mark(self, conversation_id: str, mark_type: str | None = None) -> bool:
+        """Return whether a local mark exists for a conversation.
+
+        Args:
+            conversation_id: Conversation identifier to check.
+            mark_type: Supported mark type. Defaults to ``"starred"``.
+
+        Returns:
+            True when the requested mark exists.
+
+        Raises:
+            ValueError: If ``conversation_id`` is blank or ``mark_type`` is
+                unsupported.
+        """
         conversation_id = self._conversation_id(conversation_id)
         mark_type = self._mark_type(mark_type)
-        row = self.db.get_connection().execute(
-            """
-            SELECT 1
-              FROM conversation_local_marks
-             WHERE conversation_id = ? AND mark_type = ?
-             LIMIT 1
-            """,
-            (conversation_id, mark_type),
-        ).fetchone()
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                  FROM conversation_local_marks
+                 WHERE conversation_id = ? AND mark_type = ?
+                 LIMIT 1
+                """,
+                (conversation_id, mark_type),
+            ).fetchone()
         return row is not None
 
     def list_marked_conversation_ids(
@@ -100,18 +180,32 @@ class ConversationLocalMarksService:
         *,
         limit: int = 100,
     ) -> tuple[str, ...]:
+        """List conversation ids carrying a local mark.
+
+        Args:
+            mark_type: Supported mark type. Defaults to ``"starred"``.
+            limit: Maximum number of conversation ids to return.
+
+        Returns:
+            Conversation ids ordered by latest mark update, then id.
+
+        Raises:
+            ValueError: If ``mark_type`` is unsupported or ``limit`` is not
+                positive.
+        """
         mark_type = self._mark_type(mark_type)
         safe_limit = int(limit)
         if safe_limit <= 0:
             raise ValueError("limit must be positive")
-        rows = self.db.get_connection().execute(
-            """
-            SELECT conversation_id
-              FROM conversation_local_marks
-             WHERE mark_type = ?
-             ORDER BY updated_at DESC, conversation_id ASC
-             LIMIT ?
-            """,
-            (mark_type, safe_limit),
-        ).fetchall()
+        with self.db.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT conversation_id
+                  FROM conversation_local_marks
+                 WHERE mark_type = ?
+                 ORDER BY updated_at DESC, conversation_id ASC
+                 LIMIT ?
+                """,
+                (mark_type, safe_limit),
+            ).fetchall()
         return tuple(str(row["conversation_id"]) for row in rows)

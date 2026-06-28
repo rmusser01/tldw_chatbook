@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import total_ordering
 from typing import Iterable, Mapping
 
 from .models import DEFAULT_WORKSPACE_ID
@@ -14,6 +15,26 @@ CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT = 12
 
 @dataclass(frozen=True)
 class ConsoleConversationBrowserInputRow:
+    """Input row used to build the grouped Console conversation browser.
+
+    Attributes:
+        row_key: Stable display identity for this row.
+        conversation_id: Persisted conversation id, when the row can be resumed.
+        native_session_id: Unsaved native session id, when the row is draft-only.
+        title: Conversation title shown in the browser.
+        scope_type: Conversation scope, such as ``"workspace"`` or ``"global"``.
+        workspace_id: Workspace id associated with the row, if any.
+        workspace_label: Workspace label shown to the user.
+        status: Small status copy for the row.
+        updated_label: Human-readable age/update label.
+        selected: Whether this row represents the active conversation.
+        starred: Whether this row is locally starred.
+        star_enabled: Whether the UI may toggle a local star for this row.
+        source_kind: Source of the row, such as persisted, native, or membership.
+        starred_sort: Timestamp-like value used for starred section ordering.
+        updated_sort: Timestamp-like value used for normal ordering.
+    """
+
     row_key: str
     conversation_id: str | None
     native_session_id: str | None
@@ -33,6 +54,24 @@ class ConsoleConversationBrowserInputRow:
 
 @dataclass(frozen=True)
 class ConsoleConversationBrowserRow:
+    """Rendered row in a Console conversation browser section or group.
+
+    Attributes:
+        row_key: Stable display identity for this row.
+        conversation_id: Persisted conversation id, when available.
+        native_session_id: Unsaved native session id, when available.
+        title: Conversation title shown in the browser.
+        scope_type: Conversation scope.
+        workspace_id: Workspace id associated with the row, if any.
+        workspace_label: Workspace label shown to the user.
+        status: Small status copy for the row.
+        updated_label: Human-readable age/update label.
+        selected: Whether this row represents the active conversation.
+        starred: Whether this row is locally starred.
+        star_enabled: Whether the UI may toggle a local star for this row.
+        source_kind: Source of the row.
+    """
+
     row_key: str
     conversation_id: str | None
     native_session_id: str | None
@@ -50,6 +89,19 @@ class ConsoleConversationBrowserRow:
 
 @dataclass(frozen=True)
 class ConsoleConversationBrowserGroup:
+    """Workspace group in the Console conversation browser.
+
+    Attributes:
+        group_id: Stable group id, normally prefixed with ``"workspace:"``.
+        label: Workspace label shown in the browser.
+        collapsed: Whether rows are hidden for the current render.
+        rows: Visible rows after group capping.
+        count: Total rows available in this group.
+        hidden_count: Rows hidden by collapse or per-group capping.
+        preference_collapsed: Persisted collapse preference before query expansion.
+        empty_copy: Empty-state copy for the group.
+    """
+
     group_id: str
     label: str
     collapsed: bool
@@ -62,6 +114,19 @@ class ConsoleConversationBrowserGroup:
 
 @dataclass(frozen=True)
 class ConsoleConversationBrowserSection:
+    """Top-level section in the Console conversation browser.
+
+    Attributes:
+        section_id: Stable section id, such as ``"starred"``.
+        label: Section label shown in the browser.
+        collapsed: Whether this section is currently collapsed.
+        rows: Visible rows for row-based sections.
+        groups: Workspace groups for grouped sections.
+        count: Total row count represented by the section.
+        hidden_count: Rows hidden by collapse or row capping.
+        empty_copy: Empty-state copy for the section.
+    """
+
     section_id: str
     label: str
     collapsed: bool
@@ -74,6 +139,19 @@ class ConsoleConversationBrowserSection:
 
 @dataclass(frozen=True)
 class ConsoleConversationBrowserState:
+    """Immutable grouped Console conversation browser display state.
+
+    Attributes:
+        query: Normalized active search query.
+        sections: Ordered browser sections.
+        selected_summary: Human-readable summary of the active row.
+        status_copy: Search/result status copy.
+        error_copy: Recoverable error copy for the browser.
+        marks_available: Whether local star state is available.
+        result_total_count: Total matched rows when known.
+        result_limit: Caller fetch cap retained for diagnostics/UI state.
+    """
+
     query: str
     sections: tuple[ConsoleConversationBrowserSection, ...]
     selected_summary: str
@@ -110,7 +188,7 @@ def build_console_conversation_browser_state(
         error_copy: Optional scoped recovery copy.
         result_total_count: Total matched rows when the caller already knows a
             larger search result count.
-        result_limit: Caller-level result cap used for status copy.
+        result_limit: Caller-level result cap retained on the resulting state.
         group_row_limit: Maximum visible rows per section or workspace group.
 
     Returns:
@@ -214,7 +292,6 @@ def build_console_conversation_browser_state(
         query_active=query_active,
         total_count=effective_total_count,
         displayed_count=_displayed_row_count(sections),
-        result_limit=safe_result_limit,
     )
 
     return ConsoleConversationBrowserState(
@@ -372,7 +449,7 @@ def _sort_normal_rows(
             rows,
             key=lambda row: (
                 not row.selected,
-                _reverse_string_key(row.updated_sort),
+                ReverseKey(row.updated_sort),
                 row.title.casefold(),
                 row.row_key,
             ),
@@ -387,8 +464,8 @@ def _sort_starred_rows(
         sorted(
             rows,
             key=lambda row: (
-                _reverse_string_key(row.starred_sort),
-                _reverse_string_key(row.updated_sort),
+                ReverseKey(row.starred_sort),
+                ReverseKey(row.updated_sort),
                 row.title.casefold(),
                 row.row_key,
             ),
@@ -399,10 +476,10 @@ def _sort_starred_rows(
 def _workspace_group_sort_key(
     group: tuple[str, str, str, tuple[ConsoleConversationBrowserInputRow, ...]],
     active_workspace_id: str | None,
-) -> tuple[bool, str, str, str]:
+) -> tuple[bool, "ReverseKey", str, str]:
     group_id, label, latest_sort, _rows = group
     is_active = group_id == f"workspace:{active_workspace_id}" if active_workspace_id else False
-    return (not is_active, _reverse_string_key(latest_sort), label.casefold(), group_id)
+    return (not is_active, ReverseKey(latest_sort), label.casefold(), group_id)
 
 
 def _row_matches(row: ConsoleConversationBrowserInputRow, normalized_query: str) -> bool:
@@ -456,13 +533,12 @@ def _build_status_copy(
     query_active: bool,
     total_count: int,
     displayed_count: int,
-    result_limit: int,
 ) -> str:
     if not query_active:
         return ""
     match_label = "match" if total_count == 1 else "matches"
     status = f"{total_count} {match_label}"
-    shown_count = min(total_count, displayed_count, result_limit)
+    shown_count = min(total_count, displayed_count)
     if total_count > shown_count:
         status = f"{status}. Showing {shown_count} of {total_count}"
     return status
@@ -489,5 +565,19 @@ def _safe_non_negative_int(value: int | None) -> int:
     return max(0, int(value or 0))
 
 
-def _reverse_string_key(value: str) -> str:
-    return "".join(chr(0x10FFFF - ord(character)) for character in value)
+@total_ordering
+@dataclass(frozen=True)
+class ReverseKey:
+    """Sort key wrapper that compares text values in descending order."""
+
+    value: str
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, ReverseKey):
+            return NotImplemented
+        return self.value > other.value
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ReverseKey):
+            return NotImplemented
+        return self.value == other.value
