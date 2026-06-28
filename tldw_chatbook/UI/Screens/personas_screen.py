@@ -28,6 +28,7 @@ from ...Chat.console_chat_models import ConsoleProviderSelection
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
+from ...Utils.path_validation import validate_path_simple
 from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
@@ -51,6 +52,7 @@ from ...Widgets.Persona_Widgets.personas_messages import (
 )
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterEditorCancelled,
+    CharacterImageUploadRequested,
     CharacterSaveRequested,
     ConversationRowSelected,
     EditCharacterRequested,
@@ -88,6 +90,8 @@ MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "prompts", "dictio
 
 PLACEHOLDER_COPY = "This mode is not available yet. Characters and Personas are the supported modes."
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
+PERSONAS_AVATAR_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
+PERSONAS_AVATAR_IMAGE_SUFFIX_COPY = "PNG, JPG, JPEG, WEBP, or GIF"
 
 # 80-column terminals need a tighter three-pane split than the default
 # 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
@@ -1630,6 +1634,40 @@ class PersonasScreen(BaseAppScreen):
             return dict(loaded)
         return None
 
+    def _read_avatar_image_bytes(self, path: str) -> bytes:
+        candidate = validate_path_simple(path, require_exists=True)
+        if not candidate.is_file():
+            raise ValueError("Choose an existing avatar image file.")
+        if candidate.suffix.lower() not in PERSONAS_AVATAR_IMAGE_SUFFIXES:
+            raise ValueError(
+                f"Unsupported avatar image type. Use {PERSONAS_AVATAR_IMAGE_SUFFIX_COPY}."
+            )
+        data = candidate.read_bytes()
+        if not data:
+            raise ValueError("Avatar image file is empty.")
+        return data
+
+    async def _stage_character_avatar_from_path(self, path: str) -> None:
+        if self._edit_mode not in ("create", "edit"):
+            self._notify("Open a character editor before uploading an avatar.", "warning")
+            return
+        try:
+            image_data = await asyncio.to_thread(self._read_avatar_image_bytes, path)
+        except ValueError as exc:
+            self._notify(str(exc), "error")
+            return
+        except OSError as exc:
+            logger.error(f"Error reading avatar image from {path}: {exc}", exc_info=True)
+            self._notify(f"Avatar upload failed: {exc}", "error")
+            return
+        try:
+            self.query_one(PersonasCharacterEditorWidget).set_avatar_image(image_data)
+        except Exception as exc:
+            logger.error("Could not stage avatar image in editor.", exc_info=True)
+            self._notify(f"Avatar upload failed: {exc}", "error")
+            return
+        self._notify("Avatar staged. Save the character to persist it.", "information")
+
     # ===== Import / export =====
     #
     # Dialog flows run in workers (push_screen_wait requires one); the
@@ -1637,6 +1675,48 @@ class PersonasScreen(BaseAppScreen):
     # directly. Sync DB/file work runs via asyncio.to_thread instead of a
     # threaded Textual worker because import and export need their result
     # awaited inline for the follow-up selection/notification steps.
+
+    @on(CharacterImageUploadRequested)
+    def _handle_character_image_upload_requested(
+        self, message: CharacterImageUploadRequested
+    ) -> None:
+        message.stop()
+        if self._edit_mode not in ("create", "edit"):
+            self._notify("Open a character editor before uploading an avatar.", "warning")
+            return
+        if self._io_dialog_active:
+            logger.debug("Import/export dialog already active; ignoring avatar upload request.")
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._avatar_upload_dialog_worker(), group="personas-io")
+
+    async def _avatar_upload_dialog_worker(self) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            picker = EnhancedFileOpen(
+                title="Upload Character Avatar",
+                filters=Filters(
+                    (
+                        "Image Files",
+                        lambda p: p.suffix.lower() in PERSONAS_AVATAR_IMAGE_SUFFIXES,
+                    ),
+                    ("PNG Files", lambda p: p.suffix.lower() == ".png"),
+                    ("JPEG Files", lambda p: p.suffix.lower() in (".jpg", ".jpeg")),
+                    ("WEBP Files", lambda p: p.suffix.lower() == ".webp"),
+                    ("GIF Files", lambda p: p.suffix.lower() == ".gif"),
+                ),
+                context="character_avatar_upload",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.warning("Could not show the avatar upload file dialog.", exc_info=True)
+                return
+            if file_path:
+                await self._stage_character_avatar_from_path(str(file_path))
+        finally:
+            self._io_dialog_active = False
 
     async def _open_import_dialog(self) -> None:
         """Continuation for the guarded import action: launch the dialog worker."""

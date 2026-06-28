@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
@@ -27,7 +27,11 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_messages import PersonaActio
 from tldw_chatbook.Widgets.Persona_Widgets.personas_inspector_pane import (
     PersonasInspectorPane,
 )
+from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
+    PersonasCharacterEditorWidget,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+    CharacterImageUploadRequested,
     EditPersonaRequested,
     PersonaProfileSaveRequested,
 )
@@ -1315,6 +1319,101 @@ class TestImportExport:
                 for message, severity in notifications
             )
             assert screen.state.selected_entity_id == "1"
+
+    async def test_stage_character_avatar_from_path_updates_editor_and_dirty_state(
+        self, mock_app_instance, stub_characters, tmp_path
+    ):
+        avatar = tmp_path / "avatar.png"
+        avatar.write_bytes(b"\x89PNG staged avatar")
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+
+            await screen._stage_character_avatar_from_path(str(avatar))
+            await pilot.pause()
+
+            editor = screen.query_one(PersonasCharacterEditorWidget)
+            assert editor.get_character_data()["image"] == b"\x89PNG staged avatar"
+            assert (
+                str(screen.query_one("#personas-char-editor-avatar-status", Static).renderable)
+                == "Avatar: embedded"
+            )
+            assert screen.state.has_unsaved_changes is True
+
+    async def test_stage_character_avatar_rejects_unsupported_extension_without_mutation(
+        self, mock_app_instance, stub_characters, tmp_path
+    ):
+        bad = tmp_path / "avatar.txt"
+        bad.write_text("not an image")
+        app = PersonasTestApp(mock_app_instance)
+        notifications = TestImportExport._capture_notifications(app)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+
+            await screen._stage_character_avatar_from_path(str(bad))
+            await pilot.pause()
+
+            editor = screen.query_one(PersonasCharacterEditorWidget)
+            assert "image" not in editor.get_character_data()
+            assert screen.state.has_unsaved_changes is False
+            assert any("Unsupported avatar image type" in msg for msg, _ in notifications)
+
+    async def test_stage_character_avatar_requires_open_editor(
+        self, mock_app_instance, stub_characters, tmp_path
+    ):
+        avatar = tmp_path / "avatar.png"
+        avatar.write_bytes(b"\x89PNG staged avatar")
+        app = PersonasTestApp(mock_app_instance)
+        notifications = TestImportExport._capture_notifications(app)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+
+            await screen._stage_character_avatar_from_path(str(avatar))
+            await pilot.pause()
+
+            assert screen.state.has_unsaved_changes is False
+            assert any("Open a character editor" in msg for msg, _ in notifications)
+
+    async def test_avatar_upload_request_launches_dialog_worker(
+        self, mock_app_instance, stub_characters
+    ):
+        calls: list[int] = []
+        app = PersonasTestApp(mock_app_instance)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+
+            def worker():
+                calls.append(1)
+
+                async def _noop():
+                    pass
+
+                return _noop()
+
+            screen._avatar_upload_dialog_worker = worker
+            screen.post_message(CharacterImageUploadRequested())
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            assert calls == [1]
+
+            screen.post_message(CharacterImageUploadRequested())
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            assert calls == [1]
 
     async def test_export_json_writes_file(
         self, mock_app_instance, stub_characters, stub_db, monkeypatch, tmp_path
@@ -2651,9 +2750,6 @@ class TestPreviewIntegration:
         from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
             EditCharacterRequested,
         )
-        from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
-            PersonasCharacterEditorWidget,
-        )
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
@@ -2817,7 +2913,6 @@ class TestPreviewIntegration:
         history entry is popped so a retry does not send [user, user].
         """
         from textual.widgets import Button as _Button, Static as _Static
-        from textual.widgets import Input as _Input
 
         from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
             PersonasPreviewPane,
@@ -2831,7 +2926,7 @@ class TestPreviewIntegration:
             pane = screen.query_one(PersonasPreviewPane)
             pane.expand()
             await pilot.pause()
-            screen.query_one("#personas-preview-input", _Input).value = "Hi"
+            screen.query_one("#personas-preview-input", Input).value = "Hi"
             screen.query_one("#personas-preview-test-reply", _Button).press()
             await pilot.pause()
             await app.workers.wait_for_complete()
@@ -3340,8 +3435,6 @@ class TestKeyboardInteraction:
     async def test_ctrl_s_saves_from_editor(
         self, mock_app_instance, stub_characters, monkeypatch
     ):
-        from textual.widgets import Input
-
         created = []
         monkeypatch.setattr(
             character_handler_module, "create_character",
