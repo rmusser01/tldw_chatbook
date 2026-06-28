@@ -1242,6 +1242,76 @@ class TestImportExport:
             rows = screen.query(".personas-library-row")
             assert "Imported Hero" in [_row_text(r) for r in rows]
 
+    async def test_import_markdown_routes_through_character_import_helper(
+        self, mock_app_instance, stub_characters, monkeypatch, tmp_path
+    ):
+        imported_paths: list[str] = []
+        card_path = tmp_path / "card.md"
+        card_path.write_text("# Character Card\n", encoding="utf-8")
+
+        def fake_import(file_path):
+            imported_paths.append(file_path)
+            return 3
+
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card", fake_import
+        )
+
+        def fetch_all_with_imported():
+            characters = [dict(c) for c in CHARACTERS]
+            if imported_paths:
+                characters.append({"id": 3, "name": "Markdown Hero", "version": 1})
+            return characters
+
+        monkeypatch.setattr(
+            character_handler_module, "fetch_all_characters", fetch_all_with_imported
+        )
+        monkeypatch.setattr(
+            character_handler_module,
+            "fetch_character_by_id",
+            lambda character_id: next(
+                (
+                    dict(c)
+                    for c in fetch_all_with_imported()
+                    if str(c["id"]) == str(character_id)
+                ),
+                None,
+            ),
+        )
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await screen._import_character_from_path(str(card_path))
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert imported_paths == [str(card_path)]
+            assert screen.state.selected_entity_id == "3"
+
+    async def test_import_invalid_markdown_uses_failure_path_without_selection_change(
+        self, mock_app_instance, stub_characters, monkeypatch, tmp_path
+    ):
+        bad_path = tmp_path / "bad.md"
+        bad_path.write_text("# Not a character card\n", encoding="utf-8")
+        monkeypatch.setattr(
+            character_handler_module, "import_character_card", lambda file_path: None
+        )
+        app = PersonasTestApp(mock_app_instance)
+        notifications = self._capture_notifications(app)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-row-character-1")
+            await pilot.pause()
+            await screen._import_character_from_path(str(bad_path))
+            await pilot.pause()
+            assert screen.state.selected_entity_id == "1"
+            assert any(
+                "valid character card" in message and severity == "error"
+                for message, severity in notifications
+            )
+
     async def test_second_import_request_ignored_while_dialog_active(
         self, mock_app_instance, stub_characters
     ):
@@ -3956,6 +4026,29 @@ class TestImportExportFilters:
                 pilot, screen, screen._import_dialog_worker
             )
             self._assert_filters_callable(picker.filters)
+
+    async def test_import_filters_include_markdown(
+        self, mock_app_instance, stub_characters
+    ):
+        from pathlib import Path
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            picker = await self._capture_picker(
+                pilot, screen, screen._import_dialog_worker
+            )
+            filter_by_name = {
+                name: picker.filters[filter_id]
+                for name, filter_id in picker.filters.selections
+            }
+
+            assert "Markdown Files" in filter_by_name
+            assert filter_by_name["Character Cards"](Path("character.md")) is True
+            assert filter_by_name["Character Cards"](Path("character.markdown")) is True
+            assert filter_by_name["Markdown Files"](Path("character.md")) is True
+            assert filter_by_name["Markdown Files"](Path("character.markdown")) is True
+            assert filter_by_name["Markdown Files"](Path("character.json")) is False
 
     async def test_export_json_filters_are_callable(
         self, mock_app_instance, stub_characters

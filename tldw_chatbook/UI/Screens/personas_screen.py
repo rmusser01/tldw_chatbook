@@ -1745,8 +1745,16 @@ class PersonasScreen(BaseAppScreen):
             picker = EnhancedFileOpen(
                 title="Import Character Card",
                 filters=Filters(
-                    ("Character Cards", lambda p: p.suffix.lower() in (".json", ".png")),
+                    (
+                        "Character Cards",
+                        lambda p: p.suffix.lower()
+                        in (".json", ".md", ".markdown", ".png"),
+                    ),
                     ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                    (
+                        "Markdown Files",
+                        lambda p: p.suffix.lower() in (".md", ".markdown"),
+                    ),
                     ("PNG Files (with embedded data)", lambda p: p.suffix.lower() == ".png"),
                     ("All Files", lambda p: True),
                 ),
