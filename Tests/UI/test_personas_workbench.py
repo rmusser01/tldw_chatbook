@@ -1436,6 +1436,58 @@ class TestImportExport:
             assert screen.state.has_unsaved_changes is False
             assert any("Unsupported avatar image type" in msg for msg, _ in notifications)
 
+    async def test_stage_character_avatar_rejects_oversize_without_mutation(
+        self, mock_app_instance, stub_characters, tmp_path
+    ):
+        avatar = tmp_path / "avatar.png"
+        with avatar.open("wb") as avatar_file:
+            avatar_file.truncate(personas_screen_module.PERSONAS_AVATAR_MAX_BYTES + 1)
+        app = PersonasTestApp(mock_app_instance)
+        notifications = TestImportExport._capture_notifications(app)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+
+            await screen._stage_character_avatar_from_path(str(avatar))
+            await pilot.pause()
+
+            editor = screen.query_one(PersonasCharacterEditorWidget)
+            assert "image" not in editor.get_character_data()
+            assert screen.state.has_unsaved_changes is False
+            assert any("5 MB or smaller" in msg for msg, _ in notifications)
+
+    async def test_stage_character_avatar_drops_stale_read_after_editor_restarts(
+        self, mock_app_instance, stub_characters, monkeypatch, tmp_path
+    ):
+        avatar = tmp_path / "avatar.png"
+        avatar.write_bytes(b"\x89PNG original avatar")
+        app = PersonasTestApp(mock_app_instance)
+        notifications = TestImportExport._capture_notifications(app)
+
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.pause()
+            await pilot.click("#personas-library-new")
+            await pilot.pause()
+
+            async def fake_to_thread(function: Any, path: str) -> bytes:
+                screen._finish_cancel_edit()
+                await screen._begin_create_character()
+                return b"\x89PNG stale avatar"
+
+            monkeypatch.setattr(personas_screen_module.asyncio, "to_thread", fake_to_thread)
+
+            await screen._stage_character_avatar_from_path(str(avatar))
+            await pilot.pause()
+
+            editor = screen.query_one(PersonasCharacterEditorWidget)
+            assert "image" not in editor.get_character_data()
+            assert screen.state.has_unsaved_changes is False
+            assert not any("Avatar staged" in msg for msg, _ in notifications)
+
     async def test_stage_character_avatar_requires_open_editor(
         self, mock_app_instance, stub_characters, tmp_path
     ):

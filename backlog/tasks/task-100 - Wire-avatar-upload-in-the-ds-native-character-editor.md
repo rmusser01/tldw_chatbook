@@ -43,6 +43,8 @@ Reason: scoped UI workflow restoration using existing editor, file picker, dirty
 <!-- SECTION:NOTES:BEGIN -->
 Restored character avatar upload in the ds-native Personas editor using the existing staged edit workflow. The editor now emits `CharacterImageUploadRequested`, stages raw image bytes in pending character data, updates avatar status, and marks the session dirty. `PersonasScreen` opens an image-filtered picker, validates selected paths with `validate_path_simple`, reads bytes off the UI thread, constrains upload to the active character editor, and persists the staged image through the existing Save flow.
 
+Post-review hardening added a 5 MB avatar size cap before reads, a character-editor session token that drops stale async upload results, contextual staging error logs, and regression coverage for oversize and stale-session cases.
+
 ADR required: no
 ADR path: N/A
 Reason: scoped UI workflow restoration using existing editor, file picker, dirty-state, and character persistence boundaries; no schema, sync, storage, provider/runtime, or application-architecture change.

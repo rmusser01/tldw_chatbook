@@ -268,7 +268,14 @@ class PersonasCharacterEditorWidget(Container):
         self.load_character({})
 
     def set_avatar_image(self, image_data: bytes) -> None:
-        """Stage avatar image bytes for persistence on the next Save."""
+        """Stage avatar image bytes for persistence on the next Save.
+
+        Args:
+            image_data: Non-empty avatar image bytes selected by the upload flow.
+
+        Raises:
+            ValueError: If ``image_data`` is not non-empty bytes.
+        """
         if not isinstance(image_data, bytes) or not image_data:
             raise ValueError("Avatar image data must be non-empty bytes.")
         self._character_data["image"] = image_data

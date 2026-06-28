@@ -92,6 +92,8 @@ PLACEHOLDER_COPY = "This mode is not available yet. Characters and Personas are 
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 PERSONAS_AVATAR_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 PERSONAS_AVATAR_IMAGE_SUFFIX_COPY = "PNG, JPG, JPEG, WEBP, or GIF"
+PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
+PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
 
 # 80-column terminals need a tighter three-pane split than the default
 # 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
@@ -322,6 +324,7 @@ class PersonasScreen(BaseAppScreen):
         self._io_dialog_active: bool = False
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
+        self._character_editor_generation: int = 0
         self._profile_save_inflight: bool = False
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
@@ -1516,6 +1519,7 @@ class PersonasScreen(BaseAppScreen):
         # Delete and the rest are wired in follow-up tasks.
 
     async def _begin_create_character(self) -> None:
+        self._character_editor_generation += 1
         self._edit_mode = "create"
         self.state.clear_selection()
         # Change-based dirty tracking: the session starts clean; the editor
@@ -1573,6 +1577,7 @@ class PersonasScreen(BaseAppScreen):
         if record is None:
             self._notify("Character data is not loaded yet.", severity="warning")
             return
+        self._character_editor_generation += 1
         self._edit_mode = "edit"
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
@@ -1644,6 +1649,20 @@ class PersonasScreen(BaseAppScreen):
             return False
         return editor.display is True
 
+    def _character_editor_session_token(
+        self,
+    ) -> tuple[int, str, str, str | None, str | None] | None:
+        """Return the current character edit session identity, if visible."""
+        if not self._character_editor_is_active():
+            return None
+        return (
+            self._character_editor_generation,
+            self._edit_mode,
+            self.state.active_mode,
+            self.state.selected_entity_kind,
+            self.state.selected_entity_id,
+        )
+
     def _read_avatar_image_bytes(self, path: str) -> bytes:
         candidate = validate_path_simple(path, require_exists=True)
         if not candidate.is_file():
@@ -1652,13 +1671,18 @@ class PersonasScreen(BaseAppScreen):
             raise ValueError(
                 f"Unsupported avatar image type. Use {PERSONAS_AVATAR_IMAGE_SUFFIX_COPY}."
             )
+        if candidate.stat().st_size > PERSONAS_AVATAR_MAX_BYTES:
+            raise ValueError(
+                f"Avatar image must be {PERSONAS_AVATAR_MAX_SIZE_COPY} or smaller."
+            )
         data = candidate.read_bytes()
         if not data:
             raise ValueError("Avatar image file is empty.")
         return data
 
     async def _stage_character_avatar_from_path(self, path: str) -> None:
-        if not self._character_editor_is_active():
+        session_token = self._character_editor_session_token()
+        if session_token is None:
             self._notify("Open a character editor before uploading an avatar.", "warning")
             return
         try:
@@ -1670,10 +1694,25 @@ class PersonasScreen(BaseAppScreen):
             logger.error(f"Error reading avatar image from {path}: {exc}", exc_info=True)
             self._notify(f"Avatar upload failed: {exc}", "error")
             return
+        if self._character_editor_session_token() != session_token:
+            logger.debug(
+                "Avatar upload result ignored because the character editor session "
+                f"changed. path={path!r}, original_session={session_token!r}, "
+                f"current_session={self._character_editor_session_token()!r}"
+            )
+            return
         try:
             self.query_one(PersonasCharacterEditorWidget).set_avatar_image(image_data)
         except Exception as exc:
-            logger.error("Could not stage avatar image in editor.", exc_info=True)
+            logger.error(
+                "Could not stage avatar image in editor. "
+                f"path={path!r}, edit_mode={self._edit_mode!r}, "
+                f"active_mode={self.state.active_mode!r}, "
+                f"selected_kind={self.state.selected_entity_kind!r}, "
+                f"selected_id={self.state.selected_entity_id!r}, "
+                f"image_size_bytes={len(image_data)}: {exc}",
+                exc_info=True,
+            )
             self._notify(f"Avatar upload failed: {exc}", "error")
             return
         self._notify("Avatar staged. Save the character to persist it.", "information")
@@ -2167,6 +2206,7 @@ class PersonasScreen(BaseAppScreen):
             except Exception:
                 logger.warning("Could not refresh characters after a late save.", exc_info=True)
             return
+        self._character_editor_generation += 1
         self._edit_mode = "view"
         self._set_active_row_unsaved(False)
         await self.character_handler.refresh_character_list()
@@ -2305,6 +2345,7 @@ class PersonasScreen(BaseAppScreen):
         await self._run_guarded(_finish)
 
     def _finish_cancel_edit(self) -> None:
+        self._character_editor_generation += 1
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
