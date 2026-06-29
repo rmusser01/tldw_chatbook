@@ -272,6 +272,8 @@ class ConsoleComposerBar(Horizontal):
             disabled_reason.styles.max_width = 32
             disabled_reason.styles.height = 1
             disabled_reason.styles.min_height = 1
+            disabled_reason.styles.text_overflow = "ellipsis"
+            disabled_reason.styles.text_wrap = "nowrap"
         else:
             disabled_reason.update("")
             disabled_reason.styles.display = "none"
@@ -1144,6 +1146,8 @@ class ConsoleComposerBar(Horizontal):
         disabled_reason.styles.max_width = 0
         disabled_reason.styles.height = 0
         disabled_reason.styles.min_height = 0
+        disabled_reason.styles.text_overflow = "ellipsis"
+        disabled_reason.styles.text_wrap = "nowrap"
         yield disabled_reason
         actions = Horizontal(id="console-composer-actions", classes="console-composer-actions")
         actions.styles.width = 37

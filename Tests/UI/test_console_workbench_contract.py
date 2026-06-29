@@ -369,6 +369,13 @@ async def test_console_composer_shows_send_disabled_reason_near_send():
         assert "Send disabled" in reason_text
         assert "choose" in reason_text.lower()
         assert "model" in reason_text.lower()
+        actions = console.query_one("#console-composer-actions")
+        send = console.query_one("#console-send-message")
+        assert reason.region.y == actions.region.y == send.region.y
+        assert reason.region.x < actions.region.x
+        assert actions.region.x - (reason.region.x + reason.region.width) <= 2
+        assert "ellipsis" in str(reason.styles.text_overflow)
+        assert "nowrap" in str(reason.styles.text_wrap)
 
 
 @pytest.mark.asyncio

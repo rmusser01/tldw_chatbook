@@ -1163,6 +1163,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 #console-composer-title,
 #console-composer-status,
 .console-composer-recovery,
+.console-send-disabled-reason,
 .console-control-label {
     height: 1;
     min-height: 1;
@@ -1205,6 +1206,19 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 }
 
 .console-composer-recovery {
+    width: 0;
+    min-width: 0;
+    max-width: 0;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-status-warning;
+    text-style: bold;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+}
+
+.console-send-disabled-reason {
     width: 0;
     min-width: 0;
     max-width: 0;
