@@ -17,7 +17,7 @@
 
 - TASK-142 Console visual snapshot contract:
   - Command: `PATH=.venv/bin:$PATH pytest Tests/UI/test_workbench_visual_snapshots.py -q`
-  - Result: `5 passed, 1 warning` in 9.11s. Warning: existing `requests` dependency warning.
+  - Result: `5 passed, 1 warning` in 9.16s. Warning: existing `requests` dependency warning.
   - Coverage: normal density, compact density, standard-width inspector, command palette, and focus state exports.
 - TASK-142 artifact text/image checks:
   - Command: `wc -c Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.png`
@@ -61,7 +61,8 @@ TASK-142 refreshed these artifacts after the beginner and advanced-user UX revie
 - beginner recovery actions surfaced in the transcript empty state and composer instead of being hidden in the command palette.
 - a direct disabled-Send reason next to the primary action row.
 - a tighter left rail with attach/context controls above conversation history.
-- action-first inspector ordering, with run recipe, blocked impact, next action, source readiness, tools, and approvals before secondary conversation/session detail.
+- visible standard-width inspector workflow data: status, run recipe, blocked impact, next action, and provider recovery in the right rail.
+- full action-first inspector ordering remains covered by `Tests/UI/test_console_workbench_contract.py` and `Tests/UI/test_console_internals_decomposition.py`.
 
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-normal.svg`
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-compact.svg`

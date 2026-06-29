@@ -91,11 +91,37 @@ def _assert_console_density_evidence(svg: str) -> None:
 
 def _assert_console_inspector_evidence(svg: str) -> None:
     normalized_svg = unescape(svg).replace("\xa0", " ")
+    assert "Inspector" in normalized_svg
+    assert "Status: Blocked" in normalized_svg
     assert "Run recipe" in normalized_svg
     assert "Blocked impact" in normalized_svg
     assert "Next action" in normalized_svg
     assert "Choose model" in normalized_svg
+    assert "Provider: blocked" in normalized_svg
     assert "Send disabled" in normalized_svg or "Setup required" in normalized_svg
+    assert (
+        normalized_svg.index("Status: Blocked")
+        < normalized_svg.index("Run recipe")
+        < normalized_svg.index("Blocked impact")
+        < normalized_svg.index("Next action")
+        < normalized_svg.index("Provider: blocked")
+    )
+
+
+def _assert_command_palette_evidence(svg: str) -> None:
+    normalized_svg = unescape(svg).replace("\xa0", " ")
+    assert "Console Workbench Command Palette" in normalized_svg
+    assert "Quick Actions: New Chat Conversation" in normalized_svg
+    assert "Tab Navigation: Switch to Console" in normalized_svg
+    assert "Open Console for Live agent conversations" in normalized_svg
+
+
+def _assert_console_focus_evidence(svg: str) -> None:
+    normalized_svg = unescape(svg).replace("\xa0", " ")
+    assert "Console Workbench Focus State" in normalized_svg
+    assert "Settings" in normalized_svg
+    assert "Provider:" in normalized_svg
+    assert "Choose model" in normalized_svg
 
 
 @pytest.mark.parametrize("density", ("normal", "compact"))
@@ -127,6 +153,9 @@ async def test_console_workbench_standard_width_inspector_snapshot() -> None:
         async with app.run_test(size=(128, 40)) as pilot:
             await _open_console(app, pilot)
 
+            right_rail = app.screen.query_one("#console-right-rail")
+            assert right_rail.display is True
+            assert right_rail.region.width > 0
             svg = app.export_screenshot(
                 title="Console Workbench Standard Width Inspector",
                 simplify=True,
@@ -149,12 +178,12 @@ async def test_console_workbench_command_palette_snapshot() -> None:
                 screen.__class__.__name__.lower() for screen in app.screen_stack
             }
             assert any("command" in name and "palette" in name for name in stack_names)
-            _assert_svg_healthy(
-                app.export_screenshot(
-                    title="Console Workbench Command Palette",
-                    simplify=True,
-                )
+            svg = app.export_screenshot(
+                title="Console Workbench Command Palette",
+                simplify=True,
             )
+            _assert_svg_healthy(svg)
+            _assert_command_palette_evidence(svg)
 
 
 @pytest.mark.asyncio
@@ -169,9 +198,9 @@ async def test_console_workbench_focus_state_snapshot() -> None:
             await pilot.pause()
 
             assert app.focused is settings_action
-            _assert_svg_healthy(
-                app.export_screenshot(
-                    title="Console Workbench Focus State",
-                    simplify=True,
-                )
+            svg = app.export_screenshot(
+                title="Console Workbench Focus State",
+                simplify=True,
             )
+            _assert_svg_healthy(svg)
+            _assert_console_focus_evidence(svg)
