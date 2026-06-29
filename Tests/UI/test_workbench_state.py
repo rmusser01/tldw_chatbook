@@ -73,6 +73,26 @@ def test_workbench_state_rejects_normalized_action_id_collisions():
         )
 
 
+def test_workbench_state_rejects_non_canonical_ids_before_widgets_mount():
+    with pytest.raises(ValueError, match="non-canonical action id"):
+        WorkbenchState(
+            header=WorkbenchHeaderState(title="Console"),
+            actions=(WorkbenchAction(id="run now", label="Run"),),
+        )
+
+    with pytest.raises(ValueError, match="non-canonical mode id"):
+        WorkbenchState(
+            header=WorkbenchHeaderState(title="Console"),
+            modes=(WorkbenchMode(id="rag mode", label="RAG"),),
+        )
+
+    with pytest.raises(ValueError, match="non-canonical pane id"):
+        WorkbenchState(
+            header=WorkbenchHeaderState(title="Console"),
+            panes=(WorkbenchPaneState(id="right rail", title="Inspector"),),
+        )
+
+
 def test_workbench_state_rejects_duplicate_mode_and_pane_ids():
     with pytest.raises(ValueError, match="duplicate mode id"):
         WorkbenchState(

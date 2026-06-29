@@ -52,6 +52,15 @@ def _raise_on_duplicate_ids(
         raise ValueError(f"duplicate {normalized_label}{label} id: {duplicate_ids}")
 
 
+def _raise_on_non_canonical_ids(values: tuple[str, ...], *, label: str) -> None:
+    """Raise if values are not already safe for Textual widget IDs."""
+    invalid = sorted(
+        value for value in values if value != normalize_workbench_id(value)
+    )
+    if invalid:
+        raise ValueError(f"non-canonical {label} id: {', '.join(invalid)}")
+
+
 @dataclass(frozen=True)
 class WorkbenchAction:
     """A visible Workbench command."""
@@ -138,6 +147,7 @@ class WorkbenchState:
         action_ids = tuple(action.id for action in self.actions)
         mode_ids = tuple(mode.id for mode in self.modes)
         pane_ids = tuple(pane.id for pane in self.panes)
+        route_ids = (self.route_id,) if self.route_id else ()
 
         _raise_on_duplicate_ids(action_ids, label="action")
         _raise_on_duplicate_ids(mode_ids, label="mode")
@@ -146,3 +156,8 @@ class WorkbenchState:
         _raise_on_duplicate_ids(action_ids, label="action", normalized=True)
         _raise_on_duplicate_ids(mode_ids, label="mode", normalized=True)
         _raise_on_duplicate_ids(pane_ids, label="pane", normalized=True)
+
+        _raise_on_non_canonical_ids(action_ids, label="action")
+        _raise_on_non_canonical_ids(mode_ids, label="mode")
+        _raise_on_non_canonical_ids(pane_ids, label="pane")
+        _raise_on_non_canonical_ids(route_ids, label="route")
