@@ -1180,11 +1180,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Resolve legacy app-level queries against the active pushed screen when needed."""
         try:
             return super().query_one(selector, expect_type)
-        except NoMatches:
+        except NoMatches as error:
             try:
                 active_screen = self.screen
             except Exception:
-                raise
+                raise error
             return active_screen.query_one(selector, expect_type)
 
     # RAG expansion provider reactive

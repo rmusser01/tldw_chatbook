@@ -429,3 +429,35 @@ async def test_console_shell_uses_normal_workbench_density_by_default():
         shell = console.query_one("#console-shell")
         assert shell.has_class("density-normal")
         assert not shell.has_class("density-compact")
+
+
+@pytest.mark.asyncio
+async def test_console_shell_uses_legacy_density_setting_fallback():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.app_config.setdefault("appearance", {})["density"] = "compact"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        shell = console.query_one("#console-shell")
+        assert shell.has_class("density-compact")
+        assert not shell.has_class("density-normal")
+
+
+@pytest.mark.asyncio
+async def test_console_shell_invalid_workbench_density_falls_back_to_normal():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.app_config.setdefault("appearance", {})["ui_density"] = "spacious"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        shell = console.query_one("#console-shell")
+        assert shell.has_class("density-normal")
+        assert not shell.has_class("density-compact")
