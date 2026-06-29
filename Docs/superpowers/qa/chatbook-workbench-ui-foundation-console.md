@@ -42,9 +42,9 @@
 
 These screenshots were generated from the same Textual `export_screenshot()` path used by `Tests/UI/test_workbench_visual_snapshots.py`.
 
-The TASK-140 density correction refreshed these artifacts after the first visual review found that Console still looked like the old UI with extra passive spacing. The corrected artifacts now show:
+The TASK-140 density correction refreshed these artifacts after the first visual review found that Console still looked like the old UI with extra passive spacing. TASK-141 then removed the remaining empty Console destination-header band by keeping the header mounted only as a hidden compatibility seam. The corrected artifacts now show:
 
-- a one-row Console header instead of a multi-row passive title block.
+- no visible Console-only destination header band between global navigation and the mode/action strip.
 - visible provider, model, assistant/persona, RAG, source, tools, and approval chips.
 - visible Settings, Attach, Library RAG, and Help controls in the Console-owned control strip.
 - action-first inspector ordering, with run/source/tool/approval actions before secondary conversation/session detail.
@@ -54,6 +54,10 @@ The TASK-140 density correction refreshed these artifacts after the first visual
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-compact.svg`
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-command-palette.svg`
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-focus-state.svg`
+- `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-normal.png`
+- `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-compact.png`
+- `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-command-palette.png`
+- `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-focus-state.png`
 
 Verification command:
 
@@ -67,10 +71,14 @@ Result: all four files are non-empty SVGs; normal and focus captures contain the
 
 TASK-140 corrective visual artifact sizes:
 
-- `console-workbench-command-palette.svg`: 45,072 bytes
-- `console-workbench-compact.svg`: 94,332 bytes
-- `console-workbench-focus-state.svg`: 97,734 bytes
-- `console-workbench-normal.svg`: 97,237 bytes
+- `console-workbench-command-palette.svg`: 44,774 bytes
+- `console-workbench-compact.svg`: 98,803 bytes
+- `console-workbench-focus-state.svg`: 101,607 bytes
+- `console-workbench-normal.svg`: 101,108 bytes
+- `console-workbench-command-palette.png`: 205,773 bytes
+- `console-workbench-compact.png`: 175,475 bytes
+- `console-workbench-focus-state.png`: 176,406 bytes
+- `console-workbench-normal.png`: 175,222 bytes
 
 ## Residual Risks
 

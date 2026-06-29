@@ -3787,6 +3787,15 @@ class ChatScreen(BaseAppScreen):
         return widget
 
     @staticmethod
+    def _hidden_console_workbench_widget(widget: Any) -> Any:
+        """Keep Console Workbench compatibility seams mounted without layout cost."""
+        widget.styles.display = "none"
+        widget.styles.height = 0
+        widget.styles.min_height = 0
+        widget.styles.max_height = 0
+        return widget
+
+    @staticmethod
     def _console_mode_summary(control_state: ConsoleControlState) -> str:
         def readiness_count(label: str) -> str:
             value = label.partition(":")[2].strip()
@@ -4324,13 +4333,12 @@ class ChatScreen(BaseAppScreen):
             f"density-{workbench_state.density}"
         )
         with Vertical(id="console-shell", classes=shell_classes):
-            yield self._compact_console_workbench_widget(
+            yield self._hidden_console_workbench_widget(
                 DestinationHeader(
                     workbench_state.header,
                     id="console-workbench-header",
                     classes="workbench-header",
-                ),
-                height=1,
+                )
             )
             yield self._compact_console_workbench_widget(
                 ModeStrip(

@@ -85,6 +85,10 @@ def _children_in_display_order(widget) -> list[str]:
     return ids
 
 
+def _style_scalar_value(value) -> float:
+    return float(getattr(value, "value", value))
+
+
 def _control_state() -> ConsoleControlState:
     return ConsoleControlState(
         provider_label="Provider: llama.cpp",
@@ -95,6 +99,25 @@ def _control_state() -> ConsoleControlState:
         tools_label="Tools: 0",
         approvals_label="Approvals: 0",
     )
+
+
+@pytest.mark.asyncio
+async def test_console_workbench_header_seam_has_no_visible_layout_cost():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        header = console.query_one("#console-workbench-header")
+        assert not _is_displayed(header)
+        assert _style_scalar_value(header.styles.height) == 0
+        assert _style_scalar_value(header.styles.min_height) == 0
+        assert _is_displayed(console.query_one("#console-workbench-mode-strip"))
+        assert _is_displayed(console.query_one("#console-workbench-command-strip"))
+        assert _is_displayed(console.query_one("#console-control-bar"))
 
 
 @pytest.mark.asyncio
