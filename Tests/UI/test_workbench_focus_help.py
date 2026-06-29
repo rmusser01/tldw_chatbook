@@ -1,5 +1,7 @@
-import pytest
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 from textual.app import App, ComposeResult
 
 from tldw_chatbook.UI.Workbench.focus import WorkbenchFocusRegistry
@@ -18,6 +20,13 @@ def test_focus_registry_cycles_visible_panes_only():
     assert registry.next_after("transcript", hidden={"inspector"}) == "composer"
     assert registry.next_after("composer", hidden={"inspector"}) == "context"
     assert registry.next_after("context", hidden=set(registry.pane_order)) is None
+
+
+def test_workbench_css_contains_normal_and_compact_density():
+    css = Path("tldw_chatbook/css/components/_workbench.tcss").read_text()
+
+    assert ".density-normal" in css
+    assert ".density-compact" in css
 
 
 def test_help_state_lists_visible_actions_not_palette_only():

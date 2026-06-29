@@ -122,7 +122,9 @@ from ...UI.Workbench import (
     WorkbenchHelpPanel,
     WorkbenchHelpState,
 )
+from ...UI.Workbench.focus import WorkbenchFocusRegistry
 from ...state.ui_state import UIState
+from ...Widgets.AppFooterStatus import AppFooterStatus
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
@@ -187,6 +189,20 @@ CONSOLE_READY_EMPTY_TRANSCRIPT_COPY = (
 CONSOLE_PROVIDER_ADD_API_KEY_LABEL = "Add API Key"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
+CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
+    (
+        "console-left-rail",
+        "console-transcript-surface",
+        "console-right-rail",
+        "console-native-composer",
+    )
+)
+CONSOLE_WORKBENCH_SHORTCUTS = (
+    ("F6", "next pane"),
+    ("F1", "help"),
+    ("Enter", "send"),
+    ("Ctrl+P", "palette"),
+)
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -299,6 +315,7 @@ class ChatScreen(BaseAppScreen):
 
     BINDINGS = [
         *BaseAppScreen.BINDINGS,
+        Binding("f1", "show_workbench_help", "Help", show=False),
         Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
         Binding(
             "shift+f6",
@@ -579,14 +596,117 @@ class ChatScreen(BaseAppScreen):
                     route_id=workbench_state.route_id,
                     title="Console",
                     actions=workbench_state.actions,
-                    shortcuts=(
-                        ("Enter", "Send composer draft"),
-                        ("Ctrl+U", "Clear composer draft"),
-                        ("F1", "Show this help"),
-                    ),
+                    shortcuts=CONSOLE_WORKBENCH_SHORTCUTS,
                 )
             )
         )
+
+    async def action_focus_next_workbench_pane(self) -> None:
+        """Move focus to the next visible Console Workbench pane."""
+        hidden = {
+            pane_id
+            for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
+            if not self._is_console_widget_displayed(pane_id)
+        }
+        current = self._console_workbench_focus_id_for_widget(self.app.focused)
+        target_id = CONSOLE_FOCUS_REGISTRY.next_after(current, hidden=hidden)
+        if target_id is None:
+            return
+        self._focus_console_workbench_target(target_id)
+
+    def _console_workbench_density(self) -> str:
+        """Return the supported Console Workbench density from app config."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        appearance = app_config.get("appearance", {})
+        if not isinstance(appearance, dict):
+            return "normal"
+        density = str(
+            appearance.get("ui_density", appearance.get("density", "normal")) or ""
+        ).strip().lower()
+        return "compact" if density == "compact" else "normal"
+
+    def _is_console_widget_displayed(self, widget_id: str) -> bool:
+        """Return True when a Console focus target and its parents are visible."""
+        try:
+            current = self.query_one(f"#{widget_id}")
+        except QueryError:
+            return False
+        while current is not None:
+            if current.display is False or current.styles.display == "none":
+                return False
+            current = getattr(current, "parent", None)
+        return True
+
+    def _console_workbench_focus_id_for_widget(
+        self,
+        focused: object | None,
+    ) -> str | None:
+        """Return the owning Console Workbench pane id for a focused widget."""
+        current = focused
+        while current is not None:
+            current_id = getattr(current, "id", None)
+            if current_id in CONSOLE_FOCUS_REGISTRY.pane_order:
+                return str(current_id)
+            current = getattr(current, "parent", None)
+        return None
+
+    def _focus_console_workbench_target(self, widget_id: str) -> None:
+        """Focus a visible Console Workbench target if it is available."""
+        if not self._is_console_widget_displayed(widget_id):
+            return
+        try:
+            widget = self.query_one(f"#{widget_id}")
+        except QueryError:
+            return
+        widget.can_focus = True
+        widget.focus()
+        self._last_console_workbench_focus_id = widget_id
+
+    def _ensure_console_workbench_targets_focusable(self) -> None:
+        """Make mounted visible Console Workbench focus targets focusable."""
+        for widget_id in CONSOLE_FOCUS_REGISTRY.pane_order:
+            if not self._is_console_widget_displayed(widget_id):
+                continue
+            try:
+                self.query_one(f"#{widget_id}").can_focus = True
+            except QueryError:
+                continue
+
+    def _restore_console_workbench_focus(self) -> None:
+        """Restore focus to a visible Console Workbench pane after activation."""
+        self._ensure_console_workbench_targets_focusable()
+        current = self._console_workbench_focus_id_for_widget(self.app.focused)
+        if current is not None and self._is_console_widget_displayed(current):
+            self._last_console_workbench_focus_id = current
+            return
+        for widget_id in (
+            self._last_console_workbench_focus_id,
+            "console-native-composer",
+            "console-transcript-surface",
+        ):
+            if widget_id and self._is_console_widget_displayed(widget_id):
+                self._focus_console_workbench_target(widget_id)
+                return
+
+    def _register_console_footer_shortcuts(self) -> None:
+        """Register Console Workbench shortcuts with the app footer if mounted."""
+        try:
+            footer = self.app.query_one(AppFooterStatus)
+        except QueryError:
+            return
+        set_shortcuts = getattr(footer, "set_workbench_shortcuts", None)
+        if callable(set_shortcuts):
+            set_shortcuts(source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS)
+
+    def _clear_console_footer_shortcuts(self) -> None:
+        """Clear Console Workbench shortcuts from the app footer if mounted."""
+        try:
+            footer = self.app.query_one(AppFooterStatus)
+        except QueryError:
+            return
+        clear_shortcuts = getattr(footer, "clear_shortcut_context", None)
+        if callable(clear_shortcuts):
+            clear_shortcuts(source="console")
 
     def _open_console_session_rename_modal(self, session_id: str) -> None:
         """Open a modal for viewing and editing the active Console tab title."""
@@ -731,6 +851,7 @@ class ChatScreen(BaseAppScreen):
         self._console_sync_in_progress = False
         self._console_sync_requested = False
         self._last_native_transcript_refresh_key: tuple[int, tuple[Any, ...]] | None = None
+        self._last_console_workbench_focus_id: str | None = None
         self._console_guidance_dismissed = False
         self.ui_state = UIState()
         self._load_sidebar_state()
@@ -3705,6 +3826,7 @@ class ChatScreen(BaseAppScreen):
             can_send=can_send,
             can_stop=can_stop,
             can_save_chatbook=self._console_chatbook_action_available(),
+            density=self._console_workbench_density(),
         )
 
     def _console_provider_blocker_copy(self) -> str:
@@ -4197,7 +4319,11 @@ class ChatScreen(BaseAppScreen):
             pending_launch,
         )
         workbench_state = self._build_console_workbench_state(control_state)
-        with Vertical(id="console-shell", classes="workbench-frame console-workbench-frame"):
+        shell_classes = (
+            "workbench-frame console-workbench-frame "
+            f"density-{workbench_state.density}"
+        )
+        with Vertical(id="console-shell", classes=shell_classes):
             yield self._compact_console_workbench_widget(
                 DestinationHeader(
                     workbench_state.header,
@@ -4285,6 +4411,7 @@ class ChatScreen(BaseAppScreen):
                     id="console-left-rail",
                     classes="console-region destination-workbench-pane",
                 )
+                left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
                 # Compact contract: left rail + main column + the collapsed
                 # inspector handle (11) must fit a 100-column terminal.
@@ -4432,6 +4559,7 @@ class ChatScreen(BaseAppScreen):
                     id="console-right-rail",
                     classes="console-region destination-workbench-pane",
                 )
+                right_rail.can_focus = True
                 right_rail.styles.width = "4fr"
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
@@ -4535,6 +4663,7 @@ class ChatScreen(BaseAppScreen):
         """Run diagnostics when first mounted (only once)."""
         # Call parent's on_mount
         super().on_mount()
+        self._register_console_footer_shortcuts()
         
         if not self._diagnostics_run and self.chat_window:
             self._diagnostics_run = True
@@ -4545,13 +4674,13 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
         self.set_timer(0.15, self._consume_pending_chat_handoff)
-        self._focus_console_composer_if_needed(force=True)
         self.call_after_refresh(self._sync_native_console_chat_ui)
-        self.call_after_refresh(lambda: self._focus_console_composer_if_needed(force=True))
-        self.set_timer(0.2, self._focus_console_composer_if_needed)
+        self.call_after_refresh(self._restore_console_workbench_focus)
+        self.set_timer(0.2, self._restore_console_workbench_focus)
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        self._clear_console_footer_shortcuts()
         self._stop_console_transcript_sync_timer()
         controller = self._console_chat_controller
         if controller is not None:
@@ -7064,6 +7193,8 @@ class ChatScreen(BaseAppScreen):
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
         self.sync_task_resume_state()
+        self._register_console_footer_shortcuts()
+        self.call_after_refresh(self._restore_console_workbench_focus)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:

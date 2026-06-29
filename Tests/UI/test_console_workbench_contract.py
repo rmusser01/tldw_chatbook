@@ -1,10 +1,11 @@
 import pytest
-from textual.app import App
+from textual.app import App, ComposeResult
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
 )
@@ -14,6 +15,18 @@ class ConsoleHarness(App):
     def __init__(self, app_instance):
         super().__init__()
         self.app_instance = app_instance
+
+    async def on_mount(self) -> None:
+        await self.push_screen(ChatScreen(self.app_instance))
+
+
+class ConsoleFooterHarness(App):
+    def __init__(self, app_instance):
+        super().__init__()
+        self.app_instance = app_instance
+
+    def compose(self) -> ComposeResult:
+        yield AppFooterStatus(id="app-footer-status")
 
     async def on_mount(self) -> None:
         await self.push_screen(ChatScreen(self.app_instance))
@@ -40,6 +53,21 @@ def _is_displayed(widget) -> bool:
             return False
         current = getattr(current, "parent", None)
     return True
+
+
+def _visible_workbench_focus_ids(console: ChatScreen) -> set[str]:
+    candidates = {
+        "console-left-rail",
+        "console-transcript-surface",
+        "console-right-rail",
+        "console-native-composer",
+    }
+    visible: set[str] = set()
+    for widget_id in candidates:
+        widget = console.query_one(f"#{widget_id}")
+        if _is_displayed(widget):
+            visible.add(widget_id)
+    return visible
 
 
 def _control_state() -> ConsoleControlState:
@@ -270,3 +298,134 @@ async def test_console_workbench_send_action_disables_during_active_run():
         assert send_action.disabled is True
         assert send_action.has_class("is-primary") is False
         assert stop_action.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_f6_cycles_visible_workbench_panes():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        visible_focus_ids = _visible_workbench_focus_ids(console)
+        assert "console-transcript-surface" in visible_focus_ids
+        assert "console-native-composer" in visible_focus_ids
+
+        await pilot.press("f6")
+        await pilot.pause()
+        first_focus = pilot.app.focused
+        assert first_focus is not None
+        assert first_focus.id in visible_focus_ids
+
+        await pilot.press("f6")
+        await pilot.pause()
+        second_focus = pilot.app.focused
+        assert second_focus is not None
+        assert second_focus.id in visible_focus_ids
+        assert second_focus.id != first_focus.id
+
+
+@pytest.mark.asyncio
+async def test_console_route_switch_restores_workbench_focus():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        console.query_one("#console-native-composer").focus()
+        await pilot.pause()
+        assert pilot.app.focused is not None
+        assert pilot.app.focused.id == "console-native-composer"
+
+        await console.remove()
+        await pilot.pause()
+        await host.push_screen(ChatScreen(app))
+        await pilot.pause()
+
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+        visible_focus_ids = _visible_workbench_focus_ids(console)
+        assert pilot.app.focused is not None
+        assert pilot.app.focused.id in visible_focus_ids
+
+
+@pytest.mark.asyncio
+async def test_console_f1_help_lists_visible_actions():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        await pilot.press("f1")
+        await pilot.pause()
+
+        panel = host.screen.query_one("#workbench-help-panel")
+        assert _is_displayed(panel)
+        body = str(host.screen.query_one("#workbench-help-body").renderable)
+        assert "Settings" in body
+        assert "Attach context" in body
+        assert "Run Library RAG" in body
+        assert "F6" in body
+        assert "next pane" in body
+        assert "Ctrl+P" in body
+
+
+@pytest.mark.asyncio
+async def test_console_registers_footer_workbench_shortcuts():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleFooterHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+        footer = host.query_one(AppFooterStatus)
+
+        assert footer.shortcut_text == (
+            "F6 next pane | F1 help | Enter send | Ctrl+P palette"
+        )
+
+        await console.remove()
+        await pilot.pause()
+
+        assert footer.shortcut_text == AppFooterStatus.DEFAULT_SHORTCUT_TEXT
+
+
+@pytest.mark.asyncio
+async def test_console_shell_uses_configured_workbench_density():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.app_config.setdefault("appearance", {})["ui_density"] = "compact"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        shell = console.query_one("#console-shell")
+        assert shell.has_class("density-compact")
+        assert not shell.has_class("density-normal")
+
+
+@pytest.mark.asyncio
+async def test_console_shell_uses_normal_workbench_density_by_default():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        shell = console.query_one("#console-shell")
+        assert shell.has_class("density-normal")
+        assert not shell.has_class("density-compact")
