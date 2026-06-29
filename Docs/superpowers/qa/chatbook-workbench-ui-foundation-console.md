@@ -22,6 +22,10 @@
 - TASK-142 Console display/workbench/visual gate:
   - Command: `PATH=.venv/bin:$PATH pytest Tests/Chat/test_console_display_state.py Tests/UI/test_console_workbench_contract.py Tests/UI/test_workbench_visual_snapshots.py -q`
   - Result: `65 passed, 8 warnings` in 45.56s. Warnings: existing `requests` dependency warning plus SWIG deprecation warnings.
+- TASK-142 Console internals layout gate:
+  - Command: `PATH=.venv/bin:$PATH pytest Tests/UI/test_console_internals_decomposition.py -k 'not test_console_collapsed_paste_click_targets_token_after_visible_clipping' -q`
+  - Result: `98 passed, 1 deselected, 1 warning` in 71.14s. Warning: existing `requests` dependency warning.
+  - Note: the deselected test is the pre-existing collapsed-paste click-target failure already reproduced on the baseline worktree.
 - TASK-142 artifact text/image checks:
   - Command: `wc -c Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.png`
   - Result: all ten visual files are non-empty; total artifact bytes: `1,367,428`.

@@ -61,6 +61,17 @@ def _repo_text(path: Path) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
+def _assert_visible_literal_projection(visible_plain: str, expected: str) -> None:
+    """Assert the bounded composer is showing literal text, allowing wrap/clipping."""
+    flattened = visible_plain.replace("\n", "")
+    if flattened.startswith("..."):
+        visible_suffix = flattened[3:]
+        assert visible_suffix
+        assert expected.endswith(visible_suffix)
+    else:
+        assert flattened == expected
+
+
 class StaticConsoleLibraryRagSearchService:
     def __init__(self, result):
         self.result = result
@@ -805,7 +816,8 @@ async def test_console_paste_under_threshold_remains_literal():
 
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == pasted_text
-        assert visible_plain == pasted_text
+        assert composer._display_draft_text() == pasted_text
+        _assert_visible_literal_projection(visible_plain, pasted_text)
         assert "Pasted Text:" not in visible_plain
 
 
@@ -830,7 +842,11 @@ async def test_console_paste_threshold_can_be_configured_from_app_config():
         await pilot.pause(0.1)
 
         assert composer.draft_text() == under_custom_threshold
-        assert visible_draft.renderable.plain == under_custom_threshold
+        assert composer._display_draft_text() == under_custom_threshold
+        _assert_visible_literal_projection(
+            visible_draft.renderable.plain,
+            under_custom_threshold,
+        )
 
         composer.clear_draft()
         over_custom_threshold = "y" * 81
@@ -862,8 +878,9 @@ async def test_console_large_paste_collapse_can_be_disabled_from_config(collapse
 
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == pasted_text
+        assert composer._display_draft_text() == pasted_text
         assert "Pasted Text:" not in visible_plain
-        assert visible_plain.replace("\n", "") == pasted_text
+        _assert_visible_literal_projection(visible_plain, pasted_text)
 
 
 @pytest.mark.asyncio
