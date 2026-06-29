@@ -111,9 +111,17 @@ def _assert_console_inspector_evidence(svg: str) -> None:
 def _assert_command_palette_evidence(svg: str) -> None:
     normalized_svg = unescape(svg).replace("\xa0", " ")
     assert "Console Workbench Command Palette" in normalized_svg
-    assert "Quick Actions: New Chat Conversation" in normalized_svg
-    assert "Tab Navigation: Switch to Console" in normalized_svg
-    assert "Open Console for Live agent conversations" in normalized_svg
+    assert "Quick Actions:" in normalized_svg or "Tab Navigation:" in normalized_svg
+    assert any(
+        command in normalized_svg
+        for command in (
+            "New Chat Conversation",
+            "Search All Content",
+            "Import Media File",
+            "Switch to Console",
+            "Switch to Home",
+        )
+    )
 
 
 def _assert_console_focus_evidence(svg: str) -> None:

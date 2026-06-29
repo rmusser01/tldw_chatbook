@@ -17,8 +17,11 @@
 
 - TASK-142 Console visual snapshot contract:
   - Command: `PATH=.venv/bin:$PATH pytest Tests/UI/test_workbench_visual_snapshots.py -q`
-  - Result: `5 passed, 1 warning` in 9.16s. Warning: existing `requests` dependency warning.
+  - Result: `5 passed, 1 warning` in 9.27s. Warning: existing `requests` dependency warning.
   - Coverage: normal density, compact density, standard-width inspector, command palette, and focus state exports.
+- TASK-142 Console display/workbench/visual gate:
+  - Command: `PATH=.venv/bin:$PATH pytest Tests/Chat/test_console_display_state.py Tests/UI/test_console_workbench_contract.py Tests/UI/test_workbench_visual_snapshots.py -q`
+  - Result: `65 passed, 8 warnings` in 45.56s. Warnings: existing `requests` dependency warning plus SWIG deprecation warnings.
 - TASK-142 artifact text/image checks:
   - Command: `wc -c Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.png`
   - Result: all ten visual files are non-empty; total artifact bytes: `1,367,428`.
