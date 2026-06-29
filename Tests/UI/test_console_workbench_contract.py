@@ -498,6 +498,29 @@ async def test_console_recovery_action_is_visible_when_provider_setup_blocks_sen
 
 
 @pytest.mark.asyncio
+async def test_console_blocked_setup_recovery_has_primary_choose_model_action():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": ""},
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = ""
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        recovery = console.query_one("#workbench-recovery-callout")
+        assert _is_displayed(recovery)
+        action = console.query_one("#workbench-recovery-action")
+        assert _is_displayed(action)
+        assert str(action.label) == "Choose model"
+        assert action.disabled is False
+
+
+@pytest.mark.asyncio
 async def test_console_recovery_action_button_is_visible_and_actionable():
     app = _build_test_app()
     app.app_config = {
