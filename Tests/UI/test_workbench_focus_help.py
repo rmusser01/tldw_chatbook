@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 from textual.app import App, ComposeResult
 
 from tldw_chatbook.UI.Workbench.focus import WorkbenchFocusRegistry
@@ -74,3 +75,31 @@ async def test_help_panel_renders_body_and_close_button():
         await pilot.pause()
 
         assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_app_workbench_delegation_awaits_async_screen_actions():
+    from tldw_chatbook import app as app_module
+
+    calls: list[str] = []
+
+    class AsyncScreen:
+        async def action_show_workbench_help(self) -> None:
+            calls.append("help")
+
+        async def action_focus_next_workbench_pane(self) -> None:
+            calls.append("focus")
+
+    app = SimpleNamespace(
+        screen=AsyncScreen(),
+        notify=lambda *_args, **_kwargs: None,
+    )
+
+    result = app_module.TldwCli.action_show_workbench_help(app)
+    if hasattr(result, "__await__"):
+        await result
+    result = app_module.TldwCli.action_focus_next_workbench_pane(app)
+    if hasattr(result, "__await__"):
+        await result
+
+    assert calls == ["help", "focus"]

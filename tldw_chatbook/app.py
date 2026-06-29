@@ -6855,22 +6855,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 timeout=5
             )
     
-    def action_show_workbench_help(self) -> None:
+    async def action_show_workbench_help(self) -> None:
         """Delegate contextual help to the active Workbench screen."""
         handler = getattr(self.screen, "action_show_workbench_help", None)
         if callable(handler):
-            handler()
+            result = handler()
+            if inspect.isawaitable(result):
+                await result
             return
         self.notify(
             "No contextual help is available for this screen.",
             severity="information",
         )
 
-    def action_focus_next_workbench_pane(self) -> None:
+    async def action_focus_next_workbench_pane(self) -> None:
         """Delegate pane focus cycling to the active Workbench screen."""
         handler = getattr(self.screen, "action_focus_next_workbench_pane", None)
         if callable(handler):
-            handler()
+            result = handler()
+            if inspect.isawaitable(result):
+                await result
             return
         self.notify(
             "No workbench pane focus target is available.",
