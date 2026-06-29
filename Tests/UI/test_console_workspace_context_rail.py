@@ -520,6 +520,20 @@ def test_console_workspace_conversation_result_copy_is_explicit() -> None:
     )
 
 
+def _configure_native_ready_console(app, model: str = "local-model") -> None:
+    app.app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": model},
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": model,
+            },
+        },
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = model
+
+
 @pytest.mark.asyncio
 async def test_console_workspace_conversations_render_bounded_expanded_section() -> None:
     app = _build_test_app()
@@ -678,6 +692,7 @@ async def test_console_workspace_conversations_clear_requires_enabled_search() -
 @pytest.mark.asyncio
 async def test_console_workspace_many_conversations_keep_lower_status_reachable() -> None:
     app = _build_test_app()
+    _configure_native_ready_console(app)
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     for index in range(40):

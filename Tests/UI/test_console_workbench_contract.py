@@ -1,7 +1,30 @@
+import pytest
+from textual.app import App
+
+from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
 )
+
+
+class ConsoleHarness(App):
+    def __init__(self, app_instance):
+        super().__init__()
+        self.app_instance = app_instance
+
+    async def on_mount(self) -> None:
+        await self.push_screen(ChatScreen(self.app_instance))
+
+
+def _is_displayed(widget) -> bool:
+    current = widget
+    while current is not None:
+        if current.display is False or current.styles.display == "none":
+            return False
+        current = getattr(current, "parent", None)
+    return True
 
 
 def _control_state() -> ConsoleControlState:
@@ -108,3 +131,74 @@ def test_console_workbench_state_disables_send_when_provider_is_blocked():
     assert actions["send"].disabled is True
     assert actions["send"].primary is False
     assert actions["stop"].disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_core_controls_are_visible_without_command_palette():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        for selector in (
+            "#workbench-action-settings",
+            "#workbench-action-attach-context",
+            "#workbench-action-run-library-rag",
+            "#workbench-action-help",
+            "#console-native-composer",
+        ):
+            widget = console.query_one(selector)
+            assert _is_displayed(widget), selector
+
+
+@pytest.mark.asyncio
+async def test_console_recovery_action_is_visible_when_provider_setup_blocks_send():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": ""},
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = ""
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        recovery = console.query_one("#workbench-recovery-callout")
+        assert _is_displayed(recovery)
+        recovery_text = " ".join(
+            getattr(child.renderable, "plain", str(getattr(child, "renderable", "")))
+            for child in recovery.query("Static")
+        )
+        assert "Send is blocked" in recovery_text
+
+
+@pytest.mark.asyncio
+async def test_console_recovery_action_button_is_visible_and_actionable():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": ""},
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = ""
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
+
+        action = console.query_one("#workbench-recovery-action")
+        assert _is_displayed(action)
+        assert not action.disabled
+        await pilot.click("#workbench-recovery-action")
+        await pilot.pause()
+
+        assert host.screen.query("#console-settings-modal") or host.screen.query(
+            "#settings-screen"
+        )

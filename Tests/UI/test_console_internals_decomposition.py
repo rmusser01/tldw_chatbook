@@ -268,13 +268,14 @@ async def test_console_hidden_control_bar_does_not_reserve_a_row():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-grid")
 
-        mode_bar = console.query_one("#console-mode-bar")
         control_bar = console.query_one("#console-control-bar")
+        command_strip = console.query_one("#console-workbench-command-strip")
         workbench = console.query_one("#console-workspace-grid")
 
         assert control_bar.styles.display == "none"
         assert control_bar.region.height == 0
-        assert workbench.region.y <= mode_bar.region.y + mode_bar.region.height
+        assert command_strip.display is True
+        assert workbench.region.y >= command_strip.region.y + command_strip.region.height
 
 
 @pytest.mark.asyncio
@@ -1586,8 +1587,14 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
         start_here = console.query_one("#console-start-here", Static)
         action_hints = console.query_one("#console-action-hints", Static)
         provider_strip = console.query_one("#console-provider-recovery-strip")
+        recovery = console.query_one("#workbench-recovery-callout")
+        recovery_action = console.query_one("#workbench-recovery-action", Button)
         transcript = console.query_one("#console-native-transcript")
-        assert provider_strip.region.y < transcript.region.y
+        assert provider_strip.styles.display == "none"
+        assert recovery.display is True
+        assert recovery.region.y < transcript.region.y
+        assert recovery_action.display is True
+        assert str(recovery_action.label) == "Add API Key"
         assert start_here.styles.display == "none"
         assert action_hints.styles.display == "none"
 
@@ -1596,7 +1603,7 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             "Provider setup needed",
             "OpenAI missing API key",
             "Impact: Send is blocked until setup is finished.",
-            "Action: Add API Key",
+            "Add API Key",
             "Start here",
             "1. Finish provider setup",
             "2. Attach Library, runs, Artifacts, or RAG",
@@ -1617,10 +1624,11 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
         assert "Provider: OpenAI is not ready" not in text
         assert "Provider setup is shown in the recovery strip above." not in text
         blocker = console.query_one("#console-provider-blocker", Static)
-        blocker_text = getattr(blocker.render(), "plain", str(blocker.render()))
-        assert blocker_text.startswith("Provider setup needed: OpenAI missing API key")
-        assert "Impact: Send is blocked until setup is finished." in blocker_text
-        assert blocker_text.endswith("Action: Add API Key")
+        assert blocker.styles.display == "none"
+        recovery_text = getattr(recovery.renderable, "plain", str(recovery.renderable))
+        assert recovery_text.startswith("Console setup blocked")
+        assert "Provider setup needed: OpenAI missing API key" in recovery_text
+        assert "Impact: Send is blocked until setup is finished." in recovery_text
         assert console.query_one("#console-inspector-rail-handle").display is True
         assert console.query_one("#console-right-rail").display is False
         assert text.lower().count("missing api key") == 1
@@ -1665,29 +1673,28 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-provider-recovery-strip")
-        await _wait_for_selector(console, pilot, "#console-provider-blocker")
-        await _wait_for_selector(console, pilot, "#console-open-provider-settings")
+        await _wait_for_selector(console, pilot, "#workbench-recovery-callout")
+        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
 
         strip = console.query_one("#console-provider-recovery-strip")
         blocker = console.query_one("#console-provider-blocker", Static)
-        button = console.query_one("#console-open-provider-settings", Button)
+        legacy_button = console.query_one("#console-open-provider-settings", Button)
+        recovery = console.query_one("#workbench-recovery-callout")
+        button = console.query_one("#workbench-recovery-action", Button)
+        assert strip.styles.display == "none"
+        assert blocker.styles.display == "none"
+        assert legacy_button.styles.display == "none"
         assert button.display is True
         assert button.disabled is False
         assert button.region.height == 1
         assert button.region.width >= len("Add API Key")
         assert str(button.label) == "Add API Key"
-        assert button.has_class("console-provider-api-key-action")
-        assert blocker.region.y == button.region.y
-        assert str(strip.styles.height) == "auto"
-        assert str(blocker.styles.height) == "auto"
-        assert button.region.x > blocker.region.x
-        assert blocker.region.x >= strip.region.x
-        assert button.region.x + button.region.width <= strip.region.x + strip.region.width
-        blocker_text = getattr(blocker.render(), "plain", str(blocker.render()))
-        assert blocker_text.startswith("Provider setup needed: OpenAI missing API key")
-        assert "Impact: Send is blocked until setup is finished." in blocker_text
-        assert blocker_text.endswith("Action: Add API Key")
+        assert button.has_class("is-primary")
+        assert recovery.region.y < button.region.y
+        recovery_text = getattr(recovery.renderable, "plain", str(recovery.renderable))
+        assert recovery_text.startswith("Console setup blocked")
+        assert "Provider setup needed: OpenAI missing API key" in recovery_text
+        assert "Impact: Send is blocked until setup is finished." in recovery_text
         text = _visible_text(console)
         assert "Add API Key" in text
         assert console.query_one("#console-inspector-rail-handle").display is True
@@ -1745,18 +1752,22 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-provider-blocker")
+        await _wait_for_selector(console, pilot, "#workbench-recovery-callout")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         strip = console.query_one("#console-provider-recovery-strip")
+        recovery = console.query_one("#workbench-recovery-callout")
+        recovery_action = console.query_one("#workbench-recovery-action", Button)
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         await pilot.pause()
         blocker = console.query_one("#console-provider-blocker", Static)
 
-        assert strip.styles.display != "none"
-        assert blocker.styles.display != "none"
+        assert strip.styles.display == "none"
+        assert blocker.styles.display == "none"
+        assert recovery.display is True
+        assert str(recovery_action.label) == "Choose model"
         assert "Provider setup needed: choose a model" in getattr(
-            blocker.render(), "plain", str(blocker.render())
+            recovery.renderable, "plain", str(recovery.renderable)
         )
         assert "Provider setup needed: choose a model" not in _visible_text(
             console.query_one("#console-native-transcript")
@@ -1786,10 +1797,12 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         console._sync_console_control_bar()
         await pilot.pause()
 
-        assert blocker.styles.display != "none"
-        assert strip.styles.display != "none"
+        assert blocker.styles.display == "none"
+        assert strip.styles.display == "none"
+        assert recovery.display is True
+        assert str(recovery_action.label) == "Choose model"
         assert "Provider setup needed: choose a model" in getattr(
-            blocker.render(), "plain", str(blocker.render())
+            recovery.renderable, "plain", str(recovery.renderable)
         )
         assert "Provider setup needed: choose a model" not in _visible_text(
             console.query_one("#console-native-transcript")

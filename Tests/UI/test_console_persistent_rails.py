@@ -750,8 +750,9 @@ async def test_console_provider_blocked_badge_does_not_auto_open_inspector():
             "#console-inspector-rail-badge",
             "setup",
         )
-        assert _is_displayed(console.query_one("#console-provider-recovery-strip"))
-        settings_button = console.query_one("#console-open-provider-settings", Button)
+        recovery = console.query_one("#workbench-recovery-callout")
+        assert _is_displayed(recovery)
+        settings_button = console.query_one("#workbench-recovery-action", Button)
         assert _is_displayed(settings_button)
         assert settings_button.disabled is False
 

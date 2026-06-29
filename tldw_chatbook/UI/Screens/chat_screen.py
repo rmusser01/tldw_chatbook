@@ -113,6 +113,15 @@ from ...Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...UI.Workbench import (
+    CommandStrip,
+    DestinationHeader,
+    ModeStrip,
+    RecoveryCallout,
+    WorkbenchActionRequested,
+    WorkbenchHelpPanel,
+    WorkbenchHelpState,
+)
 from ...state.ui_state import UIState
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
@@ -133,6 +142,7 @@ from ...Widgets.Console import (
     ConsoleWorkspaceSwitcherModal,
 )
 from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
+from ...Widgets.Console.console_workbench_state import build_console_workbench_state
 from ...Workspaces.display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
     ConsoleWorkspaceConversationRow,
@@ -493,13 +503,10 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self._set_console_rail_preference(right_open=True)
 
-    async def on_console_settings_open(self, event: Button.Pressed) -> None:
+    async def _open_console_settings(self, *, focus_model: bool = False) -> None:
         """Open Console session settings for the active native session."""
-        event.stop()
         settings = self._ensure_active_console_session_settings()
         controller = self._ensure_console_chat_controller()
-        summary_state = self._build_console_settings_summary_state()
-        recovery_label, _recovery_target, _recovery_tooltip = self._console_provider_recovery_action()
         modal = ConsoleSettingsModal(
             settings=settings,
             app_config=getattr(self.app_instance, "app_config", {}) or {},
@@ -509,11 +516,7 @@ class ChatScreen(BaseAppScreen):
             ),
             context_estimate=self._active_console_settings_context_estimate(),
             can_save=controller.run_state.is_send_allowed,
-            focus_model=(
-                self._is_console_choose_model_action(summary_state.action_label)
-                or self._is_console_choose_model_action(event.button.label)
-                or self._is_console_choose_model_action(recovery_label)
-            ),
+            focus_model=focus_model,
         )
 
         def _apply_modal_result(result: ConsoleSessionSettings | None) -> None:
@@ -523,6 +526,67 @@ class ChatScreen(BaseAppScreen):
             self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
         self.app.push_screen(modal, callback=_apply_modal_result)
+
+    async def on_console_settings_open(self, event: Button.Pressed) -> None:
+        """Open Console session settings for the active native session."""
+        event.stop()
+        summary_state = self._build_console_settings_summary_state()
+        recovery_label, _recovery_target, _recovery_tooltip = self._console_provider_recovery_action()
+        await self._open_console_settings(
+            focus_model=(
+                self._is_console_choose_model_action(summary_state.action_label)
+                or self._is_console_choose_model_action(event.button.label)
+                or self._is_console_choose_model_action(recovery_label)
+            )
+        )
+
+    @on(WorkbenchActionRequested)
+    async def on_console_workbench_action_requested(
+        self,
+        event: WorkbenchActionRequested,
+    ) -> None:
+        """Route visible Workbench actions through Console-owned helpers."""
+        event.stop()
+        action_id = event.action_id
+        if action_id == "new-tab":
+            await self._create_native_console_session_from_active_context()
+        elif action_id == "settings":
+            await self._open_console_settings(focus_model=False)
+        elif action_id == "attach-context":
+            self._set_console_rail_preference(left_open=True)
+        elif action_id == "run-library-rag":
+            self._run_console_library_rag_from_visible_action()
+        elif action_id == "save-chatbook":
+            self._save_console_chatbook_from_visible_action()
+        elif action_id == "send":
+            await self._send_console_message_from_visible_action()
+        elif action_id == "stop":
+            await self._stop_console_generation_from_visible_action()
+        elif action_id == "help":
+            await self.action_show_workbench_help()
+        elif action_id == "provider-recovery":
+            await self._open_console_provider_recovery()
+
+    async def action_show_workbench_help(self) -> None:
+        """Open contextual help for visible Console Workbench actions."""
+        control_state = self._build_console_control_state(
+            self._pending_console_launch_context
+        )
+        workbench_state = self._build_console_workbench_state(control_state)
+        self.app.push_screen(
+            WorkbenchHelpPanel(
+                WorkbenchHelpState(
+                    route_id=workbench_state.route_id,
+                    title="Console",
+                    actions=workbench_state.actions,
+                    shortcuts=(
+                        ("Enter", "Send composer draft"),
+                        ("Ctrl+U", "Clear composer draft"),
+                        ("F1", "Show this help"),
+                    ),
+                )
+            )
+        )
 
     def _open_console_session_rename_modal(self, session_id: str) -> None:
         """Open a modal for viewing and editing the active Console tab title."""
@@ -3594,6 +3658,14 @@ class ChatScreen(BaseAppScreen):
         return widget
 
     @staticmethod
+    def _compact_console_workbench_widget(widget: Any, height: int = 1) -> Any:
+        """Keep Console Workbench primitives visible without shrinking the grid."""
+        widget.styles.height = height
+        widget.styles.min_height = height
+        widget.styles.max_height = height
+        return widget
+
+    @staticmethod
     def _console_mode_summary(control_state: ConsoleControlState) -> str:
         def readiness_count(label: str) -> str:
             value = label.partition(":")[2].strip()
@@ -3610,6 +3682,24 @@ class ChatScreen(BaseAppScreen):
             f" | Sources {readiness_count(control_state.sources_label)}"
             f" | Tools {readiness_count(control_state.tools_label)}"
             f" | Approvals {readiness_count(control_state.approvals_label)}"
+        )
+
+    def _build_console_workbench_state(self, control_state: ConsoleControlState):
+        blocker_copy = self._console_provider_blocker_copy()
+        action_label, _action_target, _action_tooltip = self._console_provider_recovery_action()
+        composer = self._console_composer_or_none()
+        has_draft = bool(composer and composer.draft_text().strip())
+        controller = self._console_chat_controller
+        run_state = getattr(controller, "run_state", None) if controller is not None else None
+        run_active = bool(getattr(run_state, "is_stop_allowed", False))
+        can_send = has_draft and not bool(self._console_setup_blocked_reason())
+        return build_console_workbench_state(
+            control_state=control_state,
+            provider_blocker_copy=blocker_copy,
+            provider_action_label=action_label,
+            can_send=can_send,
+            can_stop=run_active,
+            can_save_chatbook=self._console_chatbook_action_available(),
         )
 
     def _console_provider_blocker_copy(self) -> str:
@@ -3823,7 +3913,9 @@ class ChatScreen(BaseAppScreen):
             provider_blocker = self.query_one("#console-provider-blocker", Static)
         except QueryError:
             return
-        recovery_visible = self._console_provider_recovery_strip_visible(blocker_copy)
+        # Legacy recovery selectors stay mounted for parity, but Workbench owns
+        # the visible setup recovery UI through #workbench-recovery-callout.
+        recovery_visible = False
         action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
         self._configure_console_provider_recovery_strip(
             provider_strip,
@@ -3996,6 +4088,10 @@ class ChatScreen(BaseAppScreen):
     def handle_console_run_library_rag(self, event: Button.Pressed) -> None:
         """Request Library retrieval from the Console source-readiness seam."""
         event.stop()
+        self._run_console_library_rag_from_visible_action()
+
+    def _run_console_library_rag_from_visible_action(self) -> None:
+        """Request Library retrieval from the visible Console action surface."""
         query = _sanitize_console_library_rag_query(self._console_library_rag_query)
         if not query:
             self.app_instance.notify(
@@ -4095,8 +4191,44 @@ class ChatScreen(BaseAppScreen):
             rail_state,
             pending_launch,
         )
-        with Vertical(id="console-shell"):
-            yield Static(
+        workbench_state = self._build_console_workbench_state(control_state)
+        with Vertical(id="console-shell", classes="workbench-frame console-workbench-frame"):
+            yield self._compact_console_workbench_widget(
+                DestinationHeader(
+                    workbench_state.header,
+                    id="console-workbench-header",
+                    classes="workbench-header",
+                ),
+                height=3,
+            )
+            yield self._compact_console_workbench_widget(
+                ModeStrip(
+                    workbench_state.modes,
+                    id="console-workbench-mode-strip",
+                    classes="workbench-mode-strip",
+                )
+            )
+            yield self._compact_console_workbench_widget(
+                CommandStrip(
+                    workbench_state.actions,
+                    id="console-workbench-command-strip",
+                    classes="workbench-command-strip",
+                )
+            )
+            yield self._compact_console_workbench_widget(
+                RecoveryCallout(
+                    workbench_state.recovery,
+                    id="workbench-recovery-callout",
+                    classes="workbench-recovery-callout",
+                ),
+                height=4,
+            )
+            # Compatibility selectors retained during Console Workbench parity:
+            # #console-title, #console-mode-bar, and #console-control-bar are
+            # legacy shell seams now represented by DestinationHeader,
+            # ModeStrip, and CommandStrip. Keep them mounted at zero height
+            # until dependent regression tests finish migrating.
+            yield self._hidden_static(
                 "Console",
                 id="console-title",
                 classes="destination-status-row",
@@ -4111,7 +4243,7 @@ class ChatScreen(BaseAppScreen):
                 id="console-status-row",
                 classes="destination-status-row",
             )
-            yield Static(
+            yield self._hidden_static(
                 self._console_mode_summary(control_state),
                 id="console-mode-bar",
                 classes="ds-panel",
@@ -4242,7 +4374,7 @@ class ChatScreen(BaseAppScreen):
                                 provider_recovery_strip,
                                 blocker,
                                 provider_blocker_copy,
-                                visible=recovery_visible,
+                                visible=False,
                                 action_label=provider_action_label,
                             )
                             yield blocker
@@ -4256,11 +4388,17 @@ class ChatScreen(BaseAppScreen):
                             )
                             self._configure_console_provider_settings_action(
                                 provider_settings_action,
-                                visible=recovery_visible,
+                                visible=False,
                                 label=provider_action_label,
                                 tooltip=provider_action_tooltip,
                             )
                             yield provider_settings_action
+                        # Compatibility selectors retained during Console
+                        # Workbench parity: #console-provider-recovery-strip,
+                        # #console-provider-blocker, and
+                        # #console-open-provider-settings are superseded by
+                        # #workbench-recovery-callout and
+                        # #workbench-recovery-action.
                         start_here = Static(
                             CONSOLE_START_HERE_COPY,
                             id="console-start-here",
@@ -5313,6 +5451,10 @@ class ChatScreen(BaseAppScreen):
     async def handle_console_send_message(self, event: Button.Pressed) -> None:
         """Route the Console composer send action through the native controller."""
         event.stop()
+        await self._send_console_message_from_visible_action()
+
+    async def _send_console_message_from_visible_action(self) -> None:
+        """Route the visible Console send action through the native controller."""
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
             draft = composer.draft_text()
@@ -5346,6 +5488,10 @@ class ChatScreen(BaseAppScreen):
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
         """Route the Console stop action through native run control."""
         event.stop()
+        await self._stop_console_generation_from_visible_action()
+
+    async def _stop_console_generation_from_visible_action(self) -> None:
+        """Route the visible Console stop action through native run control."""
         controller = self._ensure_console_chat_controller()
         if not controller.stop_active_run():
             self.app_instance.notify("No active Console run to stop.", severity="warning")
@@ -5380,6 +5526,10 @@ class ChatScreen(BaseAppScreen):
     def handle_console_save_chatbook(self, event: Button.Pressed) -> None:
         """Route available Chatbook artifacts through the existing Artifacts handoff."""
         event.stop()
+        self._save_console_chatbook_from_visible_action()
+
+    def _save_console_chatbook_from_visible_action(self) -> None:
+        """Route available Chatbook artifacts through the existing Artifacts handoff."""
         launch = self._consume_pending_console_launch()
         if self._launch_targets_chatbook_artifact(launch):
             handler = getattr(self.app_instance, "open_console_live_work_primary_action", None)
@@ -5394,9 +5544,15 @@ class ChatScreen(BaseAppScreen):
     async def handle_console_open_provider_settings(self, event: Button.Pressed) -> None:
         """Route provider setup recovery to the smallest relevant settings surface."""
         event.stop()
+        await self._open_console_provider_recovery()
+
+    async def _open_console_provider_recovery(self) -> None:
+        """Route provider setup recovery to the smallest relevant settings surface."""
         _label, target, _tooltip = self._console_provider_recovery_action()
         if target == "console" and getattr(self, "is_mounted", False):
-            await self.on_console_settings_open(event)
+            await self._open_console_settings(
+                focus_model=self._is_console_choose_model_action(_label)
+            )
             return
         provider, model, settings = self._active_console_provider_model_display()
         settings_provider = settings.provider if settings is not None else None
@@ -5765,14 +5921,16 @@ class ChatScreen(BaseAppScreen):
     def _sync_console_control_bar(self) -> None:
         """Refresh Console-owned control labels from current selection state."""
         self._sync_console_pending_delete_confirmation()
+        control_state = self._build_console_control_state(
+            self._pending_console_launch_context
+        )
         try:
             control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
         except QueryError:
             control_bar = None
         if control_bar is not None:
-            control_bar.sync_state(
-                self._build_console_control_state(self._pending_console_launch_context)
-            )
+            control_bar.sync_state(control_state)
+        self._sync_console_workbench_state(control_state)
         self._sync_console_transcript_guidance()
         try:
             inspector = self.query_one("#console-run-inspector-state", ConsoleRunInspector)
@@ -5788,6 +5946,34 @@ class ChatScreen(BaseAppScreen):
             and self._console_chatbook_action_available()
         )
         self._sync_console_rail_visibility(self._current_console_rail_state())
+
+    def _sync_console_workbench_state(self, control_state: ConsoleControlState) -> None:
+        """Refresh visible Workbench primitives from current Console state."""
+        workbench_state = self._build_console_workbench_state(control_state)
+        try:
+            self.query_one("#console-workbench-header", DestinationHeader).sync_state(
+                workbench_state.header
+            )
+        except QueryError:
+            pass
+        try:
+            self.query_one("#console-workbench-mode-strip", ModeStrip).sync_modes(
+                workbench_state.modes
+            )
+        except QueryError:
+            pass
+        try:
+            self.query_one("#console-workbench-command-strip", CommandStrip).sync_actions(
+                workbench_state.actions
+            )
+        except QueryError:
+            pass
+        try:
+            self.query_one("#workbench-recovery-callout", RecoveryCallout).sync_state(
+                workbench_state.recovery
+            )
+        except QueryError:
+            pass
 
     def _sync_console_pending_delete_confirmation(self) -> None:
         """Clear stale destructive-action confirmation when transcript selection changes."""

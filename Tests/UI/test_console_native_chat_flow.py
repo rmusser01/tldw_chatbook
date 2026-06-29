@@ -1849,9 +1849,9 @@ async def test_console_add_api_key_recovery_targets_provider_settings_category()
             ConsoleSessionSettings(provider="huggingface", model="meta-llama/test-model"),
         )
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, "#console-open-provider-settings")
+        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
 
-        await pilot.click("#console-open-provider-settings")
+        await pilot.click("#workbench-recovery-action")
 
         assert len(host.navigation_messages) == 1
         message = host.navigation_messages[0]
@@ -1878,14 +1878,14 @@ async def test_console_add_api_key_recovery_tolerates_missing_session_settings()
             ConsoleSessionSettings(provider="huggingface", model="meta-llama/test-model"),
         )
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, "#console-open-provider-settings")
+        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
         console._active_console_provider_model_display = lambda: (
             "huggingface",
             "meta-llama/test-model",
             None,
         )
 
-        await pilot.click("#console-open-provider-settings")
+        await pilot.click("#workbench-recovery-action")
 
         assert len(host.navigation_messages) == 1
         message = host.navigation_messages[0]
@@ -2108,13 +2108,13 @@ async def test_console_setup_required_state_groups_recovery_and_action_copy():
 
     async with host.run_test(size=(180, 54)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-provider-recovery-strip")
+        await _wait_for_selector(console, pilot, "#workbench-recovery-callout")
 
-        recovery = console.query_one("#console-provider-recovery-strip")
-        recovery_text = _visible_text(recovery)
+        recovery = console.query_one("#workbench-recovery-callout")
+        recovery_text = getattr(recovery.renderable, "plain", str(recovery.renderable))
         assert "Provider setup needed" in recovery_text
         assert "Impact: Send is blocked until setup is finished." in recovery_text
-        assert "Action: Add API Key" in recovery_text
+        assert str(console.query_one("#workbench-recovery-action", Button).label) == "Add API Key"
         assert recovery.region.y < console.query_one("#console-native-transcript").region.y
 
 

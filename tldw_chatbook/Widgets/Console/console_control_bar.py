@@ -64,7 +64,12 @@ class ConsoleControlBar(Horizontal):
         self.styles.min_height = CONSOLE_CONTROL_BAR_HEIGHT
 
     @staticmethod
-    def _hide_layout_widget(widget: Any) -> Any:
+    def _compatibility_layout_widget(widget: Any) -> Any:
+        """Keep pre-Workbench selectors mounted until parity tests migrate.
+
+        Guarded by Console decomposition regressions that still query the
+        legacy control-bar child IDs while visible state moves to ModeStrip.
+        """
         widget.styles.display = "none"
         widget.styles.width = 0
         widget.styles.min_width = 0
@@ -101,42 +106,42 @@ class ConsoleControlBar(Horizontal):
             id="console-control-status-line",
             classes="console-control-summary-line",
         )
-        yield self._hide_layout_widget(Static(
+        yield self._compatibility_layout_widget(Static(
             self.state.provider_label,
             id="console-provider-label",
             classes="console-control-label console-hidden-control",
         ))
-        yield self._hide_layout_widget(Static(
+        yield self._compatibility_layout_widget(Static(
             self.state.model_label,
             id="console-model-label",
             classes="console-control-label console-hidden-control",
         ))
-        yield self._hide_layout_widget(Static(
+        yield self._compatibility_layout_widget(Static(
             self.state.persona_label,
             id="console-persona-label",
             classes="console-control-label console-hidden-control",
         ))
-        yield self._hide_layout_widget(Static(
+        yield self._compatibility_layout_widget(Static(
             self.state.rag_label,
             id="console-rag-label",
             classes="console-control-label console-hidden-control",
         ))
-        yield self._hide_layout_widget(Static(
+        yield self._compatibility_layout_widget(Static(
             self.state.sources_label,
             id="console-sources-label",
             classes="console-control-label console-hidden-control",
         ))
-        yield self._hide_layout_widget(Static(
+        yield self._compatibility_layout_widget(Static(
             self.state.tools_label,
             id="console-tools-label",
             classes="console-control-label console-hidden-control",
         ))
-        yield self._hide_layout_widget(Static(
+        yield self._compatibility_layout_widget(Static(
             self.state.approvals_label,
             id="console-approvals-label",
             classes="console-control-label console-hidden-control",
         ))
-        yield self._hide_layout_widget(CompactModelBar(
+        yield self._compatibility_layout_widget(CompactModelBar(
             self.app_instance,
             on_sidebar_toggle_requested=self.on_sidebar_toggle_requested,
             id="console-compact-model-bar",
