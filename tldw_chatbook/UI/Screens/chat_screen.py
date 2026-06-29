@@ -5975,6 +5975,12 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             pass
 
+    def _sync_console_workbench_actions_from_draft(self) -> None:
+        """Refresh Workbench command readiness after composer draft changes."""
+        self._sync_console_workbench_state(
+            self._build_console_control_state(self._pending_console_launch_context)
+        )
+
     def _sync_console_pending_delete_confirmation(self) -> None:
         """Clear stale destructive-action confirmation when transcript selection changes."""
         if self._pending_console_delete_message_id is None:
@@ -6113,6 +6119,7 @@ class ChatScreen(BaseAppScreen):
             return
         if event.key in {"backspace", "ctrl+h", "delete"}:
             composer.delete_left()
+            self._sync_console_workbench_actions_from_draft()
             event.stop()
             event.prevent_default()
             return
@@ -6130,11 +6137,13 @@ class ChatScreen(BaseAppScreen):
             return
         if event.key == "ctrl+u":
             composer.clear_draft()
+            self._sync_console_workbench_actions_from_draft()
             event.stop()
             event.prevent_default()
             return
         if event.is_printable and event.character is not None:
             composer.insert_text(event.character)
+            self._sync_console_workbench_actions_from_draft()
             self._dismiss_console_guidance()
             event.stop()
             event.prevent_default()
@@ -6148,6 +6157,7 @@ class ChatScreen(BaseAppScreen):
         if not self._should_capture_console_input(composer):
             return
         composer.insert_pasted_text(event.text)
+        self._sync_console_workbench_actions_from_draft()
         self._dismiss_console_guidance()
         event.stop()
 

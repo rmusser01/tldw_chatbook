@@ -18,6 +18,20 @@ class ConsoleHarness(App):
         await self.push_screen(ChatScreen(self.app_instance))
 
 
+def _configure_native_ready_console(app, model: str = "local-model") -> None:
+    app.app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": model},
+        "api_settings": {
+            "llama_cpp": {
+                "api_url": "http://127.0.0.1:9099",
+                "model": model,
+            },
+        },
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = model
+
+
 def _is_displayed(widget) -> bool:
     current = widget
     while current is not None:
@@ -202,3 +216,25 @@ async def test_console_recovery_action_button_is_visible_and_actionable():
         assert host.screen.query("#console-settings-modal") or host.screen.query(
             "#settings-screen"
         )
+
+
+@pytest.mark.asyncio
+async def test_console_workbench_send_action_enables_after_typing_draft():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#workbench-action-send")
+
+        send_action = console.query_one("#workbench-action-send")
+        assert _is_displayed(send_action)
+        assert send_action.disabled is True
+
+        await pilot.press("h")
+        await pilot.pause()
+
+        send_action = console.query_one("#workbench-action-send")
+        assert _is_displayed(send_action)
+        assert send_action.disabled is False
