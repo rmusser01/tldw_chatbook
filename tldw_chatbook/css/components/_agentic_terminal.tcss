@@ -565,12 +565,75 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     background: $ds-surface-panel;
 }
 
+#console-workbench-header {
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    padding: 0 1;
+    margin: 0;
+}
+
+#console-workbench-header #workbench-header-subtitle,
+#console-workbench-header #workbench-header-status {
+    display: none;
+    height: 0;
+    min-height: 0;
+    max-height: 0;
+}
+
 #console-control-bar {
     height: $ds-console-control-bar-height;
     min-height: $ds-console-control-bar-height;
+    max-height: $ds-console-control-bar-height;
     padding: 0 1;
     margin: 0;
+    border: none;
+    background: $ds-surface-panel;
     overflow: hidden;
+}
+
+.console-control-chip-row,
+.console-control-action-row {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    layout: horizontal;
+    align: left middle;
+}
+
+.console-control-chip {
+    width: auto;
+    min-width: 7;
+    max-width: 22;
+    height: 1;
+    min-height: 1;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+}
+
+.console-control-action {
+    width: auto;
+    min-width: 7;
+    height: 1;
+    min-height: 1;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    border: none;
+    background: transparent;
+    color: $ds-text-primary;
+    content-align: left middle;
+}
+
+.console-control-action:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .console-control-summary-line {
@@ -1086,6 +1149,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 
 #console-composer-title,
 #console-composer-status,
+.console-composer-recovery,
 .console-control-label {
     height: 1;
     min-height: 1;
@@ -1125,6 +1189,19 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     min-height: 1;
     layout: horizontal;
     align: right middle;
+}
+
+.console-composer-recovery {
+    width: 0;
+    min-width: 0;
+    max-width: 0;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-status-warning;
+    text-style: bold;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
 }
 
 #console-command-input {

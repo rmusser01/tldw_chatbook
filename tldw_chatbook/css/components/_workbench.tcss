@@ -84,6 +84,7 @@
 }
 
 .workbench-mode.is-active {
+    border: none;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold;

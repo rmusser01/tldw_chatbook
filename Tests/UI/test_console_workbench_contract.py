@@ -70,6 +70,21 @@ def _visible_workbench_focus_ids(console: ChatScreen) -> set[str]:
     return visible
 
 
+def _widget_text(widget) -> str:
+    renderable = getattr(widget, "renderable", "")
+    plain = getattr(renderable, "plain", None)
+    return str(plain if plain is not None else renderable)
+
+
+def _children_in_display_order(widget) -> list[str]:
+    ids: list[str] = []
+    for child in widget.walk_children():
+        child_id = getattr(child, "id", None)
+        if child_id:
+            ids.append(child_id)
+    return ids
+
+
 def _control_state() -> ConsoleControlState:
     return ConsoleControlState(
         provider_label="Provider: llama.cpp",
@@ -80,6 +95,120 @@ def _control_state() -> ConsoleControlState:
         tools_label="Tools: 0",
         approvals_label="Approvals: 0",
     )
+
+
+@pytest.mark.asyncio
+async def test_console_control_bar_renders_visible_state_chips():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        control_bar = console.query_one("#console-control-bar")
+        assert _is_displayed(control_bar)
+
+        expected_selectors = (
+            "#console-provider-chip",
+            "#console-model-chip",
+            "#console-persona-chip",
+            "#console-rag-chip",
+            "#console-sources-chip",
+            "#console-tools-chip",
+            "#console-approvals-chip",
+        )
+        visible_chip_text = []
+        for selector in expected_selectors:
+            chip = console.query_one(selector)
+            assert _is_displayed(chip), selector
+            visible_chip_text.append(_widget_text(chip))
+
+        assert any("Provider:" in text for text in visible_chip_text)
+        assert any("Model:" in text for text in visible_chip_text)
+        assert any("Assistant:" in text or "Persona:" in text for text in visible_chip_text)
+        assert any("RAG:" in text for text in visible_chip_text)
+        assert any("Sources:" in text for text in visible_chip_text)
+        assert any("Tools:" in text for text in visible_chip_text)
+        assert any("Approvals:" in text for text in visible_chip_text)
+
+
+@pytest.mark.asyncio
+async def test_console_control_bar_exposes_compact_visible_actions():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        for selector in (
+            "#console-control-settings",
+            "#console-control-attach-context",
+            "#console-control-run-library-rag",
+        ):
+            action = console.query_one(selector)
+            assert _is_displayed(action), selector
+            assert action.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_inspector_prioritizes_actionable_status_before_secondary_groups():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_pending_approval_count = 1
+    app.console_tool_count = 1
+    app.console_chatbook_artifact_available = True
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        inspector = console.query_one("#console-run-inspector-state")
+        ordered_ids = _children_in_display_order(inspector)
+
+        status_index = ordered_ids.index("console-inspector-run-status-summary")
+        approval_action_index = ordered_ids.index("console-inspector-review-approval")
+        tool_action_index = ordered_ids.index("console-inspector-review-tool-call")
+        save_action_index = ordered_ids.index("console-inspector-save-chatbook")
+        first_secondary_heading_index = ordered_ids.index(
+            "console-inspector-selected-conversation-heading"
+        )
+
+        assert status_index < approval_action_index < first_secondary_heading_index
+        assert status_index < tool_action_index < first_secondary_heading_index
+        assert status_index < save_action_index < first_secondary_heading_index
+        assert console.query_one("#console-inspector-review-approval").disabled is False
+        assert console.query_one("#console-inspector-review-tool-call").disabled is False
+        assert console.query_one("#console-inspector-save-chatbook").disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_composer_keeps_primary_actions_and_setup_recovery_visible():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": ""},
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = ""
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        composer = console.query_one("#console-native-composer")
+        assert _is_displayed(composer)
+        assert _is_displayed(console.query_one("#console-attach-context"))
+        assert _is_displayed(console.query_one("#console-send-message"))
+        assert _is_displayed(console.query_one("#console-stop-generation"))
+        assert _is_displayed(console.query_one("#console-save-chatbook"))
+        assert _is_displayed(console.query_one("#console-composer-recovery"))
+        assert "Choose model" in _widget_text(console.query_one("#console-composer-recovery"))
 
 
 def test_console_workbench_state_exposes_core_actions_visibly():

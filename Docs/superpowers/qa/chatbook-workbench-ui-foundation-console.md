@@ -42,6 +42,14 @@
 
 These screenshots were generated from the same Textual `export_screenshot()` path used by `Tests/UI/test_workbench_visual_snapshots.py`.
 
+The TASK-140 density correction refreshed these artifacts after the first visual review found that Console still looked like the old UI with extra passive spacing. The corrected artifacts now show:
+
+- a one-row Console header instead of a multi-row passive title block.
+- visible provider, model, assistant/persona, RAG, source, tools, and approval chips.
+- visible Settings, Attach, Library RAG, and Help controls in the Console-owned control strip.
+- action-first inspector ordering, with run/source/tool/approval actions before secondary conversation/session detail.
+- composer setup recovery copy beside the bottom-pinned draft and visible Send, Stop, Attach, and Save actions.
+
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-normal.svg`
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-compact.svg`
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-command-palette.svg`
@@ -51,10 +59,18 @@ Verification command:
 
 ```bash
 wc -c Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg
-rg -n "<svg|Traceback|Unhandled exception|Unable to mount|Internal Error" Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg
+rg -n "Provider:|Model:|Assistant:|RAG:|Sources:|Tools:|Approvals:|Settings|Attach|Library&#160;RAG|Recovery:&#160;Choose" Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-normal.svg Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-focus-state.svg
+rg -n "Traceback|Unhandled exception|Unable to mount|Internal Error|<.* object at 0x" Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg
 ```
 
-Result: all four files are non-empty SVGs; no traceback or internal-error strings were present.
+Result: all four files are non-empty SVGs; normal and focus captures contain the dense control labels/actions and composer recovery copy; no traceback or internal-error strings were present.
+
+TASK-140 corrective visual artifact sizes:
+
+- `console-workbench-command-palette.svg`: 45,072 bytes
+- `console-workbench-compact.svg`: 94,332 bytes
+- `console-workbench-focus-state.svg`: 97,734 bytes
+- `console-workbench-normal.svg`: 97,237 bytes
 
 ## Residual Risks
 

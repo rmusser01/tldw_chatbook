@@ -49,22 +49,6 @@ _ROW_IDS = {
 
 _ROW_GROUPS = (
     (
-        "Selected Conversation",
-        "console-inspector-selected-conversation-heading",
-        ("Selected conversation", "Conversation source", "Workspace", "Resume state"),
-    ),
-    (
-        "Session Defaults",
-        "console-inspector-session-defaults-heading",
-        (
-            "Session provider",
-            "Session model",
-            "Session endpoint",
-            "Session sampling",
-            "Session persona",
-        ),
-    ),
-    (
         "Run State",
         "console-inspector-run-state-heading",
         ("Live work", "Setup", "Send blocked", "Recovery action", "Provider"),
@@ -83,6 +67,22 @@ _ROW_GROUPS = (
         "Approvals",
         "console-inspector-approvals-heading",
         ("Approvals",),
+    ),
+    (
+        "Selected Conversation",
+        "console-inspector-selected-conversation-heading",
+        ("Selected conversation", "Conversation source", "Workspace", "Resume state"),
+    ),
+    (
+        "Session Defaults",
+        "console-inspector-session-defaults-heading",
+        (
+            "Session provider",
+            "Session model",
+            "Session endpoint",
+            "Session sampling",
+            "Session persona",
+        ),
     ),
     (
         "Selected Message",

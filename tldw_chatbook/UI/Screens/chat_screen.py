@@ -4330,7 +4330,7 @@ class ChatScreen(BaseAppScreen):
                     id="console-workbench-header",
                     classes="workbench-header",
                 ),
-                height=3,
+                height=1,
             )
             yield self._compact_console_workbench_widget(
                 ModeStrip(
@@ -4355,10 +4355,9 @@ class ChatScreen(BaseAppScreen):
                 height=4,
             )
             # Compatibility selectors retained during Console Workbench parity:
-            # #console-title, #console-mode-bar, and #console-control-bar are
-            # legacy shell seams now represented by DestinationHeader,
-            # ModeStrip, and CommandStrip. Keep them mounted at zero height
-            # until dependent regression tests finish migrating.
+            # #console-title and #console-mode-bar are legacy shell seams now
+            # represented by DestinationHeader and ModeStrip. #console-control-bar
+            # remains visible as the dense Console-owned control surface.
             yield self._hidden_static(
                 "Console",
                 id="console-title",
@@ -4379,14 +4378,15 @@ class ChatScreen(BaseAppScreen):
                 id="console-mode-bar",
                 classes="ds-panel",
             )
-            yield self._collapse_console_hidden_control_bar(
+            yield self._compact_console_workbench_widget(
                 ConsoleControlBar(
                     control_state,
                     self.app_instance,
                     on_sidebar_toggle_requested=self._toggle_console_chat_sidebar,
                     id="console-control-bar",
-                    classes="ds-panel console-hidden-control",
-                )
+                    classes="console-control-bar",
+                ),
+                height=2,
             )
             workspace_grid = self._frame_console_region(
                 Horizontal(id="console-workspace-grid", classes="ds-panel destination-workbench")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Callable
+from html import unescape
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -72,6 +73,20 @@ def _assert_svg_healthy(svg: str) -> None:
     assert RAW_OBJECT_REPR.search(svg) is None
 
 
+def _assert_console_density_evidence(svg: str) -> None:
+    normalized_svg = unescape(svg).replace("\xa0", " ")
+    assert "Provider:" in normalized_svg
+    assert "Model:" in normalized_svg
+    assert "Assistant:" in normalized_svg or "Persona:" in normalized_svg
+    assert "RAG:" in normalized_svg
+    assert "Sources:" in normalized_svg
+    assert "Tools:" in normalized_svg
+    assert "Approvals:" in normalized_svg
+    assert "Settings" in normalized_svg
+    assert "Attach" in normalized_svg
+    assert "Library RAG" in normalized_svg
+
+
 @pytest.mark.parametrize("density", ("normal", "compact"))
 @pytest.mark.asyncio
 async def test_console_workbench_normal_and_compact_snapshots(density: str) -> None:
@@ -85,12 +100,12 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
 
             shell = app.screen.query_one("#console-shell")
             assert shell.has_class(f"density-{density}")
-            _assert_svg_healthy(
-                app.export_screenshot(
-                    title=f"Console Workbench {density}",
-                    simplify=True,
-                )
+            svg = app.export_screenshot(
+                title=f"Console Workbench {density}",
+                simplify=True,
             )
+            _assert_svg_healthy(svg)
+            _assert_console_density_evidence(svg)
 
 
 @pytest.mark.asyncio

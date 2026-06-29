@@ -308,6 +308,35 @@ class ConsoleComposerBar(Horizontal):
         save_button.set_class(not can_save_chatbook, "console-action-subdued")
         save_button.set_class(not can_save_chatbook, "console-action-disabled")
 
+        try:
+            recovery = self.query_one("#console-composer-recovery", Static)
+        except NoMatches:
+            recovery = None
+        if recovery is not None:
+            if send_blocked and setup_blocked_reason:
+                recovery_copy = setup_blocked_reason
+                if "model" in setup_blocked_reason.lower():
+                    recovery_copy = "Recovery: Choose model"
+                elif "api key" in setup_blocked_reason.lower():
+                    recovery_copy = "Recovery: Add API key"
+                elif "endpoint" in setup_blocked_reason.lower():
+                    recovery_copy = "Recovery: Configure endpoint"
+                recovery.update(recovery_copy)
+                recovery.styles.display = "block"
+                recovery.styles.width = 26
+                recovery.styles.min_width = 18
+                recovery.styles.max_width = 30
+                recovery.styles.height = 1
+                recovery.styles.min_height = 1
+            else:
+                recovery.update("")
+                recovery.styles.display = "none"
+                recovery.styles.width = 0
+                recovery.styles.min_width = 0
+                recovery.styles.max_width = 0
+                recovery.styles.height = 0
+                recovery.styles.min_height = 0
+
         if setup_reason_changed and not self.draft_text().strip():
             self._refresh_visible_draft()
 
@@ -1042,6 +1071,17 @@ class ConsoleComposerBar(Horizontal):
         visible_draft.styles.width = "1fr"
         visible_draft.styles.min_width = 0
         yield visible_draft
+        recovery = Static(
+            "",
+            id="console-composer-recovery",
+            classes="console-composer-recovery",
+        )
+        recovery.styles.display = "none"
+        recovery.styles.width = 0
+        recovery.styles.min_width = 0
+        recovery.styles.height = 0
+        recovery.styles.min_height = 0
+        yield recovery
         command_input = Input(
             value="",
             id="console-command-input",
