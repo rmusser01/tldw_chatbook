@@ -9,6 +9,7 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchMode,
     WorkbenchPaneState,
     WorkbenchState,
+    normalize_workbench_id,
 )
 
 
@@ -62,35 +63,21 @@ def test_workbench_state_rejects_duplicate_action_ids():
         )
 
 
-def test_workbench_state_rejects_normalized_action_id_collisions():
-    with pytest.raises(ValueError, match="duplicate normalized action id"):
-        WorkbenchState(
-            header=WorkbenchHeaderState(title="Console"),
-            actions=(
-                WorkbenchAction(id="run now", label="Run"),
-                WorkbenchAction(id="run-now", label="Run again"),
-            ),
-        )
+def test_normalize_workbench_id_matches_widget_id_contract():
+    assert normalize_workbench_id("run now") == "run-now"
+    assert normalize_workbench_id(" run-now ") == "run-now"
+    assert normalize_workbench_id("!!!") == "item"
 
 
 def test_workbench_state_rejects_non_canonical_ids_before_widgets_mount():
     with pytest.raises(ValueError, match="non-canonical action id"):
-        WorkbenchState(
-            header=WorkbenchHeaderState(title="Console"),
-            actions=(WorkbenchAction(id="run now", label="Run"),),
-        )
+        WorkbenchAction(id="run now", label="Run")
 
     with pytest.raises(ValueError, match="non-canonical mode id"):
-        WorkbenchState(
-            header=WorkbenchHeaderState(title="Console"),
-            modes=(WorkbenchMode(id="rag mode", label="RAG"),),
-        )
+        WorkbenchMode(id="rag mode", label="RAG")
 
     with pytest.raises(ValueError, match="non-canonical pane id"):
-        WorkbenchState(
-            header=WorkbenchHeaderState(title="Console"),
-            panes=(WorkbenchPaneState(id="right rail", title="Inspector"),),
-        )
+        WorkbenchPaneState(id="right rail", title="Inspector")
 
 
 def test_workbench_state_rejects_duplicate_mode_and_pane_ids():

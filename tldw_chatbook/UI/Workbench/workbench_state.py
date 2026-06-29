@@ -61,6 +61,11 @@ def _raise_on_non_canonical_ids(values: tuple[str, ...], *, label: str) -> None:
         raise ValueError(f"non-canonical {label} id: {', '.join(invalid)}")
 
 
+def _raise_on_non_canonical_id(value: str, *, label: str) -> None:
+    """Raise if one value is not already safe for Textual widget IDs."""
+    _raise_on_non_canonical_ids((value,), label=label)
+
+
 @dataclass(frozen=True)
 class WorkbenchAction:
     """A visible Workbench command."""
@@ -70,6 +75,10 @@ class WorkbenchAction:
     tooltip: str = ""
     disabled: bool = False
     primary: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate public action identity before widgets render it."""
+        _raise_on_non_canonical_id(self.id, label="action")
 
     @property
     def css_classes(self) -> str:
@@ -89,6 +98,10 @@ class WorkbenchMode:
     label: str
     active: bool = False
     status: WorkbenchStatus = "ready"
+
+    def __post_init__(self) -> None:
+        """Validate public mode identity before widgets render it."""
+        _raise_on_non_canonical_id(self.id, label="mode")
 
     @property
     def css_classes(self) -> str:
@@ -118,6 +131,10 @@ class WorkbenchPaneState:
     title: str
     status: WorkbenchStatus = "ready"
     collapsed: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate public pane identity before widgets render it."""
+        _raise_on_non_canonical_id(self.id, label="pane")
 
 
 @dataclass(frozen=True)
