@@ -260,7 +260,7 @@ async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
 
 
 @pytest.mark.asyncio
-async def test_console_hidden_control_bar_does_not_reserve_a_row():
+async def test_console_hidden_workbench_strips_do_not_reserve_rows():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -272,10 +272,12 @@ async def test_console_hidden_control_bar_does_not_reserve_a_row():
         command_strip = console.query_one("#console-workbench-command-strip")
         workbench = console.query_one("#console-workspace-grid")
 
-        assert control_bar.styles.display == "none"
-        assert control_bar.region.height == 0
-        assert command_strip.display is True
-        assert workbench.region.y >= command_strip.region.y + command_strip.region.height
+        assert control_bar.styles.display != "none"
+        assert control_bar.region.height > 0
+        assert command_strip.styles.display == "none"
+        assert command_strip.region.height == 0
+        assert workbench.region.y >= control_bar.region.y + control_bar.region.height
+        assert workbench.region.y > command_strip.region.y + command_strip.region.height
 
 
 @pytest.mark.asyncio
