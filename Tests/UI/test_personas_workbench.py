@@ -2652,6 +2652,19 @@ class TestPreviewIntegration:
         await pilot.pause()
         return screen
 
+    async def test_preview_logic_is_owned_by_controller(
+        self, mock_app_instance, stub_characters
+    ):
+        from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+            PersonasPreviewController,
+        )
+
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await _mounted(pilot)
+            assert isinstance(screen.preview, PersonasPreviewController)
+            assert screen.preview.screen is screen
+
     async def test_preview_pane_is_mounted_in_work_area(
         self, mock_app_instance, stub_characters
     ):
@@ -2801,14 +2814,14 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._ensure_preview_gateway = lambda: fake
+            screen.preview.ensure_gateway = lambda: fake
             screen.post_message(PreviewReplyRequested("Hi there"))
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
             assert "character: Hello, world." in pane.transcript_text()
-            assert screen._preview_history == [
+            assert screen.preview.history == [
                 {"role": "user", "content": "Hi there"},
                 {"role": "assistant", "content": "Hello, world."},
             ]
@@ -2840,7 +2853,7 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._ensure_preview_gateway = lambda: fake
+            screen.preview.ensure_gateway = lambda: fake
             pane = screen.query_one(PersonasPreviewPane)
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
@@ -2852,7 +2865,7 @@ class TestPreviewIntegration:
             assert "character: Hello, " in pane.transcript_text()
             # History gets the consolidated entry only at the end.
             assert not any(
-                entry["role"] == "assistant" for entry in screen._preview_history
+                entry["role"] == "assistant" for entry in screen.preview.history
             )
             mid_gate.set()
             await app.workers.wait_for_complete()
@@ -2862,7 +2875,7 @@ class TestPreviewIntegration:
             assert "character: Hello, " not in [
                 line for line in lines if line != "character: Hello, world."
             ]
-            assert screen._preview_history[-1] == {
+            assert screen.preview.history[-1] == {
                 "role": "assistant",
                 "content": "Hello, world.",
             }
@@ -2887,7 +2900,7 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._ensure_preview_gateway = lambda: fake
+            screen.preview.ensure_gateway = lambda: fake
             pane = screen.query_one(PersonasPreviewPane)
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
@@ -2906,7 +2919,7 @@ class TestPreviewIntegration:
                 "character: The name's Detective Sam. Who's asking?"
             )
             assert not any(
-                entry["role"] == "assistant" for entry in screen._preview_history
+                entry["role"] == "assistant" for entry in screen.preview.history
             )
 
     async def test_selection_change_mid_stream_removes_partial_line(
@@ -2927,7 +2940,7 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._ensure_preview_gateway = lambda: fake
+            screen.preview.ensure_gateway = lambda: fake
             pane = screen.query_one(PersonasPreviewPane)
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
@@ -2943,7 +2956,7 @@ class TestPreviewIntegration:
             await pilot.pause()
             assert "Hello" not in pane.transcript_text()
             assert not any(
-                entry["role"] == "assistant" for entry in screen._preview_history
+                entry["role"] == "assistant" for entry in screen.preview.history
             )
 
     async def test_error_mid_stream_removes_partial_line(
@@ -2967,14 +2980,14 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._ensure_preview_gateway = lambda: fake
+            screen.preview.ensure_gateway = lambda: fake
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
             pane = screen.query_one(PersonasPreviewPane)
             assert "Hello" not in pane.transcript_text()
-            assert screen._preview_history == []
+            assert screen.preview.history == []
             status = str(
                 screen.query_one("#personas-preview-status", _Static).renderable
             )
@@ -3000,7 +3013,7 @@ class TestPreviewIntegration:
                 "#personas-char-editor-description", _TextArea
             ).text = "Draft noir vibes, unsaved."
             await pilot.pause()
-            prompt = screen._preview_system_prompt()
+            prompt = screen.preview.system_prompt()
             assert "Draft noir vibes, unsaved." in prompt
 
     async def test_open_in_console_stages_preview_transcript(
@@ -3048,7 +3061,7 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._ensure_preview_gateway = lambda: fake
+            screen.preview.ensure_gateway = lambda: fake
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
             # Let the worker reach the gated stream deterministically.
@@ -3068,7 +3081,7 @@ class TestPreviewIntegration:
             pane = screen.query_one(PersonasPreviewPane)
             assert "character: Hello, world." not in pane.transcript_text()
             assert not any(
-                entry["role"] == "assistant" for entry in screen._preview_history
+                entry["role"] == "assistant" for entry in screen.preview.history
             )
             from textual.widgets import Static as _Static
 
@@ -3087,14 +3100,14 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._preview_history.append({"role": "user", "content": "Hi"})
+            screen.preview.history.append({"role": "user", "content": "Hi"})
             screen.post_message(PreviewResetRequested())
             await pilot.pause()
-            assert screen._preview_history == []
-            screen._preview_history.append({"role": "user", "content": "Hi again"})
+            assert screen.preview.history == []
+            screen.preview.history.append({"role": "user", "content": "Hi again"})
             await screen._apply_mode("prompts")
             await pilot.pause()
-            assert screen._preview_history == []
+            assert screen.preview.history == []
 
     async def test_reset_mid_stream_drops_late_reply(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -3121,7 +3134,7 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._ensure_preview_gateway = lambda: fake
+            screen.preview.ensure_gateway = lambda: fake
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
             # Let the worker reach the gated stream deterministically.
@@ -3139,7 +3152,7 @@ class TestPreviewIntegration:
             pane = screen.query_one(PersonasPreviewPane)
             assert "character: Hello, world." not in pane.transcript_text()
             assert not any(
-                entry["role"] == "assistant" for entry in screen._preview_history
+                entry["role"] == "assistant" for entry in screen.preview.history
             )
 
     async def test_error_pops_orphaned_user_history_entry(
@@ -3160,7 +3173,7 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._ensure_preview_gateway = lambda: fake
+            screen.preview.ensure_gateway = lambda: fake
             pane = screen.query_one(PersonasPreviewPane)
             pane.expand()
             await pilot.pause()
@@ -3171,7 +3184,7 @@ class TestPreviewIntegration:
             await pilot.pause()
             # History: no trailing unanswered user entry.
             assert not any(
-                entry["role"] == "user" for entry in screen._preview_history
+                entry["role"] == "user" for entry in screen.preview.history
             )
             # Transcript: the user line stays visible.
             assert "you: Hi" in pane.transcript_text()
@@ -3198,7 +3211,7 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._ensure_preview_gateway = lambda: fake
+            screen.preview.ensure_gateway = lambda: fake
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
             await app.workers.wait_for_complete()
@@ -3208,7 +3221,7 @@ class TestPreviewIntegration:
             assert len(fake.requests) == 2
             pane = screen.query_one(PersonasPreviewPane)
             assert "character: Hello, world." in pane.transcript_text()
-            assert screen._preview_history[-1] == {
+            assert screen.preview.history[-1] == {
                 "role": "assistant",
                 "content": "Hello, world.",
             }
@@ -3235,7 +3248,7 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._ensure_preview_gateway = lambda: fake
+            screen.preview.ensure_gateway = lambda: fake
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
             await app.workers.wait_for_complete()
@@ -3243,7 +3256,7 @@ class TestPreviewIntegration:
             # Streaming attempt + one non-streaming retry, no more.
             assert [s.streaming for s in fake.selections] == [True, False]
             assert len(fake.requests) == 2
-            assert screen._preview_history == []
+            assert screen.preview.history == []
             pane = screen.query_one(PersonasPreviewPane)
             assert "Hello" not in pane.transcript_text()
             status = str(
@@ -3268,7 +3281,7 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._ensure_preview_gateway = lambda: fake
+            screen.preview.ensure_gateway = lambda: fake
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
             await app.workers.wait_for_complete()
@@ -3279,7 +3292,7 @@ class TestPreviewIntegration:
                 for line in pane.transcript_text().splitlines()
             )
             assert not any(
-                entry["role"] == "assistant" for entry in screen._preview_history
+                entry["role"] == "assistant" for entry in screen.preview.history
             )
             assert (
                 str(screen.query_one("#personas-preview-status", _Static).renderable)
@@ -3294,7 +3307,7 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._preview_gateway = fake
+            screen.preview.gateway = fake
         assert fake.closed is True
 
     async def test_double_fire_coalesces_user_turns(
@@ -3314,7 +3327,7 @@ class TestPreviewIntegration:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            screen._ensure_preview_gateway = lambda: fake
+            screen.preview.ensure_gateway = lambda: fake
             screen.post_message(PreviewReplyRequested("Hi"))
             await pilot.pause()
             for _ in range(50):
