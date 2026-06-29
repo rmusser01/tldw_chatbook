@@ -75,8 +75,8 @@ def _assert_svg_healthy(svg: str) -> None:
 
 def _assert_console_density_evidence(svg: str) -> None:
     normalized_svg = unescape(svg).replace("\xa0", " ")
-    assert "Provider:" in normalized_svg
-    assert "Model:" in normalized_svg
+    assert normalized_svg.count("Provider:") == 1
+    assert normalized_svg.count("Model:") == 1
     assert "Assistant:" in normalized_svg or "Persona:" in normalized_svg
     assert "RAG:" in normalized_svg
     assert "Sources:" in normalized_svg
@@ -85,6 +85,17 @@ def _assert_console_density_evidence(svg: str) -> None:
     assert "Settings" in normalized_svg
     assert "Attach" in normalized_svg
     assert "Library RAG" in normalized_svg
+    assert "Choose model" in normalized_svg
+    assert "Send disabled" in normalized_svg or "Setup required" in normalized_svg
+
+
+def _assert_console_inspector_evidence(svg: str) -> None:
+    normalized_svg = unescape(svg).replace("\xa0", " ")
+    assert "Run recipe" in normalized_svg
+    assert "Blocked impact" in normalized_svg
+    assert "Next action" in normalized_svg
+    assert "Choose model" in normalized_svg
+    assert "Send disabled" in normalized_svg or "Setup required" in normalized_svg
 
 
 @pytest.mark.parametrize("density", ("normal", "compact"))
@@ -106,6 +117,22 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
             )
             _assert_svg_healthy(svg)
             _assert_console_density_evidence(svg)
+
+
+@pytest.mark.asyncio
+async def test_console_workbench_standard_width_inspector_snapshot() -> None:
+    app = _build_test_app()
+
+    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(128, 40)) as pilot:
+            await _open_console(app, pilot)
+
+            svg = app.export_screenshot(
+                title="Console Workbench Standard Width Inspector",
+                simplify=True,
+            )
+            _assert_svg_healthy(svg)
+            _assert_console_inspector_evidence(svg)
 
 
 @pytest.mark.asyncio

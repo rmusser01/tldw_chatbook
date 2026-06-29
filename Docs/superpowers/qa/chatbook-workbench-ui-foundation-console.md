@@ -15,6 +15,17 @@
 
 ## Verification
 
+- TASK-142 Console visual snapshot contract:
+  - Command: `PATH=.venv/bin:$PATH pytest Tests/UI/test_workbench_visual_snapshots.py -q`
+  - Result: `5 passed, 1 warning` in 9.11s. Warning: existing `requests` dependency warning.
+  - Coverage: normal density, compact density, standard-width inspector, command palette, and focus state exports.
+- TASK-142 artifact text/image checks:
+  - Command: `wc -c Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.png`
+  - Result: all ten visual files are non-empty; total artifact bytes: `1,367,428`.
+  - Command: `sips -g pixelWidth -g pixelHeight Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.png`
+  - Result: all five PNG screenshots are `1800x1200`.
+  - Command: `rg -n "Traceback|Unhandled exception|Unable to mount|Internal Error|<.* object at 0x" Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg`
+  - Result: no matches.
 - Workbench route inventory, responsiveness monitor, shared widgets, focus/help, visual snapshots, Console Workbench contract, parity matrix, and footer shortcut context:
   - Command: `PATH=.venv/bin:$PATH pytest Tests/UI/test_workbench_route_inventory.py Tests/UI/test_ui_responsiveness.py Tests/UI/test_ui_responsiveness_artifacts.py Tests/UI/test_workbench_state.py Tests/UI/test_workbench_widgets.py Tests/UI/test_workbench_focus_help.py Tests/UI/test_workbench_visual_snapshots.py Tests/UI/test_console_workbench_contract.py Tests/UI/test_console_workbench_parity_matrix.py Tests/UI/test_app_footer_shortcut_context.py -q`
   - Result: `58 passed, 1 warning` in 16.88s. Warning: existing `requests` dependency warning.
@@ -42,20 +53,24 @@
 
 These screenshots were generated from the same Textual `export_screenshot()` path used by `Tests/UI/test_workbench_visual_snapshots.py`.
 
-The TASK-140 density correction refreshed these artifacts after the first visual review found that Console still looked like the old UI with extra passive spacing. TASK-141 then removed the remaining empty Console destination-header band by keeping the header mounted only as a hidden compatibility seam. The corrected artifacts now show:
+TASK-142 refreshed these artifacts after the beginner and advanced-user UX review. The current captures show:
 
-- no visible Console-only destination header band between global navigation and the mode/action strip.
+- no visible empty Console-only horizontal destination-header band between global navigation and the setup/status area.
 - visible provider, model, assistant/persona, RAG, source, tools, and approval chips.
 - visible Settings, Attach, Library RAG, and Help controls in the Console-owned control strip.
-- action-first inspector ordering, with run/source/tool/approval actions before secondary conversation/session detail.
-- composer setup recovery copy beside the bottom-pinned draft and visible Send, Stop, Attach, and Save actions.
+- beginner recovery actions surfaced in the transcript empty state and composer instead of being hidden in the command palette.
+- a direct disabled-Send reason next to the primary action row.
+- a tighter left rail with attach/context controls above conversation history.
+- action-first inspector ordering, with run recipe, blocked impact, next action, source readiness, tools, and approvals before secondary conversation/session detail.
 
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-normal.svg`
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-compact.svg`
+- `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-standard-inspector.svg`
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-command-palette.svg`
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-focus-state.svg`
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-normal.png`
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-compact.png`
+- `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-standard-inspector.png`
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-command-palette.png`
 - `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-focus-state.png`
 
@@ -63,22 +78,25 @@ Verification command:
 
 ```bash
 wc -c Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg
-rg -n "Provider:|Model:|Assistant:|RAG:|Sources:|Tools:|Approvals:|Settings|Attach|Library&#160;RAG|Recovery:&#160;Choose" Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-normal.svg Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-focus-state.svg
+rg -n "Provider:|Model:|Assistant:|RAG:|Sources:|Tools:|Approvals:|Settings|Attach|Library&#160;RAG|Choose&#160;model|Send&#160;disabled|Setup&#160;required|Run&#160;recipe|Blocked&#160;impact|Next&#160;action" Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg
 rg -n "Traceback|Unhandled exception|Unable to mount|Internal Error|<.* object at 0x" Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg
+sips -g pixelWidth -g pixelHeight Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.png
 ```
 
-Result: all four files are non-empty SVGs; normal and focus captures contain the dense control labels/actions and composer recovery copy; no traceback or internal-error strings were present.
+Result: all five SVGs are non-empty; normal and compact captures contain the dense control labels/actions and composer recovery copy; the standard-width inspector capture contains `Run recipe`, `Blocked impact`, and `Next action`; no traceback or internal-error strings were present; all five PNGs are 1800x1200.
 
-TASK-140 corrective visual artifact sizes:
+TASK-142 visual artifact sizes:
 
-- `console-workbench-command-palette.svg`: 44,774 bytes
-- `console-workbench-compact.svg`: 98,803 bytes
-- `console-workbench-focus-state.svg`: 101,607 bytes
-- `console-workbench-normal.svg`: 101,108 bytes
-- `console-workbench-command-palette.png`: 205,773 bytes
-- `console-workbench-compact.png`: 175,475 bytes
-- `console-workbench-focus-state.png`: 176,406 bytes
-- `console-workbench-normal.png`: 175,222 bytes
+- `console-workbench-command-palette.svg`: 45,234 bytes
+- `console-workbench-compact.svg`: 98,601 bytes
+- `console-workbench-focus-state.svg`: 101,289 bytes
+- `console-workbench-normal.svg`: 100,878 bytes
+- `console-workbench-standard-inspector.svg`: 112,568 bytes
+- `console-workbench-command-palette.png`: 221,102 bytes
+- `console-workbench-compact.png`: 153,757 bytes
+- `console-workbench-focus-state.png`: 154,129 bytes
+- `console-workbench-normal.png`: 153,102 bytes
+- `console-workbench-standard-inspector.png`: 226,768 bytes
 
 ## Residual Risks
 
