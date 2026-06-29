@@ -694,6 +694,49 @@ class ChatScreen(BaseAppScreen):
             self.console_session_surface.sync_background_effect_settings(settings)
         return self.console_session_surface
 
+    def _ui_responsiveness_monitor(self) -> Any | None:
+        """Return the app-level UI diagnostics monitor when available."""
+        try:
+            return getattr(self.app_instance, "ui_responsiveness_monitor", None)
+        except Exception:
+            return None
+
+    def _record_ui_worker_started(self, name: str) -> None:
+        """Best-effort worker diagnostic hook."""
+        monitor = self._ui_responsiveness_monitor()
+        try:
+            if monitor is not None:
+                monitor.record_worker_started(name)
+        except Exception:
+            return
+
+    def _record_ui_worker_finished(self, name: str) -> None:
+        """Best-effort worker diagnostic hook."""
+        monitor = self._ui_responsiveness_monitor()
+        try:
+            if monitor is not None:
+                monitor.record_worker_finished(name)
+        except Exception:
+            return
+
+    def _record_ui_timer_created(self, name: str) -> None:
+        """Best-effort timer diagnostic hook."""
+        monitor = self._ui_responsiveness_monitor()
+        try:
+            if monitor is not None:
+                monitor.record_timer_created(name)
+        except Exception:
+            return
+
+    def _record_ui_timer_stopped(self, name: str) -> None:
+        """Best-effort timer diagnostic hook."""
+        monitor = self._ui_responsiveness_monitor()
+        try:
+            if monitor is not None:
+                monitor.record_timer_stopped(name)
+        except Exception:
+            return
+
     def _consume_pending_console_launch(self) -> Optional[ConsoleLiveWorkLaunch]:
         """Accept one-shot live-work launch context from another destination."""
         if self._pending_console_launch_context is not None:
@@ -5159,6 +5202,7 @@ class ChatScreen(BaseAppScreen):
             self._console_sync_requested = True
             return
         self._console_sync_in_progress = True
+        self._record_ui_worker_started("console-sync")
         try:
             self._sync_console_chat_core_state()
             self._sync_console_session_draft()
@@ -5170,6 +5214,7 @@ class ChatScreen(BaseAppScreen):
             await self._sync_native_console_transcript_to_legacy_surface()
             self._sync_console_rail_visibility(self._current_console_rail_state())
         finally:
+            self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
             if self._console_sync_requested:
                 self._console_sync_requested = False
@@ -5227,6 +5272,7 @@ class ChatScreen(BaseAppScreen):
                 self._stop_console_transcript_sync_timer()
 
         self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)
+        self._record_ui_timer_created("console-transcript-sync")
 
     def _stop_console_transcript_sync_timer(self) -> None:
         if self._console_transcript_sync_timer is None:
@@ -5234,6 +5280,7 @@ class ChatScreen(BaseAppScreen):
         try:
             self._console_transcript_sync_timer.stop()
         finally:
+            self._record_ui_timer_stopped("console-transcript-sync")
             self._console_transcript_sync_timer = None
 
     async def _submit_console_native_draft(self, draft: str) -> None:

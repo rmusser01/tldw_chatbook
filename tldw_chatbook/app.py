@@ -121,6 +121,7 @@ from tldw_chatbook.Prompt_Management import (
 from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN, supports_emoji
 from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
 from tldw_chatbook.Utils.ui_helpers import UIHelpers
+from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Event_Handlers.worker_handlers import (
     WorkerHandlerRegistry, ChatWorkerHandler, ServerWorkerHandler,
@@ -1195,6 +1196,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     _db_size_status_widget: Optional[AppFooterStatus] = None
     # DB size update timer moved to DBStatusManager
     _token_count_update_timer: Optional[Timer] = None
+    ui_responsiveness_monitor: UIResponsivenessMonitor | None = None
+    _ui_responsiveness_heartbeat_timer: Optional[Timer] = None
 
     # Reactives for sidebar
     chat_sidebar_collapsed: reactive[bool] = reactive(True)
@@ -1394,6 +1397,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.client_id = CLI_APP_CLIENT_ID
         self.prompts_client_id = "tldw_tui_client_v1" # Store client ID for prompts service
         self.db_status_manager = DBStatusManager(self)  # Initialize database status manager
+        self.ui_responsiveness_monitor = UIResponsivenessMonitor(
+            enabled=bool(get_cli_setting("diagnostics", "ui_responsiveness_enabled", True)),
+            heartbeat_interval_seconds=1.0,
+        )
         self._wire_server_context_provider()
         self._startup_phases["basic_init"] = time.perf_counter() - phase_start
         log_histogram("app_startup_phase_duration_seconds", self._startup_phases["basic_init"], 
@@ -3167,6 +3174,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _create_main_ui_widgets(self) -> List[Widget]:
         """Create the main UI widgets (called after splash screen or immediately if disabled)."""
         widgets = []
+        self._start_ui_responsiveness_monitor()
         
         # ALWAYS use screen-based navigation now
         logger.info("Using screen-based navigation - skipping widget creation")
@@ -3197,6 +3205,103 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Screen-based navigation is used exclusively - no tab-based UI components needed
         return widgets
+
+    def _start_ui_responsiveness_monitor(self) -> None:
+        """Start the low-cost UI responsiveness heartbeat."""
+        interval_seconds = 1.0
+        try:
+            if self.ui_responsiveness_monitor is None:
+                enabled = bool(
+                    get_cli_setting("diagnostics", "ui_responsiveness_enabled", True)
+                )
+                self.ui_responsiveness_monitor = UIResponsivenessMonitor(
+                    enabled=enabled,
+                    heartbeat_interval_seconds=interval_seconds,
+                )
+            if not self.ui_responsiveness_monitor.enabled:
+                return
+            self.ui_responsiveness_monitor.record_timer_created("ui-heartbeat")
+            if getattr(self, "_ui_responsiveness_heartbeat_timer", None) is None:
+                self._ui_responsiveness_heartbeat_timer = self.set_interval(
+                    interval_seconds,
+                    self._record_ui_heartbeat,
+                )
+        except Exception as exc:
+            logger.debug(f"UI responsiveness heartbeat setup skipped: {exc}")
+
+    def _record_ui_heartbeat(self) -> None:
+        """Record event-loop heartbeat drift without affecting UI behavior."""
+        try:
+            monitor = self.ui_responsiveness_monitor
+            if monitor is not None:
+                monitor.heartbeat()
+        except Exception as exc:
+            logger.debug(f"UI responsiveness heartbeat skipped: {exc}")
+
+    def _stop_ui_responsiveness_monitor(self) -> None:
+        """Stop the UI responsiveness heartbeat timer if it is active."""
+        timer = getattr(self, "_ui_responsiveness_heartbeat_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception as exc:
+                logger.debug(f"UI responsiveness heartbeat stop skipped: {exc}")
+            finally:
+                self._ui_responsiveness_heartbeat_timer = None
+        try:
+            monitor = self.ui_responsiveness_monitor
+            if monitor is not None:
+                monitor.record_timer_stopped("ui-heartbeat")
+        except Exception:
+            return
+
+    def _record_ui_responsiveness_timer_created(self, name: str) -> None:
+        """Best-effort timer diagnostic hook."""
+        try:
+            monitor = self.ui_responsiveness_monitor
+            if monitor is not None:
+                monitor.record_timer_created(name)
+        except Exception:
+            return
+
+    def _record_ui_responsiveness_timer_stopped(self, name: str) -> None:
+        """Best-effort timer diagnostic stop hook."""
+        try:
+            monitor = self.ui_responsiveness_monitor
+            if monitor is not None:
+                monitor.record_timer_stopped(name)
+        except Exception:
+            return
+
+    def _stop_footer_status_timers(self) -> None:
+        """Stop footer status timers and clear their diagnostic entries."""
+        timer = getattr(self, "_token_count_update_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception as exc:
+                logger.debug(f"Footer token timer stop skipped: {exc}")
+            finally:
+                self._token_count_update_timer = None
+        self._record_ui_responsiveness_timer_stopped("footer-db-size-periodic")
+        self._record_ui_responsiveness_timer_stopped("footer-token-periodic")
+
+    def _record_footer_timer_created(self, name: str) -> None:
+        """Record footer timer creation without making diagnostics mandatory."""
+        record_timer = getattr(
+            self,
+            "_record_ui_responsiveness_timer_created",
+            None,
+        )
+        try:
+            if callable(record_timer):
+                record_timer(name)
+                return
+            monitor = getattr(self, "ui_responsiveness_monitor", None)
+            if monitor is not None:
+                monitor.record_timer_created(name)
+        except Exception:
+            return
 
     def _resolve_screen_navigation_target(self, target: str):
         """Normalize navigation aliases to a routed screen id and canonical current_tab value."""
@@ -4595,6 +4700,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _schedule_footer_status_updates(self) -> None:
         """Wire footer DB/token status updates after UI readiness."""
 
+        def record_footer_timer(name: str) -> None:
+            record_timer = getattr(self, "_record_footer_timer_created", None)
+            try:
+                if callable(record_timer):
+                    record_timer(name)
+                    return
+                monitor = getattr(self, "ui_responsiveness_monitor", None)
+                if monitor is not None:
+                    monitor.record_timer_created(name)
+            except Exception:
+                return
+
         try:
             self._db_size_status_widget = self.query_one(AppFooterStatus)
             self.loguru_logger.info("AppFooterStatus widget instance acquired.")
@@ -4604,9 +4721,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.update_db_sizes,
             )
             self.db_status_manager.start_periodic_updates(120)
+            record_footer_timer("footer-db-size-periodic")
             self.loguru_logger.info("DB size update timer started for AppFooterStatus (interval: 2 minutes).")
 
             self.set_timer(0.5, self.update_token_count_display)
+            record_footer_timer("footer-token-periodic")
             self._token_count_update_timer = self.set_interval(
                 10,
                 lambda: self.call_after_refresh(self.update_token_count_display),
@@ -4748,6 +4867,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Stop DB Size Update Timer ---
         self.db_status_manager.stop_periodic_updates()
+        self._stop_footer_status_timers()
         self.loguru_logger.info("DB size update timer stopped.")
         # --- End Stop DB Size Update Timer ---
 
@@ -4762,6 +4882,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         import asyncio
         logging.info("--- App Unmounting ---")
         self._ui_ready = False
+        self._stop_ui_responsiveness_monitor()
         
         # Stop all background services and threads
         try:
@@ -4876,6 +4997,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # Stop DB size update timer on unmount as well, if not already handled by shutdown_request
         self.db_status_manager.stop_periodic_updates()
+        self._stop_footer_status_timers()
         self.loguru_logger.info("DB size update timer stopped during unmount.")
 
         # Find and remove file handler (more robustly)

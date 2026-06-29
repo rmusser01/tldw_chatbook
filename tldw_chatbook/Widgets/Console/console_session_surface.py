@@ -182,6 +182,19 @@ class ConsoleSessionSurface(Vertical):
                     "console-session-tab-active",
                 )
 
+    def _record_mount_churn(self, *, mounted: int = 0, removed: int = 0) -> None:
+        """Best-effort tab churn diagnostic hook."""
+        try:
+            monitor = getattr(self.app_instance, "ui_responsiveness_monitor", None)
+            if monitor is not None:
+                monitor.record_mounts(
+                    "console-tabs",
+                    mounted=mounted,
+                    removed=removed,
+                )
+        except Exception:
+            return
+
     async def sync_sessions(
         self,
         *,
@@ -204,6 +217,8 @@ class ConsoleSessionSurface(Vertical):
                 )
                 return
 
+            removed_count = len(tab_strip.children)
+            mounted_count = (len(sessions) * 2) + 1
             for child in list(tab_strip.children):
                 await child.remove()
             for session in sessions:
@@ -213,6 +228,7 @@ class ConsoleSessionSurface(Vertical):
                 )
                 await tab_strip.mount(self._build_close_tab_button(session))
             await tab_strip.mount(self._build_new_tab_button())
+            self._record_mount_churn(mounted=mounted_count, removed=removed_count)
 
     def sync_inline_guidance(self, *, visible: bool, copy: str = "") -> None:
         """Keep guidance out of the title and sync empty transcript copy."""
