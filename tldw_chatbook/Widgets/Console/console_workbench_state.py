@@ -28,6 +28,7 @@ def build_console_workbench_state(
     blocker = provider_blocker_copy.strip()
     workbench_density: Density = "compact" if density == "compact" else "normal"
     provider_status = "blocked" if blocker else "ready"
+    send_available = can_send and not blocker
 
     actions = (
         WorkbenchAction(
@@ -60,8 +61,8 @@ def build_console_workbench_state(
             id="send",
             label="Send",
             tooltip="Send composer draft",
-            disabled=not can_send,
-            primary=can_send,
+            disabled=not send_available,
+            primary=send_available,
         ),
         WorkbenchAction(
             id="stop",

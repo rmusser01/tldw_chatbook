@@ -25,6 +25,7 @@ def test_console_workbench_state_exposes_core_actions_visibly():
         can_save_chatbook=True,
     )
 
+    actions = {action.id: action for action in state.actions}
     action_labels = {action.label for action in state.actions}
 
     assert {
@@ -34,7 +35,29 @@ def test_console_workbench_state_exposes_core_actions_visibly():
         "Save Chatbook",
         "Help",
     } <= action_labels
+    assert tuple(actions) == (
+        "new-tab",
+        "settings",
+        "attach-context",
+        "run-library-rag",
+        "save-chatbook",
+        "send",
+        "stop",
+        "help",
+    )
+    assert actions["save-chatbook"].disabled is False
+    assert actions["send"].disabled is False
+    assert actions["send"].primary is True
+    assert actions["stop"].disabled is True
+    assert state.route_id == "chat"
+    assert state.density == "normal"
     assert state.header.title == "Console"
+    assert tuple(pane.id for pane in state.panes) == (
+        "context",
+        "transcript",
+        "inspector",
+        "composer",
+    )
     assert state.recovery is None
 
 
@@ -60,3 +83,28 @@ def test_console_workbench_state_surfaces_provider_recovery():
     assert "choose a model" in state.recovery.body.lower()
     assert state.recovery.action is not None
     assert state.recovery.action.label == "Choose model"
+    assert state.recovery.action.id == "provider-recovery"
+    assert state.recovery.action.primary is True
+
+    modes = {mode.id: mode for mode in state.modes}
+    assert modes["provider"].status == "blocked"
+    assert modes["model"].status == "blocked"
+
+
+def test_console_workbench_state_disables_send_when_provider_is_blocked():
+    state = build_console_workbench_state(
+        control_state=_control_state(),
+        provider_blocker_copy="Provider setup needed: choose a model",
+        can_send=True,
+        can_stop=True,
+        can_save_chatbook=True,
+        density="compact",
+    )
+
+    actions = {action.id: action for action in state.actions}
+
+    assert state.density == "compact"
+    assert state.header.status == "blocked"
+    assert actions["send"].disabled is True
+    assert actions["send"].primary is False
+    assert actions["stop"].disabled is False
