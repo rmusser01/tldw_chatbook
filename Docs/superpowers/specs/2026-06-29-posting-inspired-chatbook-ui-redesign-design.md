@@ -1,7 +1,7 @@
 # Posting-Inspired Chatbook UI Redesign Design
 
 Date: 2026-06-29
-Status: User-approved design; spec review approved; pending implementation plan
+Status: User-approved design; spec review approved; implementation plan drafted; pending execution handoff
 Primary Repo: `tldw_chatbook`
 Scope: All major Chatbook screens, shared Textual UI primitives, responsiveness contract, discoverability rules, and migration policy.
 
@@ -625,7 +625,7 @@ soak: idle for differing durations with heartbeat logging
 
 ADR required: yes
 
-ADR path: `backlog/decisions/NNN-chatbook-workbench-ui-system.md`
+ADR path: `backlog/decisions/011-chatbook-workbench-ui-system.md`
 
 Reason: This redesign creates a long-lived UX and application structure, shared widget boundaries, keyboard/focus conventions, command palette discoverability policy, instrumentation expectations, and migration policy. The ADR must be created before implementation begins and linked from the implementation plan and related Backlog task.
 
