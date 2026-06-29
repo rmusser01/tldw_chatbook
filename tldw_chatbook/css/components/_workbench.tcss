@@ -1,0 +1,213 @@
+/* ========================================
+ * COMPONENTS: Workbench
+ * ========================================
+ * Shared destination workbench frame, command, mode, recovery, pane,
+ * state, and density contracts.
+ * ======================================== */
+
+.workbench-frame {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    layout: vertical;
+    overflow: hidden;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.workbench-header {
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
+    margin: 0;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.workbench-header-title {
+    height: 1;
+    min-height: 1;
+    text-style: bold;
+}
+
+.workbench-header-subtitle {
+    height: 1;
+    min-height: 1;
+    color: $ds-text-muted;
+}
+
+.workbench-header.has-empty-subtitle .workbench-header-subtitle {
+    display: none;
+}
+
+.workbench-header-status {
+    width: auto;
+    height: 1;
+    min-height: 1;
+}
+
+.workbench-command-strip,
+.workbench-mode-strip {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    margin: 0;
+    layout: horizontal;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+.workbench-action,
+.workbench-mode {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    margin: 0 1 0 0;
+}
+
+.workbench-action {
+    padding: 0 1;
+}
+
+.workbench-action.is-primary {
+    text-style: bold;
+}
+
+.workbench-action.is-disabled {
+    color: $ds-text-disabled;
+}
+
+.workbench-mode {
+    padding: 0 1;
+    color: $ds-text-muted;
+}
+
+.workbench-mode.is-active {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold;
+}
+
+.workbench-recovery-callout {
+    height: auto;
+    min-height: 0;
+    padding: 0 1;
+    margin: 0;
+    border: solid $ds-status-warning;
+    background: $ds-status-warning 10%;
+    color: $ds-text-primary;
+}
+
+.workbench-recovery-callout.is-hidden {
+    display: none;
+}
+
+.workbench-recovery-title {
+    height: 1;
+    min-height: 1;
+    text-style: bold;
+}
+
+.workbench-recovery-body {
+    height: auto;
+    min-height: 1;
+    color: $ds-text-primary;
+}
+
+.workbench-recovery-action {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
+}
+
+.workbench-pane-region {
+    height: 1fr;
+    min-height: 0;
+    layout: horizontal;
+    overflow: hidden;
+}
+
+.workbench-pane {
+    width: 1fr;
+    height: 1fr;
+    min-width: 0;
+    min-height: 0;
+    padding: 0 1;
+    border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+.workbench-pane.is-collapsed {
+    width: 3;
+    min-width: 3;
+}
+
+.workbench-pane-title,
+.workbench-pane-status {
+    height: 1;
+    min-height: 1;
+}
+
+.workbench-pane-title {
+    text-style: bold;
+}
+
+.workbench-state-block {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    layout: horizontal;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+}
+
+.workbench-state-route,
+.workbench-state-density {
+    width: auto;
+    height: 1;
+    min-height: 1;
+    margin: 0 1 0 0;
+}
+
+.status-ready {
+    border-title-color: $ds-status-ready;
+}
+
+.status-running,
+.status-loading {
+    border-title-color: $ds-status-running;
+}
+
+.status-blocked,
+.status-error {
+    border-title-color: $ds-status-error;
+}
+
+.status-paused,
+.status-empty {
+    border-title-color: $ds-status-warning;
+}
+
+.density-normal .workbench-header {
+    min-height: 2;
+    padding: 0 1;
+}
+
+.density-normal .workbench-pane {
+    padding: 1;
+}
+
+.density-compact .workbench-header {
+    min-height: 1;
+    padding: 0 1;
+}
+
+.density-compact .workbench-header-subtitle {
+    display: none;
+}
+
+.density-compact .workbench-pane {
+    padding: 0 1;
+}
