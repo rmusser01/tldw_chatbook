@@ -38,6 +38,24 @@
   - Command: `test -s` for `ui_heartbeat.log`, `worker_snapshot.log`, `timer_registry.log`, `mount_churn_summary.log`, and `route_switch_soak_result.txt`
   - Result: exit 0.
 
+## Visual Artifacts
+
+These screenshots were generated from the same Textual `export_screenshot()` path used by `Tests/UI/test_workbench_visual_snapshots.py`.
+
+- `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-normal.svg`
+- `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-compact.svg`
+- `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-command-palette.svg`
+- `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/console-workbench-focus-state.svg`
+
+Verification command:
+
+```bash
+wc -c Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg
+rg -n "<svg|Traceback|Unhandled exception|Unable to mount|Internal Error" Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg
+```
+
+Result: all four files are non-empty SVGs; no traceback or internal-error strings were present.
+
 ## Residual Risks
 
 - The automated soak uses synthetic Console interactions. A real provider streaming soak can be added when a provider endpoint is available.
