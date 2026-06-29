@@ -14,6 +14,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
+from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
@@ -180,6 +181,90 @@ class ConsoleTranscriptActionButton(Button):
         except ValueError:
             return
         action_buttons[(current_index + offset) % len(action_buttons)].focus()
+
+
+class ConsoleTranscriptEmptyAction(Button):
+    """Activation button shown when the Console transcript has no messages."""
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        action_id: str,
+        tooltip: str,
+        id: str,
+    ) -> None:
+        super().__init__(
+            label,
+            id=id,
+            classes="console-transcript-empty-action",
+            compact=True,
+        )
+        self._workbench_action_id = action_id
+        self.tooltip = tooltip
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Route empty-state activation through the owning Workbench screen."""
+        action_id = getattr(self, "_workbench_action_id", "")
+        if not action_id:
+            return
+        event.stop()
+        self.post_message(WorkbenchActionRequested(action_id))
+
+
+class ConsoleTranscriptEmptyPanel(Static):
+    """Actionable Console transcript empty state."""
+
+    def __init__(self, copy: str) -> None:
+        super().__init__(
+            copy,
+            id="console-transcript-empty-state",
+            classes="console-transcript-empty-state",
+        )
+        self.empty_state_copy = copy
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "Start Console",
+            id="console-empty-title",
+            classes="console-transcript-empty-title",
+        )
+        yield Static(
+            self.empty_state_copy,
+            id="console-empty-body",
+            classes="console-transcript-empty-body",
+        )
+        yield Horizontal(
+            ConsoleTranscriptEmptyAction(
+                "Choose model",
+                action_id="provider-recovery",
+                tooltip="Choose the provider and model for this Console session.",
+                id="console-empty-choose-model",
+            ),
+            ConsoleTranscriptEmptyAction(
+                "Attach context",
+                action_id="attach-context",
+                tooltip="Open context sources and attach workspace material.",
+                id="console-empty-attach-context",
+            ),
+            ConsoleTranscriptEmptyAction(
+                "Run Library RAG",
+                action_id="run-library-rag",
+                tooltip="Search Library sources before sending.",
+                id="console-empty-run-library-rag",
+            ),
+            id="console-empty-action-row",
+            classes="console-transcript-empty-action-row",
+        )
+
+    def sync_empty_state(self, copy: str) -> None:
+        """Update the mounted body copy without remounting the action row."""
+        self.empty_state_copy = copy
+        self.update(copy)
+        try:
+            self.query_one("#console-empty-body", Static).update(copy)
+        except Exception:
+            return
 
 
 class ConsoleTranscript(VerticalScroll):
@@ -466,11 +551,7 @@ class ConsoleTranscript(VerticalScroll):
                 classes="console-transcript-rule",
             )
         if row.kind == "empty":
-            return Static(
-                row.renderable,
-                id=self._row_widget_id(row),
-                classes="console-transcript-empty-state",
-            )
+            return ConsoleTranscriptEmptyPanel(row.renderable)
         if row.kind == "action-help":
             return Static(
                 row.renderable,
@@ -487,8 +568,8 @@ class ConsoleTranscript(VerticalScroll):
         if row.kind == "message" and row.message is not None and isinstance(widget, ConsoleTranscriptMessage):
             widget.sync_message(row.message, selected=row.selected)
             return widget
-        if row.kind == "empty" and isinstance(widget, Static):
-            widget.update(row.renderable)
+        if row.kind == "empty" and isinstance(widget, ConsoleTranscriptEmptyPanel):
+            widget.sync_empty_state(row.renderable)
             return widget
         return self._build_row_widget(row, track=True)
 

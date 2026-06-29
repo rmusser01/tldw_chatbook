@@ -78,9 +78,24 @@ def _widget_text(widget) -> str:
     if label is not None:
         plain_label = getattr(label, "plain", None)
         return str(plain_label if plain_label is not None else label)
+    if getattr(widget, "id", "") == "console-transcript-empty-state":
+        child_text = [
+            _widget_text(child)
+            for child in widget.walk_children()
+            if _is_displayed(child)
+        ]
+        return " ".join(part for part in child_text if part)
     renderable = getattr(widget, "renderable", "")
     plain = getattr(renderable, "plain", None)
-    return str(plain if plain is not None else renderable)
+    text = str(plain if plain is not None else renderable)
+    if text:
+        return text
+    child_text = [
+        _widget_text(child)
+        for child in widget.walk_children()
+        if _is_displayed(child)
+    ]
+    return " ".join(part for part in child_text if part)
 
 
 def _children_in_display_order(widget) -> list[str]:
@@ -271,6 +286,41 @@ async def test_console_composer_keeps_primary_actions_and_setup_recovery_visible
         assert _is_displayed(console.query_one("#console-save-chatbook"))
         assert _is_displayed(console.query_one("#console-composer-recovery"))
         assert "Choose model" in _widget_text(console.query_one("#console-composer-recovery"))
+
+
+@pytest.mark.asyncio
+async def test_console_empty_transcript_exposes_beginner_activation_actions():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        empty_panel = console.query_one("#console-transcript-empty-state")
+        assert _is_displayed(empty_panel)
+        assert "Choose model" in _widget_text(empty_panel)
+        assert _is_displayed(console.query_one("#console-empty-choose-model"))
+        assert _is_displayed(console.query_one("#console-empty-attach-context"))
+        assert _is_displayed(console.query_one("#console-empty-run-library-rag"))
+
+
+@pytest.mark.asyncio
+async def test_console_empty_transcript_choose_model_opens_settings():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+
+        await pilot.click("#console-empty-choose-model")
+        await pilot.pause()
+
+        assert host.screen.query("#console-settings-modal") or host.screen.query(
+            "#settings-screen"
+        )
 
 
 def test_console_workbench_state_exposes_core_actions_visibly():

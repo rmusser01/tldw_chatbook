@@ -182,9 +182,7 @@ CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
 CONSOLE_READY_EMPTY_TRANSCRIPT_COPY = (
-    "Start here: ask a question, paste a task, or attach context.\n"
-    "Setup: use Settings for provider/model changes; use Test before long runs. "
-    "Enter sends; Ctrl+U clears; Ctrl+A selects."
+    "Type in Composer, attach sources, or run Library RAG before sending."
 )
 CONSOLE_PROVIDER_ADD_API_KEY_LABEL = "Add API Key"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
@@ -3866,12 +3864,7 @@ class ChatScreen(BaseAppScreen):
         """Return compact empty transcript copy while setup details live nearby."""
         blocker = blocker_copy.strip()
         if blocker:
-            return (
-                "Start here\n"
-                "1. Finish provider setup using the recovery action above\n"
-                "2. Attach Library, runs, Artifacts, or RAG\n"
-                "3. Type a message or command in Composer"
-            )
+            return "Choose a model to enable Send. Then type in Composer or attach context."
         if guidance_visible:
             return CONSOLE_READY_EMPTY_TRANSCRIPT_COPY
         return ""
