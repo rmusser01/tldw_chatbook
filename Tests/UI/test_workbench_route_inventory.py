@@ -1,7 +1,47 @@
+import importlib
+import sys
+
 from tldw_chatbook.UI.Workbench.route_inventory import (
     WORKBENCH_ROUTE_OWNERS,
     build_workbench_route_coverage,
 )
+
+
+def test_workbench_package_import_stays_side_effect_light():
+    module_names = (
+        "tldw_chatbook.UI.Workbench.route_inventory",
+        "tldw_chatbook.UI.Workbench",
+        "tldw_chatbook.UI.Navigation.screen_registry",
+        "tldw_chatbook.UI.Navigation.shell_destinations",
+    )
+    original_modules = {
+        module_name: sys.modules.pop(module_name, None) for module_name in module_names
+    }
+
+    ui_package = sys.modules.get("tldw_chatbook.UI")
+    had_workbench_attribute = ui_package is not None and hasattr(ui_package, "Workbench")
+    original_workbench_attribute = (
+        getattr(ui_package, "Workbench") if had_workbench_attribute else None
+    )
+    if had_workbench_attribute:
+        delattr(ui_package, "Workbench")
+
+    try:
+        importlib.import_module("tldw_chatbook.UI.Workbench")
+
+        assert "tldw_chatbook.UI.Workbench.route_inventory" not in sys.modules
+        assert "tldw_chatbook.UI.Navigation.screen_registry" not in sys.modules
+        assert "tldw_chatbook.UI.Navigation.shell_destinations" not in sys.modules
+    finally:
+        for module_name, module in original_modules.items():
+            sys.modules.pop(module_name, None)
+            if module is not None:
+                sys.modules[module_name] = module
+        if ui_package is not None:
+            if had_workbench_attribute:
+                setattr(ui_package, "Workbench", original_workbench_attribute)
+            elif hasattr(ui_package, "Workbench"):
+                delattr(ui_package, "Workbench")
 
 
 def test_all_registered_screen_routes_have_workbench_migration_owner():
