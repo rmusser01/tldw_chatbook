@@ -8,6 +8,7 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchAction,
     WorkbenchHeaderState,
     WorkbenchMode,
+    WorkbenchPaneState,
     WorkbenchState,
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import (
@@ -111,3 +112,63 @@ async def test_recovery_callout_action_emits_workbench_action_requested():
         await pilot.pause()
 
     assert app.requested_actions == ["provider-recovery"]
+
+
+@pytest.mark.asyncio
+async def test_workbench_frame_sync_state_reorders_actions_modes_and_panes():
+    initial = WorkbenchState(
+        header=WorkbenchHeaderState(title="Console"),
+        modes=(
+            WorkbenchMode(id="chat", label="Chat"),
+            WorkbenchMode(id="rag", label="RAG"),
+        ),
+        actions=(
+            WorkbenchAction(id="settings", label="Settings"),
+            WorkbenchAction(id="send", label="Send"),
+        ),
+        panes=(
+            WorkbenchPaneState(id="context", title="Context"),
+            WorkbenchPaneState(id="transcript", title="Transcript"),
+        ),
+    )
+    app = _WorkbenchFrameApp(initial)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        frame = app.query_one("#frame", WorkbenchFrame)
+
+        frame.sync_state(
+            WorkbenchState(
+                header=WorkbenchHeaderState(title="Console"),
+                modes=(
+                    WorkbenchMode(id="rag", label="RAG"),
+                    WorkbenchMode(id="chat", label="Chat"),
+                ),
+                actions=(
+                    WorkbenchAction(id="send", label="Send"),
+                    WorkbenchAction(id="settings", label="Settings"),
+                ),
+                panes=(
+                    WorkbenchPaneState(id="transcript", title="Transcript"),
+                    WorkbenchPaneState(id="context", title="Context"),
+                ),
+            )
+        )
+        await pilot.pause()
+
+        action_ids = [
+            getattr(child, "_workbench_action_id", None)
+            for child in frame.query_one("#workbench-command-strip").children
+        ]
+        mode_ids = [
+            getattr(child, "_workbench_mode_id", None)
+            for child in frame.query_one("#workbench-mode-strip").children
+        ]
+        pane_ids = [
+            getattr(child, "_workbench_pane_id", None)
+            for child in frame.query_one("#workbench-pane-region").children
+        ]
+
+    assert action_ids == ["send", "settings"]
+    assert mode_ids == ["rag", "chat"]
+    assert pane_ids == ["transcript", "context"]

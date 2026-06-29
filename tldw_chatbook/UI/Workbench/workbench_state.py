@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Literal
 
 
@@ -21,6 +22,34 @@ WorkbenchStatus = Literal[
 def _classes(*names: str) -> str:
     """Return a stable class string without empty parts."""
     return " ".join(name for name in names if name)
+
+
+def normalize_workbench_id(value: str) -> str:
+    """Return the Textual-safe identity segment used by Workbench widgets."""
+    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip())
+    normalized = normalized.strip("-")
+    return normalized or "item"
+
+
+def _raise_on_duplicate_ids(
+    values: tuple[str, ...],
+    *,
+    label: str,
+    normalized: bool = False,
+) -> None:
+    """Raise if values contain duplicate exact or normalized IDs."""
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for value in values:
+        key = normalize_workbench_id(value) if normalized else value
+        if key in seen:
+            duplicates.append(key)
+            continue
+        seen.add(key)
+    if duplicates:
+        duplicate_ids = ", ".join(sorted(set(duplicates)))
+        normalized_label = "normalized " if normalized else ""
+        raise ValueError(f"duplicate {normalized_label}{label} id: {duplicate_ids}")
 
 
 @dataclass(frozen=True)
@@ -106,13 +135,14 @@ class WorkbenchState:
 
     def __post_init__(self) -> None:
         """Validate action identity before widgets render the state."""
-        seen: set[str] = set()
-        duplicates: list[str] = []
-        for action in self.actions:
-            if action.id in seen:
-                duplicates.append(action.id)
-                continue
-            seen.add(action.id)
-        if duplicates:
-            duplicate_ids = ", ".join(sorted(set(duplicates)))
-            raise ValueError(f"duplicate action id: {duplicate_ids}")
+        action_ids = tuple(action.id for action in self.actions)
+        mode_ids = tuple(mode.id for mode in self.modes)
+        pane_ids = tuple(pane.id for pane in self.panes)
+
+        _raise_on_duplicate_ids(action_ids, label="action")
+        _raise_on_duplicate_ids(mode_ids, label="mode")
+        _raise_on_duplicate_ids(pane_ids, label="pane")
+
+        _raise_on_duplicate_ids(action_ids, label="action", normalized=True)
+        _raise_on_duplicate_ids(mode_ids, label="mode", normalized=True)
+        _raise_on_duplicate_ids(pane_ids, label="pane", normalized=True)

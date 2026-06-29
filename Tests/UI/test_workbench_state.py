@@ -7,6 +7,7 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchAction,
     WorkbenchHeaderState,
     WorkbenchMode,
+    WorkbenchPaneState,
     WorkbenchState,
 )
 
@@ -57,6 +58,37 @@ def test_workbench_state_rejects_duplicate_action_ids():
             actions=(
                 WorkbenchAction(id="run", label="Run"),
                 WorkbenchAction(id="run", label="Run again"),
+            ),
+        )
+
+
+def test_workbench_state_rejects_normalized_action_id_collisions():
+    with pytest.raises(ValueError, match="duplicate normalized action id"):
+        WorkbenchState(
+            header=WorkbenchHeaderState(title="Console"),
+            actions=(
+                WorkbenchAction(id="run now", label="Run"),
+                WorkbenchAction(id="run-now", label="Run again"),
+            ),
+        )
+
+
+def test_workbench_state_rejects_duplicate_mode_and_pane_ids():
+    with pytest.raises(ValueError, match="duplicate mode id"):
+        WorkbenchState(
+            header=WorkbenchHeaderState(title="Console"),
+            modes=(
+                WorkbenchMode(id="chat", label="Chat"),
+                WorkbenchMode(id="chat", label="Chat again"),
+            ),
+        )
+
+    with pytest.raises(ValueError, match="duplicate pane id"):
+        WorkbenchState(
+            header=WorkbenchHeaderState(title="Console"),
+            panes=(
+                WorkbenchPaneState(id="context", title="Context"),
+                WorkbenchPaneState(id="context", title="Context again"),
             ),
         )
 

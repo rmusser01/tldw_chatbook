@@ -171,22 +171,22 @@
     margin: 0 1 0 0;
 }
 
-.status-ready {
+.workbench-frame .status-ready {
     border-title-color: $ds-status-ready;
 }
 
-.status-running,
-.status-loading {
+.workbench-frame .status-running,
+.workbench-frame .status-loading {
     border-title-color: $ds-status-running;
 }
 
-.status-blocked,
-.status-error {
+.workbench-frame .status-blocked,
+.workbench-frame .status-error {
     border-title-color: $ds-status-error;
 }
 
-.status-paused,
-.status-empty {
+.workbench-frame .status-paused,
+.workbench-frame .status-empty {
     border-title-color: $ds-status-warning;
 }
 

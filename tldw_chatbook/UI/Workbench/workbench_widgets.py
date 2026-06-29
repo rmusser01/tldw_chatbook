@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -22,14 +21,13 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchPaneState,
     WorkbenchState,
     WorkbenchStatus,
+    normalize_workbench_id,
 )
 
 
 def _safe_id(value: str) -> str:
     """Return a Textual-safe ID segment for state-owned identifiers."""
-    normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip())
-    normalized = normalized.strip("-")
-    return normalized or "item"
+    return normalize_workbench_id(value)
 
 
 def _status_label(status: WorkbenchStatus) -> str:
@@ -71,6 +69,20 @@ def _sync_density_classes(widget: Widget, density: str) -> None:
     """Apply one density class while clearing the rest."""
     widget.set_class(density == "normal", "density-normal")
     widget.set_class(density == "compact", "density-compact")
+
+
+def _sort_state_children(
+    widget: Widget,
+    desired_order: dict[str, int],
+    attribute_name: str,
+) -> None:
+    """Sort state-owned children to match the latest Workbench state order."""
+    widget.sort_children(
+        key=lambda child: desired_order.get(
+            getattr(child, attribute_name, ""),
+            len(desired_order),
+        )
+    )
 
 
 class WorkbenchActionRequested(Message):
@@ -205,6 +217,11 @@ class CommandStrip(Horizontal):
                 continue
             self.mount(self._build_button(action))
             mounted += 1
+        _sort_state_children(
+            self,
+            {action.id: index for index, action in enumerate(actions)},
+            "_workbench_action_id",
+        )
 
         self._button_ids_by_action_id = {
             action_id: button_id
@@ -293,6 +310,11 @@ class ModeStrip(Horizontal):
                 continue
             self.mount(self._build_mode(mode))
             mounted += 1
+        _sort_state_children(
+            self,
+            {mode.id: index for index, mode in enumerate(modes)},
+            "_workbench_mode_id",
+        )
 
         if mounted or removed:
             _record_mount_churn(
@@ -501,6 +523,11 @@ class WorkbenchFrame(Vertical):
                 )
             )
             mounted += 1
+        _sort_state_children(
+            region,
+            {pane.id: index for index, pane in enumerate(panes)},
+            "_workbench_pane_id",
+        )
 
         if mounted or removed:
             _record_mount_churn(
