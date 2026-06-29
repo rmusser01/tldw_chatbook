@@ -429,6 +429,70 @@ def test_console_empty_transcript_copy_matches_setup_blocker(
     )
 
 
+@pytest.mark.parametrize(
+    ("blocker_copy", "expected_label", "expected_tooltip"),
+    (
+        (
+            "Provider setup needed: choose a model",
+            "Choose model",
+            "Choose a model for this Console session",
+        ),
+        (
+            "Provider setup needed: choose a provider",
+            "Choose provider",
+            "Choose a provider for this Console session",
+        ),
+        (
+            "Provider setup needed: OpenAI missing API key",
+            "Add API key",
+            "Add an API key before sending",
+        ),
+        (
+            "Provider setup needed: save the endpoint in settings",
+            "Configure endpoint",
+            "Configure the provider endpoint before sending",
+        ),
+        (
+            "Provider setup needed: verify local runtime",
+            "Review settings",
+            "Review Console provider settings before sending",
+        ),
+    ),
+)
+def test_console_empty_recovery_action_copy_matches_setup_blocker(
+    blocker_copy: str,
+    expected_label: str,
+    expected_tooltip: str,
+):
+    assert ChatScreen._console_empty_recovery_action_copy(blocker_copy) == (
+        expected_label,
+        expected_tooltip,
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_empty_transcript_provider_recovery_label_matches_setup_blocker(
+    monkeypatch,
+):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4.1-2025-04-14"},
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        action = console.query_one("#console-empty-choose-model")
+        assert _widget_text(action) == "Add API key"
+        assert str(action.tooltip or "") == "Add an API key for OpenAI"
+
+
 def test_console_workbench_state_exposes_core_actions_visibly():
     state = build_console_workbench_state(
         control_state=_control_state(),

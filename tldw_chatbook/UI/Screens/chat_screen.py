@@ -3885,6 +3885,36 @@ class ChatScreen(BaseAppScreen):
             action = "Finish provider setup"
         return f"{action} to enable Send. Then type in Composer or attach context."
 
+    @staticmethod
+    def _console_empty_recovery_action_copy(
+        blocker_copy: str,
+        *,
+        provider_action_label: str = "",
+        provider_action_tooltip: str = "",
+    ) -> tuple[str, str]:
+        """Return empty-state provider recovery button label and tooltip."""
+        blocker = blocker_copy.strip().lower()
+        if provider_action_label:
+            label = (
+                "Add API key"
+                if provider_action_label == CONSOLE_PROVIDER_ADD_API_KEY_LABEL
+                else provider_action_label
+            )
+            tooltip = provider_action_tooltip.strip()
+            if tooltip:
+                return label, tooltip
+        if "choose a provider" in blocker:
+            return "Choose provider", "Choose a provider for this Console session"
+        if "choose a model" in blocker:
+            return "Choose model", "Choose a model for this Console session"
+        if "api key" in blocker:
+            return "Add API key", "Add an API key before sending"
+        if "endpoint" in blocker:
+            return "Configure endpoint", "Configure the provider endpoint before sending"
+        if blocker:
+            return "Review settings", "Review Console provider settings before sending"
+        return "Choose model", "Choose the provider and model for this Console session."
+
     def _console_setup_blocked_reason(self) -> str:
         """Return setup-specific send blocker copy for the native composer."""
         blocker = self._console_provider_blocker_copy().strip().lower()
@@ -4025,6 +4055,12 @@ class ChatScreen(BaseAppScreen):
         """Refresh Console onboarding and provider recovery copy in place."""
         blocker_copy = self._console_provider_blocker_copy()
         guidance_visible = self._console_guidance_visible(blocker_copy)
+        action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
+        empty_action_label, empty_action_tooltip = self._console_empty_recovery_action_copy(
+            blocker_copy,
+            provider_action_label=action_label if blocker_copy else "",
+            provider_action_tooltip=action_tooltip if blocker_copy else "",
+        )
         for selector, copy in (
             ("#console-start-here", CONSOLE_START_HERE_COPY),
             ("#console-action-hints", CONSOLE_ACTION_HINTS_COPY),
@@ -4052,6 +4088,16 @@ class ChatScreen(BaseAppScreen):
                 visible=bool(empty_copy),
                 copy=empty_copy,
             )
+            try:
+                transcript = surface.query_one("#console-native-transcript", ConsoleTranscript)
+            except QueryError:
+                pass
+            else:
+                transcript.sync_empty_state(
+                    empty_copy if empty_copy else "",
+                    provider_action_label=empty_action_label,
+                    provider_action_tooltip=empty_action_tooltip,
+                )
 
         try:
             provider_strip = self.query_one("#console-provider-recovery-strip", Horizontal)
@@ -4061,7 +4107,6 @@ class ChatScreen(BaseAppScreen):
         # Legacy recovery selectors stay mounted for parity, but Workbench owns
         # the visible setup recovery UI through #workbench-recovery-callout.
         recovery_visible = False
-        action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
         self._configure_console_provider_recovery_strip(
             provider_strip,
             provider_blocker,
