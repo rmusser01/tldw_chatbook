@@ -1608,7 +1608,7 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             "Add API Key",
             "Start Console",
             "Add an API key to enable Send. Then type in Composer or attach context.",
-            "Choose model",
+            "Add API key",
             "Attach context",
             "Run Library RAG",
         ):
