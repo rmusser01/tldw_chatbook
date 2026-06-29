@@ -92,6 +92,10 @@ class UIResponsivenessMonitor:
         self.record_heartbeat_delta(lag_seconds)
         self._last_heartbeat = now
 
+    def reset_heartbeat_baseline(self) -> None:
+        """Reset heartbeat timing without clearing accumulated diagnostics."""
+        self._last_heartbeat = time.perf_counter()
+
     def snapshot(self) -> UIResponsivenessSnapshot:
         """Return the current diagnostic counters as an immutable snapshot."""
         return UIResponsivenessSnapshot(

@@ -71,6 +71,36 @@ def test_app_starts_responsiveness_monitor_with_heartbeat_timer(monkeypatch):
     assert scheduled == [(1.0, app._record_ui_heartbeat)]
 
 
+def test_app_resets_heartbeat_baseline_when_timer_starts(monkeypatch):
+    from tldw_chatbook import app as app_module
+    from tldw_chatbook.Utils import ui_responsiveness as responsiveness_module
+
+    current_time = {"value": 0.0}
+    monkeypatch.setattr(
+        responsiveness_module.time,
+        "perf_counter",
+        lambda: current_time["value"],
+    )
+
+    app = app_module.TldwCli.__new__(app_module.TldwCli)
+    app.ui_responsiveness_monitor = UIResponsivenessMonitor(
+        enabled=True,
+        stall_threshold_ms=250,
+        heartbeat_interval_seconds=1.0,
+    )
+    app._ui_responsiveness_heartbeat_timer = None
+    monkeypatch.setattr(app, "set_interval", lambda _seconds, _callback: object())
+
+    current_time["value"] = 10.0
+    app_module.TldwCli._start_ui_responsiveness_monitor(app)
+    current_time["value"] = 11.0
+    app_module.TldwCli._record_ui_heartbeat(app)
+
+    snapshot = app.ui_responsiveness_monitor.snapshot()
+    assert snapshot.max_heartbeat_lag_ms == 0
+    assert snapshot.stalled is False
+
+
 def test_app_stops_responsiveness_heartbeat_timer():
     from tldw_chatbook import app as app_module
 
