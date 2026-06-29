@@ -5746,9 +5746,12 @@ class ChatScreen(BaseAppScreen):
     async def _open_console_provider_recovery(self) -> None:
         """Route provider setup recovery to the smallest relevant settings surface."""
         _label, target, _tooltip = self._console_provider_recovery_action()
-        if target == "console" and getattr(self, "is_mounted", False):
+        if target in {"console", "hidden"} and getattr(self, "is_mounted", False):
             await self._open_console_settings(
-                focus_model=self._is_console_choose_model_action(_label)
+                focus_model=(
+                    target == "hidden"
+                    or self._is_console_choose_model_action(_label)
+                )
             )
             return
         provider, model, settings = self._active_console_provider_model_display()

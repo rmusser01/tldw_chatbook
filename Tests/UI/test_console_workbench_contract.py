@@ -363,6 +363,23 @@ async def test_console_empty_transcript_choose_model_opens_settings():
 
 
 @pytest.mark.asyncio
+async def test_console_ready_empty_transcript_choose_model_opens_console_settings():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+
+        await pilot.click("#console-empty-choose-model")
+        await pilot.pause()
+
+        assert host.screen.query("#console-settings-modal")
+
+
+@pytest.mark.asyncio
 async def test_console_empty_transcript_actions_post_workbench_messages():
     app = EmptyTranscriptActionHarness()
 
