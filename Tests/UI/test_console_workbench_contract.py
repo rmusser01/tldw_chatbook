@@ -3,7 +3,10 @@ from textual.app import App, ComposeResult
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
-from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+from tldw_chatbook.Chat.console_display_state import (
+    ConsoleControlState,
+    build_console_disabled_reason,
+)
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
@@ -307,6 +310,32 @@ def test_console_workbench_state_surfaces_provider_recovery():
     modes = {mode.id: mode for mode in state.modes}
     assert modes["provider"].status == "blocked"
     assert modes["model"].status == "blocked"
+
+
+def test_console_workbench_recovery_names_specific_setup_action():
+    state = build_console_workbench_state(
+        control_state=_control_state(),
+        provider_blocker_copy="Provider setup needed: choose a model",
+        provider_action_label="Choose model",
+        can_send=False,
+    )
+
+    assert state.recovery is not None
+    assert state.recovery.action is not None
+    assert state.recovery.action.label == "Choose model"
+    assert state.recovery.action.primary is True
+    assert "Send is blocked" in state.recovery.body
+
+
+def test_console_disabled_reason_copy_prefers_setup_blocker():
+    reason = build_console_disabled_reason(
+        action_id="send",
+        has_draft=False,
+        send_blocked=True,
+        setup_blocked_reason="Provider setup needed: choose a model",
+    )
+
+    assert reason == "Send disabled: choose a model"
 
 
 def test_console_workbench_state_disables_send_when_provider_is_blocked():

@@ -103,6 +103,7 @@ def build_console_workbench_state(
             action=WorkbenchAction(
                 id="provider-recovery",
                 label=provider_action_label,
+                tooltip=provider_action_label,
                 primary=True,
             ),
         )

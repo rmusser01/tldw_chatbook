@@ -52,6 +52,36 @@ def _is_blocked_rag_status(value: Any) -> bool:
     return text.startswith("missing") or text in {"blocked", "unavailable"}
 
 
+def build_console_disabled_reason(
+    *,
+    action_id: str,
+    has_draft: bool,
+    send_blocked: bool,
+    setup_blocked_reason: str = "",
+) -> str:
+    """Return concise disabled copy for Console action controls.
+
+    Args:
+        action_id: Canonical action id, such as ``send``.
+        has_draft: Whether the composer currently has message text.
+        send_blocked: Whether sending is blocked by setup or run state.
+        setup_blocked_reason: Provider/setup blocker copy, when present.
+
+    Returns:
+        A user-facing disabled reason, or an empty string when no conservative
+        reason should be shown.
+    """
+    if action_id != "send":
+        return ""
+
+    setup_reason = _clean(setup_blocked_reason, "").lower()
+    if send_blocked and "model" in setup_reason:
+        return "Send disabled: choose a model"
+    if not has_draft:
+        return "Send disabled: type a message"
+    return ""
+
+
 @dataclass(frozen=True)
 class ConsoleDisplayRow:
     """One user-visible Console display row."""
