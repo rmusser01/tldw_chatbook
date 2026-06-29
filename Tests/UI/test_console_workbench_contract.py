@@ -1,5 +1,6 @@
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Vertical
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
@@ -8,7 +9,9 @@ from tldw_chatbook.Chat.console_display_state import (
     build_console_disabled_reason,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
 )
@@ -33,6 +36,19 @@ class ConsoleFooterHarness(App):
 
     async def on_mount(self) -> None:
         await self.push_screen(ChatScreen(self.app_instance))
+
+
+class EmptyTranscriptActionHarness(App):
+    def __init__(self):
+        super().__init__()
+        self.workbench_actions: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleTranscript(id="console-native-transcript")
+
+    def on_workbench_action_requested(self, event: WorkbenchActionRequested) -> None:
+        event.stop()
+        self.workbench_actions.append(event.action_id)
 
 
 def _configure_native_ready_console(app, model: str = "local-model") -> None:
@@ -90,12 +106,7 @@ def _widget_text(widget) -> str:
     text = str(plain if plain is not None else renderable)
     if text:
         return text
-    child_text = [
-        _widget_text(child)
-        for child in widget.walk_children()
-        if _is_displayed(child)
-    ]
-    return " ".join(part for part in child_text if part)
+    return ""
 
 
 def _children_in_display_order(widget) -> list[str]:
@@ -299,10 +310,38 @@ async def test_console_empty_transcript_exposes_beginner_activation_actions():
 
         empty_panel = console.query_one("#console-transcript-empty-state")
         assert _is_displayed(empty_panel)
+        assert _widget_text(console.query_one("#console-empty-title")) == "Start Console"
+        assert _widget_text(console.query_one("#console-empty-body")) == (
+            "Choose a model to enable Send. Then type in Composer or attach context."
+        )
         assert "Choose model" in _widget_text(empty_panel)
         assert _is_displayed(console.query_one("#console-empty-choose-model"))
         assert _is_displayed(console.query_one("#console-empty-attach-context"))
         assert _is_displayed(console.query_one("#console-empty-run-library-rag"))
+
+
+@pytest.mark.asyncio
+async def test_console_ready_empty_transcript_exposes_activation_panel_copy():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        empty_panel = console.query_one("#console-transcript-empty-state")
+        assert isinstance(empty_panel, Vertical)
+        assert _is_displayed(empty_panel)
+        assert _widget_text(console.query_one("#console-empty-title")) == "Start Console"
+        assert _widget_text(console.query_one("#console-empty-body")) == (
+            "Type in Composer, attach sources, or run Library RAG before sending."
+        )
+        assert _widget_text(console.query_one("#console-empty-choose-model")) == "Choose model"
+        assert _widget_text(console.query_one("#console-empty-attach-context")) == "Attach context"
+        assert _widget_text(console.query_one("#console-empty-run-library-rag")) == (
+            "Run Library RAG"
+        )
 
 
 @pytest.mark.asyncio
@@ -321,6 +360,73 @@ async def test_console_empty_transcript_choose_model_opens_settings():
         assert host.screen.query("#console-settings-modal") or host.screen.query(
             "#settings-screen"
         )
+
+
+@pytest.mark.asyncio
+async def test_console_empty_transcript_actions_post_workbench_messages():
+    app = EmptyTranscriptActionHarness()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        await pilot.click("#console-empty-attach-context")
+        await pilot.click("#console-empty-run-library-rag")
+        await pilot.pause()
+
+        assert app.workbench_actions == ["attach-context", "run-library-rag"]
+
+
+@pytest.mark.asyncio
+async def test_console_transcript_empty_fallback_uses_ready_activation_copy():
+    app = EmptyTranscriptActionHarness()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+
+        transcript.sync_empty_state("")
+        await pilot.pause()
+
+        assert _widget_text(app.query_one("#console-empty-body")) == (
+            "Type in Composer, attach sources, or run Library RAG before sending."
+        )
+
+
+@pytest.mark.parametrize(
+    ("blocker_copy", "expected"),
+    (
+        (
+            "Provider setup needed: choose a model",
+            "Choose a model to enable Send. Then type in Composer or attach context.",
+        ),
+        (
+            "Provider setup needed: choose a provider",
+            "Choose a provider to enable Send. Then type in Composer or attach context.",
+        ),
+        (
+            "Provider setup needed: OpenAI missing API key",
+            "Add an API key to enable Send. Then type in Composer or attach context.",
+        ),
+        (
+            "Provider setup needed: save the endpoint in settings",
+            "Configure the endpoint to enable Send. Then type in Composer or attach context.",
+        ),
+        (
+            "Provider setup needed: verify local runtime",
+            "Finish provider setup to enable Send. Then type in Composer or attach context.",
+        ),
+    ),
+)
+def test_console_empty_transcript_copy_matches_setup_blocker(
+    blocker_copy: str,
+    expected: str,
+):
+    assert (
+        ChatScreen._console_empty_transcript_copy(
+            blocker_copy,
+            guidance_visible=False,
+        )
+        == expected
+    )
 
 
 def test_console_workbench_state_exposes_core_actions_visibly():

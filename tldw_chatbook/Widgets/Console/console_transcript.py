@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Iterable, Literal
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -18,7 +18,7 @@ from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequeste
 
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
-EMPTY_TRANSCRIPT_COPY = "Ready. Ask a question, run a command, or attach context."
+EMPTY_TRANSCRIPT_COPY = "Type in Composer, attach sources, or run Library RAG before sending."
 SELECTED_MESSAGE_ACTION_GUIDE = (
     "Guide: ♻ Regenerate  ---> Continue  👍/👎 Rate  🗑 Delete"
 )
@@ -212,14 +212,13 @@ class ConsoleTranscriptEmptyAction(Button):
         self.post_message(WorkbenchActionRequested(action_id))
 
 
-class ConsoleTranscriptEmptyPanel(Static):
+class ConsoleTranscriptEmptyPanel(Vertical):
     """Actionable Console transcript empty state."""
 
     def __init__(self, copy: str) -> None:
         super().__init__(
-            copy,
             id="console-transcript-empty-state",
-            classes="console-transcript-empty-state",
+            classes="console-transcript-empty-panel",
         )
         self.empty_state_copy = copy
 
@@ -232,7 +231,7 @@ class ConsoleTranscriptEmptyPanel(Static):
         yield Static(
             self.empty_state_copy,
             id="console-empty-body",
-            classes="console-transcript-empty-body",
+            classes="console-transcript-empty-body console-transcript-empty-state",
         )
         yield Horizontal(
             ConsoleTranscriptEmptyAction(
@@ -260,7 +259,6 @@ class ConsoleTranscriptEmptyPanel(Static):
     def sync_empty_state(self, copy: str) -> None:
         """Update the mounted body copy without remounting the action row."""
         self.empty_state_copy = copy
-        self.update(copy)
         try:
             self.query_one("#console-empty-body", Static).update(copy)
         except Exception:

@@ -1606,10 +1606,11 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             "OpenAI missing API key",
             "Impact: Send is blocked until setup is finished.",
             "Add API Key",
-            "Start here",
-            "1. Finish provider setup",
-            "2. Attach Library, runs, Artifacts, or RAG",
-            "3. Type a message or command in Composer",
+            "Start Console",
+            "Add an API key to enable Send. Then type in Composer or attach context.",
+            "Choose model",
+            "Attach context",
+            "Run Library RAG",
         ):
             assert expected in text
         for redundant_copy in (
@@ -1621,6 +1622,9 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             "No messages yet.",
             "Setup required: finish provider setup.",
             "No messages yet. Send a prompt or attach context.",
+            "1. Finish provider setup",
+            "2. Attach Library, runs, Artifacts, or RAG",
+            "3. Type a message or command in Composer",
         ):
             assert redundant_copy not in text
         assert "Provider: OpenAI is not ready" not in text
@@ -1647,15 +1651,17 @@ async def test_console_empty_ready_transcript_shows_first_run_guidance():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         text = _visible_text(console)
-        assert "Start here: ask a question, paste a task, or attach context." in text
-        assert "Setup: use Settings for provider/model changes; use Test before long runs." in text
-        assert "Enter sends" in text
+        assert "Start Console" in text
+        assert "Type in Composer, attach sources, or run Library RAG before sending." in text
+        assert "Choose model" in text
+        assert "Attach context" in text
+        assert "Run Library RAG" in text
 
         await pilot.press("h")
         await pilot.pause(0.1)
 
         text = _visible_text(console)
-        assert "Start here: ask a question, paste a task, or attach context." not in text
+        assert "No messages yet. Send a prompt or attach context." not in text
 
 
 @pytest.mark.asyncio
@@ -1830,8 +1836,11 @@ async def test_console_empty_transcript_stays_neutral_when_setup_blocked(monkeyp
         transcript = console.query_one("#console-native-transcript")
         text = _visible_text(transcript)
 
-        assert "Start here" in text
-        assert "1. Finish provider setup" in text
+        assert "Start Console" in text
+        assert "Choose a model to enable Send. Then type in Composer or attach context." in text
+        assert "Choose model" in text
+        assert "Attach context" in text
+        assert "Run Library RAG" in text
         assert "Choose a model in Console Settings to start chatting." not in text
         assert "Ready. Ask a question" not in text
 
@@ -1983,8 +1992,11 @@ async def test_console_native_transcript_is_visible_transcript_surface():
         assert transcript.region.height > 0
         assert transcript.styles.display != "none"
         text = _visible_text(console)
-        assert "Start here: ask a question, paste a task, or attach context." in text
-        assert "Setup: use Settings for provider/model changes; use Test before long runs." in text
+        assert "Start Console" in text
+        assert "Type in Composer, attach sources, or run Library RAG before sending." in text
+        assert "Choose model" in text
+        assert "Attach context" in text
+        assert "Run Library RAG" in text
         assert "No messages yet. Send a prompt or attach context." not in text
 
 
@@ -2000,18 +2012,18 @@ async def test_console_empty_transcript_uses_compact_ready_state():
 
         tab_strip = console.query_one("#console-native-tab-strip")
         transcript = console.query_one("#console-native-transcript")
-        empty_rows = list(transcript.query(".console-transcript-empty-state"))
+        empty_rows = list(transcript.query("#console-transcript-empty-state"))
 
         assert len(empty_rows) == 1
-        empty_row = empty_rows[0]
-        empty_text = getattr(empty_row.render(), "plain", str(empty_row.render()))
-        assert empty_text == (
-            "Start here: ask a question, paste a task, or attach context.\n"
-            "Setup: use Settings for provider/model changes; use Test before long runs. "
-            "Enter sends; Ctrl+U clears; Ctrl+A selects."
+        empty_panel = empty_rows[0]
+        assert _visible_text(empty_panel) == (
+            "Start Console Type in Composer, attach sources, or run Library RAG before "
+            "sending. Choose model Attach context Run Library RAG"
         )
-        assert "No messages yet. Send a prompt or attach context." not in empty_text
-        assert empty_row.region.y == tab_strip.region.y + tab_strip.region.height
+        assert "No messages yet. Send a prompt or attach context." not in _visible_text(
+            empty_panel
+        )
+        assert empty_panel.region.y == tab_strip.region.y + tab_strip.region.height
 
 
 @pytest.mark.asyncio

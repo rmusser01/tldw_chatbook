@@ -1445,7 +1445,8 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     margin: 0 0 1 0;
 }
 
-.console-transcript-empty-state {
+#console-transcript-empty-state,
+.console-transcript-empty-panel {
     height: auto;
     min-height: 4;
     width: 100%;

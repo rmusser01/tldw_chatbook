@@ -3864,10 +3864,26 @@ class ChatScreen(BaseAppScreen):
         """Return compact empty transcript copy while setup details live nearby."""
         blocker = blocker_copy.strip()
         if blocker:
-            return "Choose a model to enable Send. Then type in Composer or attach context."
+            return ChatScreen._console_blocked_empty_transcript_copy(blocker)
         if guidance_visible:
             return CONSOLE_READY_EMPTY_TRANSCRIPT_COPY
         return ""
+
+    @staticmethod
+    def _console_blocked_empty_transcript_copy(blocker_copy: str) -> str:
+        """Return setup-aware empty transcript activation copy."""
+        blocker = blocker_copy.strip().lower()
+        if "choose a provider" in blocker:
+            action = "Choose a provider"
+        elif "choose a model" in blocker:
+            action = "Choose a model"
+        elif "api key" in blocker:
+            action = "Add an API key"
+        elif "endpoint" in blocker:
+            action = "Configure the endpoint"
+        else:
+            action = "Finish provider setup"
+        return f"{action} to enable Send. Then type in Composer or attach context."
 
     def _console_setup_blocked_reason(self) -> str:
         """Return setup-specific send blocker copy for the native composer."""
