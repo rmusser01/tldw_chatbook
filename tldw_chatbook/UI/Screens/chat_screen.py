@@ -4340,14 +4340,14 @@ class ChatScreen(BaseAppScreen):
                     classes="workbench-header",
                 )
             )
-            yield self._compact_console_workbench_widget(
+            yield self._hidden_console_workbench_widget(
                 ModeStrip(
                     workbench_state.modes,
                     id="console-workbench-mode-strip",
                     classes="workbench-mode-strip",
                 )
             )
-            yield self._compact_console_workbench_widget(
+            yield self._hidden_console_workbench_widget(
                 CommandStrip(
                     workbench_state.actions,
                     id="console-workbench-command-strip",
@@ -4390,6 +4390,7 @@ class ChatScreen(BaseAppScreen):
                 ConsoleControlBar(
                     control_state,
                     self.app_instance,
+                    actions=workbench_state.actions,
                     on_sidebar_toggle_requested=self._toggle_console_chat_sidebar,
                     id="console-control-bar",
                     classes="console-control-bar",
@@ -6066,13 +6067,14 @@ class ChatScreen(BaseAppScreen):
         control_state = self._build_console_control_state(
             self._pending_console_launch_context
         )
+        workbench_state = self._build_console_workbench_state(control_state)
         try:
             control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
         except QueryError:
             control_bar = None
         if control_bar is not None:
-            control_bar.sync_state(control_state)
-        self._sync_console_workbench_state(control_state)
+            control_bar.sync_state(control_state, actions=workbench_state.actions)
+        self._sync_console_workbench_state(control_state, workbench_state=workbench_state)
         self._sync_console_transcript_guidance()
         try:
             inspector = self.query_one("#console-run-inspector-state", ConsoleRunInspector)
@@ -6089,9 +6091,15 @@ class ChatScreen(BaseAppScreen):
         )
         self._sync_console_rail_visibility(self._current_console_rail_state())
 
-    def _sync_console_workbench_state(self, control_state: ConsoleControlState) -> None:
+    def _sync_console_workbench_state(
+        self,
+        control_state: ConsoleControlState,
+        *,
+        workbench_state: Any | None = None,
+    ) -> None:
         """Refresh visible Workbench primitives from current Console state."""
-        workbench_state = self._build_console_workbench_state(control_state)
+        if workbench_state is None:
+            workbench_state = self._build_console_workbench_state(control_state)
         try:
             self.query_one("#console-workbench-header", DestinationHeader).sync_state(
                 workbench_state.header

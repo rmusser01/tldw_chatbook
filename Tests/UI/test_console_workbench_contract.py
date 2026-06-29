@@ -74,6 +74,10 @@ def _visible_workbench_focus_ids(console: ChatScreen) -> set[str]:
 
 
 def _widget_text(widget) -> str:
+    label = getattr(widget, "label", None)
+    if label is not None:
+        plain_label = getattr(label, "plain", None)
+        return str(plain_label if plain_label is not None else label)
     renderable = getattr(widget, "renderable", "")
     plain = getattr(renderable, "plain", None)
     return str(plain if plain is not None else renderable)
@@ -118,9 +122,35 @@ async def test_console_workbench_header_seam_has_no_visible_layout_cost():
         assert not _is_displayed(header)
         assert _style_scalar_value(header.styles.height) == 0
         assert _style_scalar_value(header.styles.min_height) == 0
-        assert _is_displayed(console.query_one("#console-workbench-mode-strip"))
-        assert _is_displayed(console.query_one("#console-workbench-command-strip"))
+        assert not _is_displayed(console.query_one("#console-workbench-mode-strip"))
+        assert not _is_displayed(console.query_one("#console-workbench-command-strip"))
         assert _is_displayed(console.query_one("#console-control-bar"))
+
+
+@pytest.mark.asyncio
+async def test_console_has_one_canonical_visible_state_action_strip():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        assert not _is_displayed(console.query_one("#console-workbench-mode-strip"))
+        assert not _is_displayed(console.query_one("#console-workbench-command-strip"))
+        control_bar = console.query_one("#console-control-bar")
+        assert _is_displayed(control_bar)
+
+        visible_text = " ".join(
+            _widget_text(child)
+            for child in control_bar.walk_children()
+            if _is_displayed(child)
+        )
+        assert visible_text.count("Provider:") == 1
+        assert visible_text.count("Model:") == 1
+        assert visible_text.count("Settings") == 1
+        assert visible_text.count("Library RAG") == 1
 
 
 @pytest.mark.asyncio
@@ -171,13 +201,19 @@ async def test_console_control_bar_exposes_compact_visible_actions():
         await _wait_for_selector(console, pilot, "#console-shell")
 
         for selector in (
+            "#console-control-new-tab",
             "#console-control-settings",
             "#console-control-attach-context",
             "#console-control-run-library-rag",
+            "#console-control-save-chatbook",
+            "#console-control-help",
         ):
             action = console.query_one(selector)
             assert _is_displayed(action), selector
-            assert action.disabled is False
+        assert console.query_one("#console-control-settings").disabled is False
+        assert console.query_one("#console-control-attach-context").disabled is False
+        assert console.query_one("#console-control-run-library-rag").disabled is False
+        assert console.query_one("#console-control-help").disabled is False
 
 
 @pytest.mark.asyncio
@@ -425,11 +461,12 @@ async def test_console_core_controls_are_visible_without_command_palette():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 
+        assert not _is_displayed(console.query_one("#console-workbench-command-strip"))
         for selector in (
-            "#workbench-action-settings",
-            "#workbench-action-attach-context",
-            "#workbench-action-run-library-rag",
-            "#workbench-action-help",
+            "#console-control-settings",
+            "#console-control-attach-context",
+            "#console-control-run-library-rag",
+            "#console-control-help",
             "#console-native-composer",
         ):
             widget = console.query_one(selector)
@@ -495,18 +532,19 @@ async def test_console_workbench_send_action_enables_after_typing_draft():
 
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#workbench-action-send")
+        await _wait_for_selector(console, pilot, "#console-send-message")
 
-        send_action = console.query_one("#workbench-action-send")
+        assert not _is_displayed(console.query_one("#console-workbench-command-strip"))
+        send_action = console.query_one("#console-send-message")
         assert _is_displayed(send_action)
-        assert send_action.disabled is True
+        assert send_action.has_class("console-send-ready") is False
 
         await pilot.press("h")
         await pilot.pause()
 
-        send_action = console.query_one("#workbench-action-send")
+        send_action = console.query_one("#console-send-message")
         assert _is_displayed(send_action)
-        assert send_action.disabled is False
+        assert send_action.has_class("console-send-ready") is True
 
 
 @pytest.mark.asyncio
@@ -517,8 +555,8 @@ async def test_console_workbench_send_action_disables_during_active_run():
 
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#workbench-action-send")
-        await _wait_for_selector(console, pilot, "#workbench-action-stop")
+        await _wait_for_selector(console, pilot, "#console-send-message")
+        await _wait_for_selector(console, pilot, "#console-stop-generation")
 
         await pilot.press("h")
         await pilot.pause()
@@ -531,13 +569,14 @@ async def test_console_workbench_send_action_disables_during_active_run():
         console._sync_console_control_bar()
         await pilot.pause()
 
-        send_action = console.query_one("#workbench-action-send")
-        stop_action = console.query_one("#workbench-action-stop")
+        assert not _is_displayed(console.query_one("#console-workbench-command-strip"))
+        send_action = console.query_one("#console-send-message")
+        stop_action = console.query_one("#console-stop-generation")
         assert _is_displayed(send_action)
         assert _is_displayed(stop_action)
-        assert send_action.disabled is True
-        assert send_action.has_class("is-primary") is False
-        assert stop_action.disabled is False
+        assert send_action.has_class("console-send-ready") is False
+        assert send_action.has_class("console-send-blocked") is True
+        assert stop_action.has_class("console-stop-active") is True
 
 
 @pytest.mark.asyncio

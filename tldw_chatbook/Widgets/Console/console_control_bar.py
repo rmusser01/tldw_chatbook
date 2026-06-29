@@ -11,11 +11,50 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchAction
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
 
 CONSOLE_CONTROL_BAR_HEIGHT = 2
+TOP_ACTION_IDS = {
+    "new-tab",
+    "settings",
+    "attach-context",
+    "run-library-rag",
+    "save-chatbook",
+    "help",
+}
+CONSOLE_CONTROL_ACTION_WIDGET_IDS = {
+    "new-tab": "console-control-new-tab",
+    "settings": "console-control-settings",
+    "attach-context": "console-control-attach-context",
+    "run-library-rag": "console-control-run-library-rag",
+    "save-chatbook": "console-control-save-chatbook",
+    "help": "console-control-help",
+}
+FALLBACK_ACTIONS = (
+    WorkbenchAction(
+        id="settings",
+        label="Settings",
+        tooltip="Configure provider, model, tools, and generation",
+    ),
+    WorkbenchAction(
+        id="attach-context",
+        label="Attach",
+        tooltip="Stage Library or workspace context",
+    ),
+    WorkbenchAction(
+        id="run-library-rag",
+        label="Library RAG",
+        tooltip="Search Library evidence before sending",
+    ),
+    WorkbenchAction(
+        id="help",
+        label="Help",
+        tooltip="Show visible Console actions and shortcuts",
+    ),
+)
 
 
 def _summary_line(state: ConsoleControlState) -> str:
@@ -46,6 +85,7 @@ class ConsoleControlBar(Vertical):
         state: ConsoleControlState,
         app_instance: Any,
         *,
+        actions: tuple[WorkbenchAction, ...] = (),
         on_sidebar_toggle_requested: Callable[[], Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -54,6 +94,7 @@ class ConsoleControlBar(Vertical):
         Args:
             state: Display-state snapshot for Console readiness labels.
             app_instance: Main application instance used by `CompactModelBar`.
+            actions: Current Workbench action state for top Console actions.
             on_sidebar_toggle_requested: Optional callback for routing compact
                 sidebar-toggle requests to the embedded chat settings sidebar.
             **kwargs: Additional Textual widget arguments.
@@ -61,6 +102,7 @@ class ConsoleControlBar(Vertical):
         super().__init__(**kwargs)
         self.state = state
         self.app_instance = app_instance
+        self.actions = tuple(actions)
         self.on_sidebar_toggle_requested = on_sidebar_toggle_requested
         self.styles.height = CONSOLE_CONTROL_BAR_HEIGHT
         self.styles.min_height = CONSOLE_CONTROL_BAR_HEIGHT
@@ -80,13 +122,20 @@ class ConsoleControlBar(Vertical):
         widget.styles.min_height = 0
         return widget
 
-    def sync_state(self, state: ConsoleControlState) -> None:
+    def sync_state(
+        self,
+        state: ConsoleControlState,
+        actions: tuple[WorkbenchAction, ...] | None = None,
+    ) -> None:
         """Refresh visible label widgets from a new display-state snapshot.
 
         Args:
             state: Updated display-state snapshot to render.
+            actions: Optional Workbench actions to sync into the top strip.
         """
         self.state = state
+        if actions is not None:
+            self.sync_actions(actions)
         label_values = {
             "#console-control-status-line": _summary_line(state),
             "#console-provider-label": state.provider_label,
@@ -115,16 +164,69 @@ class ConsoleControlBar(Vertical):
         return Static(label, id=id, classes="console-control-chip")
 
     @staticmethod
-    def _action(label: str, *, id: str, action_id: str, tooltip: str) -> Button:
-        button = Button(
-            label,
-            id=id,
-            classes="console-control-action workbench-action",
-            compact=True,
-            tooltip=tooltip,
+    def _action_widget_id(action: WorkbenchAction) -> str:
+        return CONSOLE_CONTROL_ACTION_WIDGET_IDS.get(
+            action.id,
+            f"console-control-{action.id}",
         )
-        setattr(button, "_workbench_action_id", action_id)
+
+    def _visible_actions(self) -> tuple[WorkbenchAction, ...]:
+        actions = self.actions if self.actions else FALLBACK_ACTIONS
+        return tuple(action for action in actions if action.id in TOP_ACTION_IDS)
+
+    @classmethod
+    def _action(cls, action: WorkbenchAction) -> Button:
+        button = Button(
+            action.label,
+            id=cls._action_widget_id(action),
+            classes=f"console-control-action {action.css_classes}".strip(),
+            disabled=action.disabled,
+            compact=True,
+            tooltip=action.tooltip or None,
+        )
+        setattr(button, "_workbench_action_id", action.id)
         return button
+
+    @staticmethod
+    def _sync_action_button(button: Button, action: WorkbenchAction) -> None:
+        button.label = action.label
+        button.disabled = action.disabled
+        button.tooltip = action.tooltip or None
+        setattr(button, "_workbench_action_id", action.id)
+        button.set_class(True, "console-control-action")
+        button.set_class(True, "workbench-action")
+        button.set_class(action.primary, "is-primary")
+        button.set_class(action.disabled, "is-disabled")
+
+    def sync_actions(self, actions: tuple[WorkbenchAction, ...]) -> None:
+        """Refresh top Console actions from current Workbench state."""
+        self.actions = tuple(actions)
+        try:
+            row = self.query_one("#console-control-action-row", Horizontal)
+        except NoMatches:
+            return
+
+        visible_actions = self._visible_actions()
+        desired_ids = tuple(action.id for action in visible_actions)
+        current_ids = tuple(
+            getattr(child, "_workbench_action_id", "")
+            for child in row.children
+            if getattr(child, "_workbench_action_id", "")
+        )
+        if current_ids != desired_ids:
+            for child in list(row.children):
+                if getattr(child, "_workbench_action_id", ""):
+                    child.remove()
+            for action in visible_actions:
+                row.mount(self._action(action))
+            return
+
+        actions_by_id = {action.id: action for action in visible_actions}
+        for child in row.children:
+            action_id = getattr(child, "_workbench_action_id", "")
+            action = actions_by_id.get(action_id)
+            if action is not None and isinstance(child, Button):
+                self._sync_action_button(child, action)
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="console-control-chip-row", classes="console-control-chip-row"):
@@ -136,35 +238,13 @@ class ConsoleControlBar(Vertical):
             yield self._chip(self.state.tools_label, id="console-tools-chip")
             yield self._chip(self.state.approvals_label, id="console-approvals-chip")
         with Horizontal(id="console-control-action-row", classes="console-control-action-row"):
-            yield self._action(
-                "Settings",
-                id="console-control-settings",
-                action_id="settings",
-                tooltip="Configure provider, model, tools, and generation",
-            )
-            yield self._action(
-                "Attach",
-                id="console-control-attach-context",
-                action_id="attach-context",
-                tooltip="Stage Library or workspace context",
-            )
-            yield self._action(
-                "Library RAG",
-                id="console-control-run-library-rag",
-                action_id="run-library-rag",
-                tooltip="Search Library evidence before sending",
-            )
-            yield self._action(
-                "Help",
-                id="console-control-help",
-                action_id="help",
-                tooltip="Show visible Console actions and shortcuts",
-            )
-        yield Static(
+            for action in self._visible_actions():
+                yield self._action(action)
+        yield self._compatibility_layout_widget(Static(
             _summary_line(self.state),
             id="console-control-status-line",
             classes="console-control-summary-line",
-        )
+        ))
         yield self._compatibility_layout_widget(Static(
             self.state.provider_label,
             id="console-provider-label",
