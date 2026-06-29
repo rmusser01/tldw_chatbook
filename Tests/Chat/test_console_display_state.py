@@ -59,6 +59,14 @@ def test_console_staged_context_state_preserves_live_work_payload_provenance():
     assert "Transformer notes" in state.summary
     assert any(row.label == "source_id" and row.value == "note-1" for row in state.rows)
     assert state.recovery == "Review citations before sending."
+    assert state.is_empty is False
+
+
+def test_console_staged_context_empty_state_uses_semantic_flag():
+    state = ConsoleStagedContextState.empty()
+
+    assert state.summary == "No sources attached."
+    assert state.is_empty is True
 
 
 def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows():

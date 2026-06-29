@@ -291,6 +291,7 @@ class ConsoleStagedContextState:
     summary: str
     rows: tuple[ConsoleDisplayRow, ...] = ()
     recovery: str = ""
+    is_empty: bool = False
 
     @classmethod
     def from_live_work(
@@ -332,6 +333,7 @@ class ConsoleStagedContextState:
         return cls(
             heading="Staged Context",
             summary="No sources attached.",
+            is_empty=True,
         )
 
 

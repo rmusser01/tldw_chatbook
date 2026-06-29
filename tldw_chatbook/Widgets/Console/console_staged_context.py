@@ -47,7 +47,7 @@ class ConsoleStagedContextTray(Vertical):
                 classes="console-staged-context-row",
                 markup=False,
             )
-        if self.state.summary == "No sources attached." and not self.state.rows:
+        if self.state.is_empty:
             yield Button(
                 "Attach",
                 id="console-staged-context-attach",

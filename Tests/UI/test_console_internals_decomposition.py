@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 from rich.text import Text
+from textual.app import App, ComposeResult
 from textual.events import Paste
 from textual.widgets import Button, Footer, Input, Select, Static
 
@@ -28,11 +29,22 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.config import resolve_provider_name
-from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleStagedContextTray
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class StagedContextHarness(App):
+    def __init__(self, state: ConsoleStagedContextState) -> None:
+        super().__init__()
+        self.state = state
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleStagedContextTray(self.state, id="console-staged-context-tray")
+
+
 GATE15_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-3/"
     "2026-05-07-gate-1-5-console-internals-decomposition.md"
@@ -207,8 +219,8 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
         assert (
             "#console-staged-context-tray {\n"
             "    height: auto;\n"
-            "    min-height: 4;\n"
-            "    max-height: 10;"
+            "    min-height: 3;\n"
+            "    max-height: 6;"
         ) in css
         assert (
             "#console-workspace-context {\n"
@@ -2429,6 +2441,55 @@ async def test_console_empty_staged_context_exposes_attach_action():
         await pilot.pause()
 
         assert len(fake_session.attach_events) == 1
+
+
+@pytest.mark.asyncio
+async def test_console_staged_context_attach_uses_semantic_empty_state():
+    state = ConsoleStagedContextState(
+        heading="Staged Context",
+        summary="Nothing attached yet.",
+        is_empty=True,
+    )
+    app = StagedContextHarness(state)
+
+    async with app.run_test(size=(60, 10)) as pilot:
+        await _wait_for_selector(app.screen, pilot, "#console-staged-context-attach")
+
+        assert app.query_one("#console-staged-context-summary", Static).render().plain == (
+            "Nothing attached yet."
+        )
+        assert str(app.query_one("#console-staged-context-attach", Button).label) == "Attach"
+
+
+@pytest.mark.asyncio
+async def test_console_non_empty_staged_context_keeps_room_for_source_details():
+    app = _build_test_app()
+    app.pending_console_launch = {
+        "source": "Library Search/RAG",
+        "title": "Incident Review",
+        "status": "ready",
+        "recovery": "Review citations before sending.",
+        "payload": {
+            "source_id": "note-42",
+            "chunk_id": "chunk-7",
+            "runtime_backend": "local-fts",
+        },
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
+
+        staged_context = console.query_one("#console-staged-context-tray")
+        max_height = getattr(
+            staged_context.styles.max_height,
+            "value",
+            staged_context.styles.max_height,
+        )
+        assert max_height >= 10
+        assert "source_id: note-42" in _visible_text(staged_context)
+        assert "Review citations before sending." in _visible_text(staged_context)
 
 
 @pytest.mark.asyncio
