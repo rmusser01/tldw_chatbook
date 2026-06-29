@@ -2390,7 +2390,7 @@ async def test_console_empty_staged_context_action_fits_tray():
         attach_button = console.query_one("#console-staged-context-attach", Button)
         summary_plain = getattr(summary.render(), "plain", str(summary.render()))
 
-        assert summary_plain == "No staged work."
+        assert summary_plain == "No sources attached."
         assert str(attach_button.label) == "Attach"
         visible_text_width = max(0, summary.region.width - 2)
         assert all(len(line) <= visible_text_width for line in summary_plain.splitlines())
@@ -2420,7 +2420,7 @@ async def test_console_empty_staged_context_exposes_attach_action():
         attach_button = console.query_one("#console-staged-context-attach", Button)
         tray_text = _visible_text(console.query_one("#console-staged-context-tray"))
 
-        assert getattr(summary.render(), "plain", str(summary.render())) == "No staged work."
+        assert getattr(summary.render(), "plain", str(summary.render())) == "No sources attached."
         assert str(attach_button.label) == "Attach"
         assert attach_button.compact is True
         assert "Attach sources." not in tray_text

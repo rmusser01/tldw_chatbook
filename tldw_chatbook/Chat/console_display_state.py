@@ -331,7 +331,7 @@ class ConsoleStagedContextState:
     def empty(cls) -> "ConsoleStagedContextState":
         return cls(
             heading="Staged Context",
-            summary="No staged work.",
+            summary="No sources attached.",
         )
 
 

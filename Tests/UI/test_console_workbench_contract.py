@@ -243,6 +243,27 @@ async def test_console_control_bar_exposes_compact_visible_actions():
 
 
 @pytest.mark.asyncio
+async def test_console_left_rail_prioritizes_attach_and_active_conversation():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        rail = console.query_one("#console-left-rail")
+        visible_text = " ".join(
+            _widget_text(child)
+            for child in rail.walk_children()
+            if _is_displayed(child)
+        )
+
+        assert visible_text.index("Attach") < visible_text.index("Conversations")
+        assert "No sources attached." in visible_text
+        assert "Chat 1" in visible_text
+
+
+@pytest.mark.asyncio
 async def test_console_inspector_prioritizes_actionable_status_before_secondary_groups():
     app = _build_test_app()
     _configure_native_ready_console(app)

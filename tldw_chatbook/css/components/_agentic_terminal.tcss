@@ -685,8 +685,8 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 
 #console-staged-context-tray {
     height: auto;
-    min-height: 4;
-    max-height: 10;
+    min-height: 3;
+    max-height: 6;
 }
 
 #console-workspace-context {
@@ -852,6 +852,11 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     scrollbar-color: $ds-grid-line;
     scrollbar-color-hover: $ds-grid-line;
     scrollbar-color-active: $ds-action-focus;
+}
+
+.console-left-rail-section {
+    margin: 0 0 1 0;
+    padding: 0 1;
 }
 
 #console-inspector-rail-body {

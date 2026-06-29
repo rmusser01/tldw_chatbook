@@ -4235,7 +4235,7 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     def _staged_context_frame_variant(state: ConsoleStagedContextState) -> str:
         """Use quiet framing when the staged context tray is only an empty placeholder."""
-        return "quiet" if not state.rows and state.summary == "No staged work." else "solid"
+        return "quiet" if not state.rows and state.summary == "No sources attached." else "solid"
 
     @staticmethod
     def _workspace_context_frame_variant(_state: ConsoleWorkspaceContextState) -> str:
@@ -4555,8 +4555,8 @@ class ChatScreen(BaseAppScreen):
                         staged_context_tray.styles.width = "100%"
                         staged_context_tray.styles.min_width = 0
                         staged_context_tray.styles.height = "auto"
-                        staged_context_tray.styles.min_height = 4
-                        staged_context_tray.styles.max_height = 10
+                        staged_context_tray.styles.min_height = 3
+                        staged_context_tray.styles.max_height = 6
                         yield self._frame_console_region(
                             staged_context_tray,
                             variant=self._staged_context_frame_variant(staged_context_state),
