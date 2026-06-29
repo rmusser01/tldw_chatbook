@@ -3691,14 +3691,19 @@ class ChatScreen(BaseAppScreen):
         has_draft = bool(composer and composer.draft_text().strip())
         controller = self._console_chat_controller
         run_state = getattr(controller, "run_state", None) if controller is not None else None
-        run_active = bool(getattr(run_state, "is_stop_allowed", False))
-        can_send = has_draft and not bool(self._console_setup_blocked_reason())
+        can_stop = bool(getattr(run_state, "is_stop_allowed", False))
+        run_allows_send = bool(getattr(run_state, "is_send_allowed", True))
+        can_send = (
+            has_draft
+            and not bool(self._console_setup_blocked_reason())
+            and run_allows_send
+        )
         return build_console_workbench_state(
             control_state=control_state,
             provider_blocker_copy=blocker_copy,
             provider_action_label=action_label,
             can_send=can_send,
-            can_stop=run_active,
+            can_stop=can_stop,
             can_save_chatbook=self._console_chatbook_action_available(),
         )
 

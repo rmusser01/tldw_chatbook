@@ -2,6 +2,7 @@ import pytest
 from textual.app import App
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
@@ -238,3 +239,34 @@ async def test_console_workbench_send_action_enables_after_typing_draft():
         send_action = console.query_one("#workbench-action-send")
         assert _is_displayed(send_action)
         assert send_action.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_console_workbench_send_action_disables_during_active_run():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#workbench-action-send")
+        await _wait_for_selector(console, pilot, "#workbench-action-stop")
+
+        await pilot.press("h")
+        await pilot.pause()
+
+        controller = console._ensure_console_chat_controller()
+        controller.run_state = ConsoleRunState(
+            ConsoleRunStatus.STREAMING,
+            "Streaming response.",
+        )
+        console._sync_console_control_bar()
+        await pilot.pause()
+
+        send_action = console.query_one("#workbench-action-send")
+        stop_action = console.query_one("#workbench-action-stop")
+        assert _is_displayed(send_action)
+        assert _is_displayed(stop_action)
+        assert send_action.disabled is True
+        assert send_action.has_class("is-primary") is False
+        assert stop_action.disabled is False
