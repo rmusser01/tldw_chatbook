@@ -1127,7 +1127,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit App", show=True),
-        Binding("ctrl+p", "command_palette", "Palette Menu", show=True)
+        Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
+        Binding("f1", "show_workbench_help", "Help", show=True),
+        Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
     ]
     COMMANDS = App.COMMANDS | {
         ThemeProvider,
@@ -6853,6 +6855,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 timeout=5
             )
     
+    def action_show_workbench_help(self) -> None:
+        """Delegate contextual help to the active Workbench screen."""
+        handler = getattr(self.screen, "action_show_workbench_help", None)
+        if callable(handler):
+            handler()
+            return
+        self.notify(
+            "No contextual help is available for this screen.",
+            severity="information",
+        )
+
+    def action_focus_next_workbench_pane(self) -> None:
+        """Delegate pane focus cycling to the active Workbench screen."""
+        handler = getattr(self.screen, "action_focus_next_workbench_pane", None)
+        if callable(handler):
+            handler()
+            return
+        self.notify(
+            "No workbench pane focus target is available.",
+            severity="information",
+        )
+
     def action_quit(self) -> None:
         """Handle application quit - save persistent caches before exiting."""
         loguru_logger.info("Application quit initiated")
