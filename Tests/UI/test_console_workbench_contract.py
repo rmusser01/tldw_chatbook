@@ -275,6 +275,55 @@ async def test_console_inspector_prioritizes_actionable_status_before_secondary_
 
 
 @pytest.mark.asyncio
+async def test_console_blocked_inspector_explains_impact_and_next_action():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": ""},
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = ""
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        inspector = console.query_one("#console-run-inspector-state")
+        visible_text = " ".join(
+            _widget_text(child)
+            for child in inspector.walk_children()
+            if _is_displayed(child)
+        )
+        assert "Blocked" in visible_text
+        assert "Send is blocked" in visible_text
+        assert "Choose model" in visible_text
+
+
+@pytest.mark.asyncio
+async def test_console_ready_inspector_shows_run_recipe_and_operational_groups():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        inspector = console.query_one("#console-run-inspector-state")
+        text = " ".join(
+            _widget_text(child)
+            for child in inspector.walk_children()
+            if _is_displayed(child)
+        )
+        assert "Run recipe" in text
+        assert "Sources" in text
+        assert "Tools" in text
+        assert "Approvals" in text
+        assert "Artifacts" in text
+
+
+@pytest.mark.asyncio
 async def test_console_composer_keeps_primary_actions_and_setup_recovery_visible():
     app = _build_test_app()
     app.app_config = {

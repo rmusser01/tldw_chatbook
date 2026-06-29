@@ -349,6 +349,8 @@ class ConsoleInspectorState:
         cls,
         *,
         live_work_title: Any = None,
+        provider_label: Any = None,
+        model_label: Any = None,
         provider_ready: bool = True,
         provider_recovery: Any = None,
         rag_status: Any = None,
@@ -365,7 +367,15 @@ class ConsoleInspectorState:
         normalized_tool_count = coerce_non_negative_int(tool_count)
         normalized_approval_count = coerce_non_negative_int(approval_count)
         rag_value = _clean(rag_status, "not staged")
+        provider_value = _clean(provider_label, "provider")
+        model_value = _clean(model_label, "no model")
+        source_summary = rag_value
+        run_recipe = (
+            f"{provider_value} / {model_value} / sources {source_summary} / "
+            f"tools {normalized_tool_count} / approvals {normalized_approval_count}"
+        )
         rows = [
+            ConsoleDisplayRow("Run recipe", run_recipe),
             ConsoleDisplayRow("Live work", _clean(live_work_title, "No active work")),
             ConsoleDisplayRow(
                 "Provider",
@@ -373,12 +383,12 @@ class ConsoleInspectorState:
                 status=provider_status,
                 recovery=_clean(provider_recovery, "") if not provider_ready else "",
             ),
-            ConsoleDisplayRow("Tools", f"{normalized_tool_count} ready"),
             ConsoleDisplayRow(
-                "RAG/source",
-                rag_value,
-                status="blocked" if _is_blocked_rag_status(rag_value) else "ready",
+                "Sources",
+                source_summary,
+                status="blocked" if _is_blocked_rag_status(source_summary) else "ready",
             ),
+            ConsoleDisplayRow("Tools", f"{normalized_tool_count} ready"),
             ConsoleDisplayRow(
                 "Approvals",
                 f"{normalized_approval_count} pending",

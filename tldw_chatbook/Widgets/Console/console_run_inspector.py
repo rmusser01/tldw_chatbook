@@ -19,11 +19,15 @@ from tldw_chatbook.Chat.console_display_state import (
 
 
 _ROW_IDS = {
+    "Run recipe": "console-inspector-run-recipe",
     "Live work": "console-inspector-live-work",
     "Setup": "console-inspector-setup",
     "Send blocked": "console-inspector-send-blocked",
     "Recovery action": "console-inspector-recovery-action",
+    "Blocked impact": "console-inspector-blocked-impact",
+    "Next action": "console-inspector-next-action",
     "Provider": "console-inspector-provider",
+    "Sources": "console-inspector-sources",
     "Tools": "console-inspector-tools",
     "RAG/source": "console-inspector-rag-source",
     "Evidence": "console-inspector-evidence",
@@ -49,14 +53,21 @@ _ROW_IDS = {
 
 _ROW_GROUPS = (
     (
-        "Run State",
-        "console-inspector-run-state-heading",
-        ("Live work", "Setup", "Send blocked", "Recovery action", "Provider"),
+        "Run",
+        "console-inspector-run-heading",
+        (
+            "Run recipe",
+            "Live work",
+            "Setup",
+            "Blocked impact",
+            "Next action",
+            "Provider",
+        ),
     ),
     (
         "Source Readiness",
         "console-inspector-source-readiness-heading",
-        ("RAG/source", "Evidence", "Authority", "Artifacts"),
+        ("Sources", "Evidence", "Authority"),
     ),
     (
         "Tools",
@@ -67,6 +78,11 @@ _ROW_GROUPS = (
         "Approvals",
         "console-inspector-approvals-heading",
         ("Approvals",),
+    ),
+    (
+        "Artifacts",
+        "console-inspector-artifacts-heading",
+        ("Artifacts",),
     ),
     (
         "Selected Conversation",
@@ -92,7 +108,7 @@ _ROW_GROUPS = (
 )
 
 _ACTION_GROUPS = {
-    "Source Readiness": (CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,),
+    "Artifacts": (CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,),
     "Tools": (CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,),
     "Approvals": (CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,),
 }
@@ -155,7 +171,7 @@ class ConsoleRunInspector(Vertical):
         rows = {row.label: row for row in self.state.rows}
         provider = rows.get("Provider")
         approvals = rows.get("Approvals")
-        rag_source = rows.get("RAG/source")
+        rag_source = rows.get("Sources") or rows.get("RAG/source")
         if provider is not None and provider.status == "blocked":
             return "Status: Blocked"
         if approvals is not None and approvals.status == "blocked":

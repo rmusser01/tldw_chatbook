@@ -3270,12 +3270,13 @@ class ChatScreen(BaseAppScreen):
             preference_key.value,
             preference_key.fallback_value,
         )
-        return build_console_rail_state(
+        stored_preferences = self._stored_console_rail_preferences(
+            preference_key.value,
+            preference_key.fallback_value,
+        )
+        rail_state = build_console_rail_state(
             preference_key=preference_key,
-            stored_preferences=self._stored_console_rail_preferences(
-                preference_key.value,
-                preference_key.fallback_value,
-            ),
+            stored_preferences=stored_preferences,
             staged_source_count=len(workspace_context.staged_sources),
             staged_summary=staged_context_state.summary,
             workspace_label=workspace_context_state.workspace_label,
@@ -3286,6 +3287,41 @@ class ChatScreen(BaseAppScreen):
             approval_count=self._console_pending_approval_count(),
             can_save_chatbook=inspector_state.can_save_chatbook,
             available_columns=self._console_rail_available_columns(),
+        )
+        if self._should_open_standard_width_inspector(
+            rail_state=rail_state,
+            stored_preferences=stored_preferences,
+            inspector_state=inspector_state,
+        ):
+            return replace(rail_state, right_open=True, right_forced_collapsed=False)
+        return rail_state
+
+    def _should_open_standard_width_inspector(
+        self,
+        *,
+        rail_state: ConsoleRailState,
+        stored_preferences: Any,
+        inspector_state: ConsoleInspectorState,
+    ) -> bool:
+        """Return whether the 120-column Console contract should show Inspector."""
+        if rail_state.right_open:
+            return False
+        if isinstance(stored_preferences, dict) and "right_open" in stored_preferences:
+            return False
+        available_columns = self._console_rail_available_columns()
+        if available_columns is None or not 118 <= available_columns <= 128:
+            return False
+        labels = {str(row.label).strip() for row in inspector_state.rows}
+        return "Run recipe" in labels and bool(
+            labels
+            & {
+                "Blocked impact",
+                "Next action",
+                "Sources",
+                "Tools",
+                "Approvals",
+                "Artifacts",
+            }
         )
 
     def _apply_pending_launch_inspector_auto_open(
@@ -3589,6 +3625,8 @@ class ChatScreen(BaseAppScreen):
         evidence_state = build_console_evidence_display_state(pending_launch)
         inspector_state = ConsoleInspectorState.from_values(
             live_work_title=pending_launch.title if pending_launch else None,
+            provider_label=provider_display,
+            model_label=model,
             provider_ready=provider_ready,
             provider_recovery=provider_recovery,
             rag_status=self._console_rag_source_status(pending_launch),
@@ -3610,13 +3648,13 @@ class ChatScreen(BaseAppScreen):
             setup_rows = (
                 ConsoleDisplayRow("Setup", "Provider configuration required", status="blocked"),
                 ConsoleDisplayRow(
-                    "Send blocked",
-                    "finish setup before sending",
+                    "Blocked impact",
+                    "Send is blocked until setup is finished.",
                     status="blocked",
                     recovery=setup_blocker_copy,
                 ),
                 ConsoleDisplayRow(
-                    "Recovery action",
+                    "Next action",
                     action_label or "Open Settings",
                     status="blocked",
                 ),

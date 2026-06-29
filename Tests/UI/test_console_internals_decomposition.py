@@ -2161,10 +2161,11 @@ async def test_console_run_inspector_orders_state_source_tools_and_approvals():
     async with host.run_test(size=(196, 64)) as pilot:
         console = host.screen_stack[-1]
         await _open_console_inspector(console, pilot)
-        await _wait_for_selector(console, pilot, "#console-inspector-run-state-heading")
+        await _wait_for_selector(console, pilot, "#console-inspector-run-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-source-readiness-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-tools-heading")
         await _wait_for_selector(console, pilot, "#console-inspector-approvals-heading")
+        await _wait_for_selector(console, pilot, "#console-inspector-artifacts-heading")
 
         assert (
             getattr(
@@ -2177,11 +2178,11 @@ async def test_console_run_inspector_orders_state_source_tools_and_approvals():
         assert not list(console.query("#console-run-inspector-title"))
         assert (
             getattr(
-                console.query_one("#console-inspector-run-state-heading", Static).render(),
+                console.query_one("#console-inspector-run-heading", Static).render(),
                 "plain",
                 "",
             )
-            == "Run State"
+            == "Run"
         )
         assert (
             getattr(
@@ -2208,10 +2209,11 @@ async def test_console_run_inspector_orders_state_source_tools_and_approvals():
             == "Tools"
         )
         assert (
-            console.query_one("#console-inspector-run-state-heading").region.y
+            console.query_one("#console-inspector-run-heading").region.y
             < console.query_one("#console-inspector-source-readiness-heading").region.y
             < console.query_one("#console-inspector-tools-heading").region.y
             < console.query_one("#console-inspector-approvals-heading").region.y
+            < console.query_one("#console-inspector-artifacts-heading").region.y
         )
 
 
@@ -2695,9 +2697,10 @@ async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_sour
         assert "Select a provider and model before sending." in str(
             console.query_one("#console-inspector-provider", Static).renderable
         )
-        assert "RAG/source: missing source" in str(
-            console.query_one("#console-inspector-rag-source", Static).renderable
+        assert "Sources: missing source" in str(
+            console.query_one("#console-inspector-sources", Static).renderable
         )
+        assert not list(console.query("#console-inspector-rag-source"))
         assert console.query_one("#console-inspector-review-tool-call", Button).disabled is True
         assert "No tool calls are ready for review." in str(
             console.query_one("#console-inspector-review-tool-call-reason", Static).renderable
@@ -2735,8 +2738,6 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         assert console.query_one("#console-inspector-save-chatbook", Button).disabled is False
         assert (
             console.query_one("#console-inspector-source-readiness-heading").region.y
-            < console.query_one("#console-inspector-artifacts").region.y
-            < console.query_one("#console-inspector-save-chatbook").region.y
             < console.query_one("#console-inspector-tools-heading").region.y
         )
         assert (
@@ -2749,6 +2750,9 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
             console.query_one("#console-inspector-approvals-heading").region.y
             < console.query_one("#console-inspector-approvals").region.y
             < console.query_one("#console-inspector-review-approval").region.y
+            < console.query_one("#console-inspector-artifacts-heading").region.y
+            < console.query_one("#console-inspector-artifacts").region.y
+            < console.query_one("#console-inspector-save-chatbook").region.y
         )
         assert console.query_one("#console-live-work-primary-action", Button).disabled is False
 
@@ -2801,7 +2805,8 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result()
             }
         ]
         text = _visible_text(console)
-        assert "RAG/source: staged from Library Search/RAG" in text
+        assert "Sources: staged from Library Search/RAG" in text
+        assert "RAG/source:" not in text
         assert "Title: Incident Review" in text
         assert "source_id: note-42" in text
         assert "chunk_id: chunk-7" in text
@@ -3051,6 +3056,7 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker():
 
         text = _visible_text(console)
         assert "Status: blocked" in text
-        assert "RAG/source: unavailable" in text
+        assert "Sources: unavailable" in text
+        assert "RAG/source:" not in text
         assert "Unavailable: Library Search/RAG retrieval." in text
         assert "Owner: Library retrieval service." in text

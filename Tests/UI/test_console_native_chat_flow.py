@@ -2177,7 +2177,7 @@ async def test_console_inspector_setup_state_explains_blocked_send_without_selec
 
         inspector_text = _visible_text(console.query_one("#console-run-inspector-state"))
         assert "Setup" in inspector_text
-        assert "Send blocked" in inspector_text
+        assert "Blocked impact" in inspector_text
         assert "Add API Key" in inspector_text
         assert "Selected Message" not in inspector_text
 
