@@ -323,6 +323,7 @@ def test_console_workbench_recovery_names_specific_setup_action():
     assert state.recovery is not None
     assert state.recovery.action is not None
     assert state.recovery.action.label == "Choose model"
+    assert state.recovery.action.tooltip == "Choose model"
     assert state.recovery.action.primary is True
     assert "Send is blocked" in state.recovery.body
 
@@ -336,6 +337,45 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
     )
 
     assert reason == "Send disabled: choose a model"
+
+
+@pytest.mark.parametrize(
+    ("setup_blocked_reason", "expected_reason"),
+    (
+        (
+            "Provider setup needed: choose a provider",
+            "Send disabled: choose a provider",
+        ),
+        (
+            "Provider setup needed: OpenAI missing API key",
+            "Send disabled: add API key",
+        ),
+        (
+            "Provider setup needed: configure endpoint",
+            "Send disabled: configure endpoint",
+        ),
+        (
+            "Provider setup needed: llama.cpp endpoint unavailable",
+            "Send disabled: configure endpoint",
+        ),
+        (
+            "Provider setup needed: verify local runtime",
+            "Send disabled: finish provider setup",
+        ),
+    ),
+)
+def test_console_disabled_reason_copy_maps_setup_blockers(
+    setup_blocked_reason, expected_reason
+):
+    for has_draft in (False, True):
+        reason = build_console_disabled_reason(
+            action_id="send",
+            has_draft=has_draft,
+            send_blocked=True,
+            setup_blocked_reason=setup_blocked_reason,
+        )
+
+        assert reason == expected_reason
 
 
 def test_console_disabled_reason_copy_handles_draft_and_ready_states():

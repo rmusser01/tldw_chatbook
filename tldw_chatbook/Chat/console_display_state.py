@@ -74,9 +74,21 @@ def build_console_disabled_reason(
     if action_id != "send":
         return ""
 
-    setup_reason = _clean(setup_blocked_reason, "").lower()
-    if send_blocked and "model" in setup_reason:
-        return "Send disabled: choose a model"
+    setup_reason = _clean(setup_blocked_reason, "")
+    setup_reason_lower = setup_reason.lower()
+    if send_blocked and setup_reason:
+        if "model" in setup_reason_lower:
+            return "Send disabled: choose a model"
+        if "api key" in setup_reason_lower:
+            return "Send disabled: add API key"
+        if "endpoint" in setup_reason_lower:
+            return "Send disabled: configure endpoint"
+        if (
+            "choose a provider" in setup_reason_lower
+            or "missing provider" in setup_reason_lower
+        ):
+            return "Send disabled: choose a provider"
+        return "Send disabled: finish provider setup"
     if not has_draft:
         return "Send disabled: type a message"
     return ""
