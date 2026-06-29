@@ -338,6 +338,25 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
     assert reason == "Send disabled: choose a model"
 
 
+def test_console_disabled_reason_copy_handles_draft_and_ready_states():
+    assert (
+        build_console_disabled_reason(
+            action_id="send",
+            has_draft=False,
+            send_blocked=False,
+        )
+        == "Send disabled: type a message"
+    )
+    assert (
+        build_console_disabled_reason(
+            action_id="send",
+            has_draft=True,
+            send_blocked=False,
+        )
+        == ""
+    )
+
+
 def test_console_workbench_state_disables_send_when_provider_is_blocked():
     state = build_console_workbench_state(
         control_state=_control_state(),
