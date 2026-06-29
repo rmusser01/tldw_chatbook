@@ -17,6 +17,7 @@ from textual.geometry import Region
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from ...Chat.console_display_state import build_console_disabled_reason
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -252,10 +253,34 @@ class ConsoleComposerBar(Horizontal):
             stop_button = self.query_one("#console-stop-generation", Button)
             attach_button = self.query_one("#console-attach-context", Button)
             save_button = self.query_one("#console-save-chatbook", Button)
+            disabled_reason = self.query_one("#console-send-disabled-reason", Static)
         except NoMatches:
             return
 
         send_ready = has_draft and not send_blocked
+        send_disabled_reason = build_console_disabled_reason(
+            action_id="send",
+            has_draft=has_draft,
+            send_blocked=send_blocked,
+            setup_blocked_reason=setup_blocked_reason,
+        )
+        if send_disabled_reason and not send_ready:
+            disabled_reason.update(send_disabled_reason)
+            disabled_reason.styles.display = "block"
+            disabled_reason.styles.width = 30
+            disabled_reason.styles.min_width = 20
+            disabled_reason.styles.max_width = 32
+            disabled_reason.styles.height = 1
+            disabled_reason.styles.min_height = 1
+        else:
+            disabled_reason.update("")
+            disabled_reason.styles.display = "none"
+            disabled_reason.styles.width = 0
+            disabled_reason.styles.min_width = 0
+            disabled_reason.styles.max_width = 0
+            disabled_reason.styles.height = 0
+            disabled_reason.styles.min_height = 0
+
         send_button.disabled = False
         send_button.variant = "primary" if send_ready else "default"
         if send_blocked and setup_blocked_reason:
@@ -1108,6 +1133,18 @@ class ConsoleComposerBar(Horizontal):
         status.styles.height = 0
         status.styles.min_height = 0
         yield status
+        disabled_reason = Static(
+            "",
+            id="console-send-disabled-reason",
+            classes="console-send-disabled-reason",
+        )
+        disabled_reason.styles.display = "none"
+        disabled_reason.styles.width = 0
+        disabled_reason.styles.min_width = 0
+        disabled_reason.styles.max_width = 0
+        disabled_reason.styles.height = 0
+        disabled_reason.styles.min_height = 0
+        yield disabled_reason
         actions = Horizontal(id="console-composer-actions", classes="console-composer-actions")
         actions.styles.width = 37
         actions.styles.min_width = 37

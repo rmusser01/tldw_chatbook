@@ -349,6 +349,29 @@ async def test_console_composer_keeps_primary_actions_and_setup_recovery_visible
 
 
 @pytest.mark.asyncio
+async def test_console_composer_shows_send_disabled_reason_near_send():
+    app = _build_test_app()
+    app.app_config = {
+        "chat_defaults": {"provider": "OpenAI", "model": ""},
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = ""
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        reason = console.query_one("#console-send-disabled-reason")
+        assert _is_displayed(reason)
+        reason_text = _widget_text(reason)
+        assert "Send disabled" in reason_text
+        assert "choose" in reason_text.lower()
+        assert "model" in reason_text.lower()
+
+
+@pytest.mark.asyncio
 async def test_console_empty_transcript_exposes_beginner_activation_actions():
     app = _build_test_app()
     host = ConsoleHarness(app)
