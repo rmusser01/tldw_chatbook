@@ -67,7 +67,12 @@ class WorkbenchRouteCoverage:
 
 
 def build_workbench_route_coverage() -> WorkbenchRouteCoverage:
-    """Return route coverage for all registered navigation sources."""
+    """Return route coverage for all registered navigation sources.
+
+    Returns:
+        Workbench migration-owner coverage across constants, screen routes,
+        aliases, and shell routes.
+    """
 
     constant_tabs = tuple(sorted(str(route) for route in ALL_TABS))
     screen_routes = registered_screen_route_ids()

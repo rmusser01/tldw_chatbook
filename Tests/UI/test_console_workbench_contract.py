@@ -8,7 +8,10 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleControlState,
     build_console_disabled_reason,
 )
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_FOCUS_TARGETS_BY_PANE,
+    ChatScreen,
+)
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
@@ -75,17 +78,16 @@ def _is_displayed(widget) -> bool:
 
 
 def _visible_workbench_focus_ids(console: ChatScreen) -> set[str]:
-    candidates = {
-        "console-left-rail",
-        "console-transcript-surface",
-        "console-right-rail",
-        "console-native-composer",
-    }
     visible: set[str] = set()
-    for widget_id in candidates:
-        widget = console.query_one(f"#{widget_id}")
-        if _is_displayed(widget):
-            visible.add(widget_id)
+    for pane_id, target_ids in CONSOLE_FOCUS_TARGETS_BY_PANE.items():
+        pane = console.query_one(f"#{pane_id}")
+        if not _is_displayed(pane):
+            continue
+        for widget_id in target_ids:
+            widget = console.query_one(f"#{widget_id}")
+            if _is_displayed(widget):
+                visible.add(widget_id)
+                break
     return visible
 
 
@@ -998,7 +1000,7 @@ async def test_console_f6_cycles_visible_workbench_panes():
         await _wait_for_selector(console, pilot, "#console-shell")
 
         visible_focus_ids = _visible_workbench_focus_ids(console)
-        assert "console-transcript-surface" in visible_focus_ids
+        assert "console-native-transcript" in visible_focus_ids
         assert "console-native-composer" in visible_focus_ids
 
         await pilot.press("f6")
@@ -1078,7 +1080,7 @@ async def test_console_registers_footer_workbench_shortcuts():
         footer = host.query_one(AppFooterStatus)
 
         assert footer.shortcut_text == (
-            "F6 next pane | F1 help | Enter send | Ctrl+P palette"
+            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send | Ctrl+P palette"
         )
 
         await console.remove()

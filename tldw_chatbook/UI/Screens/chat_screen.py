@@ -143,7 +143,6 @@ from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
-from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
 from ...Workspaces.display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
@@ -195,8 +194,18 @@ CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
         "console-native-composer",
     )
 )
+CONSOLE_FOCUS_TARGETS_BY_PANE = {
+    "console-left-rail": ("console-context-rail-collapse", "console-left-rail"),
+    "console-transcript-surface": (
+        "console-native-transcript",
+        "console-transcript-surface",
+    ),
+    "console-right-rail": ("console-inspector-rail-collapse", "console-right-rail"),
+    "console-native-composer": ("console-native-composer",),
+}
 CONSOLE_WORKBENCH_SHORTCUTS = (
     ("F6", "next pane"),
+    ("Shift+F6", "previous pane"),
     ("F1", "help"),
     ("Enter", "send"),
     ("Ctrl+P", "palette"),
@@ -323,40 +332,6 @@ class ChatScreen(BaseAppScreen):
             priority=True,
         ),
     ]
-    _WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget(
-            "console-left-rail",
-            ("console-context-rail-collapse",),
-        ),
-        WorkbenchPaneTarget(
-            "console-transcript-region",
-            ("console-native-transcript",),
-        ),
-        WorkbenchPaneTarget(
-            "console-right-rail",
-            ("console-inspector-rail-collapse",),
-        ),
-        WorkbenchPaneTarget(
-            "console-native-composer",
-            ("console-native-composer",),
-        ),
-    )
-
-    def action_focus_next_workbench_pane(self) -> None:
-        """F6: move focus to the next Console workbench pane."""
-        focus_relative_workbench_pane(
-            self,
-            self._WORKBENCH_FOCUS_TARGETS,
-            direction=1,
-        )
-
-    def action_focus_previous_workbench_pane(self) -> None:
-        """Shift+F6: move focus to the previous Console workbench pane."""
-        focus_relative_workbench_pane(
-            self,
-            self._WORKBENCH_FOCUS_TARGETS,
-            direction=-1,
-        )
     
     @on(Select.Changed, "#chat-api-provider")
     async def handle_provider_change(self, event: Select.Changed) -> None:
@@ -612,6 +587,19 @@ class ChatScreen(BaseAppScreen):
             return
         self._focus_console_workbench_target(target_id)
 
+    async def action_focus_previous_workbench_pane(self) -> None:
+        """Move focus to the previous visible Console Workbench pane."""
+        hidden = {
+            pane_id
+            for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
+            if not self._is_console_widget_displayed(pane_id)
+        }
+        current = self._console_workbench_focus_id_for_widget(self.app.focused)
+        target_id = CONSOLE_FOCUS_REGISTRY.previous_before(current, hidden=hidden)
+        if target_id is None:
+            return
+        self._focus_console_workbench_target(target_id)
+
     def _console_workbench_density(self) -> str:
         """Return the supported Console Workbench density from app config."""
         app_config = getattr(self.app_instance, "app_config", {}) or {}
@@ -650,25 +638,28 @@ class ChatScreen(BaseAppScreen):
 
     def _focus_console_workbench_target(self, widget_id: str) -> None:
         """Focus a visible Console Workbench target if it is available."""
-        if not self._is_console_widget_displayed(widget_id):
+        for target_id in CONSOLE_FOCUS_TARGETS_BY_PANE.get(widget_id, (widget_id,)):
+            if not self._is_console_widget_displayed(target_id):
+                continue
+            try:
+                widget = self.query_one(f"#{target_id}")
+            except QueryError:
+                continue
+            widget.can_focus = True
+            widget.focus()
+            self._last_console_workbench_focus_id = widget_id
             return
-        try:
-            widget = self.query_one(f"#{widget_id}")
-        except QueryError:
-            return
-        widget.can_focus = True
-        widget.focus()
-        self._last_console_workbench_focus_id = widget_id
 
     def _ensure_console_workbench_targets_focusable(self) -> None:
         """Make mounted visible Console Workbench focus targets focusable."""
-        for widget_id in CONSOLE_FOCUS_REGISTRY.pane_order:
-            if not self._is_console_widget_displayed(widget_id):
-                continue
-            try:
-                self.query_one(f"#{widget_id}").can_focus = True
-            except QueryError:
-                continue
+        for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order:
+            for widget_id in CONSOLE_FOCUS_TARGETS_BY_PANE.get(pane_id, (pane_id,)):
+                if not self._is_console_widget_displayed(widget_id):
+                    continue
+                try:
+                    self.query_one(f"#{widget_id}").can_focus = True
+                except QueryError:
+                    continue
 
     def _restore_console_workbench_focus(self) -> None:
         """Restore focus to a visible Console Workbench pane after activation."""
@@ -3816,6 +3807,7 @@ class ChatScreen(BaseAppScreen):
         widget.styles.display = "none"
         widget.styles.height = 0
         widget.styles.min_height = 0
+        widget.styles.max_height = 0
         return widget
 
     @staticmethod

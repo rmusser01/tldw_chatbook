@@ -20,6 +20,10 @@ def test_focus_registry_cycles_visible_panes_only():
     assert registry.next_after("transcript", hidden={"inspector"}) == "composer"
     assert registry.next_after("composer", hidden={"inspector"}) == "context"
     assert registry.next_after("context", hidden=set(registry.pane_order)) is None
+    assert registry.previous_before(None, hidden={"inspector"}) == "composer"
+    assert registry.previous_before("context", hidden={"inspector"}) == "composer"
+    assert registry.previous_before("composer", hidden={"inspector"}) == "transcript"
+    assert registry.previous_before("context", hidden=set(registry.pane_order)) is None
 
 
 def test_workbench_css_contains_normal_and_compact_density():

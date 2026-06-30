@@ -239,6 +239,7 @@ async def test_console_sync_records_worker_lifecycle():
     screen.app_instance = SimpleNamespace(ui_responsiveness_monitor=monitor)
     screen._console_sync_in_progress = False
     screen._console_sync_requested = False
+    screen._last_console_rail_state = None
     screen.run_worker = lambda *_args, **_kwargs: None
 
     def assert_worker_active():

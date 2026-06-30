@@ -180,7 +180,11 @@ def get_shell_destination(destination_id: str) -> ShellDestination:
 
 
 def registered_shell_route_ids() -> tuple[str, ...]:
-    """Return all shell route ids and aliases known to the destination model."""
+    """Return all shell route ids and aliases known to the destination model.
+
+    Returns:
+        Sorted route IDs and compatibility aliases that resolve in the shell.
+    """
 
     return tuple(sorted(_ROUTE_MAP))
 

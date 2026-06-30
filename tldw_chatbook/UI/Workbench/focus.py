@@ -25,3 +25,18 @@ class WorkbenchFocusRegistry:
             return visible[0]
         index = visible.index(current)
         return visible[(index + 1) % len(visible)]
+
+    def previous_before(
+        self,
+        current: str | None,
+        *,
+        hidden: set[str] | frozenset[str] = frozenset(),
+    ) -> str | None:
+        """Return the previous visible pane before ``current``."""
+        visible = tuple(pane for pane in self.pane_order if pane not in hidden)
+        if not visible:
+            return None
+        if current not in visible:
+            return visible[-1]
+        index = visible.index(current)
+        return visible[(index - 1) % len(visible)]

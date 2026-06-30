@@ -224,8 +224,9 @@ class ConsoleControlBar(Vertical):
             for child in list(row.children):
                 if getattr(child, "_workbench_action_id", ""):
                     child.remove()
-            for action in visible_actions:
-                row.mount(self._action(action))
+            new_actions = tuple(self._action(action) for action in visible_actions)
+            if new_actions:
+                row.mount(*new_actions)
             return
 
         actions_by_id = {action.id: action for action in visible_actions}

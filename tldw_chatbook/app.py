@@ -1183,8 +1183,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except NoMatches as error:
             try:
                 active_screen = self.screen
-            except Exception:
-                raise error
+            except Exception as screen_error:
+                raise screen_error from error
             return active_screen.query_one(selector, expect_type)
 
     # RAG expansion provider reactive

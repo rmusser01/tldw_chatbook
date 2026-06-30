@@ -85,6 +85,15 @@ def _sort_state_children(
     )
 
 
+def _schedule_sort_state_children(
+    widget: Widget,
+    desired_order: dict[str, int],
+    attribute_name: str,
+) -> None:
+    """Sort after queued mount/remove operations settle for this message."""
+    widget.call_next(_sort_state_children, widget, desired_order, attribute_name)
+
+
 class WorkbenchActionRequested(Message):
     """Posted when a Workbench command button is pressed."""
 
@@ -212,14 +221,21 @@ class CommandStrip(Horizontal):
             getattr(child, "_workbench_action_id", "")
             for child in self.children
         }
-        for action in actions:
-            if action.id in existing_action_ids:
-                continue
-            self.mount(self._build_button(action))
-            mounted += 1
-        _sort_state_children(
+        new_buttons = tuple(
+            self._build_button(action)
+            for action in actions
+            if action.id not in existing_action_ids
+        )
+        if new_buttons:
+            self.mount(*new_buttons)
+            mounted += len(new_buttons)
+        desired_order = {
+            action.id: index
+            for index, action in enumerate(actions)
+        }
+        _schedule_sort_state_children(
             self,
-            {action.id: index for index, action in enumerate(actions)},
+            desired_order,
             "_workbench_action_id",
         )
 
@@ -305,12 +321,15 @@ class ModeStrip(Horizontal):
             getattr(child, "_workbench_mode_id", "")
             for child in self.children
         }
-        for mode in modes:
-            if mode.id in existing_mode_ids:
-                continue
-            self.mount(self._build_mode(mode))
-            mounted += 1
-        _sort_state_children(
+        new_modes = tuple(
+            self._build_mode(mode)
+            for mode in modes
+            if mode.id not in existing_mode_ids
+        )
+        if new_modes:
+            self.mount(*new_modes)
+            mounted += len(new_modes)
+        _schedule_sort_state_children(
             self,
             {mode.id: index for index, mode in enumerate(modes)},
             "_workbench_mode_id",
@@ -513,17 +532,18 @@ class WorkbenchFrame(Vertical):
             getattr(child, "_workbench_pane_id", "")
             for child in region.children
         }
-        for pane in panes:
-            if pane.id in existing_pane_ids:
-                continue
-            region.mount(
-                WorkbenchPane(
-                    pane,
-                    id=f"workbench-pane-{_safe_id(pane.id)}",
-                )
+        new_panes = tuple(
+            WorkbenchPane(
+                pane,
+                id=f"workbench-pane-{_safe_id(pane.id)}",
             )
-            mounted += 1
-        _sort_state_children(
+            for pane in panes
+            if pane.id not in existing_pane_ids
+        )
+        if new_panes:
+            region.mount(*new_panes)
+            mounted += len(new_panes)
+        _schedule_sort_state_children(
             region,
             {pane.id: index for index, pane in enumerate(panes)},
             "_workbench_pane_id",

@@ -25,7 +25,15 @@ def _classes(*names: str) -> str:
 
 
 def normalize_workbench_id(value: str) -> str:
-    """Return the Textual-safe identity segment used by Workbench widgets."""
+    """Return the Textual-safe identity segment used by Workbench widgets.
+
+    Args:
+        value: Raw Workbench identifier.
+
+    Returns:
+        Identifier segment containing only Textual-safe characters, or
+        ``item`` when normalization removes all content.
+    """
     normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", value.strip())
     normalized = normalized.strip("-")
     return normalized or "item"

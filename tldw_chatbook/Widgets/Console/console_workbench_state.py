@@ -24,7 +24,20 @@ def build_console_workbench_state(
     can_save_chatbook: bool = False,
     density: str = "normal",
 ) -> WorkbenchState:
-    """Return a shared Workbench state snapshot for Console."""
+    """Return a shared Workbench state snapshot for Console.
+
+    Args:
+        control_state: Current Console control labels and readiness state.
+        provider_blocker_copy: Provider/setup blocker copy, if send is blocked.
+        provider_action_label: Label for the recovery action shown when blocked.
+        can_send: Whether the visible composer draft can be sent.
+        can_stop: Whether an active generation can be stopped.
+        can_save_chatbook: Whether the current session can be saved as a Chatbook.
+        density: Requested Workbench density, currently ``normal`` or ``compact``.
+
+    Returns:
+        Immutable shared Workbench state used by Console widgets.
+    """
     blocker = provider_blocker_copy.strip()
     workbench_density: Density = "compact" if density == "compact" else "normal"
     provider_status = "blocked" if blocker else "ready"

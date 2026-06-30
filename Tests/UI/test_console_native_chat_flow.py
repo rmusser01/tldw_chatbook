@@ -2130,10 +2130,11 @@ async def test_console_empty_transcript_teaches_setup_and_start_paths():
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         empty_text = _visible_text(transcript)
-        assert "Start here" in empty_text
-        assert "1. Finish provider setup" in empty_text
-        assert "2. Attach Library, runs, Artifacts, or RAG" in empty_text
-        assert "3. Type a message or command in Composer" in empty_text
+        assert "Start Console" in empty_text
+        assert "Add an API key" in empty_text
+        assert "type in Composer" in empty_text
+        assert "Attach context" in empty_text
+        assert "Run Library RAG" in empty_text
 
 
 @pytest.mark.asyncio
@@ -2477,6 +2478,7 @@ async def test_console_sync_skips_transcript_refresh_when_messages_unchanged(mon
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         original_refresh = transcript.refresh_messages
         refresh_calls = 0
+        await pilot.pause()
 
         async def counted_refresh():
             nonlocal refresh_calls
@@ -2486,14 +2488,15 @@ async def test_console_sync_skips_transcript_refresh_when_messages_unchanged(mon
         monkeypatch.setattr(transcript, "refresh_messages", counted_refresh)
 
         await console._sync_native_console_chat_ui()
-        assert refresh_calls == 1
+        baseline_refresh_calls = refresh_calls
+        assert baseline_refresh_calls >= 1
 
         await console._sync_native_console_chat_ui()
-        assert refresh_calls == 1
+        assert refresh_calls == baseline_refresh_calls
 
         store.add_variant(message.id, "updated answer")
         await console._sync_native_console_chat_ui()
-        assert refresh_calls == 2
+        assert refresh_calls == baseline_refresh_calls + 1
 
 
 @pytest.mark.asyncio
@@ -2817,7 +2820,7 @@ async def test_console_native_tab_switch_restores_transcript_messages():
         await pilot.click("#console-new-chat-tab")
         second = await _wait_for_active_session_change(store, pilot, previous)
         await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
-        await _wait_for_text(console, pilot, "Start here")
+        await _wait_for_text(console, pilot, "Start Console")
         assert "first tab assistant reply" not in _visible_text(console)
 
         await pilot.click(f"#console-session-tab-{first.id}")
@@ -2862,7 +2865,7 @@ async def test_console_workspace_conversation_switch_restores_transcript_message
             "Chat 2",
             selected=True,
         )
-        await _wait_for_text(console, pilot, "Start here")
+        await _wait_for_text(console, pilot, "Start Console")
         assert "workspace row assistant reply" not in _visible_text(console)
 
         await _click_console_workspace_conversation_for_session(
