@@ -850,6 +850,9 @@ class ChatScreen(BaseAppScreen):
         self._console_sync_requested = False
         self._last_native_transcript_refresh_key: tuple[int, tuple[Any, ...]] | None = None
         self._last_console_workbench_focus_id: str | None = None
+        self._last_console_control_state: ConsoleControlState | None = None
+        self._last_console_workbench_state: Any | None = None
+        self._last_console_rail_state: ConsoleRailState | None = None
         self._console_guidance_dismissed = False
         self.ui_state = UIState()
         self._load_sidebar_state()
@@ -3395,6 +3398,16 @@ class ChatScreen(BaseAppScreen):
 
         self.refresh(layout=True)
 
+    def _sync_console_rail_visibility_if_changed(
+        self,
+        rail_state: ConsoleRailState,
+    ) -> None:
+        """Apply rail visibility only when the visible rail state changes."""
+        if rail_state == self._last_console_rail_state:
+            return
+        self._sync_console_rail_visibility(rail_state)
+        self._last_console_rail_state = rail_state
+
     @staticmethod
     def _sync_console_rail_descendant_visibility(widget: Any, visible: bool) -> None:
         """Cascade rail display state while preserving child display preferences."""
@@ -3463,7 +3476,7 @@ class ChatScreen(BaseAppScreen):
         if right_open is not None:
             self._pending_console_launch_auto_open_inspector = False
         rail_state = self._current_console_rail_state()
-        self._sync_console_rail_visibility(rail_state)
+        self._sync_console_rail_visibility_if_changed(rail_state)
         return rail_state
 
     def _sync_console_workspace_context(
@@ -5589,7 +5602,9 @@ class ChatScreen(BaseAppScreen):
             await self._sync_console_native_session_tabs()
             self._sync_console_workspace_context()
             await self._sync_native_console_transcript_to_legacy_surface()
-            self._sync_console_rail_visibility(self._current_console_rail_state())
+            self._sync_console_rail_visibility_if_changed(
+                self._current_console_rail_state()
+            )
         finally:
             self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
@@ -6167,13 +6182,18 @@ class ChatScreen(BaseAppScreen):
             self._pending_console_launch_context
         )
         workbench_state = self._build_console_workbench_state(control_state)
-        try:
-            control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
-        except QueryError:
-            control_bar = None
-        if control_bar is not None:
-            control_bar.sync_state(control_state, actions=workbench_state.actions)
-        self._sync_console_workbench_state(control_state, workbench_state=workbench_state)
+        control_state_changed = control_state != self._last_console_control_state
+        workbench_state_changed = workbench_state != self._last_console_workbench_state
+        if control_state_changed or workbench_state_changed:
+            try:
+                control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
+            except QueryError:
+                control_bar = None
+            if control_bar is not None:
+                control_bar.sync_state(control_state, actions=workbench_state.actions)
+            self._sync_console_workbench_state(control_state, workbench_state=workbench_state)
+            self._last_console_control_state = control_state
+            self._last_console_workbench_state = workbench_state
         self._sync_console_transcript_guidance()
         try:
             inspector = self.query_one("#console-run-inspector-state", ConsoleRunInspector)
@@ -6188,7 +6208,7 @@ class ChatScreen(BaseAppScreen):
             can_save_chatbook=inspector_state.can_save_chatbook
             and self._console_chatbook_action_available()
         )
-        self._sync_console_rail_visibility(self._current_console_rail_state())
+        self._sync_console_rail_visibility_if_changed(self._current_console_rail_state())
 
     def _sync_console_workbench_state(
         self,

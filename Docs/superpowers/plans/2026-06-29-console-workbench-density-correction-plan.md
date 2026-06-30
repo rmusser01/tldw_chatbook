@@ -28,7 +28,7 @@ Reason: this implements the already accepted Workbench UI System decision, espec
 - Modify: `tldw_chatbook/css/components/_agentic_terminal.tcss`
 - Modify: `tldw_chatbook/css/tldw_cli_modular.tcss`
 - Modify: `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console.md`
-- Modify: `backlog/tasks/task-140 - Correct-Console-Workbench-visual-density-and-visible-controls.md`
+- Modify: `backlog/tasks/task-142 - Correct-Console-Workbench-visual-density-and-visible-controls.md`
 
 ### Task 1: Contract Tests For Visible Dense Controls
 
@@ -104,7 +104,7 @@ Run: `git diff --check`
 
 - [ ] **Step 4: Update backlog task**
 
-Check all acceptance criteria and add implementation notes before setting TASK-140 to Done.
+Check all acceptance criteria and add implementation notes before setting TASK-142 to Done.
 
 - [ ] **Step 5: Commit**
 

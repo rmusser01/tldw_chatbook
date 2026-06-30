@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-06-29
-Related Task: [backlog/tasks/task-139 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md](../tasks/task-139%20-%20Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md)
+Related Task: [backlog/tasks/task-141 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md](../tasks/task-141%20-%20Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md)
 Supersedes: N/A
 
 ## Decision

@@ -15,18 +15,18 @@
 
 ## Verification
 
-- TASK-142 Console visual snapshot contract:
+- TASK-144 Console visual snapshot contract:
   - Command: `PATH=.venv/bin:$PATH pytest Tests/UI/test_workbench_visual_snapshots.py -q`
   - Result: `5 passed, 1 warning` in 9.27s. Warning: existing `requests` dependency warning.
   - Coverage: normal density, compact density, standard-width inspector, command palette, and focus state exports.
-- TASK-142 Console display/workbench/visual gate:
+- TASK-144 Console display/workbench/visual gate:
   - Command: `PATH=.venv/bin:$PATH pytest Tests/Chat/test_console_display_state.py Tests/UI/test_console_workbench_contract.py Tests/UI/test_workbench_visual_snapshots.py -q`
   - Result: `65 passed, 8 warnings` in 45.56s. Warnings: existing `requests` dependency warning plus SWIG deprecation warnings.
-- TASK-142 Console internals layout gate:
+- TASK-144 Console internals layout gate:
   - Command: `PATH=.venv/bin:$PATH pytest Tests/UI/test_console_internals_decomposition.py -k 'not test_console_collapsed_paste_click_targets_token_after_visible_clipping' -q`
   - Result: `98 passed, 1 deselected, 1 warning` in 71.14s. Warning: existing `requests` dependency warning.
   - Note: the deselected test is the pre-existing collapsed-paste click-target failure already reproduced on the baseline worktree.
-- TASK-142 artifact text/image checks:
+- TASK-144 artifact text/image checks:
   - Command: `wc -c Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.svg Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.png`
   - Result: all ten visual files are non-empty; total artifact bytes: `1,367,428`.
   - Command: `sips -g pixelWidth -g pixelHeight Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual/*.png`
@@ -60,7 +60,7 @@
 
 These screenshots were generated from the same Textual `export_screenshot()` path used by `Tests/UI/test_workbench_visual_snapshots.py`.
 
-TASK-142 refreshed these artifacts after the beginner and advanced-user UX review. The current captures show:
+TASK-144 refreshed these artifacts after the beginner and advanced-user UX review. The current captures show:
 
 - no visible empty Console-only horizontal destination-header band between global navigation and the setup/status area.
 - visible provider, model, assistant/persona, RAG, source, tools, and approval chips.
@@ -93,7 +93,7 @@ sips -g pixelWidth -g pixelHeight Docs/superpowers/qa/chatbook-workbench-ui-foun
 
 Result: all five SVGs are non-empty; normal and compact captures contain the dense control labels/actions and composer recovery copy; the standard-width inspector capture contains `Run recipe`, `Blocked impact`, and `Next action`; no traceback or internal-error strings were present; all five PNGs are 1800x1200.
 
-TASK-142 visual artifact sizes:
+TASK-144 visual artifact sizes:
 
 - `console-workbench-command-palette.svg`: 45,234 bytes
 - `console-workbench-compact.svg`: 98,601 bytes

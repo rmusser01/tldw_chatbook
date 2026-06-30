@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the existing Console frame: global nav, top workflow controls, recovery/status, context rail, transcript, inspector, composer, footer. Consolidate duplicated Workbench `ModeStrip`/`CommandStrip` content into the Console-owned control strip, leaving shared Workbench seams mounted hidden only where compatibility tests still need selectors. Put beginner recovery and advanced operational state into display-state builders first, then render those contracts in focused widgets.
 
-**Tech Stack:** Python 3.11+, Textual widgets/TCSS, pytest async UI harness, Textual `export_screenshot()`, Backlog.md task `TASK-142`.
+**Tech Stack:** Python 3.11+, Textual widgets/TCSS, pytest async UI harness, Textual `export_screenshot()`, Backlog.md task `TASK-144`.
 
 ---
 
@@ -54,7 +54,7 @@ Advanced users need quick scan                One run recipe row plus source/too
 
 ## Files and Responsibilities
 
-- `backlog/tasks/task-142 - Address-Console-beginner-and-advanced-workflow-UX-findings.md`
+- `backlog/tasks/task-144 - Address-Console-beginner-and-advanced-workflow-UX-findings.md`
   Track acceptance criteria, implementation plan link, and implementation notes.
 
 - `tldw_chatbook/Widgets/Console/console_workbench_state.py`
@@ -98,15 +98,15 @@ Advanced users need quick scan                One run recipe row plus source/too
 
 ---
 
-### Task 1: Normalize TASK-142 and Add State-Contract Tests
+### Task 1: Normalize TASK-144 and Add State-Contract Tests
 
 **Files:**
-- Modify: `backlog/tasks/task-142 - Address-Console-beginner-and-advanced-workflow-UX-findings.md`
+- Modify: `backlog/tasks/task-144 - Address-Console-beginner-and-advanced-workflow-UX-findings.md`
 - Modify: `Tests/UI/test_console_workbench_contract.py`
 - Modify: `tldw_chatbook/Widgets/Console/console_workbench_state.py`
 - Modify: `tldw_chatbook/Chat/console_display_state.py`
 
-- [ ] **Step 1: Split TASK-142 acceptance criteria**
+- [ ] **Step 1: Split TASK-144 acceptance criteria**
 
 Update the task file so each acceptance criterion is its own checkbox:
 
@@ -198,7 +198,7 @@ Expected: pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add "backlog/tasks/task-142 - Address-Console-beginner-and-advanced-workflow-UX-findings.md" Tests/UI/test_console_workbench_contract.py tldw_chatbook/Widgets/Console/console_workbench_state.py tldw_chatbook/Chat/console_display_state.py
+git add "backlog/tasks/task-144 - Address-Console-beginner-and-advanced-workflow-UX-findings.md" Tests/UI/test_console_workbench_contract.py tldw_chatbook/Widgets/Console/console_workbench_state.py tldw_chatbook/Chat/console_display_state.py
 git commit -m "Define Console UX recovery state contracts"
 ```
 
@@ -999,7 +999,7 @@ node -e "import('playwright').then(async ({ chromium }) => { const path = await 
 
 Update `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console.md` with:
 
-- New TASK-142 summary.
+- New TASK-144 summary.
 - Beginner workflow evidence.
 - Advanced workflow evidence.
 - PNG paths and dimensions.
@@ -1037,7 +1037,7 @@ git commit -m "Refresh Console UX visual evidence"
 ### Task 9: Final Verification and Task Closeout
 
 **Files:**
-- Modify: `backlog/tasks/task-142 - Address-Console-beginner-and-advanced-workflow-UX-findings.md`
+- Modify: `backlog/tasks/task-144 - Address-Console-beginner-and-advanced-workflow-UX-findings.md`
 
 - [ ] **Step 1: Run targeted suite**
 
@@ -1108,7 +1108,7 @@ git diff --check
 
 Expected: exit 0.
 
-- [ ] **Step 6: Update TASK-142 notes and mark Done**
+- [ ] **Step 6: Update TASK-144 notes and mark Done**
 
 Update acceptance criteria to `[x]` and add implementation notes summarizing:
 
@@ -1128,7 +1128,7 @@ backlog task edit 142 -s Done
 - [ ] **Step 7: Commit closeout**
 
 ```bash
-git add "backlog/tasks/task-142 - Address-Console-beginner-and-advanced-workflow-UX-findings.md" Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts
+git add "backlog/tasks/task-144 - Address-Console-beginner-and-advanced-workflow-UX-findings.md" Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts
 git commit -m "Close Console UX remediation task"
 ```
 

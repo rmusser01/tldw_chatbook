@@ -940,6 +940,54 @@ async def test_console_workbench_send_action_disables_during_active_run():
 
 
 @pytest.mark.asyncio
+async def test_console_active_stream_sync_skips_unchanged_chrome_and_inspector(monkeypatch):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        controller = console._ensure_console_chat_controller()
+        controller.run_state = ConsoleRunState(
+            ConsoleRunStatus.STREAMING,
+            "Streaming response.",
+        )
+        control_state = console._build_console_control_state(
+            console._pending_console_launch_context
+        )
+        console._last_console_control_state = control_state
+        console._last_console_workbench_state = console._build_console_workbench_state(
+            control_state
+        )
+        console._last_console_rail_state = console._current_console_rail_state()
+
+        workbench_syncs = 0
+        inspector_refreshes = 0
+
+        def count_workbench_sync(*_args, **_kwargs):
+            nonlocal workbench_syncs
+            workbench_syncs += 1
+
+        inspector = console.query_one("#console-run-inspector-state")
+
+        def count_inspector_refresh(*_args, **_kwargs):
+            nonlocal inspector_refreshes
+            inspector_refreshes += 1
+
+        monkeypatch.setattr(console, "_sync_console_workbench_state", count_workbench_sync)
+        monkeypatch.setattr(inspector, "refresh", count_inspector_refresh)
+
+        for _ in range(5):
+            console._sync_console_control_bar()
+        await pilot.pause()
+
+        assert workbench_syncs == 0
+        assert inspector_refreshes == 0
+
+
+@pytest.mark.asyncio
 async def test_console_f6_cycles_visible_workbench_panes():
     app = _build_test_app()
     _configure_native_ready_console(app)

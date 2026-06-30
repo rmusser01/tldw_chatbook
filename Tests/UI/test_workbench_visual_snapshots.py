@@ -132,6 +132,14 @@ def _assert_console_focus_evidence(svg: str) -> None:
     assert "Choose model" in normalized_svg
 
 
+def _assert_visible_ancestors(widget) -> None:
+    current = widget
+    while current is not None:
+        assert current.display is not False
+        assert current.styles.display != "none"
+        current = getattr(current, "parent", None)
+
+
 @pytest.mark.parametrize("density", ("normal", "compact"))
 @pytest.mark.asyncio
 async def test_console_workbench_normal_and_compact_snapshots(density: str) -> None:
@@ -201,11 +209,14 @@ async def test_console_workbench_focus_state_snapshot() -> None:
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 42)) as pilot:
             await _open_console(app, pilot)
-            settings_action = app.screen.query_one("#workbench-action-settings", Button)
+            settings_action = app.screen.query_one("#console-control-settings", Button)
             settings_action.focus()
             await pilot.pause()
 
             assert app.focused is settings_action
+            assert settings_action.region.width > 0
+            assert settings_action.region.height > 0
+            _assert_visible_ancestors(settings_action)
             svg = app.export_screenshot(
                 title="Console Workbench Focus State",
                 simplify=True,

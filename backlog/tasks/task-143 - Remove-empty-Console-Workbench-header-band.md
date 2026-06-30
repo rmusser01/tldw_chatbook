@@ -1,5 +1,5 @@
 ---
-id: TASK-141
+id: TASK-143
 title: Remove empty Console Workbench header band
 status: Done
 assignee:
@@ -41,7 +41,7 @@ Reason: this is a corrective implementation of the existing Workbench UI System 
 2. Hide the Console DestinationHeader as a compatibility seam while preserving sync selectors for existing state refreshes.
 3. Rebuild CSS if needed and regenerate visual proof screenshots.
 4. Run targeted Console Workbench tests, visual snapshot checks, and diff hygiene.
-5. Update TASK-141 acceptance criteria and implementation notes.
+5. Update TASK-143 acceptance criteria and implementation notes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

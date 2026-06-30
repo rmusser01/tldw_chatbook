@@ -125,6 +125,8 @@ class ConsoleRunInspector(Vertical):
 
     def sync_state(self, state: ConsoleInspectorState) -> None:
         """Refresh the mounted inspector from a new display-state snapshot."""
+        if state == self.state:
+            return
         self.state = state
         self.refresh(recompose=True)
 

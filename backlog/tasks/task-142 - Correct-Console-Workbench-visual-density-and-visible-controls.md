@@ -1,5 +1,5 @@
 ---
-id: TASK-140
+id: TASK-142
 title: Correct Console Workbench visual density and visible controls
 status: Done
 assignee:

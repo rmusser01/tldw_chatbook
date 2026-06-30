@@ -133,6 +133,10 @@ class ConsoleControlBar(Vertical):
             state: Updated display-state snapshot to render.
             actions: Optional Workbench actions to sync into the top strip.
         """
+        if actions is None and state == self.state:
+            return
+        if actions is not None and state == self.state and tuple(actions) == self.actions:
+            return
         self.state = state
         if actions is not None:
             self.sync_actions(actions)
@@ -200,7 +204,10 @@ class ConsoleControlBar(Vertical):
 
     def sync_actions(self, actions: tuple[WorkbenchAction, ...]) -> None:
         """Refresh top Console actions from current Workbench state."""
-        self.actions = tuple(actions)
+        actions = tuple(actions)
+        if actions == self.actions:
+            return
+        self.actions = actions
         try:
             row = self.query_one("#console-control-action-row", Horizontal)
         except NoMatches:

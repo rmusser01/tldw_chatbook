@@ -6,14 +6,14 @@
 
 **Architecture:** Add a small Textual-native workbench layer that owns shared layout primitives, state snapshots, focus/help contracts, and responsiveness diagnostics while domain screens continue to own domain data and side effects. Console is refactored to consume those primitives first because it exercises streaming, provider readiness, staged context, rails, transcript updates, and recovery states. Later destination migrations use separate plans and must pass the route-owner and responsiveness gates introduced here.
 
-**Tech Stack:** Python 3.11, Textual 3.3+, Rich, pytest, pytest-asyncio, existing TCSS build pipeline, Backlog.md task `TASK-139`, ADR-011.
+**Tech Stack:** Python 3.11, Textual 3.3+, Rich, pytest, pytest-asyncio, existing TCSS build pipeline, Backlog.md task `TASK-141`, ADR-011.
 
 ---
 
 ## Source Documents
 
 - Spec: `Docs/superpowers/specs/2026-06-29-posting-inspired-chatbook-ui-redesign-design.md`
-- Backlog task: `backlog/tasks/task-139 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md`
+- Backlog task: `backlog/tasks/task-141 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md`
 - ADR: `backlog/decisions/011-chatbook-workbench-ui-system.md`
 - Posting reference checkout: `/tmp/posting-main`
 - Current Console screen: `tldw_chatbook/UI/Screens/chat_screen.py`
@@ -130,7 +130,7 @@ Core Console workflows must be visible in the workbench itself. The command pale
   - Regenerate with `python3 tldw_chatbook/css/build_css.py`.
 - `Docs/Design/master-shell-design-system-contract.md`
   - Link to the Workbench UI System doc and note the visible-action rule.
-- `backlog/tasks/task-139 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md`
+- `backlog/tasks/task-141 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md`
   - Keep `Implementation Plan`, acceptance criteria, and final notes aligned with this plan.
 
 ## Migration Owner Map
@@ -207,7 +207,7 @@ WORKBENCH_ROUTE_OWNERS: dict[str, str] = {
 - Modify: `tldw_chatbook/UI/Navigation/screen_registry.py:36-100`
 - Modify: `tldw_chatbook/UI/Navigation/shell_destinations.py:88-154`
 - Test: `Tests/UI/test_workbench_route_inventory.py`
-- Modify: `backlog/tasks/task-139 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md`
+- Modify: `backlog/tasks/task-141 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md`
 
 - [ ] **Step 1: Write the failing route inventory tests**
 
@@ -388,7 +388,7 @@ Expected: PASS.
 
 - [ ] **Step 6: Link the plan in the Backlog task**
 
-Add an `## Implementation Plan` section to `backlog/tasks/task-139 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md` with:
+Add an `## Implementation Plan` section to `backlog/tasks/task-141 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md` with:
 
 ```markdown
 ADR required: yes
@@ -406,7 +406,7 @@ git add tldw_chatbook/UI/Navigation/screen_registry.py \
   tldw_chatbook/UI/Workbench/__init__.py \
   tldw_chatbook/UI/Workbench/route_inventory.py \
   Tests/UI/test_workbench_route_inventory.py \
-  "backlog/tasks/task-139 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md"
+  "backlog/tasks/task-141 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md"
 git commit -m "Add workbench route migration coverage"
 ```
 
@@ -2264,7 +2264,7 @@ git commit -m "Add Console Workbench focus help and density gates"
 - Create: `Tests/UI/test_console_workbench_parity_matrix.py`
 - Modify: `Docs/Design/master-shell-design-system-contract.md`
 - Modify: `Docs/superpowers/qa/chatbook-workbench-ui-foundation-console.md`
-- Modify: `backlog/tasks/task-139 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md`
+- Modify: `backlog/tasks/task-141 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md`
 - Verify: all files touched in Tasks 1-7
 
 - [ ] **Step 1: Write the Workbench design doc**
@@ -2593,7 +2593,7 @@ Fill each bullet with the command and pass/fail output summary.
 
 - [ ] **Step 9: Update Backlog acceptance criteria**
 
-In `backlog/tasks/task-139 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md`, mark each AC complete only after the associated verification passes:
+In `backlog/tasks/task-141 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md`, mark each AC complete only after the associated verification passes:
 
 ```markdown
 - [x] ADR records the Chatbook Workbench UI System decision
@@ -2627,7 +2627,7 @@ Expected: task status becomes `Done`.
 git add Docs/Design/chatbook-workbench-ui-system.md \
   Docs/Design/master-shell-design-system-contract.md \
   Docs/superpowers/qa/chatbook-workbench-ui-foundation-console.md \
-  "backlog/tasks/task-139 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md"
+  "backlog/tasks/task-141 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md"
 git commit -m "Document Workbench UI foundation verification"
 ```
 
@@ -2705,7 +2705,7 @@ If Console regressions appear after Task 6:
 1. Keep `tldw_chatbook/UI/Workbench/*`, route inventory, and responsiveness instrumentation.
 2. Revert only the Console `compose_content` integration and `console_control_bar.py` changes from the latest task commit.
 3. Keep tests documenting the desired visible-control behavior, marked as expected failures only if the user approves a pause.
-4. Do not remove ADR-011 or TASK-139; update implementation notes with the rollback reason.
+4. Do not remove ADR-011 or TASK-141; update implementation notes with the rollback reason.
 
 ## Execution Notes
 
