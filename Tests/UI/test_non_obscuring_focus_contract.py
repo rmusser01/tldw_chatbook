@@ -709,6 +709,22 @@ def test_console_composer_focus_uses_thin_input_treatment():
     assert "border-bottom: solid $ds-input-focus-accent;" in block
 
 
+def test_console_structural_separators_use_visible_column_line_token():
+    text = AGENTIC.read_text(encoding="utf-8")
+    transcript_region_blocks = css_blocks(text, "#console-transcript-region")
+    composer = css_block(text, "#console-native-composer")
+    transcript_rule = css_block(text, ".console-transcript-rule")
+
+    assert transcript_region_blocks
+    assert all("$ds-grid-line" not in block for block in transcript_region_blocks)
+    assert any("border: solid $ds-column-line;" in block for block in transcript_region_blocks)
+    assert any("border: round $ds-column-line;" in block for block in transcript_region_blocks)
+    assert "border: round $ds-column-line;" in composer
+    assert "border: round $ds-grid-line;" not in composer
+    assert "color: $ds-column-line;" in transcript_rule
+    assert "color: $ds-grid-line;" not in transcript_rule
+
+
 @pytest.mark.unit
 def test_console_settings_modal_select_uses_compact_focus_outline():
     for _, text in (

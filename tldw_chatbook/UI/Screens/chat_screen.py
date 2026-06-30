@@ -3966,10 +3966,30 @@ class ChatScreen(BaseAppScreen):
         if blocker == "provider setup needed: choose a model":
             return "Choose a model in Console Settings before sending."
         if "missing api key" in blocker:
-            return "Add API Key in Settings before sending."
+            return "Add API key in Settings > Providers & Models before sending."
         if "save the endpoint in settings" in blocker:
-            return "Save provider endpoint in Settings before sending."
+            return "Save provider endpoint in Settings > Providers & Models before sending."
         return "Finish provider setup before sending."
+
+    def _console_provider_recovery_field(self) -> str:
+        """Return the Settings Providers & Models field targeted by recovery."""
+        provider, model, settings = self._active_console_provider_model_display()
+        if not _has_selected_text(provider) or not _has_selected_text(model):
+            return ""
+
+        _effective_settings, settings_readiness = self._active_console_settings_readiness()
+        if settings_readiness.native_send_supported:
+            return ""
+
+        provider_readiness = get_provider_readiness(
+            (settings.provider if settings is not None else None) or provider,
+            getattr(self.app_instance, "app_config", {}) or {},
+        )
+        if provider_readiness.reason == "Missing API key":
+            return "api_key"
+        if settings_readiness.label == "Endpoint not saved":
+            return "endpoint"
+        return ""
 
     def _console_provider_recovery_action(self) -> tuple[str, str, str]:
         """Return the label, target, and tooltip for Console provider recovery."""
@@ -5815,6 +5835,9 @@ class ChatScreen(BaseAppScreen):
         model_context = str(model or settings_model or "").strip()
         if model_context:
             screen_context["model"] = model_context
+        field_context = self._console_provider_recovery_field()
+        if field_context:
+            screen_context["field"] = field_context
         self.post_message(
             NavigateToScreen(
                 TAB_SETTINGS,

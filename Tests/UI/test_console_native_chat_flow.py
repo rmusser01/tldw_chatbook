@@ -1017,7 +1017,7 @@ async def test_console_native_enter_on_setup_blocked_send_shows_recovery_feedbac
         assert composer.draft_text() == "preserve this from keyboard"
         assert notifications == [
             (
-                "Add API Key in Settings before sending.",
+                "Add API key in Settings > Providers & Models before sending.",
                 {"severity": "warning"},
             )
         ]
@@ -1046,17 +1046,23 @@ async def test_console_setup_blocked_send_adds_durable_transcript_recovery_feedb
         composer.load_draft("blocked setup draft")
 
         await pilot.press("enter")
-        await _wait_for_text(console, pilot, "Add API Key in Settings before sending.")
+        await _wait_for_text(
+            console,
+            pilot,
+            "Add API key in Settings > Providers & Models before sending.",
+        )
 
         store = console._ensure_console_chat_store()
         messages = store.messages_for_session(store.active_session_id)
         assert composer.draft_text() == "blocked setup draft"
         assert messages[-1].role is ConsoleMessageRole.SYSTEM
-        assert messages[-1].content == "Add API Key in Settings before sending."
+        assert messages[-1].content == (
+            "Add API key in Settings > Providers & Models before sending."
+        )
 
     assert notifications == [
         (
-            "Add API Key in Settings before sending.",
+            "Add API key in Settings > Providers & Models before sending.",
             {"severity": "warning"},
         )
     ]
@@ -1860,6 +1866,7 @@ async def test_console_add_api_key_recovery_targets_provider_settings_category()
             "category": SettingsCategoryId.PROVIDERS_MODELS.value,
             "provider": "huggingface",
             "model": "meta-llama/test-model",
+            "field": "api_key",
         }
 
 
@@ -1893,6 +1900,7 @@ async def test_console_add_api_key_recovery_tolerates_missing_session_settings()
             "category": SettingsCategoryId.PROVIDERS_MODELS.value,
             "provider": "huggingface",
             "model": "meta-llama/test-model",
+            "field": "api_key",
         }
 
 
@@ -2184,7 +2192,7 @@ async def test_console_inspector_setup_state_explains_blocked_send_without_selec
 
 
 @pytest.mark.asyncio
-async def test_console_composer_setup_placeholder_names_recovery_action():
+async def test_console_composer_setup_blocker_keeps_recovery_outside_input():
     app = _build_test_app()
     _configure_openai_missing_api_key(app)
     host = ConsoleHarness(app)
@@ -2195,9 +2203,11 @@ async def test_console_composer_setup_placeholder_names_recovery_action():
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer_text = _visible_text(composer)
-        assert "Setup required: Add API Key before sending." in composer_text
+        assert ConsoleComposerBar.DRAFT_PLACEHOLDER in composer_text
+        assert "Setup required" not in composer_text
+        assert "Impact: Send is blocked" in _visible_text(console)
         assert console.query_one("#console-send-message", Button).tooltip == (
-            "Add API Key in Settings before sending."
+            "Add API key in Settings > Providers & Models before sending."
         )
 
 

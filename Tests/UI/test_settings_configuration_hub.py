@@ -61,6 +61,10 @@ DUMMY_REDACTION_CONFIG_VALUE = "redaction-fixture-config-value"
 DUMMY_REDACTION_SERVER_VALUE = "redaction-fixture-server-value"
 
 
+class StyledSettingsDestinationHarness(DestinationHarness):
+    CSS_PATH = str(Path(__file__).parents[2] / "tldw_chatbook/css/tldw_cli_modular.tcss")
+
+
 class FakeSettingsModelDiscoveryScope:
     def __init__(
         self,
@@ -128,6 +132,21 @@ async def _wait_for_settings_text(screen, pilot, expected_text: str, *, timeout:
             return
         await pilot.pause(0.01)
     raise AssertionError(f"Timed out waiting for {expected_text!r}. Visible text: {_visible_text(screen)}")
+
+
+async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Button:
+    button = screen.query_one(selector, Button)
+    detail_pane = screen.query_one("#settings-detail-pane", VerticalScroll)
+    detail_pane.scroll_to_widget(
+        button,
+        animate=False,
+        immediate=True,
+        top=True,
+        force=True,
+    )
+    await pilot.pause()
+    await pilot.click(selector)
+    return button
 
 
 async def _wait_for_settings_search_focus(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -438,6 +457,7 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "chat_defaults.provider",
         "chat_defaults.model",
         "api_settings.<provider>.endpoint",
+        "api_settings.<provider>.api_key",
         "api_settings.<provider>.api_key_env_var",
         "api_settings.<provider>.model_defaults.<model>",
     )
@@ -1845,13 +1865,27 @@ async def test_settings_detail_shows_state_banner_and_structured_rows():
 @pytest.mark.asyncio
 async def test_settings_long_detail_and_inspector_panes_are_scrollable_containers():
     app = _build_test_app()
-    host = DestinationHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
 
         assert isinstance(screen.query_one("#settings-detail-pane"), VerticalScroll)
         assert isinstance(screen.query_one("#settings-impact-pane"), VerticalScroll)
+
+        await pilot.click("#settings-category-providers-models")
+        detail_pane = screen.query_one("#settings-detail-pane", VerticalScroll)
+        test_provider = screen.query_one("#settings-test-provider", Button)
+
+        assert detail_pane.max_scroll_y > 0
+        detail_pane.scroll_to_widget(
+            test_provider,
+            animate=False,
+            immediate=True,
+            top=True,
+            force=True,
+        )
+        assert detail_pane.scroll_y > 0
 
 
 @pytest.mark.asyncio
@@ -3060,6 +3094,30 @@ async def test_settings_navigation_context_can_preselect_provider_category_targe
 
 
 @pytest.mark.asyncio
+async def test_settings_provider_navigation_context_focuses_api_key_field():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+
+        screen.apply_navigation_context(
+            {
+                "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+                "provider": "openai",
+                "model": "gpt-4.1",
+                "field": "api_key",
+            }
+        )
+        await pilot.pause()
+
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        assert api_key.has_focus
+
+
+@pytest.mark.asyncio
 async def test_settings_navigation_context_preselection_does_not_create_provider_draft():
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
@@ -3241,12 +3299,13 @@ async def test_settings_provider_test_redacts_secrets(monkeypatch):
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}
     monkeypatch.setenv("OPENAI_API_KEY", "sk-secret-token")
-    host = DestinationHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.click("#settings-category-providers-models")
-        await pilot.click("#settings-test-provider")
         screen = _active_destination_screen(host)
+        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
+        await _wait_for_settings_text(screen, pilot, "Provider test")
         text = _visible_text(screen)
 
         assert "Provider test" in text
@@ -3854,6 +3913,69 @@ async def test_settings_provider_category_saves_credential_env_var(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_settings_provider_category_renders_local_api_key_setup_without_revealing_secret():
+    app = _build_test_app()
+    fake_key = "sk-test-visible-redaction-source"
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "OPENAI_API_KEY", "api_key": fake_key}
+    }
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        assert getattr(api_key, "password", False) is True
+        assert api_key.value == ""
+        text = _visible_text(screen)
+        assert "API key" in text
+        assert "local config key saved" in text.lower()
+        assert fake_key not in text
+
+
+@pytest.mark.asyncio
+async def test_settings_provider_category_saves_and_clears_local_api_key(monkeypatch):
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {
+        "provider": "OpenAI",
+        "model": "gpt-4.1",
+    }
+    app.app_config["api_settings"] = {
+        "openai": {"api_key_env_var": "OPENAI_API_KEY"}
+    }
+    saved = []
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.settings_config_adapter.save_setting_to_cli_config",
+        lambda section, key, value: saved.append((section, key, value)) or True,
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.click("#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        api_key.value = "sk-test-new-local-key"
+        screen.handle_provider_api_key_changed(Input.Changed(api_key, api_key.value))
+        await pilot.click("#settings-save-category")
+
+        assert ("api_settings.openai", "api_key", "sk-test-new-local-key") in saved
+        assert app.app_config["api_settings"]["openai"]["api_key"] == "sk-test-new-local-key"
+
+        await pilot.click("#settings-provider-api-key-clear")
+        await pilot.click("#settings-save-category")
+
+    assert ("api_settings.openai", "api_key", "") in saved
+    assert app.app_config["api_settings"]["openai"]["api_key"] == ""
+
+
+@pytest.mark.asyncio
 async def test_settings_provider_category_rejects_invalid_credential_env_var(monkeypatch):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
@@ -4346,12 +4468,13 @@ async def test_settings_provider_test_blocks_unknown_provider():
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAi Typo", "model": "fake-model"}
     app.app_config["api_settings"] = {}
-    host = DestinationHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.click("#settings-category-providers-models")
-        await pilot.click("#settings-test-provider")
         screen = _active_destination_screen(host)
+        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
+        await _wait_for_settings_text(screen, pilot, "Unknown provider")
         text = _visible_text(screen)
 
         assert "Unknown provider" in text
@@ -4368,12 +4491,13 @@ async def test_settings_provider_test_uses_api_settings_env_var_without_secret_l
         }
     }
     monkeypatch.setenv("GROQ_API_KEY", "gsk-secret-token")
-    host = DestinationHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.click("#settings-category-providers-models")
-        await pilot.click("#settings-test-provider")
         screen = _active_destination_screen(host)
+        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
+        await _wait_for_settings_text(screen, pilot, "GROQ_API_KEY=<redacted>")
         text = _visible_text(screen)
 
         assert "env:GROQ_API_KEY" in text
@@ -4448,12 +4572,12 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
         ),
     )
     app.llm_provider_catalog_scope_service = scope
-    host = DestinationHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.click("#settings-category-providers-models")
-        await pilot.click("#settings-discover-provider-models")
         screen = _active_destination_screen(host)
+        await _click_scrolled_settings_button(screen, pilot, "#settings-discover-provider-models")
         await _wait_for_settings_text(
             screen,
             pilot,
@@ -4466,7 +4590,7 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
         )
         discovered_models.select("gpt-4o-mini")
 
-        await pilot.click("#settings-save-discovered-provider-models")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-save-discovered-provider-models")
         await _wait_for_settings_text(
             screen,
             pilot,
@@ -4522,12 +4646,12 @@ async def test_settings_provider_model_discovery_shows_ambiguous_provider_recove
             ),
         ),
     )
-    host = DestinationHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.click("#settings-category-providers-models")
-        await pilot.click("#settings-discover-provider-models")
         screen = _active_destination_screen(host)
+        await _click_scrolled_settings_button(screen, pilot, "#settings-discover-provider-models")
         await _wait_for_settings_text(
             screen,
             pilot,
@@ -4553,14 +4677,15 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
         "streaming": True,
         "temperature": "not-a-number",
     }
-    host = DestinationHarness(app, "settings")
+    host = StyledSettingsDestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.click("#settings-category-providers-models")
         screen = _active_destination_screen(host)
         screen.query_one("#settings-model-profile-temperature", Input).value = "not-a-number"
 
-        await pilot.click("#settings-test-provider")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
+        await _wait_for_settings_text(screen, pilot, "Provider test")
         text = _visible_text(screen)
 
         assert "Provider test" in text

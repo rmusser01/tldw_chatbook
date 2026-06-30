@@ -572,6 +572,8 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
+        recovery = composer.query_one("#console-composer-recovery", Static)
+        disabled_reason = composer.query_one("#console-send-disabled-reason", Static)
         send_button = composer.query_one("#console-send-message", Button)
 
         composer.sync_action_state(
@@ -583,7 +585,9 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         )
         await pilot.pause(0.1)
 
-        assert "Setup required: Choose model before sending." in visible_draft.renderable.plain
+        assert visible_draft.renderable.plain == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        assert recovery.styles.display == "none"
+        assert disabled_reason.styles.display == "none"
         assert send_button.disabled is False
         assert send_button.tooltip == "Choose a model in Console Settings before sending."
 
@@ -1608,7 +1612,9 @@ async def test_console_enter_sends_native_composer_draft(monkeypatch):
         send_button = console.query_one("#console-send-message", Button)
         assert "Console send blocked" not in text
         assert send_button.disabled is False
-        assert send_button.tooltip == "Add API Key in Settings before sending."
+        assert send_button.tooltip == (
+            "Add API key in Settings > Providers & Models before sending."
+        )
         assert "missing API key" in text
         assert "Internal Error" not in text
         assert "Missing UI elements" not in text
@@ -1831,7 +1837,8 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert "Choose model" in _visible_text(console)
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
         assert "No messages yet." not in _visible_text(console)
-        assert "Setup required: Choose model before sending." in _visible_text(console)
+        assert "Impact: Send is blocked" in _visible_text(console)
+        assert "Setup required: Choose model before sending." not in _visible_text(console)
 
         store.replace_session_settings(
             session.id,

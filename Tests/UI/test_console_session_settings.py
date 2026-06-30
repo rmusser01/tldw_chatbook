@@ -3203,7 +3203,11 @@ def test_console_missing_key_recovery_action_is_provider_specific() -> None:
     assert label == "Add API Key"
     assert target == "settings"
     assert tooltip == "Add an API key for OpenAI"
-    assert screen._console_setup_blocked_reason() == "Add API Key in Settings before sending."
+    assert screen._console_provider_recovery_field() == "api_key"
+    assert (
+        screen._console_setup_blocked_reason()
+        == "Add API key in Settings > Providers & Models before sending."
+    )
 
 
 def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details() -> None:
@@ -3234,7 +3238,11 @@ def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details
     assert label == "Configure endpoint"
     assert target == "settings"
     assert tooltip == "Save the ollama endpoint in Settings"
-    assert screen._console_setup_blocked_reason() == "Save provider endpoint in Settings before sending."
+    assert screen._console_provider_recovery_field() == "endpoint"
+    assert (
+        screen._console_setup_blocked_reason()
+        == "Save provider endpoint in Settings > Providers & Models before sending."
+    )
 
 
 def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallback() -> None:

@@ -367,12 +367,17 @@ async def test_console_composer_keeps_primary_actions_and_setup_recovery_visible
         assert _is_displayed(console.query_one("#console-send-message"))
         assert _is_displayed(console.query_one("#console-stop-generation"))
         assert _is_displayed(console.query_one("#console-save-chatbook"))
-        assert _is_displayed(console.query_one("#console-composer-recovery"))
-        assert "Choose model" in _widget_text(console.query_one("#console-composer-recovery"))
+        assert not _is_displayed(console.query_one("#console-composer-recovery"))
+        assert _is_displayed(console.query_one("#workbench-recovery-callout"))
+        recovery_action = console.query_one("#workbench-recovery-action")
+        assert _is_displayed(recovery_action)
+        assert "Choose model" in _widget_text(recovery_action)
+        visible_draft = console.query_one("#console-command-visible-text")
+        assert visible_draft.region.width >= 32
 
 
 @pytest.mark.asyncio
-async def test_console_composer_shows_send_disabled_reason_near_send():
+async def test_console_composer_keeps_disabled_reason_outside_input_row():
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
@@ -387,17 +392,15 @@ async def test_console_composer_shows_send_disabled_reason_near_send():
         await _wait_for_selector(console, pilot, "#console-shell")
 
         reason = console.query_one("#console-send-disabled-reason")
-        assert _is_displayed(reason)
-        reason_text = _widget_text(reason)
-        assert "Send disabled" in reason_text
-        assert "choose" in reason_text.lower()
-        assert "model" in reason_text.lower()
+        assert not _is_displayed(reason)
+        visible_draft = console.query_one("#console-command-visible-text")
+        assert visible_draft.region.width >= 32
         actions = console.query_one("#console-composer-actions")
         send = console.query_one("#console-send-message")
-        assert reason.region.y == actions.region.y == send.region.y
-        assert reason.region.x < actions.region.x
-        assert actions.region.x - (reason.region.x + reason.region.width) <= 2
-        assert "ellipsis" in str(reason.styles.text_overflow)
+        assert actions.region.y == send.region.y
+        assert visible_draft.region.x < actions.region.x
+        assert visible_draft.region.x + visible_draft.region.width <= actions.region.x
+        assert "model" in (send.tooltip or "").lower()
         assert "nowrap" in str(reason.styles.text_wrap)
 
 
