@@ -3616,9 +3616,12 @@ async def test_console_conversation_browser_search_ignores_stale_results():
 
         console._console_conversation_browser_query = "beta"
         console._console_conversation_browser_search_token += 1
-        fresh_token = console._console_conversation_browser_search_token
         app.chat_conversation_scope_service.release.set()
         await stale_task
+
+        console._console_conversation_browser_query = "beta"
+        console._console_conversation_browser_search_token += 1
+        fresh_token = console._console_conversation_browser_search_token
         await console._refresh_console_conversation_browser_search("beta", fresh_token)
         await _wait_for_browser_conversation_row(console, pilot, "fresh-beta")
         row_texts = _console_workspace_conversation_texts(console)

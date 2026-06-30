@@ -3041,6 +3041,11 @@ async def test_settings_non_editable_categories_disable_guided_save_revert():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
 
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Guided edits: choose Providers or Console.",
+        )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
         assert "Guided edits: choose Providers or Console." in _visible_text(screen)
