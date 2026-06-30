@@ -184,7 +184,7 @@ CONSOLE_ACTION_HINTS_COPY = ""
 CONSOLE_READY_EMPTY_TRANSCRIPT_COPY = (
     "Type in Composer, attach sources, or run Library RAG before sending."
 )
-CONSOLE_PROVIDER_ADD_API_KEY_LABEL = "Add API Key"
+CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Configure API+API Key"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
 CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
@@ -3947,20 +3947,18 @@ class ChatScreen(BaseAppScreen):
         """Return empty-state provider recovery button label and tooltip."""
         blocker = blocker_copy.strip().lower()
         if provider_action_label:
-            label = (
-                "Add API key"
-                if provider_action_label == CONSOLE_PROVIDER_ADD_API_KEY_LABEL
-                else provider_action_label
-            )
             tooltip = provider_action_tooltip.strip()
             if tooltip:
-                return label, tooltip
+                return provider_action_label, tooltip
         if "choose a provider" in blocker:
             return "Choose provider", "Choose a provider for this Console session"
         if "choose a model" in blocker:
             return "Choose model", "Choose a model for this Console session"
         if "api key" in blocker:
-            return "Add API key", "Add an API key before sending"
+            return (
+                CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
+                "Configure API and API key before sending",
+            )
         if "endpoint" in blocker:
             return "Configure endpoint", "Configure the provider endpoint before sending"
         if blocker:
@@ -4026,9 +4024,9 @@ class ChatScreen(BaseAppScreen):
         )
         if provider_readiness.reason == "Missing API key":
             return (
-                CONSOLE_PROVIDER_ADD_API_KEY_LABEL,
+                CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
                 "settings",
-                f"Add an API key for {provider}",
+                f"Configure {provider} API and API key in Settings",
             )
         if settings_readiness.label == "Endpoint not saved":
             return (
@@ -4235,7 +4233,7 @@ class ChatScreen(BaseAppScreen):
         button.label = label or "Open Settings"
         button.tooltip = tooltip
         button.disabled = not visible
-        if visible and label == CONSOLE_PROVIDER_ADD_API_KEY_LABEL:
+        if visible and label == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL:
             button.add_class("console-provider-api-key-action")
         else:
             button.remove_class("console-provider-api-key-action")

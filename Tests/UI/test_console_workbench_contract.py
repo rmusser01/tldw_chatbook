@@ -566,8 +566,8 @@ def test_console_empty_transcript_copy_matches_setup_blocker(
         ),
         (
             "Provider setup needed: OpenAI missing API key",
-            "Add API key",
-            "Add an API key before sending",
+            "Configure API+API Key",
+            "Configure API and API key before sending",
         ),
         (
             "Provider setup needed: save the endpoint in settings",
@@ -611,8 +611,8 @@ async def test_console_empty_transcript_provider_recovery_label_matches_setup_bl
         await _wait_for_selector(console, pilot, "#console-shell")
 
         action = console.query_one("#console-empty-choose-model")
-        assert _widget_text(action) == "Add API key"
-        assert str(action.tooltip or "") == "Add an API key for OpenAI"
+        assert _widget_text(action) == "Configure API+API Key"
+        assert str(action.tooltip or "") == "Configure OpenAI API and API key in Settings"
 
 
 def test_console_workbench_state_exposes_core_actions_visibly():
