@@ -1289,16 +1289,35 @@ async def test_console_collapsed_paste_click_targets_token_after_visible_clippin
 
         visible_plain = visible_draft.renderable.plain
         visible_lines = visible_plain.splitlines()
+        display_text = composer._display_draft_text()
+        token_start = display_text.index(expected_token)
+        token_end = token_start + len(expected_token)
+        visible_slices = composer._visible_draft_line_slices(
+            display_text,
+            composer._draft_render_width(),
+        )
         assert len(composer._wrap_draft_lines(composer._display_draft_text(), composer._draft_render_width())) > (
             ConsoleComposerBar.MAX_DRAFT_ROWS
         )
         assert visible_lines[0].startswith("...")
-        token_row = next(index for index, line in enumerate(visible_lines) if expected_token in line)
-        token_column = visible_lines[token_row].index(expected_token)
+        assert expected_token in visible_plain.replace("\n", "")
+        token_row, token_slice = next(
+            (index, line_slice)
+            for index, line_slice in enumerate(visible_slices)
+            if max(line_slice.start, token_start) < min(line_slice.end, token_end)
+        )
+        click_source_index = max(token_start, token_slice.start)
+        if click_source_index + 1 < min(token_end, token_slice.end):
+            click_source_index += 1
+        token_column = (
+            click_source_index
+            - token_slice.start
+            + token_slice.synthetic_prefix_columns
+        )
 
         await pilot.click(
             "#console-command-visible-text",
-            offset=(token_column + 1, token_row),
+            offset=(token_column, token_row),
         )
         await pilot.pause(0.1)
 
