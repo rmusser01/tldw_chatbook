@@ -10,6 +10,7 @@ from tldw_chatbook.Chat.console_display_state import (
 )
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_FOCUS_TARGETS_BY_PANE,
+    CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
     ChatScreen,
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
@@ -566,7 +567,7 @@ def test_console_empty_transcript_copy_matches_setup_blocker(
         ),
         (
             "Provider setup needed: OpenAI missing API key",
-            "Configure API+API Key",
+            CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
             "Configure API and API key before sending",
         ),
         (
@@ -611,8 +612,16 @@ async def test_console_empty_transcript_provider_recovery_label_matches_setup_bl
         await _wait_for_selector(console, pilot, "#console-shell")
 
         action = console.query_one("#console-empty-choose-model")
-        assert _widget_text(action) == "Configure API+API Key"
+        assert _widget_text(action) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         assert str(action.tooltip or "") == "Configure OpenAI API and API key in Settings"
+
+
+def test_console_empty_recovery_action_keeps_provider_label_with_empty_tooltip():
+    assert ChatScreen._console_empty_recovery_action_copy(
+        "Provider setup needed: OpenAI missing API key",
+        provider_action_label="Localized recovery label",
+        provider_action_tooltip="",
+    ) == ("Localized recovery label", "")
 
 
 def test_console_workbench_state_exposes_core_actions_visibly():

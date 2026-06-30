@@ -3947,9 +3947,7 @@ class ChatScreen(BaseAppScreen):
         """Return empty-state provider recovery button label and tooltip."""
         blocker = blocker_copy.strip().lower()
         if provider_action_label:
-            tooltip = provider_action_tooltip.strip()
-            if tooltip:
-                return provider_action_label, tooltip
+            return provider_action_label, provider_action_tooltip.strip()
         if "choose a provider" in blocker:
             return "Choose provider", "Choose a provider for this Console session"
         if "choose a model" in blocker:
@@ -4126,6 +4124,7 @@ class ChatScreen(BaseAppScreen):
         blocker_copy = self._console_provider_blocker_copy()
         guidance_visible = self._console_guidance_visible(blocker_copy)
         action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
+        is_api_key_recovery = self._console_provider_recovery_field() == "api_key"
         empty_action_label, empty_action_tooltip = self._console_empty_recovery_action_copy(
             blocker_copy,
             provider_action_label=action_label if blocker_copy else "",
@@ -4193,6 +4192,7 @@ class ChatScreen(BaseAppScreen):
             visible=recovery_visible,
             label=action_label,
             tooltip=action_tooltip,
+            is_api_key_recovery=is_api_key_recovery,
         )
 
     @staticmethod
@@ -4228,12 +4228,13 @@ class ChatScreen(BaseAppScreen):
         visible: bool,
         label: str = "Open Settings",
         tooltip: str = "Open provider settings",
+        is_api_key_recovery: bool = False,
     ) -> None:
         """Show or hide the provider recovery action with the blocker copy."""
         button.label = label or "Open Settings"
         button.tooltip = tooltip
         button.disabled = not visible
-        if visible and label == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL:
+        if visible and is_api_key_recovery:
             button.add_class("console-provider-api-key-action")
         else:
             button.remove_class("console-provider-api-key-action")
@@ -4629,6 +4630,7 @@ class ChatScreen(BaseAppScreen):
                         provider_action_label, _provider_action_target, provider_action_tooltip = (
                             self._console_provider_recovery_action()
                         )
+                        provider_recovery_field = self._console_provider_recovery_field()
                         provider_recovery_strip = Horizontal(
                             id="console-provider-recovery-strip",
                             classes="console-provider-recovery-strip",
@@ -4660,6 +4662,7 @@ class ChatScreen(BaseAppScreen):
                                 visible=False,
                                 label=provider_action_label,
                                 tooltip=provider_action_tooltip,
+                                is_api_key_recovery=provider_recovery_field == "api_key",
                             )
                             yield provider_settings_action
                         # Compatibility selectors retained during Console
@@ -5458,14 +5461,25 @@ class ChatScreen(BaseAppScreen):
         )
         self._pending_console_launch_auto_open_inspector = True
 
-        if payload.suggested_prompt:
+        suggested_prompt = launch_payload["suggested_prompt"]
+        if suggested_prompt:
+            store = self._ensure_console_chat_store()
+            session = store.ensure_session(
+                title=self._console_initial_session_title_for_workspace(
+                    store.workspace_context.active_workspace_id
+                ),
+                workspace_id=store.workspace_context.active_workspace_id,
+                settings=self._default_console_session_settings(),
+            )
+            if not store.session_draft(session.id).strip():
+                store.set_session_draft(session.id, suggested_prompt)
             try:
                 composer = self.query_one("#console-native-composer", ConsoleComposerBar)
             except QueryError:
                 pass
             else:
                 if not composer.draft_text().strip():
-                    composer.load_draft(payload.suggested_prompt)
+                    composer.load_draft(suggested_prompt)
 
         self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
