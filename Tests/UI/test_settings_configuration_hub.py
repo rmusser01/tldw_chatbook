@@ -125,7 +125,7 @@ def _app(
     )
 
 
-async def _wait_for_settings_text(screen, pilot, expected_text: str, *, timeout: float = 2.0) -> None:
+async def _wait_for_settings_text(screen, pilot, expected_text: str, *, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if expected_text in _visible_text(screen):
@@ -133,6 +133,35 @@ async def _wait_for_settings_text(screen, pilot, expected_text: str, *, timeout:
             return
         await pilot.pause(0.01)
     raise AssertionError(f"Timed out waiting for {expected_text!r}. Visible text: {_visible_text(screen)}")
+
+
+async def _select_settings_category(
+    screen,
+    pilot,
+    category: SettingsCategoryId | str,
+    *,
+    expected_text: str | None = None,
+    selector: str | None = None,
+    timeout: float = 4.0,
+) -> None:
+    category_value = category.value if isinstance(category, SettingsCategoryId) else str(category)
+    button_selector = f"#settings-category-{category_value}"
+    await _wait_for_selector(screen, pilot, button_selector, timeout=timeout)
+    await pilot.click(button_selector)
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        active = getattr(screen, "active_category", None) == category_value
+        has_text = expected_text is None or expected_text in _visible_text(screen)
+        has_selector = selector is None or bool(screen.query(selector))
+        if active and has_text and has_selector:
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Timed out waiting for Settings category {category_value!r}. "
+        f"Visible text: {_visible_text(screen)}"
+    )
 
 
 async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Button:
@@ -432,8 +461,9 @@ async def test_settings_defaults_to_overview_category():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-category-overview")
         text = _visible_text(screen)
 
         assert "Overview" in text
@@ -1140,8 +1170,13 @@ async def test_settings_library_rag_save_preserves_mapping_like_app_config(monke
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(190, 55)) as pilot:
-        await pilot.click("#settings-category-library-rag")
         screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.LIBRARY_RAG,
+            selector="#settings-library-rag-default-top-k",
+        )
         top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
         top_k.value = "12"
         screen.handle_library_rag_default_top_k_changed(Input.Changed(top_k, top_k.value))
@@ -2412,8 +2447,13 @@ async def test_settings_console_background_fps_rejects_out_of_range_save(monkeyp
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
         screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.CONSOLE_BEHAVIOR,
+            selector="#settings-console-background-effect-fps",
+        )
         fps = screen.query_one("#settings-console-background-effect-fps", Input)
 
         fps.value = "610"
@@ -3005,7 +3045,12 @@ async def test_settings_non_editable_categories_disable_guided_save_revert():
         assert screen.query_one("#settings-revert-category", Button).disabled is True
         assert "Guided edits: choose Providers or Console." in _visible_text(screen)
 
-        await pilot.click("#settings-category-privacy-security")
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.PRIVACY_SECURITY,
+            expected_text="Guided edits: use Check Privacy.",
+        )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
         assert "Guided edits: use Check Privacy." in _visible_text(screen)
@@ -3203,8 +3248,13 @@ async def test_settings_provider_keyless_local_provider_does_not_report_missing_
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
         screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.PROVIDERS_MODELS,
+            expected_text="API key: not required for this provider",
+        )
         text = _visible_text(screen)
 
         assert "API key: not required for this provider" in text
@@ -4442,8 +4492,13 @@ async def test_settings_provider_custom_value_uses_manual_field_for_unknown_prov
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
         screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.PROVIDERS_MODELS,
+            selector="#settings-provider-value",
+        )
 
         assert screen.query_one("#settings-provider-value", Select).value == "__manual__"
         assert screen.query_one("#settings-provider-manual-value", Input).value == "OpenAi Typo"
@@ -4734,8 +4789,14 @@ async def test_settings_first_slice_categories_have_real_content(button_id, expe
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click(button_id)
         screen = _active_destination_screen(host)
+        category_value = button_id.removeprefix("#settings-category-")
+        await _select_settings_category(
+            screen,
+            pilot,
+            category_value,
+            expected_text=expected,
+        )
 
         assert expected in _visible_text(screen)
 

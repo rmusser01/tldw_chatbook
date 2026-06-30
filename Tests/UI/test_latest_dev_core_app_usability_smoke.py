@@ -179,6 +179,11 @@ async def test_home_console_model_setup_routes_to_settings_provider_defaults(
                 ),
                 context="Settings Providers & Models category",
             )
+            await _wait_until(
+                pilot,
+                lambda: bool(app.screen.query("#settings-provider-value SelectOverlay")),
+                context="Settings provider Select overlay mounted",
+            )
 
             _assert_core_render_is_healthy(app, route="home model setup")
 

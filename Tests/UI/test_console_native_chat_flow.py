@@ -3620,7 +3620,8 @@ async def test_console_conversation_browser_search_ignores_stale_results():
         app.chat_conversation_scope_service.release.set()
         await stale_task
         await console._refresh_console_conversation_browser_search("beta", fresh_token)
-        row_texts = await _wait_for_workspace_conversation_text(console, pilot, "Fresh Beta")
+        await _wait_for_browser_conversation_row(console, pilot, "fresh-beta")
+        row_texts = _console_workspace_conversation_texts(console)
         assert all("Stale Alpha" not in text for text in row_texts)
 
 
