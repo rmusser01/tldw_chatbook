@@ -38,9 +38,9 @@ Chatbook's frame stays terminal-native, local-first, keyboard-first, and recover
 
 ## Required Visible Actions
 
-Console must visibly expose provider/model settings, send/stop, attach context, Library RAG, inspector review, save Chatbook, help, and recovery actions.
+Console must visibly expose provider/model settings, send/stop, attach context, Library RAG, inspector review, save Chatbook, help, destructive confirmations, and recovery actions.
 
-The command palette may duplicate visible workflows and expose global navigation, diagnostics, density toggles, and power-user utilities. It must not be the only route to provider/model settings, send/stop, attach context, Library RAG, inspector review, save Chatbook, help, or blocked-state recovery.
+The command palette may duplicate visible workflows and expose global navigation, diagnostics, density toggles, and power-user utilities. It must not be the only route to provider/model settings, send/stop, attach context, Library RAG, inspector review, save Chatbook, help, destructive confirmations, or blocked-state recovery.
 
 ## State Contract
 
@@ -61,7 +61,7 @@ Workbench destinations expose keyboard-first focus and help:
 - `F6` cycles visible panes only.
 - `F1` opens contextual help for visible actions and shortcuts.
 - The footer publishes route-owned shortcut context.
-- Focus, hover, and density changes must not remount major regions or shift layout.
+- Focus and hover changes must not remount major regions; density changes may adjust spacing, but must not remount or reflow major regions.
 
 ## Responsiveness Gates
 
