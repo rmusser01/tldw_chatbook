@@ -18,6 +18,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.events import Click, Key, MouseUp, Paste
+from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
@@ -847,6 +848,14 @@ class ChatScreen(BaseAppScreen):
         self._console_guidance_dismissed = False
         self.ui_state = UIState()
         self._load_sidebar_state()
+
+    def _provider_readiness_app_config(self) -> Any:
+        """Return app config for provider-readiness checks."""
+        try:
+            app_config = getattr(self.app, "app_config")
+        except (AttributeError, NoActiveAppError):
+            return getattr(self.app_instance, "app_config", {}) or {}
+        return app_config or {}
 
     def _ensure_chat_window(self) -> ChatWindowEnhanced:
         if self.chat_window is None:
@@ -3603,7 +3612,7 @@ class ChatScreen(BaseAppScreen):
         explicit_provider_ready = getattr(self.app_instance, "console_provider_ready", None)
         provider_readiness = get_provider_readiness(
             (settings.provider if settings is not None else None) or provider_display,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         provider_runtime_ready = settings_readiness.native_send_supported and explicit_provider_ready is not False
         model_selected = _has_selected_text(model)
@@ -3892,7 +3901,7 @@ class ChatScreen(BaseAppScreen):
             return ""
         provider_readiness = get_provider_readiness(
             (settings.provider if settings is not None else None) or provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         if provider_readiness.reason == "Missing API key":
             return f"Provider setup needed: {provider} missing API key"
@@ -3983,7 +3992,7 @@ class ChatScreen(BaseAppScreen):
 
         provider_readiness = get_provider_readiness(
             (settings.provider if settings is not None else None) or provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         if provider_readiness.reason == "Missing API key":
             return "api_key"
@@ -4013,7 +4022,7 @@ class ChatScreen(BaseAppScreen):
 
         provider_readiness = get_provider_readiness(
             (settings.provider if settings is not None else None) or provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         if provider_readiness.reason == "Missing API key":
             return (

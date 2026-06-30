@@ -102,6 +102,11 @@ def _valid_api_key(value: object) -> Optional[str]:
     return stripped or None
 
 
+def is_valid_provider_api_key(value: object) -> bool:
+    """Return whether value is a usable provider API key."""
+    return _valid_api_key(value) is not None
+
+
 def _requires_api_key(provider_key: str) -> bool:
     """Return True unless the provider is known to work without credentials."""
     return provider_key not in KEYLESS_PROVIDER_KEYS

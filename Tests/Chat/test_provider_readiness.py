@@ -2,6 +2,7 @@
 
 import pytest
 
+from tldw_chatbook.Chat import provider_readiness as provider_readiness_module
 from tldw_chatbook.Chat.provider_readiness import (
     ProviderReadiness,
     get_provider_readiness,
@@ -95,6 +96,18 @@ def test_placeholder_config_key_is_not_ready():
     assert readiness.ready is False
     assert readiness.api_key is None
     assert readiness.recovery == "Set OPENROUTER_API_KEY or add api_key under [api_settings.openrouter]."
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "<API_KEY_HERE>", "YOUR_KEY", "your_key", "your-api-key"],
+)
+def test_public_provider_api_key_validator_rejects_placeholder_values(value):
+    assert provider_readiness_module.is_valid_provider_api_key(value) is False
+
+
+def test_public_provider_api_key_validator_accepts_real_trimmed_key():
+    assert provider_readiness_module.is_valid_provider_api_key("  sk-real-key  ") is True
 
 
 def test_key_required_provider_names_are_case_insensitive():

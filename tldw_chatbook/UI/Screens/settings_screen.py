@@ -46,6 +46,7 @@ from ...config import (
     save_setting_to_cli_config,
 )
 from ...Utils.input_validation import (
+    provider_api_key_validation_error,
     sanitize_string,
     validate_number_range,
     validate_text_input,
@@ -3731,10 +3732,18 @@ class SettingsScreen(BaseAppScreen):
         api_key = self._provider_config(provider).get("api_key", "")
         return str(api_key or "").strip() if isinstance(api_key, str) else ""
 
+    def _provider_readiness_app_config(self) -> Mapping[str, object]:
+        """Return app config for provider-readiness checks."""
+        try:
+            app_config = getattr(self.app, "app_config")
+        except (AttributeError, NoActiveAppError):
+            return getattr(self.app_instance, "app_config", {}) or {}
+        return app_config or {}
+
     def _provider_saved_api_key_present(self, provider: str) -> bool:
         readiness = get_provider_readiness(
             provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         return bool(
             readiness.api_key_source
@@ -3747,7 +3756,7 @@ class SettingsScreen(BaseAppScreen):
             return "Select provider first"
         readiness = get_provider_readiness(
             provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         if not readiness.requires_api_key:
             return "No credential required"
@@ -3758,7 +3767,7 @@ class SettingsScreen(BaseAppScreen):
     def _provider_credential_status(self, provider: str) -> str:
         readiness = get_provider_readiness(
             provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         if self._provider_saved_api_key_present(provider):
             return "API key source: local config key saved"
@@ -3776,7 +3785,7 @@ class SettingsScreen(BaseAppScreen):
             return "Select provider first"
         readiness = get_provider_readiness(
             provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         if not readiness.requires_api_key:
             return "No credential required"
@@ -4126,17 +4135,12 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _validate_provider_api_key(api_key: object) -> str | None:
-        key = str(api_key or "")
-        if not key:
-            return None
-        if len(key) > 4096 or any(char in key for char in "\r\n\t"):
-            return "API key must be a single-line value under 4096 characters."
-        return None
+        return provider_api_key_validation_error(api_key)
 
     def _provider_key_status(self, provider: str) -> str:
         readiness = get_provider_readiness(
             provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         if readiness.api_key_source:
             return f"API key: {readiness.api_key_source}"
@@ -7351,6 +7355,14 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-provider-api-key")
     def handle_provider_api_key_changed(self, event: Input.Changed) -> None:
+        """Stage a local provider API-key draft.
+
+        Args:
+            event: Textual input change event containing the masked key value.
+
+        Returns:
+            None.
+        """
         if self._syncing_provider_api_key:
             self._update_provider_dynamic_widgets()
             return
@@ -7361,6 +7373,14 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-provider-api-key-clear")
     def handle_provider_api_key_clear_pressed(self, event: Button.Pressed) -> None:
+        """Clear the staged local provider API key.
+
+        Args:
+            event: Textual button press event from the provider API-key clear control.
+
+        Returns:
+            None.
+        """
         event.stop()
         try:
             api_key_input = self.query_one("#settings-provider-api-key", Input)

@@ -252,18 +252,10 @@ class ConsoleComposerBar(Horizontal):
             stop_button = self.query_one("#console-stop-generation", Button)
             attach_button = self.query_one("#console-attach-context", Button)
             save_button = self.query_one("#console-save-chatbook", Button)
-            disabled_reason = self.query_one("#console-send-disabled-reason", Static)
         except NoMatches:
             return
 
         send_ready = has_draft and not send_blocked
-        disabled_reason.update("")
-        disabled_reason.styles.display = "none"
-        disabled_reason.styles.width = 0
-        disabled_reason.styles.min_width = 0
-        disabled_reason.styles.max_width = 0
-        disabled_reason.styles.height = 0
-        disabled_reason.styles.min_height = 0
 
         send_button.disabled = False
         send_button.variant = "primary" if send_ready else "default"
@@ -316,19 +308,6 @@ class ConsoleComposerBar(Horizontal):
         save_button.set_class(can_save_chatbook, "console-save-chatbook-ready")
         save_button.set_class(not can_save_chatbook, "console-action-subdued")
         save_button.set_class(not can_save_chatbook, "console-action-disabled")
-
-        try:
-            recovery = self.query_one("#console-composer-recovery", Static)
-        except NoMatches:
-            recovery = None
-        if recovery is not None:
-            recovery.update("")
-            recovery.styles.display = "none"
-            recovery.styles.width = 0
-            recovery.styles.min_width = 0
-            recovery.styles.max_width = 0
-            recovery.styles.height = 0
-            recovery.styles.min_height = 0
 
         if setup_reason_changed and not self.draft_text().strip():
             self._refresh_visible_draft()

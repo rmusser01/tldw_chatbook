@@ -19,6 +19,7 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
 )
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from tldw_chatbook.Utils import input_validation as input_validation_module
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
 )
@@ -3973,6 +3974,14 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
 
     assert ("api_settings.openai", "api_key", "") in saved
     assert app.app_config["api_settings"]["openai"]["api_key"] == ""
+
+
+def test_settings_provider_api_key_validation_rejects_placeholder_values():
+    assert input_validation_module.validate_provider_api_key("<API_KEY_HERE>") is False
+    assert input_validation_module.validate_provider_api_key("sk-test-real-key") is True
+    assert SettingsScreen._validate_provider_api_key("<API_KEY_HERE>") == (
+        "API key looks like a placeholder; paste a real key."
+    )
 
 
 @pytest.mark.asyncio

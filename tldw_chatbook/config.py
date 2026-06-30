@@ -2831,6 +2831,13 @@ def _is_sensitive_setting_key(key: Any) -> bool:
     return key_lower in sensitive_exact or any(pattern in key_lower for pattern in sensitive_patterns)
 
 
+def _setting_value_for_log(key: Any, value: Any) -> str:
+    """Return a safe representation of a config setting value for logs."""
+    if _is_sensitive_setting_key(key):
+        return repr("<redacted>")
+    return repr(value)
+
+
 def _maybe_encrypt_setting_value(config_data: Dict[str, Any], key: Any, value: Any) -> Any:
     encryption_config = config_data.get("encryption", {})
     if not (
@@ -2944,7 +2951,10 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
     Returns:
         True if the setting was saved successfully, False otherwise.
     """
-    logger.info(f"Attempting to save setting: [{section}].{key} = {repr(value)}")
+    logger.info(
+        f"Attempting to save setting: [{section}].{key} = "
+        f"{_setting_value_for_log(key, value)}"
+    )
     return save_settings_to_cli_config({section: {key: value}})
 
 
