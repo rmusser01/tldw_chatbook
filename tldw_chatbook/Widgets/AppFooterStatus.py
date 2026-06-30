@@ -9,7 +9,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 #
 # Local Imports
-from ..UI.Navigation.shortcut_context import ShortcutContext
+from ..UI.Navigation.shortcut_context import ShortcutAction, ShortcutContext
 #
 ########################################################################################################################
 #
@@ -48,6 +48,19 @@ class AppFooterStatus(Widget):
         text = context.render() or self.DEFAULT_SHORTCUT_TEXT
         self._shortcut_source = context.source
         self._set_shortcut_text(text)
+
+    def set_workbench_shortcuts(
+        self,
+        *,
+        source: str,
+        shortcuts: tuple[tuple[str, str], ...],
+    ) -> None:
+        """Render Workbench shortcut hints through the footer context model."""
+        context = ShortcutContext(
+            source=source,
+            actions=tuple(ShortcutAction(key, label) for key, label in shortcuts),
+        )
+        self.set_shortcut_context(context)
 
     def clear_shortcut_context(self, source: str | None = None) -> None:
         """Reset the footer to the default shortcuts.

@@ -3045,9 +3045,9 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _visible_console_settings_button(console, pilot)
-        await _wait_for_selector(console, pilot, "#console-open-provider-settings")
+        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
 
-        recovery_button = console.query_one("#console-open-provider-settings", Button)
+        recovery_button = console.query_one("#workbench-recovery-action", Button)
         assert str(recovery_button.label) == "Choose model"
         assert recovery_button.display is True
 

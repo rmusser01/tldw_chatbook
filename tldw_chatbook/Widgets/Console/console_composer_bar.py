@@ -17,6 +17,7 @@ from textual.geometry import Region
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from ...Chat.console_display_state import build_console_disabled_reason
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     MAX_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -252,10 +253,36 @@ class ConsoleComposerBar(Horizontal):
             stop_button = self.query_one("#console-stop-generation", Button)
             attach_button = self.query_one("#console-attach-context", Button)
             save_button = self.query_one("#console-save-chatbook", Button)
+            disabled_reason = self.query_one("#console-send-disabled-reason", Static)
         except NoMatches:
             return
 
         send_ready = has_draft and not send_blocked
+        send_disabled_reason = build_console_disabled_reason(
+            action_id="send",
+            has_draft=has_draft,
+            send_blocked=send_blocked,
+            setup_blocked_reason=setup_blocked_reason,
+        )
+        if send_disabled_reason and not send_ready:
+            disabled_reason.update(send_disabled_reason)
+            disabled_reason.styles.display = "block"
+            disabled_reason.styles.width = 30
+            disabled_reason.styles.min_width = 20
+            disabled_reason.styles.max_width = 32
+            disabled_reason.styles.height = 1
+            disabled_reason.styles.min_height = 1
+            disabled_reason.styles.text_overflow = "ellipsis"
+            disabled_reason.styles.text_wrap = "nowrap"
+        else:
+            disabled_reason.update("")
+            disabled_reason.styles.display = "none"
+            disabled_reason.styles.width = 0
+            disabled_reason.styles.min_width = 0
+            disabled_reason.styles.max_width = 0
+            disabled_reason.styles.height = 0
+            disabled_reason.styles.min_height = 0
+
         send_button.disabled = False
         send_button.variant = "primary" if send_ready else "default"
         if send_blocked and setup_blocked_reason:
@@ -307,6 +334,35 @@ class ConsoleComposerBar(Horizontal):
         save_button.set_class(can_save_chatbook, "console-save-chatbook-ready")
         save_button.set_class(not can_save_chatbook, "console-action-subdued")
         save_button.set_class(not can_save_chatbook, "console-action-disabled")
+
+        try:
+            recovery = self.query_one("#console-composer-recovery", Static)
+        except NoMatches:
+            recovery = None
+        if recovery is not None:
+            if send_blocked and setup_blocked_reason:
+                recovery_copy = setup_blocked_reason
+                if "model" in setup_blocked_reason.lower():
+                    recovery_copy = "Recovery: Choose model"
+                elif "api key" in setup_blocked_reason.lower():
+                    recovery_copy = "Recovery: Add API key"
+                elif "endpoint" in setup_blocked_reason.lower():
+                    recovery_copy = "Recovery: Configure endpoint"
+                recovery.update(recovery_copy)
+                recovery.styles.display = "block"
+                recovery.styles.width = 26
+                recovery.styles.min_width = 18
+                recovery.styles.max_width = 30
+                recovery.styles.height = 1
+                recovery.styles.min_height = 1
+            else:
+                recovery.update("")
+                recovery.styles.display = "none"
+                recovery.styles.width = 0
+                recovery.styles.min_width = 0
+                recovery.styles.max_width = 0
+                recovery.styles.height = 0
+                recovery.styles.min_height = 0
 
         if setup_reason_changed and not self.draft_text().strip():
             self._refresh_visible_draft()
@@ -1042,6 +1098,17 @@ class ConsoleComposerBar(Horizontal):
         visible_draft.styles.width = "1fr"
         visible_draft.styles.min_width = 0
         yield visible_draft
+        recovery = Static(
+            "",
+            id="console-composer-recovery",
+            classes="console-composer-recovery",
+        )
+        recovery.styles.display = "none"
+        recovery.styles.width = 0
+        recovery.styles.min_width = 0
+        recovery.styles.height = 0
+        recovery.styles.min_height = 0
+        yield recovery
         command_input = Input(
             value="",
             id="console-command-input",
@@ -1068,6 +1135,20 @@ class ConsoleComposerBar(Horizontal):
         status.styles.height = 0
         status.styles.min_height = 0
         yield status
+        disabled_reason = Static(
+            "",
+            id="console-send-disabled-reason",
+            classes="console-send-disabled-reason",
+        )
+        disabled_reason.styles.display = "none"
+        disabled_reason.styles.width = 0
+        disabled_reason.styles.min_width = 0
+        disabled_reason.styles.max_width = 0
+        disabled_reason.styles.height = 0
+        disabled_reason.styles.min_height = 0
+        disabled_reason.styles.text_overflow = "ellipsis"
+        disabled_reason.styles.text_wrap = "nowrap"
+        yield disabled_reason
         actions = Horizontal(id="console-composer-actions", classes="console-composer-actions")
         actions.styles.width = 37
         actions.styles.min_width = 37

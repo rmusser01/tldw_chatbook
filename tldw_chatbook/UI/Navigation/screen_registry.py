@@ -106,6 +106,26 @@ _SCREEN_ALIASES = {
 }
 
 
+def registered_screen_route_ids() -> tuple[str, ...]:
+    """Return all registered screen route ids without loading screen classes.
+
+    Returns:
+        Sorted route IDs backed by lazy screen metadata.
+    """
+
+    return tuple(sorted(_SCREEN_ROUTES))
+
+
+def registered_screen_aliases() -> tuple[str, ...]:
+    """Return screen route aliases without loading screen classes.
+
+    Returns:
+        Sorted alias route IDs that resolve to canonical screen routes.
+    """
+
+    return tuple(sorted(set(_SCREEN_ALIASES)))
+
+
 def resolve_screen_target(target: str) -> tuple[str, str, type | None]:
     """Resolve a navigation target to a screen route without importing unrelated screens."""
 

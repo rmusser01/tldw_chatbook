@@ -113,7 +113,18 @@ from ...Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...UI.Workbench import (
+    CommandStrip,
+    DestinationHeader,
+    ModeStrip,
+    RecoveryCallout,
+    WorkbenchActionRequested,
+    WorkbenchHelpPanel,
+    WorkbenchHelpState,
+)
+from ...UI.Workbench.focus import WorkbenchFocusRegistry
 from ...state.ui_state import UIState
+from ...Widgets.AppFooterStatus import AppFooterStatus
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
@@ -132,7 +143,7 @@ from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
-from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
+from ...Widgets.Console.console_workbench_state import build_console_workbench_state
 from ...Workspaces.display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
     ConsoleWorkspaceConversationRow,
@@ -170,13 +181,35 @@ CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
 CONSOLE_READY_EMPTY_TRANSCRIPT_COPY = (
-    "Start here: ask a question, paste a task, or attach context.\n"
-    "Setup: use Settings for provider/model changes; use Test before long runs. "
-    "Enter sends; Ctrl+U clears; Ctrl+A selects."
+    "Type in Composer, attach sources, or run Library RAG before sending."
 )
 CONSOLE_PROVIDER_ADD_API_KEY_LABEL = "Add API Key"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
+CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
+    (
+        "console-left-rail",
+        "console-transcript-surface",
+        "console-right-rail",
+        "console-native-composer",
+    )
+)
+CONSOLE_FOCUS_TARGETS_BY_PANE = {
+    "console-left-rail": ("console-context-rail-collapse", "console-left-rail"),
+    "console-transcript-surface": (
+        "console-native-transcript",
+        "console-transcript-surface",
+    ),
+    "console-right-rail": ("console-inspector-rail-collapse", "console-right-rail"),
+    "console-native-composer": ("console-native-composer",),
+}
+CONSOLE_WORKBENCH_SHORTCUTS = (
+    ("F6", "next pane"),
+    ("Shift+F6", "previous pane"),
+    ("F1", "help"),
+    ("Enter", "send"),
+    ("Ctrl+P", "palette"),
+)
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -289,6 +322,7 @@ class ChatScreen(BaseAppScreen):
 
     BINDINGS = [
         *BaseAppScreen.BINDINGS,
+        Binding("f1", "show_workbench_help", "Help", show=False),
         Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
         Binding(
             "shift+f6",
@@ -298,40 +332,6 @@ class ChatScreen(BaseAppScreen):
             priority=True,
         ),
     ]
-    _WORKBENCH_FOCUS_TARGETS = (
-        WorkbenchPaneTarget(
-            "console-left-rail",
-            ("console-context-rail-collapse",),
-        ),
-        WorkbenchPaneTarget(
-            "console-transcript-region",
-            ("console-native-transcript",),
-        ),
-        WorkbenchPaneTarget(
-            "console-right-rail",
-            ("console-inspector-rail-collapse",),
-        ),
-        WorkbenchPaneTarget(
-            "console-native-composer",
-            ("console-native-composer",),
-        ),
-    )
-
-    def action_focus_next_workbench_pane(self) -> None:
-        """F6: move focus to the next Console workbench pane."""
-        focus_relative_workbench_pane(
-            self,
-            self._WORKBENCH_FOCUS_TARGETS,
-            direction=1,
-        )
-
-    def action_focus_previous_workbench_pane(self) -> None:
-        """Shift+F6: move focus to the previous Console workbench pane."""
-        focus_relative_workbench_pane(
-            self,
-            self._WORKBENCH_FOCUS_TARGETS,
-            direction=-1,
-        )
     
     @on(Select.Changed, "#chat-api-provider")
     async def handle_provider_change(self, event: Select.Changed) -> None:
@@ -493,13 +493,10 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self._set_console_rail_preference(right_open=True)
 
-    async def on_console_settings_open(self, event: Button.Pressed) -> None:
+    async def _open_console_settings(self, *, focus_model: bool = False) -> None:
         """Open Console session settings for the active native session."""
-        event.stop()
         settings = self._ensure_active_console_session_settings()
         controller = self._ensure_console_chat_controller()
-        summary_state = self._build_console_settings_summary_state()
-        recovery_label, _recovery_target, _recovery_tooltip = self._console_provider_recovery_action()
         modal = ConsoleSettingsModal(
             settings=settings,
             app_config=getattr(self.app_instance, "app_config", {}) or {},
@@ -509,11 +506,7 @@ class ChatScreen(BaseAppScreen):
             ),
             context_estimate=self._active_console_settings_context_estimate(),
             can_save=controller.run_state.is_send_allowed,
-            focus_model=(
-                self._is_console_choose_model_action(summary_state.action_label)
-                or self._is_console_choose_model_action(event.button.label)
-                or self._is_console_choose_model_action(recovery_label)
-            ),
+            focus_model=focus_model,
         )
 
         def _apply_modal_result(result: ConsoleSessionSettings | None) -> None:
@@ -523,6 +516,186 @@ class ChatScreen(BaseAppScreen):
             self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
         self.app.push_screen(modal, callback=_apply_modal_result)
+
+    async def on_console_settings_open(self, event: Button.Pressed) -> None:
+        """Open Console session settings for the active native session."""
+        event.stop()
+        summary_state = self._build_console_settings_summary_state()
+        recovery_label, _recovery_target, _recovery_tooltip = self._console_provider_recovery_action()
+        await self._open_console_settings(
+            focus_model=(
+                self._is_console_choose_model_action(summary_state.action_label)
+                or self._is_console_choose_model_action(event.button.label)
+                or self._is_console_choose_model_action(recovery_label)
+            )
+        )
+
+    @on(WorkbenchActionRequested)
+    async def on_console_workbench_action_requested(
+        self,
+        event: WorkbenchActionRequested,
+    ) -> None:
+        """Route visible Workbench actions through Console-owned helpers."""
+        event.stop()
+        action_id = event.action_id
+        if action_id == "new-tab":
+            await self._create_native_console_session_from_active_context()
+        elif action_id == "settings":
+            await self._open_console_settings(focus_model=False)
+        elif action_id == "attach-context":
+            self._set_console_rail_preference(left_open=True)
+        elif action_id == "run-library-rag":
+            self._run_console_library_rag_from_visible_action()
+        elif action_id == "save-chatbook":
+            self._save_console_chatbook_from_visible_action()
+        elif action_id == "send":
+            await self._send_console_message_from_visible_action()
+        elif action_id == "stop":
+            await self._stop_console_generation_from_visible_action()
+        elif action_id == "help":
+            await self.action_show_workbench_help()
+        elif action_id == "provider-recovery":
+            await self._open_console_provider_recovery()
+
+    async def action_show_workbench_help(self) -> None:
+        """Open contextual help for visible Console Workbench actions."""
+        control_state = self._build_console_control_state(
+            self._pending_console_launch_context
+        )
+        workbench_state = self._build_console_workbench_state(control_state)
+        self.app.push_screen(
+            WorkbenchHelpPanel(
+                WorkbenchHelpState(
+                    route_id=workbench_state.route_id,
+                    title="Console",
+                    actions=workbench_state.actions,
+                    shortcuts=CONSOLE_WORKBENCH_SHORTCUTS,
+                )
+            )
+        )
+
+    async def action_focus_next_workbench_pane(self) -> None:
+        """Move focus to the next visible Console Workbench pane."""
+        hidden = {
+            pane_id
+            for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
+            if not self._is_console_widget_displayed(pane_id)
+        }
+        current = self._console_workbench_focus_id_for_widget(self.app.focused)
+        target_id = CONSOLE_FOCUS_REGISTRY.next_after(current, hidden=hidden)
+        if target_id is None:
+            return
+        self._focus_console_workbench_target(target_id)
+
+    async def action_focus_previous_workbench_pane(self) -> None:
+        """Move focus to the previous visible Console Workbench pane."""
+        hidden = {
+            pane_id
+            for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
+            if not self._is_console_widget_displayed(pane_id)
+        }
+        current = self._console_workbench_focus_id_for_widget(self.app.focused)
+        target_id = CONSOLE_FOCUS_REGISTRY.previous_before(current, hidden=hidden)
+        if target_id is None:
+            return
+        self._focus_console_workbench_target(target_id)
+
+    def _console_workbench_density(self) -> str:
+        """Return the supported Console Workbench density from app config."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        appearance = app_config.get("appearance", {})
+        if not isinstance(appearance, dict):
+            return "normal"
+        density = str(
+            appearance.get("ui_density", appearance.get("density", "normal")) or ""
+        ).strip().lower()
+        return "compact" if density == "compact" else "normal"
+
+    def _is_console_widget_displayed(self, widget_id: str) -> bool:
+        """Return True when a Console focus target and its parents are visible."""
+        try:
+            current = self.query_one(f"#{widget_id}")
+        except QueryError:
+            return False
+        while current is not None:
+            if current.display is False or current.styles.display == "none":
+                return False
+            current = getattr(current, "parent", None)
+        return True
+
+    def _console_workbench_focus_id_for_widget(
+        self,
+        focused: object | None,
+    ) -> str | None:
+        """Return the owning Console Workbench pane id for a focused widget."""
+        current = focused
+        while current is not None:
+            current_id = getattr(current, "id", None)
+            if current_id in CONSOLE_FOCUS_REGISTRY.pane_order:
+                return str(current_id)
+            current = getattr(current, "parent", None)
+        return None
+
+    def _focus_console_workbench_target(self, widget_id: str) -> None:
+        """Focus a visible Console Workbench target if it is available."""
+        for target_id in CONSOLE_FOCUS_TARGETS_BY_PANE.get(widget_id, (widget_id,)):
+            if not self._is_console_widget_displayed(target_id):
+                continue
+            try:
+                widget = self.query_one(f"#{target_id}")
+            except QueryError:
+                continue
+            widget.can_focus = True
+            widget.focus()
+            self._last_console_workbench_focus_id = widget_id
+            return
+
+    def _ensure_console_workbench_targets_focusable(self) -> None:
+        """Make mounted visible Console Workbench focus targets focusable."""
+        for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order:
+            for widget_id in CONSOLE_FOCUS_TARGETS_BY_PANE.get(pane_id, (pane_id,)):
+                if not self._is_console_widget_displayed(widget_id):
+                    continue
+                try:
+                    self.query_one(f"#{widget_id}").can_focus = True
+                except QueryError:
+                    continue
+
+    def _restore_console_workbench_focus(self) -> None:
+        """Restore focus to a visible Console Workbench pane after activation."""
+        self._ensure_console_workbench_targets_focusable()
+        current = self._console_workbench_focus_id_for_widget(self.app.focused)
+        if current is not None and self._is_console_widget_displayed(current):
+            self._last_console_workbench_focus_id = current
+            return
+        for widget_id in (
+            self._last_console_workbench_focus_id,
+            "console-native-composer",
+            "console-transcript-surface",
+        ):
+            if widget_id and self._is_console_widget_displayed(widget_id):
+                self._focus_console_workbench_target(widget_id)
+                return
+
+    def _register_console_footer_shortcuts(self) -> None:
+        """Register Console Workbench shortcuts with the app footer if mounted."""
+        try:
+            footer = self.app.query_one(AppFooterStatus)
+        except QueryError:
+            return
+        set_shortcuts = getattr(footer, "set_workbench_shortcuts", None)
+        if callable(set_shortcuts):
+            set_shortcuts(source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS)
+
+    def _clear_console_footer_shortcuts(self) -> None:
+        """Clear Console Workbench shortcuts from the app footer if mounted."""
+        try:
+            footer = self.app.query_one(AppFooterStatus)
+        except QueryError:
+            return
+        clear_shortcuts = getattr(footer, "clear_shortcut_context", None)
+        if callable(clear_shortcuts):
+            clear_shortcuts(source="console")
 
     def _open_console_session_rename_modal(self, session_id: str) -> None:
         """Open a modal for viewing and editing the active Console tab title."""
@@ -667,6 +840,10 @@ class ChatScreen(BaseAppScreen):
         self._console_sync_in_progress = False
         self._console_sync_requested = False
         self._last_native_transcript_refresh_key: tuple[int, tuple[Any, ...]] | None = None
+        self._last_console_workbench_focus_id: str | None = None
+        self._last_console_control_state: ConsoleControlState | None = None
+        self._last_console_workbench_state: Any | None = None
+        self._last_console_rail_state: ConsoleRailState | None = None
         self._console_guidance_dismissed = False
         self.ui_state = UIState()
         self._load_sidebar_state()
@@ -693,6 +870,49 @@ class ChatScreen(BaseAppScreen):
         else:
             self.console_session_surface.sync_background_effect_settings(settings)
         return self.console_session_surface
+
+    def _ui_responsiveness_monitor(self) -> Any | None:
+        """Return the app-level UI diagnostics monitor when available."""
+        try:
+            return getattr(self.app_instance, "ui_responsiveness_monitor", None)
+        except Exception:
+            return None
+
+    def _record_ui_worker_started(self, name: str) -> None:
+        """Best-effort worker diagnostic hook."""
+        monitor = self._ui_responsiveness_monitor()
+        try:
+            if monitor is not None:
+                monitor.record_worker_started(name)
+        except Exception:
+            return
+
+    def _record_ui_worker_finished(self, name: str) -> None:
+        """Best-effort worker diagnostic hook."""
+        monitor = self._ui_responsiveness_monitor()
+        try:
+            if monitor is not None:
+                monitor.record_worker_finished(name)
+        except Exception:
+            return
+
+    def _record_ui_timer_created(self, name: str) -> None:
+        """Best-effort timer diagnostic hook."""
+        monitor = self._ui_responsiveness_monitor()
+        try:
+            if monitor is not None:
+                monitor.record_timer_created(name)
+        except Exception:
+            return
+
+    def _record_ui_timer_stopped(self, name: str) -> None:
+        """Best-effort timer diagnostic hook."""
+        monitor = self._ui_responsiveness_monitor()
+        try:
+            if monitor is not None:
+                monitor.record_timer_stopped(name)
+        except Exception:
+            return
 
     def _consume_pending_console_launch(self) -> Optional[ConsoleLiveWorkLaunch]:
         """Accept one-shot live-work launch context from another destination."""
@@ -3044,12 +3264,13 @@ class ChatScreen(BaseAppScreen):
             preference_key.value,
             preference_key.fallback_value,
         )
-        return build_console_rail_state(
+        stored_preferences = self._stored_console_rail_preferences(
+            preference_key.value,
+            preference_key.fallback_value,
+        )
+        rail_state = build_console_rail_state(
             preference_key=preference_key,
-            stored_preferences=self._stored_console_rail_preferences(
-                preference_key.value,
-                preference_key.fallback_value,
-            ),
+            stored_preferences=stored_preferences,
             staged_source_count=len(workspace_context.staged_sources),
             staged_summary=staged_context_state.summary,
             workspace_label=workspace_context_state.workspace_label,
@@ -3060,6 +3281,41 @@ class ChatScreen(BaseAppScreen):
             approval_count=self._console_pending_approval_count(),
             can_save_chatbook=inspector_state.can_save_chatbook,
             available_columns=self._console_rail_available_columns(),
+        )
+        if self._should_open_standard_width_inspector(
+            rail_state=rail_state,
+            stored_preferences=stored_preferences,
+            inspector_state=inspector_state,
+        ):
+            return replace(rail_state, right_open=True, right_forced_collapsed=False)
+        return rail_state
+
+    def _should_open_standard_width_inspector(
+        self,
+        *,
+        rail_state: ConsoleRailState,
+        stored_preferences: Any,
+        inspector_state: ConsoleInspectorState,
+    ) -> bool:
+        """Return whether the 120-column Console contract should show Inspector."""
+        if rail_state.right_open:
+            return False
+        if isinstance(stored_preferences, dict) and "right_open" in stored_preferences:
+            return False
+        available_columns = self._console_rail_available_columns()
+        if available_columns is None or not 118 <= available_columns <= 128:
+            return False
+        labels = {str(row.label).strip() for row in inspector_state.rows}
+        return "Run recipe" in labels and bool(
+            labels
+            & {
+                "Blocked impact",
+                "Next action",
+                "Sources",
+                "Tools",
+                "Approvals",
+                "Artifacts",
+            }
         )
 
     def _apply_pending_launch_inspector_auto_open(
@@ -3133,6 +3389,16 @@ class ChatScreen(BaseAppScreen):
 
         self.refresh(layout=True)
 
+    def _sync_console_rail_visibility_if_changed(
+        self,
+        rail_state: ConsoleRailState,
+    ) -> None:
+        """Apply rail visibility only when the visible rail state changes."""
+        if rail_state == self._last_console_rail_state:
+            return
+        self._sync_console_rail_visibility(rail_state)
+        self._last_console_rail_state = rail_state
+
     @staticmethod
     def _sync_console_rail_descendant_visibility(widget: Any, visible: bool) -> None:
         """Cascade rail display state while preserving child display preferences."""
@@ -3201,7 +3467,7 @@ class ChatScreen(BaseAppScreen):
         if right_open is not None:
             self._pending_console_launch_auto_open_inspector = False
         rail_state = self._current_console_rail_state()
-        self._sync_console_rail_visibility(rail_state)
+        self._sync_console_rail_visibility_if_changed(rail_state)
         return rail_state
 
     def _sync_console_workspace_context(
@@ -3363,6 +3629,8 @@ class ChatScreen(BaseAppScreen):
         evidence_state = build_console_evidence_display_state(pending_launch)
         inspector_state = ConsoleInspectorState.from_values(
             live_work_title=pending_launch.title if pending_launch else None,
+            provider_label=provider_display,
+            model_label=model,
             provider_ready=provider_ready,
             provider_recovery=provider_recovery,
             rag_status=self._console_rag_source_status(pending_launch),
@@ -3384,13 +3652,13 @@ class ChatScreen(BaseAppScreen):
             setup_rows = (
                 ConsoleDisplayRow("Setup", "Provider configuration required", status="blocked"),
                 ConsoleDisplayRow(
-                    "Send blocked",
-                    "finish setup before sending",
+                    "Blocked impact",
+                    "Send is blocked until setup is finished.",
                     status="blocked",
                     recovery=setup_blocker_copy,
                 ),
                 ConsoleDisplayRow(
-                    "Recovery action",
+                    "Next action",
                     action_label or "Open Settings",
                     status="blocked",
                 ),
@@ -3539,11 +3807,29 @@ class ChatScreen(BaseAppScreen):
         widget.styles.display = "none"
         widget.styles.height = 0
         widget.styles.min_height = 0
+        widget.styles.max_height = 0
         return widget
 
     @staticmethod
     def _collapse_console_hidden_control_bar(widget: ConsoleControlBar) -> ConsoleControlBar:
         """Keep the legacy Console control seam mounted without layout cost."""
+        widget.styles.display = "none"
+        widget.styles.height = 0
+        widget.styles.min_height = 0
+        widget.styles.max_height = 0
+        return widget
+
+    @staticmethod
+    def _compact_console_workbench_widget(widget: Any, height: int = 1) -> Any:
+        """Keep Console Workbench primitives visible without shrinking the grid."""
+        widget.styles.height = height
+        widget.styles.min_height = height
+        widget.styles.max_height = height
+        return widget
+
+    @staticmethod
+    def _hidden_console_workbench_widget(widget: Any) -> Any:
+        """Keep Console Workbench compatibility seams mounted without layout cost."""
         widget.styles.display = "none"
         widget.styles.height = 0
         widget.styles.min_height = 0
@@ -3567,6 +3853,30 @@ class ChatScreen(BaseAppScreen):
             f" | Sources {readiness_count(control_state.sources_label)}"
             f" | Tools {readiness_count(control_state.tools_label)}"
             f" | Approvals {readiness_count(control_state.approvals_label)}"
+        )
+
+    def _build_console_workbench_state(self, control_state: ConsoleControlState):
+        blocker_copy = self._console_provider_blocker_copy()
+        action_label, _action_target, _action_tooltip = self._console_provider_recovery_action()
+        composer = self._console_composer_or_none()
+        has_draft = bool(composer and composer.draft_text().strip())
+        controller = self._console_chat_controller
+        run_state = getattr(controller, "run_state", None) if controller is not None else None
+        can_stop = bool(getattr(run_state, "is_stop_allowed", False))
+        run_allows_send = bool(getattr(run_state, "is_send_allowed", True))
+        can_send = (
+            has_draft
+            and not bool(self._console_setup_blocked_reason())
+            and run_allows_send
+        )
+        return build_console_workbench_state(
+            control_state=control_state,
+            provider_blocker_copy=blocker_copy,
+            provider_action_label=action_label,
+            can_send=can_send,
+            can_stop=can_stop,
+            can_save_chatbook=self._console_chatbook_action_available(),
+            density=self._console_workbench_density(),
         )
 
     def _console_provider_blocker_copy(self) -> str:
@@ -3597,15 +3907,56 @@ class ChatScreen(BaseAppScreen):
         """Return compact empty transcript copy while setup details live nearby."""
         blocker = blocker_copy.strip()
         if blocker:
-            return (
-                "Start here\n"
-                "1. Finish provider setup using the recovery action above\n"
-                "2. Attach Library, runs, Artifacts, or RAG\n"
-                "3. Type a message or command in Composer"
-            )
+            return ChatScreen._console_blocked_empty_transcript_copy(blocker)
         if guidance_visible:
             return CONSOLE_READY_EMPTY_TRANSCRIPT_COPY
         return ""
+
+    @staticmethod
+    def _console_blocked_empty_transcript_copy(blocker_copy: str) -> str:
+        """Return setup-aware empty transcript activation copy."""
+        blocker = blocker_copy.strip().lower()
+        if "choose a provider" in blocker:
+            action = "Choose a provider"
+        elif "choose a model" in blocker:
+            action = "Choose a model"
+        elif "api key" in blocker:
+            action = "Add an API key"
+        elif "endpoint" in blocker:
+            action = "Configure the endpoint"
+        else:
+            action = "Finish provider setup"
+        return f"{action} to enable Send. Then type in Composer or attach context."
+
+    @staticmethod
+    def _console_empty_recovery_action_copy(
+        blocker_copy: str,
+        *,
+        provider_action_label: str = "",
+        provider_action_tooltip: str = "",
+    ) -> tuple[str, str]:
+        """Return empty-state provider recovery button label and tooltip."""
+        blocker = blocker_copy.strip().lower()
+        if provider_action_label:
+            label = (
+                "Add API key"
+                if provider_action_label == CONSOLE_PROVIDER_ADD_API_KEY_LABEL
+                else provider_action_label
+            )
+            tooltip = provider_action_tooltip.strip()
+            if tooltip:
+                return label, tooltip
+        if "choose a provider" in blocker:
+            return "Choose provider", "Choose a provider for this Console session"
+        if "choose a model" in blocker:
+            return "Choose model", "Choose a model for this Console session"
+        if "api key" in blocker:
+            return "Add API key", "Add an API key before sending"
+        if "endpoint" in blocker:
+            return "Configure endpoint", "Configure the provider endpoint before sending"
+        if blocker:
+            return "Review settings", "Review Console provider settings before sending"
+        return "Choose model", "Choose the provider and model for this Console session."
 
     def _console_setup_blocked_reason(self) -> str:
         """Return setup-specific send blocker copy for the native composer."""
@@ -3747,6 +4098,12 @@ class ChatScreen(BaseAppScreen):
         """Refresh Console onboarding and provider recovery copy in place."""
         blocker_copy = self._console_provider_blocker_copy()
         guidance_visible = self._console_guidance_visible(blocker_copy)
+        action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
+        empty_action_label, empty_action_tooltip = self._console_empty_recovery_action_copy(
+            blocker_copy,
+            provider_action_label=action_label if blocker_copy else "",
+            provider_action_tooltip=action_tooltip if blocker_copy else "",
+        )
         for selector, copy in (
             ("#console-start-here", CONSOLE_START_HERE_COPY),
             ("#console-action-hints", CONSOLE_ACTION_HINTS_COPY),
@@ -3774,14 +4131,25 @@ class ChatScreen(BaseAppScreen):
                 visible=bool(empty_copy),
                 copy=empty_copy,
             )
+            try:
+                transcript = surface.query_one("#console-native-transcript", ConsoleTranscript)
+            except QueryError:
+                pass
+            else:
+                transcript.sync_empty_state(
+                    empty_copy if empty_copy else "",
+                    provider_action_label=empty_action_label,
+                    provider_action_tooltip=empty_action_tooltip,
+                )
 
         try:
             provider_strip = self.query_one("#console-provider-recovery-strip", Horizontal)
             provider_blocker = self.query_one("#console-provider-blocker", Static)
         except QueryError:
             return
-        recovery_visible = self._console_provider_recovery_strip_visible(blocker_copy)
-        action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
+        # Legacy recovery selectors stay mounted for parity, but Workbench owns
+        # the visible setup recovery UI through #workbench-recovery-callout.
+        recovery_visible = False
         self._configure_console_provider_recovery_strip(
             provider_strip,
             provider_blocker,
@@ -3872,7 +4240,7 @@ class ChatScreen(BaseAppScreen):
     @staticmethod
     def _staged_context_frame_variant(state: ConsoleStagedContextState) -> str:
         """Use quiet framing when the staged context tray is only an empty placeholder."""
-        return "quiet" if not state.rows and state.summary == "No staged work." else "solid"
+        return "quiet" if state.is_empty else "solid"
 
     @staticmethod
     def _workspace_context_frame_variant(_state: ConsoleWorkspaceContextState) -> str:
@@ -3953,6 +4321,10 @@ class ChatScreen(BaseAppScreen):
     def handle_console_run_library_rag(self, event: Button.Pressed) -> None:
         """Request Library retrieval from the Console source-readiness seam."""
         event.stop()
+        self._run_console_library_rag_from_visible_action()
+
+    def _run_console_library_rag_from_visible_action(self) -> None:
+        """Request Library retrieval from the visible Console action surface."""
         query = _sanitize_console_library_rag_query(self._console_library_rag_query)
         if not query:
             self.app_instance.notify(
@@ -4052,8 +4424,46 @@ class ChatScreen(BaseAppScreen):
             rail_state,
             pending_launch,
         )
-        with Vertical(id="console-shell"):
-            yield Static(
+        workbench_state = self._build_console_workbench_state(control_state)
+        shell_classes = (
+            "workbench-frame console-workbench-frame "
+            f"density-{workbench_state.density}"
+        )
+        with Vertical(id="console-shell", classes=shell_classes):
+            yield self._hidden_console_workbench_widget(
+                DestinationHeader(
+                    workbench_state.header,
+                    id="console-workbench-header",
+                    classes="workbench-header",
+                )
+            )
+            yield self._hidden_console_workbench_widget(
+                ModeStrip(
+                    workbench_state.modes,
+                    id="console-workbench-mode-strip",
+                    classes="workbench-mode-strip",
+                )
+            )
+            yield self._hidden_console_workbench_widget(
+                CommandStrip(
+                    workbench_state.actions,
+                    id="console-workbench-command-strip",
+                    classes="workbench-command-strip",
+                )
+            )
+            yield self._compact_console_workbench_widget(
+                RecoveryCallout(
+                    workbench_state.recovery,
+                    id="workbench-recovery-callout",
+                    classes="workbench-recovery-callout",
+                ),
+                height=4,
+            )
+            # Compatibility selectors retained during Console Workbench parity:
+            # #console-title and #console-mode-bar are legacy shell seams now
+            # represented by DestinationHeader and ModeStrip. #console-control-bar
+            # remains visible as the dense Console-owned control surface.
+            yield self._hidden_static(
                 "Console",
                 id="console-title",
                 classes="destination-status-row",
@@ -4068,19 +4478,21 @@ class ChatScreen(BaseAppScreen):
                 id="console-status-row",
                 classes="destination-status-row",
             )
-            yield Static(
+            yield self._hidden_static(
                 self._console_mode_summary(control_state),
                 id="console-mode-bar",
                 classes="ds-panel",
             )
-            yield self._collapse_console_hidden_control_bar(
+            yield self._compact_console_workbench_widget(
                 ConsoleControlBar(
                     control_state,
                     self.app_instance,
+                    actions=workbench_state.actions,
                     on_sidebar_toggle_requested=self._toggle_console_chat_sidebar,
                     id="console-control-bar",
-                    classes="ds-panel console-hidden-control",
-                )
+                    classes="console-control-bar",
+                ),
+                height=2,
             )
             workspace_grid = self._frame_console_region(
                 Horizontal(id="console-workspace-grid", classes="ds-panel destination-workbench")
@@ -4105,6 +4517,7 @@ class ChatScreen(BaseAppScreen):
                     id="console-left-rail",
                     classes="console-region destination-workbench-pane",
                 )
+                left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
                 # Compact contract: left rail + main column + the collapsed
                 # inspector handle (11) must fit a 100-column terminal.
@@ -4147,8 +4560,12 @@ class ChatScreen(BaseAppScreen):
                         staged_context_tray.styles.width = "100%"
                         staged_context_tray.styles.min_width = 0
                         staged_context_tray.styles.height = "auto"
-                        staged_context_tray.styles.min_height = 4
-                        staged_context_tray.styles.max_height = 10
+                        staged_context_tray.styles.min_height = (
+                            3 if staged_context_state.is_empty else 4
+                        )
+                        staged_context_tray.styles.max_height = (
+                            6 if staged_context_state.is_empty else 10
+                        )
                         yield self._frame_console_region(
                             staged_context_tray,
                             variant=self._staged_context_frame_variant(staged_context_state),
@@ -4199,7 +4616,7 @@ class ChatScreen(BaseAppScreen):
                                 provider_recovery_strip,
                                 blocker,
                                 provider_blocker_copy,
-                                visible=recovery_visible,
+                                visible=False,
                                 action_label=provider_action_label,
                             )
                             yield blocker
@@ -4213,11 +4630,17 @@ class ChatScreen(BaseAppScreen):
                             )
                             self._configure_console_provider_settings_action(
                                 provider_settings_action,
-                                visible=recovery_visible,
+                                visible=False,
                                 label=provider_action_label,
                                 tooltip=provider_action_tooltip,
                             )
                             yield provider_settings_action
+                        # Compatibility selectors retained during Console
+                        # Workbench parity: #console-provider-recovery-strip,
+                        # #console-provider-blocker, and
+                        # #console-open-provider-settings are superseded by
+                        # #workbench-recovery-callout and
+                        # #workbench-recovery-action.
                         start_here = Static(
                             CONSOLE_START_HERE_COPY,
                             id="console-start-here",
@@ -4246,6 +4669,7 @@ class ChatScreen(BaseAppScreen):
                     id="console-right-rail",
                     classes="console-region destination-workbench-pane",
                 )
+                right_rail.can_focus = True
                 right_rail.styles.width = "4fr"
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
@@ -4349,6 +4773,7 @@ class ChatScreen(BaseAppScreen):
         """Run diagnostics when first mounted (only once)."""
         # Call parent's on_mount
         super().on_mount()
+        self._register_console_footer_shortcuts()
         
         if not self._diagnostics_run and self.chat_window:
             self._diagnostics_run = True
@@ -4359,13 +4784,13 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
         self.set_timer(0.15, self._consume_pending_chat_handoff)
-        self._focus_console_composer_if_needed(force=True)
         self.call_after_refresh(self._sync_native_console_chat_ui)
-        self.call_after_refresh(lambda: self._focus_console_composer_if_needed(force=True))
-        self.set_timer(0.2, self._focus_console_composer_if_needed)
+        self.call_after_refresh(self._restore_console_workbench_focus)
+        self.set_timer(0.2, self._restore_console_workbench_focus)
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        self._clear_console_footer_shortcuts()
         self._stop_console_transcript_sync_timer()
         controller = self._console_chat_controller
         if controller is not None:
@@ -5159,6 +5584,7 @@ class ChatScreen(BaseAppScreen):
             self._console_sync_requested = True
             return
         self._console_sync_in_progress = True
+        self._record_ui_worker_started("console-sync")
         try:
             self._sync_console_chat_core_state()
             self._sync_console_session_draft()
@@ -5168,8 +5594,11 @@ class ChatScreen(BaseAppScreen):
             await self._sync_console_native_session_tabs()
             self._sync_console_workspace_context()
             await self._sync_native_console_transcript_to_legacy_surface()
-            self._sync_console_rail_visibility(self._current_console_rail_state())
+            self._sync_console_rail_visibility_if_changed(
+                self._current_console_rail_state()
+            )
         finally:
+            self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
             if self._console_sync_requested:
                 self._console_sync_requested = False
@@ -5227,6 +5656,7 @@ class ChatScreen(BaseAppScreen):
                 self._stop_console_transcript_sync_timer()
 
         self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)
+        self._record_ui_timer_created("console-transcript-sync")
 
     def _stop_console_transcript_sync_timer(self) -> None:
         if self._console_transcript_sync_timer is None:
@@ -5234,6 +5664,7 @@ class ChatScreen(BaseAppScreen):
         try:
             self._console_transcript_sync_timer.stop()
         finally:
+            self._record_ui_timer_stopped("console-transcript-sync")
             self._console_transcript_sync_timer = None
 
     async def _submit_console_native_draft(self, draft: str) -> None:
@@ -5266,6 +5697,10 @@ class ChatScreen(BaseAppScreen):
     async def handle_console_send_message(self, event: Button.Pressed) -> None:
         """Route the Console composer send action through the native controller."""
         event.stop()
+        await self._send_console_message_from_visible_action()
+
+    async def _send_console_message_from_visible_action(self) -> None:
+        """Route the visible Console send action through the native controller."""
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
             draft = composer.draft_text()
@@ -5299,6 +5734,10 @@ class ChatScreen(BaseAppScreen):
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
         """Route the Console stop action through native run control."""
         event.stop()
+        await self._stop_console_generation_from_visible_action()
+
+    async def _stop_console_generation_from_visible_action(self) -> None:
+        """Route the visible Console stop action through native run control."""
         controller = self._ensure_console_chat_controller()
         if not controller.stop_active_run():
             self.app_instance.notify("No active Console run to stop.", severity="warning")
@@ -5333,6 +5772,10 @@ class ChatScreen(BaseAppScreen):
     def handle_console_save_chatbook(self, event: Button.Pressed) -> None:
         """Route available Chatbook artifacts through the existing Artifacts handoff."""
         event.stop()
+        self._save_console_chatbook_from_visible_action()
+
+    def _save_console_chatbook_from_visible_action(self) -> None:
+        """Route available Chatbook artifacts through the existing Artifacts handoff."""
         launch = self._consume_pending_console_launch()
         if self._launch_targets_chatbook_artifact(launch):
             handler = getattr(self.app_instance, "open_console_live_work_primary_action", None)
@@ -5347,9 +5790,18 @@ class ChatScreen(BaseAppScreen):
     async def handle_console_open_provider_settings(self, event: Button.Pressed) -> None:
         """Route provider setup recovery to the smallest relevant settings surface."""
         event.stop()
+        await self._open_console_provider_recovery()
+
+    async def _open_console_provider_recovery(self) -> None:
+        """Route provider setup recovery to the smallest relevant settings surface."""
         _label, target, _tooltip = self._console_provider_recovery_action()
-        if target == "console" and getattr(self, "is_mounted", False):
-            await self.on_console_settings_open(event)
+        if target in {"console", "hidden"} and getattr(self, "is_mounted", False):
+            await self._open_console_settings(
+                focus_model=(
+                    target == "hidden"
+                    or self._is_console_choose_model_action(_label)
+                )
+            )
             return
         provider, model, settings = self._active_console_provider_model_display()
         settings_provider = settings.provider if settings is not None else None
@@ -5718,14 +6170,22 @@ class ChatScreen(BaseAppScreen):
     def _sync_console_control_bar(self) -> None:
         """Refresh Console-owned control labels from current selection state."""
         self._sync_console_pending_delete_confirmation()
-        try:
-            control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
-        except QueryError:
-            control_bar = None
-        if control_bar is not None:
-            control_bar.sync_state(
-                self._build_console_control_state(self._pending_console_launch_context)
-            )
+        control_state = self._build_console_control_state(
+            self._pending_console_launch_context
+        )
+        workbench_state = self._build_console_workbench_state(control_state)
+        control_state_changed = control_state != self._last_console_control_state
+        workbench_state_changed = workbench_state != self._last_console_workbench_state
+        if control_state_changed or workbench_state_changed:
+            try:
+                control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
+            except QueryError:
+                control_bar = None
+            if control_bar is not None:
+                control_bar.sync_state(control_state, actions=workbench_state.actions)
+            self._sync_console_workbench_state(control_state, workbench_state=workbench_state)
+            self._last_console_control_state = control_state
+            self._last_console_workbench_state = workbench_state
         self._sync_console_transcript_guidance()
         try:
             inspector = self.query_one("#console-run-inspector-state", ConsoleRunInspector)
@@ -5740,7 +6200,47 @@ class ChatScreen(BaseAppScreen):
             can_save_chatbook=inspector_state.can_save_chatbook
             and self._console_chatbook_action_available()
         )
-        self._sync_console_rail_visibility(self._current_console_rail_state())
+        self._sync_console_rail_visibility_if_changed(self._current_console_rail_state())
+
+    def _sync_console_workbench_state(
+        self,
+        control_state: ConsoleControlState,
+        *,
+        workbench_state: Any | None = None,
+    ) -> None:
+        """Refresh visible Workbench primitives from current Console state."""
+        if workbench_state is None:
+            workbench_state = self._build_console_workbench_state(control_state)
+        try:
+            self.query_one("#console-workbench-header", DestinationHeader).sync_state(
+                workbench_state.header
+            )
+        except QueryError:
+            pass
+        try:
+            self.query_one("#console-workbench-mode-strip", ModeStrip).sync_modes(
+                workbench_state.modes
+            )
+        except QueryError:
+            pass
+        try:
+            self.query_one("#console-workbench-command-strip", CommandStrip).sync_actions(
+                workbench_state.actions
+            )
+        except QueryError:
+            pass
+        try:
+            self.query_one("#workbench-recovery-callout", RecoveryCallout).sync_state(
+                workbench_state.recovery
+            )
+        except QueryError:
+            pass
+
+    def _sync_console_workbench_actions_from_draft(self) -> None:
+        """Refresh Workbench command readiness after composer draft changes."""
+        self._sync_console_workbench_state(
+            self._build_console_control_state(self._pending_console_launch_context)
+        )
 
     def _sync_console_pending_delete_confirmation(self) -> None:
         """Clear stale destructive-action confirmation when transcript selection changes."""
@@ -5880,6 +6380,7 @@ class ChatScreen(BaseAppScreen):
             return
         if event.key in {"backspace", "ctrl+h", "delete"}:
             composer.delete_left()
+            self._sync_console_workbench_actions_from_draft()
             event.stop()
             event.prevent_default()
             return
@@ -5897,11 +6398,13 @@ class ChatScreen(BaseAppScreen):
             return
         if event.key == "ctrl+u":
             composer.clear_draft()
+            self._sync_console_workbench_actions_from_draft()
             event.stop()
             event.prevent_default()
             return
         if event.is_printable and event.character is not None:
             composer.insert_text(event.character)
+            self._sync_console_workbench_actions_from_draft()
             self._dismiss_console_guidance()
             event.stop()
             event.prevent_default()
@@ -5915,6 +6418,7 @@ class ChatScreen(BaseAppScreen):
         if not self._should_capture_console_input(composer):
             return
         composer.insert_pasted_text(event.text)
+        self._sync_console_workbench_actions_from_draft()
         self._dismiss_console_guidance()
         event.stop()
 
@@ -6816,6 +7320,8 @@ class ChatScreen(BaseAppScreen):
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
         self.sync_task_resume_state()
+        self._register_console_footer_shortcuts()
+        self.call_after_refresh(self._restore_console_workbench_focus)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:

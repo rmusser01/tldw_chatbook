@@ -32,6 +32,7 @@ CSS_MODULES = [
     "components/_dialogs.tcss",
     "components/_status.tcss",
     "components/_agentic_terminal.tcss",
+    "components/_workbench.tcss",
     "components/_widgets.tcss",
     "components/stats_screen.css",
     "components/splash_viewer.css",

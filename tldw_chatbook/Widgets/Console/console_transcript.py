@@ -7,17 +7,22 @@ from dataclasses import dataclass
 from typing import Iterable, Literal
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
+from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
-EMPTY_TRANSCRIPT_COPY = "Ready. Ask a question, run a command, or attach context."
+EMPTY_TRANSCRIPT_COPY = "Type in Composer, attach sources, or run Library RAG before sending."
+EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL = "Choose model"
+EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
+    "Choose the provider and model for this Console session."
+)
 SELECTED_MESSAGE_ACTION_GUIDE = (
     "Guide: ♻ Regenerate  ---> Continue  👍/👎 Rate  🗑 Delete"
 )
@@ -68,6 +73,8 @@ class _TranscriptRow:
     message: ConsoleChatMessage | None = None
     selected: bool = False
     renderable: str = ""
+    action_label: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
+    action_tooltip: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
 
 
 class ConsoleTranscriptMessage(Static):
@@ -182,6 +189,107 @@ class ConsoleTranscriptActionButton(Button):
         action_buttons[(current_index + offset) % len(action_buttons)].focus()
 
 
+class ConsoleTranscriptEmptyAction(Button):
+    """Activation button shown when the Console transcript has no messages."""
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        action_id: str,
+        tooltip: str,
+        id: str,
+    ) -> None:
+        super().__init__(
+            label,
+            id=id,
+            classes="console-transcript-empty-action",
+            compact=True,
+        )
+        self._workbench_action_id = action_id
+        self.tooltip = tooltip
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Route empty-state activation through the owning Workbench screen."""
+        action_id = getattr(self, "_workbench_action_id", "")
+        if not action_id:
+            return
+        event.stop()
+        self.post_message(WorkbenchActionRequested(action_id))
+
+
+class ConsoleTranscriptEmptyPanel(Vertical):
+    """Actionable Console transcript empty state."""
+
+    def __init__(
+        self,
+        copy: str,
+        *,
+        provider_action_label: str,
+        provider_action_tooltip: str,
+    ) -> None:
+        super().__init__(
+            id="console-transcript-empty-state",
+            classes="console-transcript-empty-panel",
+        )
+        self.empty_state_copy = copy
+        self.provider_action_label = provider_action_label
+        self.provider_action_tooltip = provider_action_tooltip
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "Start Console",
+            id="console-empty-title",
+            classes="console-transcript-empty-title",
+        )
+        yield Static(
+            self.empty_state_copy,
+            id="console-empty-body",
+            classes="console-transcript-empty-body console-transcript-empty-state",
+        )
+        yield Horizontal(
+            ConsoleTranscriptEmptyAction(
+                self.provider_action_label,
+                action_id="provider-recovery",
+                tooltip=self.provider_action_tooltip,
+                id="console-empty-choose-model",
+            ),
+            ConsoleTranscriptEmptyAction(
+                "Attach context",
+                action_id="attach-context",
+                tooltip="Open context sources and attach workspace material.",
+                id="console-empty-attach-context",
+            ),
+            ConsoleTranscriptEmptyAction(
+                "Run Library RAG",
+                action_id="run-library-rag",
+                tooltip="Search Library sources before sending.",
+                id="console-empty-run-library-rag",
+            ),
+            id="console-empty-action-row",
+            classes="console-transcript-empty-action-row",
+        )
+
+    def sync_empty_state(
+        self,
+        copy: str,
+        *,
+        provider_action_label: str,
+        provider_action_tooltip: str,
+    ) -> None:
+        """Update the mounted body copy without remounting the action row."""
+        self.empty_state_copy = copy
+        self.provider_action_label = provider_action_label
+        self.provider_action_tooltip = provider_action_tooltip
+        try:
+            self.query_one("#console-empty-body", Static).update(copy)
+            action = self.query_one("#console-empty-choose-model", Button)
+            action.label = provider_action_label
+            action.tooltip = provider_action_tooltip
+        except Exception:
+            return
+
+
 class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
@@ -199,6 +307,8 @@ class ConsoleTranscript(VerticalScroll):
         self.selected_message_id: str | None = None
         self._refresh_lock = asyncio.Lock()
         self.empty_state_copy = EMPTY_TRANSCRIPT_COPY
+        self.empty_state_action_label = EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
+        self.empty_state_action_tooltip = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
         self._row_widgets: dict[str, Widget] = {}
         self._row_signatures: dict[str, tuple] = {}
         self._row_build_counts: dict[str, int] = {}
@@ -220,12 +330,30 @@ class ConsoleTranscript(VerticalScroll):
         if self.selected_message_id not in message_ids:
             self.selected_message_id = None
 
-    def sync_empty_state(self, copy: str = "") -> None:
+    def sync_empty_state(
+        self,
+        copy: str = "",
+        *,
+        provider_action_label: str = "",
+        provider_action_tooltip: str = "",
+    ) -> None:
         """Refresh the empty transcript copy while preserving message exports."""
         next_copy = copy.strip() or EMPTY_TRANSCRIPT_COPY
-        if self.empty_state_copy == next_copy:
+        next_action_label = (
+            provider_action_label.strip() or EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
+        )
+        next_action_tooltip = (
+            provider_action_tooltip.strip() or EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
+        )
+        if (
+            self.empty_state_copy == next_copy
+            and self.empty_state_action_label == next_action_label
+            and self.empty_state_action_tooltip == next_action_tooltip
+        ):
             return
         self.empty_state_copy = next_copy
+        self.empty_state_action_label = next_action_label
+        self.empty_state_action_tooltip = next_action_tooltip
         if self.is_mounted and not self._messages:
             self.call_later(self.refresh_messages)
 
@@ -402,8 +530,15 @@ class ConsoleTranscript(VerticalScroll):
                 _TranscriptRow(
                     key="empty",
                     kind="empty",
-                    signature=("empty", self.empty_state_copy),
+                    signature=(
+                        "empty",
+                        self.empty_state_copy,
+                        self.empty_state_action_label,
+                        self.empty_state_action_tooltip,
+                    ),
                     renderable=self.empty_state_copy,
+                    action_label=self.empty_state_action_label,
+                    action_tooltip=self.empty_state_action_tooltip,
                 )
             )
         return rows
@@ -466,10 +601,10 @@ class ConsoleTranscript(VerticalScroll):
                 classes="console-transcript-rule",
             )
         if row.kind == "empty":
-            return Static(
+            return ConsoleTranscriptEmptyPanel(
                 row.renderable,
-                id=self._row_widget_id(row),
-                classes="console-transcript-empty-state",
+                provider_action_label=row.action_label,
+                provider_action_tooltip=row.action_tooltip,
             )
         if row.kind == "action-help":
             return Static(
@@ -487,8 +622,12 @@ class ConsoleTranscript(VerticalScroll):
         if row.kind == "message" and row.message is not None and isinstance(widget, ConsoleTranscriptMessage):
             widget.sync_message(row.message, selected=row.selected)
             return widget
-        if row.kind == "empty" and isinstance(widget, Static):
-            widget.update(row.renderable)
+        if row.kind == "empty" and isinstance(widget, ConsoleTranscriptEmptyPanel):
+            widget.sync_empty_state(
+                row.renderable,
+                provider_action_label=row.action_label,
+                provider_action_tooltip=row.action_tooltip,
+            )
             return widget
         return self._build_row_widget(row, track=True)
 
