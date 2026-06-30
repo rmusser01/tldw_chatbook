@@ -2,6 +2,8 @@
 
 import tomllib
 
+from loguru import logger
+
 from tldw_chatbook import config as config_module
 
 
@@ -124,6 +126,30 @@ def test_save_setting_respects_tldw_config_path_override(tmp_path, monkeypatch):
     saved_override = tomllib.loads(override_config.read_text(encoding="utf-8"))
     assert saved_override["console"]["collapse_large_pastes"] is False
     assert not default_config.exists()
+
+
+def test_save_setting_redacts_sensitive_value_in_attempt_log(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    secret = "sk-review-secret-redaction-source"
+    messages = []
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]),
+        level="INFO",
+    )
+    try:
+        assert config_module.save_setting_to_cli_config(
+            "api_settings.openai",
+            "api_key",
+            secret,
+        )
+    finally:
+        logger.remove(sink_id)
+
+    joined_messages = "\n".join(messages)
+    assert secret not in joined_messages
+    assert "[api_settings.openai].api_key = '<redacted>'" in joined_messages
 
 
 def test_save_settings_batches_multiple_sections(tmp_path, monkeypatch):

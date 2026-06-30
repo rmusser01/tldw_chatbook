@@ -891,7 +891,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 #console-right-rail,
 #console-run-inspector,
 #console-transcript-region {
-    border: solid $ds-grid-line;
+    border: solid $ds-column-line;
     background: $ds-surface-panel;
 }
 
@@ -1097,7 +1097,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 
 #console-transcript-region {
     padding: 0 1;
-    border: round $ds-grid-line;
+    border: round $ds-column-line;
     background: $ds-surface-panel;
 }
 
@@ -1147,7 +1147,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     margin: 0;
     layout: horizontal;
     align: left middle;
-    border: round $ds-grid-line;
+    border: round $ds-column-line;
     background: $ds-surface-panel;
 }
 
@@ -1368,7 +1368,7 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 .console-transcript-rule {
     height: 1;
     min-height: 1;
-    color: $ds-grid-line;
+    color: $ds-column-line;
 }
 
 .console-transcript-message {
@@ -2201,6 +2201,7 @@ Button.settings-category-button.settings-secondary-search-match {
 
 .settings-focus-card {
     width: 100%;
+    height: auto;
     min-height: 10;
     padding: 1;
     margin: 0 0 1 0;

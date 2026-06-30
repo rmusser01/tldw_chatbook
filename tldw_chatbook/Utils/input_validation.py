@@ -9,6 +9,9 @@ from pathlib import Path
 from ..Metrics.metrics_logger import log_counter, log_histogram
 
 
+PROVIDER_API_KEY_MAX_LENGTH = 4096
+
+
 def validate_email(email: str) -> bool:
     """Validate email address format."""
     start_time = time.time()
@@ -206,6 +209,55 @@ def validate_text_input(text: str, max_length: int = 10000, allow_html: bool = F
     log_counter("input_validation_text_result", labels={"valid": "true", "type": "text"})
     
     return True
+
+
+def provider_api_key_validation_error(
+    api_key: object,
+    max_length: int = PROVIDER_API_KEY_MAX_LENGTH,
+) -> Optional[str]:
+    """Return a validation error for a provider API key, or None when valid.
+
+    Args:
+        api_key: User-entered provider API key. Empty values are allowed so
+            optional local-key fields can represent "not configured."
+        max_length: Maximum allowed key length.
+
+    Returns:
+        A user-facing validation error, or None when the value is acceptable.
+    """
+    key = str(api_key or "")
+    if not key:
+        return None
+
+    sanitized = sanitize_string(key, max_length=max_length)
+    if (
+        sanitized != key
+        or any(char in key for char in "\r\n\t")
+        or not validate_text_input(key, max_length=max_length, allow_html=False)
+    ):
+        return f"API key must be a single-line value under {max_length} characters."
+
+    from tldw_chatbook.Chat.provider_readiness import is_valid_provider_api_key
+
+    if not is_valid_provider_api_key(key):
+        return "API key looks like a placeholder; paste a real key."
+    return None
+
+
+def validate_provider_api_key(
+    api_key: object,
+    max_length: int = PROVIDER_API_KEY_MAX_LENGTH,
+) -> bool:
+    """Validate provider API-key input without leaking the value.
+
+    Args:
+        api_key: User-entered provider API key.
+        max_length: Maximum allowed key length.
+
+    Returns:
+        True when the value is empty or a usable single-line provider key.
+    """
+    return provider_api_key_validation_error(api_key, max_length=max_length) is None
 
 
 def validate_number_range(value: Union[str, int, float], min_val: Optional[float] = None, 

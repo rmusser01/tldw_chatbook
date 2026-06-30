@@ -86,7 +86,8 @@ def _assert_console_density_evidence(svg: str) -> None:
     assert "Attach" in normalized_svg
     assert "Library RAG" in normalized_svg
     assert "Choose model" in normalized_svg
-    assert "Send disabled" in normalized_svg or "Setup required" in normalized_svg
+    assert "Send disabled" not in normalized_svg
+    assert "Setup required" not in normalized_svg
 
 
 def _assert_console_inspector_evidence(svg: str) -> None:
@@ -98,7 +99,8 @@ def _assert_console_inspector_evidence(svg: str) -> None:
     assert "Next action" in normalized_svg
     assert "Choose model" in normalized_svg
     assert "Provider: blocked" in normalized_svg
-    assert "Send disabled" in normalized_svg or "Setup required" in normalized_svg
+    assert "Send disabled" not in normalized_svg
+    assert "Setup required" not in normalized_svg
     assert (
         normalized_svg.index("Status: Blocked")
         < normalized_svg.index("Run recipe")
