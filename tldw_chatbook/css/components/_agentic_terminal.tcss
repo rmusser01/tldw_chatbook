@@ -690,15 +690,10 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 }
 
 #console-workspace-context {
-    height: 1fr;
-    min-height: 8;
-    overflow-y: auto;
-    overflow-x: hidden;
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
-    scrollbar-color-active: $ds-action-focus;
+    height: auto;
+    min-height: 0;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
 }
 
 #console-workspace-handoff-rows {
@@ -761,14 +756,12 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 #console-workspace-conversations {
     width: 100%;
     min-width: 0;
-    min-height: 4;
-    overflow-y: auto;
+    height: auto;
+    min-height: 0;
+    overflow-y: hidden;
     overflow-x: hidden;
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-grid-line;
-    scrollbar-color-hover: $ds-grid-line;
-    scrollbar-color-active: $ds-action-focus;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
 }
 
 .console-workspace-conversation-row {
@@ -839,6 +832,12 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     overflow: hidden;
 }
 
+#console-left-rail:focus {
+    outline: none;
+    border: solid $ds-column-line;
+    background: $ds-surface-panel;
+}
+
 #console-left-rail-body {
     width: 100%;
     min-width: 0;
@@ -852,6 +851,24 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     scrollbar-color: $ds-grid-line;
     scrollbar-color-hover: $ds-grid-line;
     scrollbar-color-active: $ds-action-focus;
+}
+
+#console-left-rail-body:focus {
+    outline: none;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+#console-workspace-context:focus {
+    outline: none;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+#console-workspace-conversations:focus {
+    outline: none;
+    border: none;
+    background: $ds-surface-panel;
 }
 
 .console-left-rail-section {
@@ -1466,13 +1483,21 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
 
 #console-transcript-empty-state,
 .console-transcript-empty-panel {
-    height: auto;
-    min-height: 4;
+    height: 100%;
+    min-height: 100%;
     width: 100%;
     layout: vertical;
     padding: 1 2;
     background: transparent;
     color: $ds-text-primary;
+}
+
+#console-shell .workbench-recovery-callout,
+#console-control-bar,
+#console-workspace-grid,
+#console-transcript-region,
+#console-native-composer {
+    opacity: 100%;
 }
 
 .console-transcript-empty-title {

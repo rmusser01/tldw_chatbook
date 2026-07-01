@@ -233,6 +233,16 @@ def test_generated_console_stylesheet_includes_rail_rules():
         composer_focus = _css_block(css, "#console-native-composer.console-composer-focused")
         assert "border: heavy $ds-action-focus;" not in composer_focus
         assert "border: thick $ds-action-focus;" not in css
+        for selector in (
+            "#console-left-rail:focus",
+            "#console-left-rail-body:focus",
+            "#console-workspace-context:focus",
+            "#console-workspace-conversations:focus",
+        ):
+            focus_block = _css_block(css, selector)
+            assert "border: solid $ds-action-focus;" not in focus_block
+            assert "border: thick $ds-action-focus;" not in focus_block
+            assert "outline: none;" in focus_block
 
         right_handle = _css_block(css, ".console-rail-handle-right")
         right_button = _css_block(css, ".console-rail-handle-button-right")
