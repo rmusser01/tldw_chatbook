@@ -164,6 +164,28 @@ async def _select_settings_category(
     )
 
 
+async def _wait_for_settings_input_value(
+    screen,
+    pilot,
+    selector: str,
+    expected_value: str,
+    *,
+    timeout: float = 4.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if screen.query(selector):
+            field = screen.query_one(selector, Input)
+            if field.value == expected_value:
+                await pilot.pause()
+                return
+        await pilot.pause(0.01)
+    actual = screen.query_one(selector, Input).value if screen.query(selector) else "<missing>"
+    raise AssertionError(
+        f"Timed out waiting for {selector} value {expected_value!r}; actual={actual!r}"
+    )
+
+
 async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Button:
     button = screen.query_one(selector, Button)
     detail_pane = screen.query_one("#settings-detail-pane", VerticalScroll)
@@ -2947,8 +2969,13 @@ async def test_settings_console_behavior_revert_restores_global_defaults(monkeyp
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-console-behavior")
         screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.CONSOLE_BEHAVIOR,
+            selector="#settings-console-default-temperature",
+        )
         temperature = screen.query_one("#settings-console-default-temperature", Input)
         temperature.value = "0.33"
         screen.handle_console_default_temperature_changed(Input.Changed(temperature, temperature.value))
@@ -2957,7 +2984,12 @@ async def test_settings_console_behavior_revert_restores_global_defaults(monkeyp
 
         await pilot.click("#settings-revert-category")
 
-        assert screen.query_one("#settings-console-default-temperature", Input).value == "0.7"
+        await _wait_for_settings_input_value(
+            screen,
+            pilot,
+            "#settings-console-default-temperature",
+            "0.7",
+        )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert "No unsaved changes" in _visible_text(screen)
 
@@ -3839,8 +3871,13 @@ async def test_settings_provider_category_saves_llamacpp_endpoint(monkeypatch):
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
         screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.PROVIDERS_MODELS,
+            selector="#settings-provider-endpoint-value",
+        )
 
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
         assert endpoint.value == "http://127.0.0.1:8080/v1"
@@ -4312,8 +4349,14 @@ async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.click("#settings-category-providers-models")
         screen = _active_destination_screen(host)
+        await _select_settings_category(
+            screen,
+            pilot,
+            SettingsCategoryId.PROVIDERS_MODELS,
+            selector="#settings-provider-endpoint-value",
+        )
+        await _wait_for_selector(screen, pilot, "#settings-provider-value #label")
         provider = screen.query_one("#settings-provider-value", Select)
         provider.value = "llama_cpp"
         screen.handle_provider_value_changed(Select.Changed(provider, "llama_cpp"))
