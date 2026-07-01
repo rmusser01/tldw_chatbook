@@ -4606,8 +4606,6 @@ class ChatScreen(BaseAppScreen):
                         )
                         workspace_context_tray.styles.width = "100%"
                         workspace_context_tray.styles.min_width = 0
-                        workspace_context_tray.styles.height = "1fr"
-                        workspace_context_tray.styles.min_height = 8
                         yield self._frame_console_region(
                             workspace_context_tray,
                             variant=self._workspace_context_frame_variant(workspace_context_state),

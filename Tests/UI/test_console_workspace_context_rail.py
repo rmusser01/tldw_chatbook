@@ -373,6 +373,7 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
         await pilot.pause()
 
         workspace_context = console.query_one("#console-workspace-context")
+        left_rail_body = console.query_one("#console-left-rail-body")
         conversation_list = console.query_one("#console-workspace-conversations")
         sync_label = console.query_one("#console-workspace-sync-label")
         server_readiness = console.query_one("#console-workspace-server-readiness-label")
@@ -384,11 +385,12 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
         assert sync_label.region.y > conversation_list.region.y
         assert server_readiness.region.y > conversation_list.region.y
 
-        assert workspace_context.max_scroll_y > 0
-        workspace_context.scroll_end(animate=False)
+        assert getattr(conversation_list, "max_scroll_y", 0) == 0
+        assert left_rail_body.max_scroll_y > 0
+        left_rail_body.scroll_end(animate=False)
         await pilot.pause(0.1)
 
-        assert workspace_context.scroll_y > 0
+        assert left_rail_body.scroll_y > 0
         assert handoff_label.region.y >= workspace_context.region.y
         assert handoff_label.region.y + handoff_label.region.height <= workspace_bottom
         assert handoff_label.region.y + handoff_label.region.height <= composer.region.y
@@ -483,7 +485,9 @@ def test_console_workspace_context_grouped_browser_styles_are_declared() -> None
         list_selector = "#console-workspace-conversations {"
         assert list_selector in css
         list_block = css.split(list_selector, 1)[1].split("}", 1)[0]
-        assert "overflow-y: auto" in list_block
+        assert "overflow-y: auto" not in list_block
+        assert "scrollbar-size:" not in list_block
+        assert "#console-workspace-conversations:focus {" in css
 
 
 def test_console_workspace_conversation_visible_rows_are_clamped() -> None:
@@ -555,7 +559,8 @@ async def test_console_workspace_conversations_render_bounded_expanded_section()
         conversation_list = console.query_one("#console-workspace-conversations")
         rows = list(console.query(".console-workspace-conversation-row"))
         assert len(rows) == 8
-        assert conversation_list.region.height <= 36
+        assert conversation_list.region.height >= len(rows) * 2
+        assert getattr(conversation_list, "max_scroll_y", 0) == 0
 
 
 @pytest.mark.asyncio
@@ -710,6 +715,7 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
         await _wait_for_selector(console, pilot, "#console-workspace-conversations")
 
         workspace_context = console.query_one("#console-workspace-context")
+        left_rail_body = console.query_one("#console-left-rail-body")
         conversation_list = console.query_one("#console-workspace-conversations")
         new_conversation = console.query_one("#console-new-workspace-conversation", Button)
         server_readiness = console.query_one("#console-workspace-server-readiness-label")
@@ -721,17 +727,18 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
 
         workspace_bottom = workspace_context.region.y + workspace_context.region.height
 
-        assert conversation_list.region.height <= 36
+        assert conversation_list.region.height > left_rail_body.region.height
         assert new_conversation.region.y + new_conversation.region.height <= composer.region.y
         assert new_conversation.region.y + new_conversation.region.height <= workspace_bottom
         assert hit_widget is new_conversation
         assert server_readiness.region.y > conversation_list.region.y
 
-        assert workspace_context.max_scroll_y > 0
-        workspace_context.scroll_end(animate=False)
+        assert getattr(conversation_list, "max_scroll_y", 0) == 0
+        assert left_rail_body.max_scroll_y > 0
+        left_rail_body.scroll_end(animate=False)
         await pilot.pause(0.1)
 
-        assert workspace_context.scroll_y > 0
+        assert left_rail_body.scroll_y > 0
         assert handoff_label.region.y >= workspace_context.region.y
         assert handoff_label.region.y + handoff_label.region.height <= workspace_bottom
         assert handoff_label.region.y + handoff_label.region.height <= composer.region.y
@@ -1219,9 +1226,14 @@ def test_console_workspace_conversation_subsection_styles_are_declared() -> None
     context_blocks = [
         block.split("}", 1)[0] for block in css.split(context_selector)[1:]
     ]
-    assert any("overflow-y: auto" in block for block in context_blocks)
+    assert all("overflow-y: auto" not in block for block in context_blocks)
+    assert "#console-left-rail-body {" in css
+    left_rail_body_block = css.split("#console-left-rail-body {", 1)[1].split("}", 1)[0]
+    assert "overflow-y: auto" in left_rail_body_block
     list_selector = "#console-workspace-conversations {"
     assert list_selector in css
 
     list_block = css.split(list_selector, 1)[1].split("}", 1)[0]
-    assert "scrollbar-size: 1 1" in list_block
+    assert "overflow-y: auto" not in list_block
+    assert "scrollbar-size:" not in list_block
+    assert "#console-left-rail-body:focus {" in css

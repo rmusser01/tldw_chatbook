@@ -7,7 +7,7 @@ from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Workspaces.conversation_browser_state import (
@@ -20,7 +20,6 @@ from tldw_chatbook.Workspaces.display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT,
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationSectionState,
-    console_workspace_conversation_visible_rows,
 )
 
 
@@ -48,11 +47,8 @@ _AUTHORITY_LABELS = {
     "runtime-missing": "runtime missing",
 }
 _MAX_CONVERSATION_ROW_TITLE = 20
-_CONVERSATION_SECTION_FIXED_ROWS = 7
-_CONVERSATION_SECTION_STATUS_RESERVE_ROWS = 3
-_CONVERSATION_SECTION_CHROME_HEIGHT = (
-    _CONVERSATION_SECTION_FIXED_ROWS + _CONVERSATION_SECTION_STATUS_RESERVE_ROWS
-)
+_CONVERSATION_BROWSER_HEADER_HEIGHT = 1
+_CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT = 1
 
 
 class ConsoleWorkspaceStatusPair(Horizontal):
@@ -118,17 +114,60 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         yield value_widget
 
 
-class ConsoleWorkspaceContextTray(VerticalScroll):
+class ConsoleWorkspaceContextTray(Vertical):
     """Render workspace selection, conversation scope, and recovery copy."""
 
     def __init__(self, state: ConsoleWorkspaceContextState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.state = state
+        self.styles.height = "auto"
+        self.styles.min_height = 0
+
+    def on_mount(self) -> None:
+        """Fit the tray to content after Textual has measured child widgets."""
+
+        self.call_after_refresh(self._fit_height_to_content)
+
+    def on_resize(self, event: Any) -> None:
+        """Refit wrapped status rows when the rail width changes."""
+
+        self.call_after_refresh(self._fit_height_to_content)
 
     def sync_state(self, state: ConsoleWorkspaceContextState) -> None:
         """Refresh the mounted workspace context tray from new display state."""
         self.state = state
+        self.styles.height = "auto"
+        self.styles.min_height = 0
         self.refresh(recompose=True)
+        if self.is_mounted:
+            self.call_after_refresh(self._fit_height_to_content)
+
+    def _fit_height_to_content(self) -> None:
+        """Expose the full tray content height to the parent scroll container."""
+
+        region = getattr(self, "region", None)
+        if region is None or region.height <= 0:
+            return
+
+        content_region = getattr(self, "content_region", None)
+        content_top = content_region.y if content_region is not None else region.y
+        content_bottom = content_top + 1
+        for child in self.children:
+            if not getattr(child, "display", True):
+                continue
+            child_region = getattr(child, "region", None)
+            if child_region is None or child_region.height <= 0:
+                continue
+            content_bottom = max(content_bottom, child_region.y + child_region.height)
+
+        target_height = max(1, content_bottom - content_top)
+        parent_region = getattr(getattr(self, "parent", None), "region", None)
+        if parent_region is not None and parent_region.height > 0:
+            visible_floor = max(1, parent_region.y + parent_region.height - region.y)
+            target_height = max(target_height, visible_floor)
+
+        if int(region.height) != target_height:
+            self.styles.height = target_height
 
     @staticmethod
     def _static(text: str, *, id: str, classes: str = "") -> Static:
@@ -231,26 +270,50 @@ class ConsoleWorkspaceContextTray(VerticalScroll):
         button.styles.min_height = 2
         return button
 
-    def _visible_conversation_rows(self) -> int:
-        """Return the conversation rows that fit inside the mounted tray."""
+    @staticmethod
+    def _legacy_conversation_list_height(
+        section: ConsoleWorkspaceConversationSectionState,
+    ) -> int:
+        """Return the full content height for legacy conversation rows."""
 
-        parent_region = getattr(getattr(self, "parent", None), "region", None)
-        base_rows = console_workspace_conversation_visible_rows(
-            parent_region.height if parent_region is not None else None
+        if not section.rows:
+            return _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
+        return max(
+            _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT,
+            len(section.rows) * CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT,
         )
-        tray_height = int(getattr(getattr(self, "region", None), "height", 0) or 0)
-        if tray_height <= 0:
-            return base_rows
 
-        available_list_height = max(
-            1,
-            tray_height - _CONVERSATION_SECTION_CHROME_HEIGHT,
-        )
-        fitted_rows = max(
-            1,
-            available_list_height // CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT,
-        )
-        return min(base_rows, fitted_rows)
+    @staticmethod
+    def _conversation_browser_list_height(
+        browser: ConsoleConversationBrowserState,
+    ) -> int:
+        """Return the full content height for the grouped browser rows."""
+
+        height = 0
+        for section in browser.sections:
+            height += _CONVERSATION_BROWSER_HEADER_HEIGHT
+            if section.collapsed:
+                continue
+            if section.groups:
+                for group in section.groups:
+                    height += _CONVERSATION_BROWSER_HEADER_HEIGHT
+                    if group.collapsed:
+                        continue
+                    if group.rows:
+                        height += (
+                            len(group.rows)
+                            * CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT
+                        )
+                    elif group.empty_copy:
+                        height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
+                continue
+            if section.rows:
+                height += (
+                    len(section.rows) * CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT
+                )
+            elif section.empty_copy:
+                height += _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
+        return max(_CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT, height)
 
     def compose(self) -> ComposeResult:
         yield self._static(
@@ -371,10 +434,11 @@ class ConsoleWorkspaceContextTray(VerticalScroll):
                     id="console-workspace-conversation-search-error",
                     classes="console-workspace-recovery",
                 )
-            visible_rows = self._visible_conversation_rows()
-            conversation_list = VerticalScroll(id="console-workspace-conversations")
-            conversation_list.styles.height = max(1, visible_rows * 3)
-            conversation_list.styles.min_height = max(1, visible_rows * 3)
+            conversation_list = Vertical(id="console-workspace-conversations")
+            conversation_list.styles.height = self._legacy_conversation_list_height(
+                section
+            )
+            conversation_list.styles.min_height = 0
             with conversation_list:
                 if section.rows:
                     for index, row in enumerate(section.rows):
@@ -478,10 +542,9 @@ class ConsoleWorkspaceContextTray(VerticalScroll):
             )
 
         row_index = 0
-        visible_rows = self._visible_conversation_rows()
-        conversation_list = VerticalScroll(id="console-workspace-conversations")
-        conversation_list.styles.height = max(1, visible_rows * 3)
-        conversation_list.styles.min_height = max(1, visible_rows * 3)
+        conversation_list = Vertical(id="console-workspace-conversations")
+        conversation_list.styles.height = self._conversation_browser_list_height(browser)
+        conversation_list.styles.min_height = 0
         with conversation_list:
             for section in browser.sections:
                 yield from self._compose_conversation_browser_section_header(section)
