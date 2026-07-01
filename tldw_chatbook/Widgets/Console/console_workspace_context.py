@@ -124,58 +124,166 @@ class ConsoleWorkspaceContextTray(Vertical):
         self.styles.min_height = 0
 
     def on_mount(self) -> None:
-        """Fit the tray to content after Textual has measured child widgets."""
+        """Fit the tray to content after Textual has measured child widgets.
+
+        Returns:
+            None.
+        """
 
         self.call_after_refresh(self._fit_height_to_content)
 
     def on_resize(self, event: Any) -> None:
-        """Refit wrapped status rows when the rail width changes."""
+        """Refit wrapped status rows when the rail width changes.
+
+        Args:
+            event: Textual resize event emitted for this tray.
+
+        Returns:
+            None.
+        """
 
         self.call_after_refresh(self._fit_height_to_content)
 
     def sync_state(self, state: ConsoleWorkspaceContextState) -> None:
-        """Refresh the mounted workspace context tray from new display state."""
+        """Refresh the mounted workspace context tray from new display state.
+
+        Args:
+            state: Latest workspace context display state.
+
+        Returns:
+            None.
+        """
         self.state = state
-        self.styles.height = "auto"
         self.styles.min_height = 0
+        scroll_parent = self._nearest_scroll_parent()
+        parent_scroll_y = getattr(scroll_parent, "scroll_y", None)
+        restore_scroll_y = int(parent_scroll_y) if parent_scroll_y is not None else None
         self.refresh(recompose=True)
         if self.is_mounted:
-            self.call_after_refresh(self._fit_height_to_content)
+            self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
+
+    def _nearest_scroll_parent(self) -> Any | None:
+        """Return the nearest ancestor that owns vertical scrolling.
+
+        Returns:
+            Scrollable ancestor widget, or ``None`` when unavailable.
+        """
+
+        for ancestor in self.ancestors:
+            if getattr(ancestor, "id", None) == "console-left-rail-body":
+                return ancestor
+        for ancestor in self.ancestors:
+            if (
+                getattr(ancestor, "max_scroll_y", 0) > 0
+                and callable(getattr(ancestor, "scroll_to", None))
+            ):
+                return ancestor
+        return None
+
+    def _schedule_recomposed_content_fit(
+        self,
+        *,
+        restore_scroll_y: int | None = None,
+    ) -> None:
+        """Schedule bounded fit passes after recomposing tray content.
+
+        Args:
+            restore_scroll_y: Parent rail scroll offset to restore after fitting.
+
+        Returns:
+            None.
+        """
+
+        def fit_and_restore_scroll() -> None:
+            self._fit_height_to_content()
+            self._restore_parent_scroll(restore_scroll_y)
+
+        # Recompose settles child layout over more than one message turn in
+        # scrolled rails; a fixed follow-up pass avoids a layout feedback loop.
+        self.call_later(fit_and_restore_scroll)
+        self.call_later(lambda: self.call_later(fit_and_restore_scroll))
+        if restore_scroll_y is not None:
+            self.set_timer(
+                0.01,
+                lambda: self._restore_parent_scroll(restore_scroll_y),
+                name="console-workspace-context-scroll-restore",
+            )
+
+    def _restore_parent_scroll(self, scroll_y: int | None) -> None:
+        """Restore the parent rail scroll position after a deferred fit pass.
+
+        Args:
+            scroll_y: Parent rail scroll offset to restore.
+
+        Returns:
+            None.
+        """
+
+        if scroll_y is None:
+            return
+        scroll_parent = self._nearest_scroll_parent()
+        scroll_to = getattr(scroll_parent, "scroll_to", None)
+        if callable(scroll_to):
+            scroll_to(y=max(0, scroll_y), animate=False)
 
     def _fit_height_to_content(self) -> None:
-        """Expose the full tray content height to the parent scroll container."""
+        """Expose the full tray content height to the parent scroll container.
+
+        Returns:
+            None.
+        """
 
         region = getattr(self, "region", None)
         if region is None or region.height <= 0:
             return
 
-        content_region = getattr(self, "content_region", None)
-        content_top = content_region.y if content_region is not None else region.y
-        content_bottom = content_top + 1
+        content_top = 0
+        content_bottom = 1
         for child in self.children:
             if not getattr(child, "display", True):
                 continue
-            child_region = getattr(child, "region", None)
-            if child_region is None or child_region.height <= 0:
+            child_virtual = getattr(child, "virtual_region", None)
+            if child_virtual is None or child_virtual.height <= 0:
                 continue
-            content_bottom = max(content_bottom, child_region.y + child_region.height)
+            content_bottom = max(
+                content_bottom,
+                child_virtual.y + child_virtual.height,
+            )
 
         target_height = max(1, content_bottom - content_top)
-        parent_region = getattr(getattr(self, "parent", None), "region", None)
+        scroll_parent = self._nearest_scroll_parent()
+        parent_region = getattr(scroll_parent, "region", None)
         if parent_region is not None and parent_region.height > 0:
-            visible_floor = max(1, parent_region.y + parent_region.height - region.y)
-            target_height = max(target_height, visible_floor)
+            target_height = max(target_height, int(parent_region.height))
 
         if int(region.height) != target_height:
             self.styles.height = target_height
 
     @staticmethod
     def _static(text: str, *, id: str, classes: str = "") -> Static:
+        """Create a plain Static widget with markup disabled.
+
+        Args:
+            text: Text to display.
+            id: Textual widget id.
+            classes: Optional CSS classes.
+
+        Returns:
+            Static widget configured for plain text.
+        """
         return Static(str(text), id=id, classes=classes, markup=False)
 
     @staticmethod
     def _split_status_row(text: str, fallback_label: str) -> tuple[str, str]:
-        """Return a scannable label/value pair from legacy status copy."""
+        """Return a scannable label/value pair from legacy status copy.
+
+        Args:
+            text: Existing status copy, optionally containing ``label: value``.
+            fallback_label: Label to use when ``text`` has no explicit label.
+
+        Returns:
+            Tuple of ``(label, value)`` strings for the status row.
+        """
         raw = str(text or "").strip()
         label, separator, value = raw.partition(":")
         if separator:
@@ -195,7 +303,17 @@ class ConsoleWorkspaceContextTray(Vertical):
         value_id: str,
         fallback_label: str,
     ) -> ComposeResult:
-        """Build a two-column status row for scan-heavy workspace metadata."""
+        """Build a two-column status row for scan-heavy workspace metadata.
+
+        Args:
+            text: Source status copy to split into a label/value pair.
+            label_id: Textual widget id for the label cell.
+            value_id: Textual widget id for the value cell.
+            fallback_label: Label used when ``text`` does not provide one.
+
+        Returns:
+            ComposeResult yielding the status-pair widget.
+        """
         label, value = self._split_status_row(text, fallback_label)
         if fallback_label == "Handoff" and label != fallback_label:
             value = f"{label}: {value}"
@@ -208,7 +326,11 @@ class ConsoleWorkspaceContextTray(Vertical):
         )
 
     def _conversation_section(self) -> ConsoleWorkspaceConversationSectionState:
-        """Return section state, adapting legacy row-only snapshots."""
+        """Return section state, adapting legacy row-only snapshots.
+
+        Returns:
+            Conversation section state for the currently mounted tray state.
+        """
         section = self.state.conversation_section
         if section is not None:
             return section
@@ -242,7 +364,14 @@ class ConsoleWorkspaceContextTray(Vertical):
     def _conversation_count_title(
         section: ConsoleWorkspaceConversationSectionState,
     ) -> str:
-        """Return the Conversations heading with a stable workspace count."""
+        """Return the Conversations heading with a stable workspace count.
+
+        Args:
+            section: Conversation section state to summarize.
+
+        Returns:
+            Heading text containing the workspace conversation count.
+        """
         count = section.workspace_total_count
         if count is None:
             count = len(section.rows)
@@ -274,7 +403,14 @@ class ConsoleWorkspaceContextTray(Vertical):
     def _legacy_conversation_list_height(
         section: ConsoleWorkspaceConversationSectionState,
     ) -> int:
-        """Return the full content height for legacy conversation rows."""
+        """Return the full content height for legacy conversation rows.
+
+        Args:
+            section: Legacy conversation section state.
+
+        Returns:
+            Height needed to render every row without internal scrolling.
+        """
 
         if not section.rows:
             return _CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT
@@ -287,7 +423,14 @@ class ConsoleWorkspaceContextTray(Vertical):
     def _conversation_browser_list_height(
         browser: ConsoleConversationBrowserState,
     ) -> int:
-        """Return the full content height for the grouped browser rows."""
+        """Return the full content height for the grouped browser rows.
+
+        Args:
+            browser: Grouped conversation browser state.
+
+        Returns:
+            Height needed to render every visible browser row.
+        """
 
         height = 0
         for section in browser.sections:

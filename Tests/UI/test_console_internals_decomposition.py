@@ -2329,8 +2329,10 @@ async def test_console_left_rail_sections_use_available_space():
         assert workspace_context.parent is body
         assert staged_context.region.y < workspace_context.region.y
         assert workspace_context.region.height > staged_context.region.height
-        assert staged_context.region.width == body.region.width
-        assert workspace_context.region.width == body.region.width
+        body_content_width = body.scrollable_content_region.width
+        assert 0 <= body.region.width - body_content_width <= 2
+        assert staged_context.region.width == body_content_width
+        assert workspace_context.region.width == body_content_width
 
 
 @pytest.mark.asyncio

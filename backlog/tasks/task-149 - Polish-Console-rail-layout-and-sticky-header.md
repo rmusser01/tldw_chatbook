@@ -4,7 +4,7 @@ title: Polish Console rail layout and sticky header
 status: Done
 assignee: []
 created_date: '2026-07-01 01:18'
-updated_date: '2026-07-01 01:44'
+updated_date: '2026-07-01 03:00'
 labels: []
 dependencies: []
 ---
@@ -44,7 +44,8 @@ Reason: scoped UI layout and focus styling polish within existing Console/Textua
 - Replaced the nested scrollable conversation list with deterministic full-content list heights, preventing the conversation browser from trapping scroll or drawing the loud blue focus boundary.
 - Added quiet focus rules for the left rail, workspace tray, and conversation list; kept setup-blocked/control/transcript/composer surfaces fully opaque; expanded the transcript empty panel to fill its available region.
 - Updated generated modular CSS and targeted UI tests for rail geometry, focus styling, and persistent rail stylesheet regressions.
+- Addressed PR review feedback by switching scrolled tray measurement to `virtual_region`, removing the scroll-position-dependent height floor, preserving rail scroll position through recomposed syncs, and expanding Google-style docstrings on the touched helpers.
 - ADR required: no. This is scoped Textual layout and styling polish within existing Console UI contracts.
-- Verification: `pytest` affected Console UI suite passed, `62 passed, 1 warning`; `git diff --check` passed.
+- Verification: `pytest` affected Console UI suite passed, `63 passed, 1 warning`; `git diff --check` passed.
 - Visual evidence: `/tmp/console-rail-layout-polish-initial.png` and `/tmp/console-rail-layout-polish-scrolled.png`.
 <!-- SECTION:NOTES:END -->

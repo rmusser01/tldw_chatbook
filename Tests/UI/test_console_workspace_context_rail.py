@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import time
 from pathlib import Path
 
 import pytest
@@ -72,6 +73,15 @@ def _conversation_row_texts(screen) -> list[str]:
 def _static_plain(screen, selector: str) -> str:
     widget = screen.query_one(selector, Static)
     return getattr(widget.render(), "plain", str(widget.render()))
+
+
+async def _wait_for_condition(pilot, predicate, *, timeout: float = 1.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        await pilot.pause(0.05)
+    assert predicate()
 
 
 def _assert_status_row(
@@ -742,6 +752,67 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
         assert handoff_label.region.y >= workspace_context.region.y
         assert handoff_label.region.y + handoff_label.region.height <= workspace_bottom
         assert handoff_label.region.y + handoff_label.region.height <= composer.region.y
+
+
+@pytest.mark.asyncio
+async def test_console_workspace_sync_while_scrolled_keeps_scroll_range_stable() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    service = app.workspace_registry_service
+    active_workspace = service.get_active_workspace()
+    for index in range(40):
+        service.link_membership(
+            active_workspace.workspace_id,
+            item_type="conversation",
+            item_id=f"stable-scroll-chat-{index}",
+            role="workspace-thread",
+            title=f"Stable Scroll Chat {index:02d}",
+        )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(120, 34)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-conversations")
+
+        workspace_context = console.query_one(
+            "#console-workspace-context",
+            ConsoleWorkspaceContextTray,
+        )
+        left_rail_body = console.query_one("#console-left-rail-body")
+        assert workspace_context._nearest_scroll_parent() is left_rail_body
+        assert left_rail_body.max_scroll_y > 0
+
+        scroll_y = max(1, min(8, left_rail_body.max_scroll_y - 1))
+        initial_max_scroll_y = left_rail_body.max_scroll_y
+        initial_height = str(workspace_context.styles.height)
+        left_rail_body.scroll_to(y=scroll_y, animate=False)
+        await pilot.pause(0.1)
+        assert left_rail_body.scroll_y == scroll_y, (
+            left_rail_body.scroll_y,
+            left_rail_body.max_scroll_y,
+            str(workspace_context.styles.height),
+            workspace_context.region.height,
+            workspace_context.virtual_region.height,
+        )
+
+        workspace_context.sync_state(workspace_context.state)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                left_rail_body.scroll_y == scroll_y
+                and str(workspace_context.styles.height) == initial_height
+            ),
+        )
+
+        assert left_rail_body.scroll_y == scroll_y, (
+            left_rail_body.scroll_y,
+            left_rail_body.max_scroll_y,
+            str(workspace_context.styles.height),
+            workspace_context.region.height,
+            workspace_context.virtual_region.height,
+        )
+        assert left_rail_body.max_scroll_y == initial_max_scroll_y
+        assert str(workspace_context.styles.height) == initial_height
 
 
 @pytest.mark.asyncio
