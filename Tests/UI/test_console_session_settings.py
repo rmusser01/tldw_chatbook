@@ -25,7 +25,10 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_summary_state,
     validate_console_session_settings,
 )
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
+    ChatScreen,
+)
 from tldw_chatbook.UI.Screens import provider_model_resolution
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     MODAL_BODY_MIN_HEIGHT,
@@ -3200,14 +3203,24 @@ def test_console_missing_key_recovery_action_is_provider_specific() -> None:
     label, target, tooltip = screen._console_provider_recovery_action()
 
     assert screen._console_provider_blocker_copy() == "Provider setup needed: OpenAI missing API key"
-    assert label == "Add API Key"
+    assert label == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
     assert target == "settings"
-    assert tooltip == "Add an API key for OpenAI"
+    assert tooltip == "Configure OpenAI API and API key in Settings"
     assert screen._console_provider_recovery_field() == "api_key"
     assert (
         screen._console_setup_blocked_reason()
         == "Add API key in Settings > Providers & Models before sending."
     )
+
+    settings_button = Button("Sentinel")
+    ChatScreen._configure_console_provider_settings_action(
+        settings_button,
+        visible=True,
+        label="Localized recovery label",
+        tooltip=tooltip,
+        is_api_key_recovery=True,
+    )
+    assert settings_button.has_class("console-provider-api-key-action")
 
 
 def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details() -> None:

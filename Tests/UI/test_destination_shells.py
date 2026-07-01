@@ -2537,8 +2537,13 @@ async def test_settings_destination_uses_three_column_workbench_contract():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
+        await _wait_for_visible_text(
+            screen,
+            pilot,
+            "Settings | Global preferences, appearance, accounts, storage | Local",
+        )
         text = _visible_text(screen)
 
         assert "Settings | Global preferences, appearance, accounts, storage | Local" in text

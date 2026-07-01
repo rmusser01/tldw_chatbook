@@ -189,9 +189,12 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
                 app.screen._console_provider_blocker_copy()
                 == "Provider setup needed: choose a model"
             )
-            blocker_strip = app.screen.query("#console-provider-blocker")
-            assert blocker_strip and blocker_strip[0].display is True
-            assert app.screen.query_one("#console-open-provider-settings", Button)
+            recovery_callout = app.screen.query("#workbench-recovery-callout")
+            assert recovery_callout and recovery_callout[0].display is True
+            recovery_action = app.screen.query_one("#workbench-recovery-action", Button)
+            assert recovery_action.display is True
+            assert str(recovery_action.label) == "Choose model"
+            assert app.screen.query_one("#console-open-provider-settings", Button).display is False
             assert "More: Ctrl+P" in _screen_text(app)
 
             await app.handle_screen_navigation(NavigateToScreen("acp"))

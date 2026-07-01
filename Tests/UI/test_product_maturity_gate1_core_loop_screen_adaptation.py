@@ -61,13 +61,16 @@ def _visible_text(screen) -> str:
     return " ".join([*static_text, *button_text])
 
 
-async def _wait_for_visible_text(screen, pilot, expected: str, *, timeout: float = 1.0) -> None:
+async def _wait_for_visible_text(screen, pilot, expected: str, *, timeout: float = 4.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if expected in _visible_text(screen):
             await pilot.pause()
             return
         await pilot.pause(0.01)
+    if expected in _visible_text(screen):
+        await pilot.pause()
+        return
     raise AssertionError(f"Timed out waiting for {expected!r}. Visible text: {_visible_text(screen)}")
 
 

@@ -27,7 +27,10 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
+    ChatScreen,
+)
 from tldw_chatbook.config import resolve_provider_name
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleStagedContextTray
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
@@ -1650,7 +1653,7 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
         assert recovery.display is True
         assert recovery.region.y < transcript.region.y
         assert recovery_action.display is True
-        assert str(recovery_action.label) == "Add API Key"
+        assert str(recovery_action.label) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         assert start_here.styles.display == "none"
         assert action_hints.styles.display == "none"
 
@@ -1659,10 +1662,9 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             "Provider setup needed",
             "OpenAI missing API key",
             "Impact: Send is blocked until setup is finished.",
-            "Add API Key",
+            CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
             "Start Console",
             "Add an API key to enable Send. Then type in Composer or attach context.",
-            "Add API key",
             "Attach context",
             "Run Library RAG",
         ):
@@ -1749,8 +1751,8 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         assert button.display is True
         assert button.disabled is False
         assert button.region.height == 1
-        assert button.region.width >= len("Add API Key")
-        assert str(button.label) == "Add API Key"
+        assert button.region.width >= len(CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL)
+        assert str(button.label) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         assert button.has_class("is-primary")
         assert recovery.region.y < button.region.y
         recovery_text = getattr(recovery.renderable, "plain", str(recovery.renderable))
@@ -1758,7 +1760,7 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         assert "Provider setup needed: OpenAI missing API key" in recovery_text
         assert "Impact: Send is blocked until setup is finished." in recovery_text
         text = _visible_text(console)
-        assert "Add API Key" in text
+        assert CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL in text
         assert console.query_one("#console-inspector-rail-handle").display is True
         assert console.query_one("#console-right-rail").display is False
         assert text.lower().count("missing api key") == 1

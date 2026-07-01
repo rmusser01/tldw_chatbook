@@ -81,6 +81,10 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
                 pilot,
                 lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
             )
+            await _wait_until(
+                pilot,
+                lambda: bool(app.screen.query("#library-open-import-export")),
+            )
             library_text = _screen_text(app)
             assert "Import/Export Sources" in library_text
             assert "Search/RAG" in library_text
@@ -110,6 +114,10 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
                 lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
             )
             # Search/RAG is likewise an in-Library mode now.
+            await _wait_until(
+                pilot,
+                lambda: bool(app.screen.query("#library-open-search")),
+            )
             app.screen.query_one("#library-open-search", Button).press()
             await _wait_until(
                 pilot,
@@ -150,5 +158,4 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
                 assert subscription_window is not None
                 assert subscription_window.initial_tab == "watchlist-runs"
                 assert subscription_window._selected_watchlist_run_id == "local:watchlist_run:91"
-
 

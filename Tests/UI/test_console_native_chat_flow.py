@@ -29,7 +29,10 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
+    ChatScreen,
+)
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
@@ -2122,7 +2125,10 @@ async def test_console_setup_required_state_groups_recovery_and_action_copy():
         recovery_text = getattr(recovery.renderable, "plain", str(recovery.renderable))
         assert "Provider setup needed" in recovery_text
         assert "Impact: Send is blocked until setup is finished." in recovery_text
-        assert str(console.query_one("#workbench-recovery-action", Button).label) == "Add API Key"
+        assert (
+            str(console.query_one("#workbench-recovery-action", Button).label)
+            == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
+        )
         assert recovery.region.y < console.query_one("#console-native-transcript").region.y
 
 
@@ -2187,7 +2193,7 @@ async def test_console_inspector_setup_state_explains_blocked_send_without_selec
         inspector_text = _visible_text(console.query_one("#console-run-inspector-state"))
         assert "Setup" in inspector_text
         assert "Blocked impact" in inspector_text
-        assert "Add API Key" in inspector_text
+        assert CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL in inspector_text
         assert "Selected Message" not in inspector_text
 
 
@@ -3610,11 +3616,15 @@ async def test_console_conversation_browser_search_ignores_stale_results():
 
         console._console_conversation_browser_query = "beta"
         console._console_conversation_browser_search_token += 1
-        fresh_token = console._console_conversation_browser_search_token
         app.chat_conversation_scope_service.release.set()
         await stale_task
+
+        console._console_conversation_browser_query = "beta"
+        console._console_conversation_browser_search_token += 1
+        fresh_token = console._console_conversation_browser_search_token
         await console._refresh_console_conversation_browser_search("beta", fresh_token)
-        row_texts = await _wait_for_workspace_conversation_text(console, pilot, "Fresh Beta")
+        await _wait_for_browser_conversation_row(console, pilot, "fresh-beta")
+        row_texts = _console_workspace_conversation_texts(console)
         assert all("Stale Alpha" not in text for text in row_texts)
 
 

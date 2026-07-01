@@ -41,6 +41,29 @@ def _seed_library_content(app) -> None:
     )
 
 
+async def _wait_for_library_conversation_selection(
+    screen,
+    pilot,
+    conversation_id: str,
+    expected_title: str,
+    *,
+    attempts: int = 80,
+) -> None:
+    for _ in range(attempts):
+        if (
+            getattr(screen, "_selected_conversation_id", None) == conversation_id
+            and expected_title in _visible_text(screen)
+        ):
+            await pilot.pause()
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"Conversation {conversation_id!r} was not selected. "
+        f"selected={getattr(screen, '_selected_conversation_id', None)!r}; "
+        f"visible={_visible_text(screen)}"
+    )
+
+
 class StaticLibraryCollectionsService:
     """Small mounted-test service for Library Collections snapshots."""
 
@@ -710,7 +733,12 @@ async def test_library_navigation_context_opens_requested_conversation() -> None
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_CONVERSATION_ID: "chat-2"})
-        await _wait_for_selector(screen, pilot, "#library-selected-conversation-title")
+        await _wait_for_library_conversation_selection(
+            screen,
+            pilot,
+            "chat-2",
+            "Design Review",
+        )
 
         visible = _visible_text(screen)
         assert getattr(screen, "_active_mode") == "conversations"
