@@ -278,6 +278,21 @@ def test_generated_console_stylesheet_includes_rail_rules():
         assert "max-width: 11;" in right_button
 
 
+def test_generated_console_stylesheet_includes_rail_section_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for selector in (
+        ".console-rail-section-header",
+        ".console-rail-section-title",
+        ".console-rail-section-toggle",
+        ".console-rail-section-body",
+        ".console-model-section-line",
+    ):
+        assert selector in component_css, selector
+        assert selector in generated_css, selector
+
+
 @pytest.mark.asyncio
 async def test_console_first_start_renders_left_rail_and_right_handle():
     app = _build_test_app()
