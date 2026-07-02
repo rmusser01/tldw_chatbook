@@ -112,3 +112,35 @@ def test_chat_message_defaults_to_complete_status():
     assert message.content == "hello"
     assert message.status == "complete"
     assert message.id
+
+
+from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_AUTO_TITLE_MAX_LENGTH,
+    derive_console_session_title,
+    is_default_console_session_title,
+)
+
+
+def test_is_default_console_session_title_matches_chat_number_pattern():
+    assert is_default_console_session_title("Chat 1")
+    assert is_default_console_session_title("  Chat 42  ")
+    assert not is_default_console_session_title("API refactor plan")
+    assert not is_default_console_session_title("Chat")
+    assert not is_default_console_session_title("Chat one")
+    assert not is_default_console_session_title("")
+
+
+def test_derive_console_session_title_collapses_whitespace():
+    assert derive_console_session_title("  fix   the\nlogin  bug ") == "fix the login bug"
+
+
+def test_derive_console_session_title_truncates_long_drafts():
+    draft = "please review the workspace registry service for thread safety"
+    title = derive_console_session_title(draft)
+    assert len(title) <= CONSOLE_AUTO_TITLE_MAX_LENGTH
+    assert title.endswith("...")
+    assert title == "please review the workspace..."
+
+
+def test_derive_console_session_title_empty_draft_returns_empty():
+    assert derive_console_session_title("   \n  ") == ""
