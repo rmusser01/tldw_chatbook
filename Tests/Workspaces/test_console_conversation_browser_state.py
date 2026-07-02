@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserInputRow,
     build_console_conversation_browser_state,
+    format_console_relative_age,
 )
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 
@@ -489,3 +492,89 @@ def test_duplicate_filtered_rows_produce_status_copy_from_deduped_matches():
     assert group.hidden_count == 0
     assert state.result_total_count == 1
     assert state.status_copy == "1 match"
+
+
+_NOW = datetime(2026, 7, 2, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def test_format_console_relative_age_buckets():
+    assert format_console_relative_age("2026-07-02T11:59:40+00:00", now=_NOW) == "now"
+    assert format_console_relative_age("2026-07-02T11:58:00+00:00", now=_NOW) == "2m"
+    assert format_console_relative_age("2026-07-02T10:59:00+00:00", now=_NOW) == "1h"
+    assert format_console_relative_age("2026-06-29T12:00:00+00:00", now=_NOW) == "3d"
+    assert format_console_relative_age("2026-06-10T12:00:00+00:00", now=_NOW) == "3w"
+    assert format_console_relative_age("2024-06-10T12:00:00+00:00", now=_NOW) == "2y"
+
+
+def test_format_console_relative_age_tolerates_bad_input():
+    assert format_console_relative_age("", now=_NOW) == ""
+    assert format_console_relative_age("not a timestamp", now=_NOW) == ""
+    # SQLite space-separated naive timestamps are treated as UTC.
+    assert format_console_relative_age("2026-07-02 11:58:00", now=_NOW) == "2m"
+    # Future timestamps clamp to "now".
+    assert format_console_relative_age("2026-07-02T13:00:00+00:00", now=_NOW) == "now"
+
+
+def _input_row(**overrides):
+    defaults = dict(
+        row_key="conv-1",
+        conversation_id="conv-1",
+        native_session_id=None,
+        title="Example",
+        scope_type="workspace",
+        workspace_id="ws-1",
+        workspace_label="Workspace 1",
+        updated_sort="2026-07-02T11:58:00+00:00",
+    )
+    defaults.update(overrides)
+    return ConsoleConversationBrowserInputRow(**defaults)
+
+
+def test_builder_fills_updated_label_from_updated_sort():
+    state = build_console_conversation_browser_state(
+        rows=[_input_row()],
+        active_workspace_id="ws-1",
+        now=_NOW,
+    )
+    workspaces = next(s for s in state.sections if s.section_id == "workspaces")
+    row = workspaces.groups[0].rows[0]
+    assert row.updated_label == "2m"
+
+
+def test_builder_keeps_caller_supplied_updated_label():
+    state = build_console_conversation_browser_state(
+        rows=[_input_row(updated_label="today")],
+        active_workspace_id="ws-1",
+        now=_NOW,
+    )
+    workspaces = next(s for s in state.sections if s.section_id == "workspaces")
+    assert workspaces.groups[0].rows[0].updated_label == "today"
+
+
+def test_non_active_workspace_groups_default_collapsed_regression():
+    state = build_console_conversation_browser_state(
+        rows=[
+            _input_row(),
+            _input_row(row_key="conv-2", conversation_id="conv-2", workspace_id="ws-2", workspace_label="Workspace 2"),
+        ],
+        active_workspace_id="ws-1",
+        now=_NOW,
+    )
+    workspaces = next(s for s in state.sections if s.section_id == "workspaces")
+    by_id = {group.group_id: group for group in workspaces.groups}
+    assert not by_id["workspace:ws-1"].collapsed
+    assert by_id["workspace:ws-2"].collapsed
+
+
+def test_rows_sorted_recent_first_regression():
+    state = build_console_conversation_browser_state(
+        rows=[
+            _input_row(row_key="old", conversation_id="old", title="Old", updated_sort="2026-06-01T00:00:00+00:00"),
+            _input_row(row_key="new", conversation_id="new", title="New", updated_sort="2026-07-01T00:00:00+00:00"),
+        ],
+        active_workspace_id="ws-1",
+        now=_NOW,
+    )
+    workspaces = next(s for s in state.sections if s.section_id == "workspaces")
+    titles = [row.title for row in workspaces.groups[0].rows]
+    assert titles == ["New", "Old"]
