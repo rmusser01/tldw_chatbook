@@ -39,6 +39,9 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
 )
+from tldw_chatbook.Widgets.Console.console_workspace_details import (
+    ConsoleWorkspaceDetailsTray,
+)
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
@@ -77,7 +80,7 @@ def test_console_provider_recovery_strip_visible_handles_missing_blocker_copy():
 
 def test_console_workspace_status_row_empty_value_uses_unavailable():
     """Status labels ending in a colon should not repeat the label as the value."""
-    assert ConsoleWorkspaceContextTray._split_status_row("Authority: ", "Authority") == (
+    assert ConsoleWorkspaceDetailsTray._split_status_row("Authority: ", "Authority") == (
         "Authority",
         "unavailable",
     )

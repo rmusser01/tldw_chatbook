@@ -17,6 +17,9 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
+from tldw_chatbook.Widgets.Console.console_workspace_details import (
+    ConsoleWorkspaceDetailsTray,
+)
 from tldw_chatbook.Workspaces import (
     ConsoleWorkspaceACPHandoffState,
     ConsoleConversationBrowserInputRow,
@@ -894,7 +897,7 @@ def test_console_workspace_switcher_modal_documents_constructor_contract() -> No
 
 def test_console_workspace_runtime_label_is_case_insensitive() -> None:
     assert (
-        ConsoleWorkspaceContextTray._friendly_status_label(
+        ConsoleWorkspaceDetailsTray._friendly_status_label(
             "Runtime: 2 bindings, 1 Ready, 1 Missing"
         )
         == "File tools: 1 ready, 1 missing"
@@ -903,30 +906,30 @@ def test_console_workspace_runtime_label_is_case_insensitive() -> None:
 
 def test_console_workspace_authority_label_preserves_non_local_state() -> None:
     assert (
-        ConsoleWorkspaceContextTray._friendly_status_label("Authority: runtime-missing")
+        ConsoleWorkspaceDetailsTray._friendly_status_label("Authority: runtime-missing")
         == "Storage: runtime missing"
     )
     assert (
-        ConsoleWorkspaceContextTray._friendly_status_label("Authority: server-backed")
+        ConsoleWorkspaceDetailsTray._friendly_status_label("Authority: server-backed")
         == "Storage: server backed"
     )
 
 
 def test_console_workspace_readiness_detail_preserves_error_copy() -> None:
     assert (
-        ConsoleWorkspaceContextTray._friendly_detail_copy(
+        ConsoleWorkspaceDetailsTray._friendly_detail_copy(
             "Workspace registry service is not ready. No background sync is running."
         )
         == "Workspace registry service is not ready. No background sync is running."
     )
     assert (
-        ConsoleWorkspaceContextTray._friendly_detail_copy(
+        ConsoleWorkspaceDetailsTray._friendly_detail_copy(
             "Workspace registry could not be read. No background sync is running."
         )
         == "Workspace registry could not be read. No background sync is running."
     )
     assert (
-        ConsoleWorkspaceContextTray._friendly_detail_copy(
+        ConsoleWorkspaceDetailsTray._friendly_detail_copy(
             "Local registry fallback is active. No background sync is running."
         )
         == "Chats stay local. Connect a server later for explicit handoff."
