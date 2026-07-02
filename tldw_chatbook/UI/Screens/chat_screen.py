@@ -2136,7 +2136,7 @@ class ChatScreen(BaseAppScreen):
                 status="active session" if selected else "open session",
                 selected=selected,
                 source_kind="native",
-                updated_sort="",
+                updated_sort=str(session.updated_at or ""),
             )
             rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows

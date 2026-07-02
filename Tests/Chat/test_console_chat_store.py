@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -741,3 +742,23 @@ def test_store_returns_message_snapshots_not_mutable_internals():
     stored = store.get_message(user_message.id)
     assert stored.content == "hello"
     assert stored.status == "complete"
+
+
+def test_create_session_records_updated_at():
+    store = ConsoleChatStore()
+    session = store.create_session()
+    parsed = datetime.fromisoformat(session.updated_at)
+    assert parsed.tzinfo is not None
+
+
+def test_append_message_touches_session_updated_at():
+    store = ConsoleChatStore()
+    session = store.create_session()
+    original = session.updated_at
+    store._sessions[session.id].updated_at = "2020-01-01T00:00:00+00:00"
+
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+
+    touched = store._sessions[session.id].updated_at
+    assert touched != "2020-01-01T00:00:00+00:00"
+    assert datetime.fromisoformat(touched) >= datetime.fromisoformat(original)
