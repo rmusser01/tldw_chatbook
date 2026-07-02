@@ -1631,11 +1631,18 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         row = console.query_one("#console-workspace-conversation-0")
         row_text = _widget_text(row)
         assert row_text.startswith("> ")
-        assert "Chat 1" in row_text
+        # Once the first message is accepted, the default "Chat 1" title is
+        # replaced by an auto-title derived from the message (see
+        # _maybe_auto_title_session in console_chat_controller.py).
+        assert "hello" in row_text
+        assert "Chat 1" not in row_text
         assert "\n" in row_text
         assert "Chats" in row_text
         assert "workspace-thread" not in row_text
         assert not re.search(r"\[[0-9a-f]{8}\]", row_text)
+        # The secondary line also carries a relative age label appended after
+        # persistence (e.g. "now", "2m", "1h"...).
+        assert "now" in row_text
         assert len(console.query("#console-workspace-empty-conversations")) == 0
 
 
