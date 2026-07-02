@@ -207,6 +207,32 @@ class ConsoleSettingsSummaryState:
     action_tooltip: str = "Configure Console settings"
 
 
+def _summary_row_value(row: str) -> str:
+    text = str(row or "").strip()
+    _label, separator, value = text.partition(":")
+    return value.strip() if separator else text
+
+
+def build_console_model_section_lines(
+    summary: ConsoleSettingsSummaryState,
+) -> tuple[str, str]:
+    """Build the two compact Model rail-section lines from summary rows.
+
+    Args:
+        summary: Preformatted Console settings summary rows.
+
+    Returns:
+        Tuple of ``(provider/model line, sampling·context·streaming line)``.
+    """
+    provider = _summary_row_value(summary.provider_row) or "not selected"
+    model = _summary_row_value(summary.model_row) or "no model"
+    sampling = _summary_row_value(summary.sampling_row).partition(",")[0].strip()
+    context = _summary_row_value(summary.context_row).partition(";")[0].strip()
+    transport = str(summary.transport_row or "").strip()
+    detail_parts = [part for part in (sampling, context, transport) if part]
+    return f"{provider} / {model}", " · ".join(detail_parts)
+
+
 def build_console_provider_options(
     providers_models: Mapping[str, Sequence[str]],
 ) -> list[ConsoleSettingsOption]:
