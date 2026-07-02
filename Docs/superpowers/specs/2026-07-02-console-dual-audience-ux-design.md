@@ -130,14 +130,24 @@ Four rules, applied consistently and mirrored in both stylesheet files (`css/com
 - Missing conversation timestamps render blank rather than erroring.
 - Unknown/corrupt persisted section states fall back to first-run defaults.
 
-## 6. Testing
+## 6. Design reference: posting
+
+[posting](https://github.com/darrenburns/posting/tree/main/src/posting) (darrenburns) is the reference for how a well-factored Textual app answers backend design questions. Patterns to follow when implementing:
+
+- **Context-aware command palette provider** (`posting/commands.py`): a single `textual.command.Provider` subclass whose `commands` property inspects current screen state and yields only currently-applicable commands (e.g., only the layout you're *not* in). Our §3 palette registration should be one `ConsoleCommandProvider` built this way — not ad-hoc per-widget registration.
+- **Typed `Message` dataclasses** (`posting/messages.py`): widgets communicate upward via small frozen dataclass messages, never by reaching into parents. New widgets (setup card, switcher, popover) emit messages; `chat_screen.py` handles them.
+- **One module per concern, widgets grouped by feature directory** (`widgets/request/*`, `widgets/response/*`): matches and validates our `Widgets/Console/*` layout — keep new widgets small and single-purpose rather than growing `chat_screen.py`.
+- **Jump mode** (`posting/jumper.py`, `jump_overlay.py`): an Amp-style `Jumpable` protocol (widgets declare a `jump_key`; an overlay paints keys over the screen; one keystroke focuses the target). Not in scope for the four phases, but the pattern to adopt if pane cycling (F6) proves too slow — noted as a candidate follow-up.
+- **Centralized help data** (`posting/help_data.py` + `help_screen.py`): binding descriptions live in one place feeding both footer hints and the help screen. Our footer hints (§3) should source from binding metadata the same way, not duplicated strings.
+
+## 7. Testing
 
 - House pattern: failing pilot/widget test first per behavior. Existing files `Tests/UI/test_console_internals_decomposition.py` and `Tests/UI/test_console_persistent_rails.py` extend; new test files cover the setup card, session switcher, and model popover.
 - Both stylesheets mirrored; CSS build step run.
 - Screenshot QA via the textual-serve live-capture workflow with real CSS.
 - Results judged against the known ~33-failure pre-existing UI test baseline; CI checks may be cancelled by design — verify locally.
 
-## 7. Phasing
+## 8. Phasing
 
 Four independently mergeable phases:
 
