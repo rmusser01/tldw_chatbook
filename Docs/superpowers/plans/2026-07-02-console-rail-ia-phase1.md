@@ -67,7 +67,7 @@ def test_derive_console_session_title_truncates_long_drafts():
     title = derive_console_session_title(draft)
     assert len(title) <= CONSOLE_AUTO_TITLE_MAX_LENGTH
     assert title.endswith("...")
-    assert title == "please review the workspac..."
+    assert title == "please review the workspace..."
 
 
 def test_derive_console_session_title_empty_draft_returns_empty():
