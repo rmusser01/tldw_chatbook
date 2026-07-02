@@ -246,13 +246,33 @@ class ConsoleWorkspaceContextTray(Vertical):
             )
 
         target_height = max(1, content_bottom - content_top)
-        scroll_parent = self._nearest_scroll_parent()
-        parent_region = getattr(scroll_parent, "region", None)
-        if parent_region is not None and parent_region.height > 0:
-            target_height = max(target_height, int(parent_region.height))
+        # When the tray is nested inside a collapsible left-rail section body,
+        # size to natural content only. Stretching to the shared scroll parent
+        # would push sibling sections (Context/Model/Details) out of the rail
+        # viewport.
+        if not self._is_inside_rail_section_body():
+            scroll_parent = self._nearest_scroll_parent()
+            parent_region = getattr(scroll_parent, "region", None)
+            if parent_region is not None and parent_region.height > 0:
+                target_height = max(target_height, int(parent_region.height))
 
         if int(region.height) != target_height:
             self.styles.height = target_height
+
+    def _is_inside_rail_section_body(self) -> bool:
+        """Return whether this tray is nested in a collapsible rail section body.
+
+        Returns:
+            True when an ancestor carries the ``console-rail-section-body``
+            class, meaning the tray shares the left-rail scroll container with
+            sibling sections and must not stretch to fill it.
+        """
+
+        for ancestor in self.ancestors:
+            has_class = getattr(ancestor, "has_class", None)
+            if callable(has_class) and has_class("console-rail-section-body"):
+                return True
+        return False
 
     @staticmethod
     def _static(text: str, *, id: str, classes: str = "") -> Static:

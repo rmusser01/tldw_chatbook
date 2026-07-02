@@ -655,6 +655,10 @@ async def _open_console_context_rail(console: ChatScreen, pilot) -> None:
         left_open=True,
     )
     console._sync_console_rail_visibility(rail_state)
+    # Storage/Sync/handoff status rows now live in the collapsible Details
+    # section; expand it so its rows lay out with a real screen region.
+    if not console._current_console_rail_state().details_open:
+        console._toggle_console_rail_section("details")
     await _wait_for_selector(console, pilot, "#console-workspace-authority-label")
     for _ in range(40):
         label = console.query_one("#console-workspace-authority-label")
@@ -4076,6 +4080,11 @@ async def test_console_conversation_browser_long_list_keeps_readiness_rows_reach
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        # Storage/Server-handoff readiness rows now live in the collapsible
+        # Details section beneath the conversation browser; expand it.
+        if not console._current_console_rail_state().details_open:
+            console._toggle_console_rail_section("details")
+        await pilot.pause()
         conversation_list = console.query_one("#console-workspace-conversations")
         server_label = console.query_one("#console-workspace-server-readiness-label")
         server_value = console.query_one("#console-workspace-server-readiness-value")

@@ -205,6 +205,31 @@ async def _wait_for_saved_settings(pilot, saved_settings, expected_count: int) -
     )
 
 
+def _rail_prefs(
+    *,
+    left_open: bool,
+    right_open: bool,
+    session_open: bool = True,
+    context_open: bool = True,
+    model_open: bool = True,
+    details_open: bool = False,
+) -> dict[str, bool]:
+    """Full serialized rail-preference shape (left/right rails + four sections).
+
+    The persisted shape now carries the four collapsible left-rail section
+    states alongside the left/right rail openness. Section states default to
+    the first-run layout (Session/Context/Model open, Details collapsed).
+    """
+    return {
+        "left_open": left_open,
+        "right_open": right_open,
+        "session_open": session_open,
+        "context_open": context_open,
+        "model_open": model_open,
+        "details_open": details_open,
+    }
+
+
 class _FixedUuid:
     def __init__(self, value: str) -> None:
         self.value = value
@@ -491,14 +516,11 @@ async def test_console_rail_state_persists_by_workspace_session_key(monkeypatch)
 
     rail_state = app.app_config["console"]["rail_state"]
     expected_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:{session.id}"
-    assert rail_state[expected_key] == {
-        "left_open": False,
-        "right_open": True,
-    }
+    assert rail_state[expected_key] == _rail_prefs(left_open=False, right_open=True)
     assert saved_settings[-1] == (
         "console.rail_state",
         expected_key,
-        {"left_open": False, "right_open": True},
+        _rail_prefs(left_open=False, right_open=True),
     )
 
     app.console_rail_session_id = session.id
@@ -643,14 +665,15 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
 
     rail_state = app.app_config["console"]["rail_state"]
+    # The seeded session fallback entry is left untouched (raw two-key shape);
+    # the durable conversation copy is written through the full serialized shape.
     assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-1"] == {
         "left_open": False,
         "right_open": True,
     }
-    assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-1"] == {
-        "left_open": False,
-        "right_open": True,
-    }
+    assert rail_state[
+        f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-1"
+    ] == _rail_prefs(left_open=False, right_open=True)
 
 
 @pytest.mark.asyncio
@@ -689,20 +712,18 @@ async def test_console_rail_key_prefers_native_session_over_legacy_conversation(
         await _wait_for_hidden(console, pilot, "#console-left-rail")
 
         rail_state = app.app_config["console"]["rail_state"]
-        assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-native"] == {
-            "left_open": False,
-            "right_open": False,
-        }
+        assert rail_state[
+            f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-native"
+        ] == _rail_prefs(left_open=False, right_open=False)
         assert f"console_rail_state:{DEFAULT_WORKSPACE_ID}:legacy-conv" not in rail_state
 
         session.persisted_conversation_id = "native-conv"
         console._sync_console_rail_visibility(console._current_console_rail_state())
 
     rail_state = app.app_config["console"]["rail_state"]
-    assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:native-conv"] == {
-        "left_open": False,
-        "right_open": False,
-    }
+    assert rail_state[
+        f"console_rail_state:{DEFAULT_WORKSPACE_ID}:native-conv"
+    ] == _rail_prefs(left_open=False, right_open=False)
     assert f"console_rail_state:{DEFAULT_WORKSPACE_ID}:legacy-conv" not in rail_state
 
 
@@ -1057,3 +1078,51 @@ async def test_console_desktop_composer_span_ignores_rail_width_changes():
 
         assert right_open_main_width < left_collapsed_main_width
         assert composer.region.width == first_start_composer_width
+
+
+@pytest.mark.asyncio
+async def test_console_left_rail_renders_four_sections_with_details_collapsed():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-details")
+
+        for section_id in ("session", "context", "model", "details"):
+            assert _is_displayed(
+                console.query_one(f"#console-rail-section-header-{section_id}")
+            )
+        assert _is_displayed(console.query_one("#console-rail-section-body-session"))
+        assert _is_displayed(console.query_one("#console-rail-section-body-context"))
+        assert _is_displayed(console.query_one("#console-rail-section-body-model"))
+        assert not _is_displayed(console.query_one("#console-rail-section-body-details"))
+        # Session content: workspace context tray without duplicate heading.
+        assert _is_displayed(console.query_one("#console-workspace-context"))
+        _assert_selector_hidden_or_absent(console, "#console-workspace-context-title")
+        # Details content exists but is hidden.
+        assert list(console.query("#console-workspace-details"))
+        # Model section content.
+        assert _is_displayed(console.query_one("#console-model-section-line1"))
+        assert _is_displayed(console.query_one("#console-model-section-configure"))
+
+
+@pytest.mark.asyncio
+async def test_console_details_toggle_expands_and_persists():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-details")
+
+        await pilot.click("#console-rail-section-toggle-details")
+        await pilot.pause(0.1)
+        assert _is_displayed(console.query_one("#console-rail-section-body-details"))
+        assert _is_displayed(console.query_one("#console-workspace-authority-label"))
+
+    rail_state_config = app.app_config.get("console", {}).get("rail_state", {})
+    assert any(
+        isinstance(value, dict) and value.get("details_open") is True
+        for value in rail_state_config.values()
+    )

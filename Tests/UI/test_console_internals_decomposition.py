@@ -2318,6 +2318,8 @@ async def test_console_left_rail_sections_use_available_space():
         left_rail = console.query_one("#console-left-rail")
         body = console.query_one("#console-left-rail-body")
         header = console.query_one(".console-rail-header")
+        session_body = console.query_one("#console-rail-section-body-session")
+        context_body = console.query_one("#console-rail-section-body-context")
         staged_context = console.query_one("#console-staged-context-tray")
         workspace_context = console.query_one("#console-workspace-context")
 
@@ -2325,9 +2327,11 @@ async def test_console_left_rail_sections_use_available_space():
         assert header.region.height == 1
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
-        assert staged_context.parent is body
-        assert workspace_context.parent is body
-        assert staged_context.region.y < workspace_context.region.y
+        # The trays now live inside their collapsible section bodies: workspace
+        # context in Session (first), staged context in Context (second).
+        assert staged_context.parent is context_body
+        assert workspace_context.parent is session_body
+        assert workspace_context.region.y < staged_context.region.y
         assert workspace_context.region.height > staged_context.region.height
         body_content_width = body.scrollable_content_region.width
         assert 0 <= body.region.width - body_content_width <= 2
