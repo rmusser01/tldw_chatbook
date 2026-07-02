@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -971,3 +972,52 @@ async def test_regenerate_continuation_message_ends_provider_payload_with_user_i
         {"role": "assistant", "content": "Seed"},
         {"role": "user", "content": "Continue and extend the selected message."},
     ]
+
+
+class _AutoTitleReadyGateway:
+    async def resolve_for_send(self, selection):
+        return SimpleNamespace(ready=True, visible_copy="")
+
+    async def stream_chat(self, resolution, messages):
+        yield "ok"
+
+
+def _auto_title_controller() -> ConsoleChatController:
+    return ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=_AutoTitleReadyGateway(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_auto_titles_default_session_from_first_message():
+    controller = _auto_title_controller()
+    session = controller.new_session()
+    assert session.title == "Chat 1"
+
+    await controller.submit_draft("fix the login bug in the auth flow")
+
+    assert controller.store.sessions()[0].title == "fix the login bug in the au..."
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_preserves_user_renamed_session_title():
+    controller = _auto_title_controller()
+    session = controller.new_session()
+    controller.store.rename_session(session.id, "My research thread")
+
+    await controller.submit_draft("hello there")
+
+    assert controller.store.sessions()[0].title == "My research thread"
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_does_not_retitle_after_first_send():
+    controller = _auto_title_controller()
+    controller.new_session()
+
+    await controller.submit_draft("first message decides the title")
+    first_title = controller.store.sessions()[0].title
+    await controller.submit_draft("second message must not retitle")
+
+    assert controller.store.sessions()[0].title == first_title
