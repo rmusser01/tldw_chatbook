@@ -65,3 +65,11 @@ test_console_browser_selecting_duplicate_membership_row_ignores_other_workspace_
 After the 86230bb4 fix, five-suite Console UI gate = 299 passed, 2 failed
 (same two baseline failures); Tests/UI/test_console_persistent_rails.py =
 30 passed.
+
+## Composer cursor addendum (2026-07-02, commit 164bbe68)
+
+- console-composer-cursor-empty-2026-07-02.png — focused empty composer:
+  block cursor before the dim placeholder.
+- console-composer-cursor-typed-2026-07-02.png — cursor trailing typed text
+  ("Summarize the latest workspace notes▌"); blinks at 0.53s while focused,
+  hidden on blur (blink covered by deterministic pilot tests).
