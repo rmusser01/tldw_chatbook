@@ -144,3 +144,8 @@ def test_derive_console_session_title_truncates_long_drafts():
 
 def test_derive_console_session_title_empty_draft_returns_empty():
     assert derive_console_session_title("   \n  ") == ""
+
+
+def test_derive_console_session_title_handles_max_length_below_ellipsis_width():
+    assert derive_console_session_title("hello world", max_length=2) == "he"
+    assert derive_console_session_title("hello world", max_length=0) == ""

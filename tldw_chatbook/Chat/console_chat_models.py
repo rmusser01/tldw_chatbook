@@ -64,6 +64,8 @@ def derive_console_session_title(
         return ""
     if len(collapsed) <= max_length:
         return collapsed
+    if max_length < 3:
+        return collapsed[:max_length]
     return f"{collapsed[: max_length - 3].rstrip()}..."
 
 

@@ -515,6 +515,11 @@ def test_format_console_relative_age_tolerates_bad_input():
     assert format_console_relative_age("2026-07-02T13:00:00+00:00", now=_NOW) == "now"
 
 
+def test_format_console_relative_age_tolerates_naive_now():
+    naive_now = datetime(2026, 7, 2, 12, 0, 0)
+    assert format_console_relative_age("2026-07-02T11:58:00+00:00", now=naive_now) == "2m"
+
+
 def _input_row(**overrides):
     defaults = dict(
         row_key="conv-1",

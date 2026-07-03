@@ -40,6 +40,8 @@ def format_console_relative_age(value: str, *, now: datetime) -> str:
     parsed = _parse_browser_timestamp(value)
     if parsed is None:
         return ""
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     total_seconds = max(0.0, (now - parsed).total_seconds())
     minutes = int(total_seconds // 60)
     if minutes < 1:
