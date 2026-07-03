@@ -5144,6 +5144,7 @@ class ChatScreen(BaseAppScreen):
                     "persisted_conversation_id": session.persisted_conversation_id,
                     "draft": session.draft,
                     "settings": self._serialize_console_settings(session.settings),
+                    "updated_at": session.updated_at,
                 }
                 for session in store.sessions()
             ],
@@ -5177,7 +5178,7 @@ class ChatScreen(BaseAppScreen):
             if not isinstance(raw_session, dict):
                 continue
             session_id = str(raw_session.get("id") or uuid.uuid4())
-            session = ConsoleChatSession(
+            session_kwargs: dict[str, Any] = dict(
                 id=session_id,
                 title=str(raw_session.get("title") or DEFAULT_CONSOLE_SESSION_TITLE),
                 workspace_id=str(
@@ -5193,6 +5194,13 @@ class ChatScreen(BaseAppScreen):
                 settings=self._restore_console_settings(raw_session.get("settings")),
                 draft=str(raw_session.get("draft") or ""),
             )
+            # Legacy payloads saved before `updated_at` was serialized omit the
+            # key entirely; keep the ConsoleChatSession factory default (now)
+            # for those instead of forcing an empty/invalid timestamp.
+            raw_updated_at = raw_session.get("updated_at")
+            if raw_updated_at:
+                session_kwargs["updated_at"] = str(raw_updated_at)
+            session = ConsoleChatSession(**session_kwargs)
             restored_sessions.append(session)
             restored_messages_by_session[session.id] = []
             raw_messages = messages_by_session.get(session.id, [])

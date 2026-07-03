@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import re
 from dataclasses import replace
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -23,7 +24,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunStatus,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -5467,3 +5468,86 @@ def test_native_console_state_serializes_plain_string_message_role():
     serialized = ChatScreen._serialize_console_message(message)
 
     assert serialized["role"] == "assistant"
+
+
+def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
+    """Build a native-console screen shell for direct serialize/restore calls.
+
+    Bypasses ``ChatScreen.__init__`` (which requires a mounted Textual app)
+    while still resolving the class's inherited serialize/restore helpers
+    normally, so ``_serialize_native_console_state`` /
+    ``_restore_native_console_state`` can be exercised as plain, fast
+    unit-level round trips instead of a full pilot-driven screen.
+    """
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._console_chat_store = store
+    screen._console_visible_draft_session_id = None
+    screen._console_composer_or_none = lambda: None
+    return screen
+
+
+def test_native_console_state_round_trip_preserves_session_updated_at():
+    """Verify a restored session keeps its original ``updated_at`` timestamp.
+
+    Without this, every restored session's ``updated_at`` resets to "now" on
+    screen recreation, so restored sessions all show age "now" and recent-
+    first ordering across restored sessions breaks.
+    """
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(
+        id="session-a",
+        title="Chat 1",
+        updated_at="2020-01-01T00:00:00+00:00",
+    )
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen(store)
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+    assert payload["sessions"][0]["updated_at"] == "2020-01-01T00:00:00+00:00"
+
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+    restored_screen._restore_native_console_state(payload)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.updated_at == "2020-01-01T00:00:00+00:00"
+
+
+def test_native_console_state_restore_tolerates_legacy_payload_without_updated_at():
+    """Verify legacy saved states (no ``updated_at`` key) still restore.
+
+    Older saved screen states were written before ``updated_at`` was
+    serialized, so restore must fall back to the ``ConsoleChatSession``
+    factory default instead of raising or leaving the field unset.
+    """
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-a",
+        "sessions": [
+            {
+                "id": "session-a",
+                "title": "Chat 1",
+                "workspace_id": CONSOLE_GLOBAL_WORKSPACE_ID,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+            }
+        ],
+        "messages_by_session": {"session-a": []},
+    }
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+
+    before = datetime.now(timezone.utc)
+    restored_screen._restore_native_console_state(payload)
+    after = datetime.now(timezone.utc)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.updated_at
+    restored_dt = datetime.fromisoformat(restored_session.updated_at)
+    assert before <= restored_dt <= after
