@@ -8,6 +8,10 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleControlState,
     build_console_disabled_reason,
 )
+from tldw_chatbook.Chat.console_onboarding_state import (
+    ConsoleSetupCardState,
+    ConsoleSetupStep,
+)
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_FOCUS_TARGETS_BY_PANE,
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
@@ -490,6 +494,15 @@ async def test_console_empty_transcript_actions_post_workbench_messages():
     app = EmptyTranscriptActionHarness()
 
     async with app.run_test(size=(80, 24)) as pilot:
+        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.sync_empty_state(
+            ConsoleSetupCardState(
+                mode="card",
+                steps=(ConsoleSetupStep(state="active", label="Add an API key"),),
+            ),
+            provider_action_label="Configure API",
+            provider_action_tooltip="Open provider settings.",
+        )
         await pilot.pause()
 
         await pilot.click("#console-empty-attach-context")
@@ -506,7 +519,12 @@ async def test_console_transcript_empty_fallback_uses_ready_activation_copy():
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
 
-        transcript.sync_empty_state("")
+        transcript.sync_empty_state(
+            ConsoleSetupCardState(
+                mode="ready_line",
+                body_copy="Type in Composer, attach sources, or run Library RAG before sending.",
+            )
+        )
         await pilot.pause()
 
         assert _widget_text(app.query_one("#console-empty-body")) == (

@@ -14,6 +14,12 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
+from tldw_chatbook.Chat.console_onboarding_state import (
+    CONSOLE_QUIET_EMPTY_COPY,
+    CONSOLE_SETUP_CARD_TITLE,
+    ConsoleSetupCardState,
+    ConsoleSetupStep,
+)
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 
 
@@ -75,6 +81,7 @@ class _TranscriptRow:
     renderable: str = ""
     action_label: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
     action_tooltip: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
+    card_state: ConsoleSetupCardState | None = None
 
 
 class ConsoleTranscriptMessage(Static):
@@ -219,11 +226,11 @@ class ConsoleTranscriptEmptyAction(Button):
 
 
 class ConsoleTranscriptEmptyPanel(Vertical):
-    """Actionable Console transcript empty state."""
+    """Actionable Console transcript empty state, driven by a setup card state."""
 
     def __init__(
         self,
-        copy: str,
+        card_state: ConsoleSetupCardState,
         *,
         provider_action_label: str,
         provider_action_tooltip: str,
@@ -232,22 +239,41 @@ class ConsoleTranscriptEmptyPanel(Vertical):
             id="console-transcript-empty-state",
             classes="console-transcript-empty-panel",
         )
-        self.empty_state_copy = copy
+        self.card_state = card_state
         self.provider_action_label = provider_action_label
         self.provider_action_tooltip = provider_action_tooltip
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            "Start Console",
+        is_card_mode = self.card_state.mode == "card"
+
+        title = Static(
+            CONSOLE_SETUP_CARD_TITLE,
             id="console-empty-title",
             classes="console-transcript-empty-title",
         )
-        yield Static(
-            self.empty_state_copy,
+        if not is_card_mode:
+            title.styles.display = "none"
+        yield title
+
+        if is_card_mode and self.card_state.steps:
+            for index, step in enumerate(self.card_state.steps, start=1):
+                yield Static(
+                    self._step_text(index, step),
+                    id=f"console-setup-step-{index}",
+                    classes=f"console-setup-step console-setup-step-{step.state}",
+                    markup=False,
+                )
+
+        body = Static(
+            self.card_state.body_copy,
             id="console-empty-body",
             classes="console-transcript-empty-body console-transcript-empty-state",
         )
-        yield Horizontal(
+        if is_card_mode:
+            body.styles.display = "none"
+        yield body
+
+        action_row = Horizontal(
             ConsoleTranscriptEmptyAction(
                 self.provider_action_label,
                 action_id="provider-recovery",
@@ -269,25 +295,29 @@ class ConsoleTranscriptEmptyPanel(Vertical):
             id="console-empty-action-row",
             classes="console-transcript-empty-action-row",
         )
+        if not is_card_mode:
+            action_row.styles.display = "none"
+        yield action_row
 
-    def sync_empty_state(
+    @staticmethod
+    def _step_text(index: int, step: ConsoleSetupStep) -> str:
+        text = f"{index}. {step.glyph} {step.label}"
+        if step.detail:
+            text = f"{text}  {step.detail}"
+        return text
+
+    def sync_card_state(
         self,
-        copy: str,
+        card_state: ConsoleSetupCardState,
         *,
         provider_action_label: str,
         provider_action_tooltip: str,
     ) -> None:
-        """Update the mounted body copy without remounting the action row."""
-        self.empty_state_copy = copy
+        """Refresh the onboarding surface from a new card state."""
+        self.card_state = card_state
         self.provider_action_label = provider_action_label
         self.provider_action_tooltip = provider_action_tooltip
-        try:
-            self.query_one("#console-empty-body", Static).update(copy)
-            action = self.query_one("#console-empty-choose-model", Button)
-            action.label = provider_action_label
-            action.tooltip = provider_action_tooltip
-        except Exception:
-            return
+        self.refresh(recompose=True)
 
 
 class ConsoleTranscript(VerticalScroll):
@@ -306,7 +336,9 @@ class ConsoleTranscript(VerticalScroll):
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None
         self._refresh_lock = asyncio.Lock()
-        self.empty_state_copy = EMPTY_TRANSCRIPT_COPY
+        self._empty_card_state = ConsoleSetupCardState(
+            mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
+        )
         self.empty_state_action_label = EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
         self.empty_state_action_tooltip = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
         self._row_widgets: dict[str, Widget] = {}
@@ -332,13 +364,13 @@ class ConsoleTranscript(VerticalScroll):
 
     def sync_empty_state(
         self,
-        copy: str = "",
+        card_state: ConsoleSetupCardState,
         *,
         provider_action_label: str = "",
         provider_action_tooltip: str = "",
     ) -> None:
-        """Refresh the empty transcript copy while preserving message exports."""
-        next_copy = copy.strip() or EMPTY_TRANSCRIPT_COPY
+        """Refresh the empty transcript state while preserving message exports."""
+        next_card_state = card_state
         next_action_label = (
             provider_action_label.strip() or EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
         )
@@ -346,12 +378,12 @@ class ConsoleTranscript(VerticalScroll):
             provider_action_tooltip.strip() or EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
         )
         if (
-            self.empty_state_copy == next_copy
+            self._empty_card_state == next_card_state
             and self.empty_state_action_label == next_action_label
             and self.empty_state_action_tooltip == next_action_tooltip
         ):
             return
-        self.empty_state_copy = next_copy
+        self._empty_card_state = next_card_state
         self.empty_state_action_label = next_action_label
         self.empty_state_action_tooltip = next_action_tooltip
         if self.is_mounted and not self._messages:
@@ -532,13 +564,13 @@ class ConsoleTranscript(VerticalScroll):
                     kind="empty",
                     signature=(
                         "empty",
-                        self.empty_state_copy,
+                        self._empty_card_state,
                         self.empty_state_action_label,
                         self.empty_state_action_tooltip,
                     ),
-                    renderable=self.empty_state_copy,
                     action_label=self.empty_state_action_label,
                     action_tooltip=self.empty_state_action_tooltip,
+                    card_state=self._empty_card_state,
                 )
             )
         return rows
@@ -601,8 +633,9 @@ class ConsoleTranscript(VerticalScroll):
                 classes="console-transcript-rule",
             )
         if row.kind == "empty":
+            assert row.card_state is not None
             return ConsoleTranscriptEmptyPanel(
-                row.renderable,
+                row.card_state,
                 provider_action_label=row.action_label,
                 provider_action_tooltip=row.action_tooltip,
             )
@@ -623,8 +656,9 @@ class ConsoleTranscript(VerticalScroll):
             widget.sync_message(row.message, selected=row.selected)
             return widget
         if row.kind == "empty" and isinstance(widget, ConsoleTranscriptEmptyPanel):
-            widget.sync_empty_state(
-                row.renderable,
+            assert row.card_state is not None
+            widget.sync_card_state(
+                row.card_state,
                 provider_action_label=row.action_label,
                 provider_action_tooltip=row.action_tooltip,
             )
