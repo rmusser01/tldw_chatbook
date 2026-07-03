@@ -422,10 +422,26 @@ class ConsoleComposerBar(Horizontal):
         *,
         width: int = FALLBACK_DRAFT_WIDTH,
         style_ranges: list[_DraftStyleRange] | None = None,
-        cursor: bool = False,
+        focused: bool = False,
+        cursor_visible: bool = True,
     ) -> Text:
         if text:
-            line_slices = cls._visible_draft_line_slices(text, width)
+            # While focused, exactly one trailing display cell is always
+            # reserved after the wrapped draft -- the caret glyph during the
+            # visible blink phase, an ordinary space during the hidden phase
+            # -- and it is wrapped in the *same* pass as the draft itself
+            # (rather than appended afterward). That keeps the two blink
+            # phases layout-identical: whichever character reserves the row
+            # is decided by wrap width alone, never by which literal
+            # character it is, so a blink tick can never change how many
+            # visual rows the draft occupies (which previously could clip or
+            # jitter the composer when the last wrapped line landed exactly
+            # at the wrap width). The glyph is left unstyled: the block
+            # character is prominent enough on its own, and leaving it
+            # unstyled keeps it from being mistaken for a stateful paste
+            # token.
+            trailing_cell = (cls.CURSOR_GLYPH if cursor_visible else " ") if focused else ""
+            line_slices = cls._visible_draft_line_slices(f"{text}{trailing_cell}", width)
             rendered = Text("\n".join(line.text for line in line_slices))
             if style_ranges:
                 output_offset = 0
@@ -445,38 +461,41 @@ class ConsoleComposerBar(Horizontal):
                     output_offset += len(line_slice.text)
                     if line_index < len(line_slices) - 1:
                         output_offset += 1
-            # Append the cursor glyph after wrapping so it never perturbs the
-            # wrap positions computed above; editing in this composer is
-            # always at the end of the draft. The glyph is left unstyled: the
-            # block character is prominent enough on its own, and leaving it
-            # unstyled keeps it from being mistaken for a stateful paste token.
-            if cursor:
-                rendered.append(cls.CURSOR_GLYPH)
             return rendered
 
-        if cursor:
-            placeholder = Text(cls.CURSOR_GLYPH)
+        if focused:
+            placeholder = Text(cls.CURSOR_GLYPH if cursor_visible else " ")
             placeholder.append(cls.DRAFT_PLACEHOLDER, style="bright_black")
             return placeholder
         return Text(cls.DRAFT_PLACEHOLDER, style="bright_black")
 
     def _placeholder_renderable(self, *, width: int) -> Text:
         """Return the empty composer placeholder copy."""
-        return self._draft_renderable("", width=width, cursor=self._should_show_cursor())
-
-    def _should_show_cursor(self) -> bool:
-        """Return whether the blinking caret glyph should render right now."""
-        if not self.has_focus_within:
-            return False
-        return getattr(self, "_cursor_visible", True)
+        return self._draft_renderable(
+            "",
+            width=width,
+            focused=self.has_focus_within,
+            cursor_visible=getattr(self, "_cursor_visible", True),
+        )
 
     @classmethod
-    def _visible_draft_row_count(cls, text: str, width: int) -> int:
+    def _visible_draft_row_count(
+        cls,
+        text: str,
+        width: int,
+        *,
+        reserve_trailing_cell: bool = False,
+    ) -> int:
         if not text:
             return cls.MIN_DRAFT_ROWS
+        # Budget for the same reserved trailing cell _draft_renderable adds
+        # while focused, computed once here (at focus/blur/mutation time,
+        # never on a blink tick) so the exactly-at-width case gets its extra
+        # row up front instead of only discovering it needs one mid-blink.
+        measured_text = f"{text} " if reserve_trailing_cell else text
         return max(
             cls.MIN_DRAFT_ROWS,
-            min(cls.MAX_DRAFT_ROWS, len(cls._wrap_draft_line_slices(text, width))),
+            min(cls.MAX_DRAFT_ROWS, len(cls._wrap_draft_line_slices(measured_text, width))),
         )
 
     def _draft_render_width(self) -> int:
@@ -517,7 +536,8 @@ class ConsoleComposerBar(Horizontal):
                 draft,
                 width=width,
                 style_ranges=self._display_draft_style_ranges(),
-                cursor=self._should_show_cursor(),
+                focused=self.has_focus_within,
+                cursor_visible=getattr(self, "_cursor_visible", True),
             )
         return self._placeholder_renderable(width=width)
 
@@ -542,7 +562,9 @@ class ConsoleComposerBar(Horizontal):
             self._cursor_visible = True
             draft = self._display_draft_text()
             width = self._draft_render_width()
-            row_count = self._visible_draft_row_count(draft, width)
+            row_count = self._visible_draft_row_count(
+                draft, width, reserve_trailing_cell=self.has_focus_within
+            )
             renderable = self._current_visible_draft_renderable(draft, width)
             self.query_one("#console-command-visible-text", Static).update(renderable)
             self._apply_draft_height(row_count)

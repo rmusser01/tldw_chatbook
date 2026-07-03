@@ -65,12 +65,16 @@ def _repo_text(path: Path) -> str:
 
 
 def _without_trailing_cursor(text: str) -> str:
-    """Strip a blinking-cursor glyph from rendered composer text.
+    """Strip a blinking-cursor placeholder from rendered composer text.
 
     The composer draft is often focused by default in these harnesses, so a
     solid caret (``ConsoleComposerBar.CURSOR_GLYPH``) may be present in the
     rendered text: trailing when there is draft content, or leading (ahead of
-    the dim placeholder copy) when the draft is empty. Draft-content
+    the dim placeholder copy) when the draft is empty. While focused, the
+    hidden half of the blink cycle reserves that same single display cell
+    with a plain space instead of the glyph (see
+    ``ConsoleComposerBar._draft_renderable``), so a test can race the real
+    blink timer under load; strip that placeholder form too. Draft-content
     assertions should stay agnostic to that focus/blink state.
     """
     glyph = ConsoleComposerBar.CURSOR_GLYPH
@@ -78,6 +82,10 @@ def _without_trailing_cursor(text: str) -> str:
         return text[len(glyph) :]
     if text.endswith(glyph):
         return text[: -len(glyph)]
+    if text.startswith(" ") and text[1:].startswith(ConsoleComposerBar.DRAFT_PLACEHOLDER):
+        return text[1:]
+    if text.endswith(" "):
+        return text[:-1]
     return text
 
 
@@ -561,6 +569,46 @@ async def test_console_composer_cursor_blink_toggles():
 
         composer._toggle_cursor_blink()
         assert ConsoleComposerBar.CURSOR_GLYPH in visible_draft.renderable.plain
+
+
+@pytest.mark.asyncio
+async def test_console_composer_cursor_blink_keeps_row_count_stable_at_wrap_width():
+    """Verify a blink tick never changes the composer's rendered row count.
+
+    When the last wrapped draft line lands exactly at the wrap width, the
+    caret glyph used to be appended only after wrapping, so it silently
+    overflowed onto an extra visual row only while visible: the hidden
+    blink phase rendered one row fewer, clipping/jittering the composer.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+
+        composer.focus()
+        await pilot.pause(0.1)
+
+        width = composer._draft_render_width()
+        composer.load_draft("a" * width)
+        await pilot.pause(0.1)
+
+        height_visible = composer.styles.height
+        assert ConsoleComposerBar.CURSOR_GLYPH in visible_draft.renderable.plain
+        rows_visible = _wrapped_plain_lines(visible_draft.renderable, width)
+
+        composer._toggle_cursor_blink()
+        height_hidden = composer.styles.height
+        assert ConsoleComposerBar.CURSOR_GLYPH not in visible_draft.renderable.plain
+        rows_hidden = _wrapped_plain_lines(visible_draft.renderable, width)
+
+        assert height_visible == height_hidden
+        assert len(rows_visible) == len(rows_hidden)
+        assert len(rows_visible) == 2
 
 
 @pytest.mark.asyncio
