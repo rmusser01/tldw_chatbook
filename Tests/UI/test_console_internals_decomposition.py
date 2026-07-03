@@ -1798,8 +1798,9 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             "OpenAI missing API key",
             "Impact: Send is blocked until setup is finished.",
             CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
-            "Start Console",
-            "Add an API key to enable Send. Then type in Composer or attach context.",
+            "Get started",
+            "Add an API key",
+            "Send your first message",
             "Attach context",
             "Run Library RAG",
         ):
@@ -1842,11 +1843,9 @@ async def test_console_empty_ready_transcript_shows_first_run_guidance():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         text = _visible_text(console)
-        assert "Start Console" in text
-        assert "Type in Composer, attach sources, or run Library RAG before sending." in text
-        assert "Choose model" in text
-        assert "Attach context" in text
-        assert "Run Library RAG" in text
+        assert "Ready — type a message to begin." in text
+        assert "Type in Composer, attach sources, or run Library RAG before sending." not in text
+        assert "Start Console" not in text
 
         await pilot.press("h")
         await pilot.pause(0.1)
@@ -2028,8 +2027,8 @@ async def test_console_empty_transcript_stays_neutral_when_setup_blocked(monkeyp
         transcript = console.query_one("#console-native-transcript")
         text = _visible_text(transcript)
 
-        assert "Start Console" in text
-        assert "Choose a model to enable Send. Then type in Composer or attach context." in text
+        assert "Get started" in text
+        assert "Send your first message" in text
         assert "Choose model" in text
         assert "Attach context" in text
         assert "Run Library RAG" in text
@@ -2184,11 +2183,8 @@ async def test_console_native_transcript_is_visible_transcript_surface():
         assert transcript.region.height > 0
         assert transcript.styles.display != "none"
         text = _visible_text(console)
-        assert "Start Console" in text
-        assert "Type in Composer, attach sources, or run Library RAG before sending." in text
-        assert "Choose model" in text
-        assert "Attach context" in text
-        assert "Run Library RAG" in text
+        assert "Ready — type a message to begin." in text
+        assert "Type in Composer, attach sources, or run Library RAG before sending." not in text
         assert "No messages yet. Send a prompt or attach context." not in text
 
 
@@ -2208,10 +2204,14 @@ async def test_console_empty_transcript_uses_compact_ready_state():
 
         assert len(empty_rows) == 1
         empty_panel = empty_rows[0]
-        assert _visible_text(empty_panel) == (
-            "Start Console Type in Composer, attach sources, or run Library RAG before "
-            "sending. Choose model Attach context Run Library RAG"
+        # Ready state is compact: one displayed ready line, no visible action row.
+        body = empty_panel.query_one("#console-empty-body", Static)
+        action_row = empty_panel.query_one("#console-empty-action-row")
+        assert getattr(body.render(), "plain", str(body.render())) == (
+            "Ready — type a message to begin."
         )
+        assert body.display is True
+        assert action_row.styles.display == "none"
         assert "No messages yet. Send a prompt or attach context." not in _visible_text(
             empty_panel
         )

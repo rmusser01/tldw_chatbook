@@ -78,6 +78,11 @@ from ...Chat.console_display_state import (
     build_console_evidence_display_state,
     coerce_non_negative_int,
 )
+from ...Chat.console_onboarding_state import (
+    ConsoleSetupCardState,
+    build_console_setup_card_state,
+    coerce_console_first_send_completed,
+)
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
@@ -189,9 +194,6 @@ CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
-CONSOLE_READY_EMPTY_TRANSCRIPT_COPY = (
-    "Type in Composer, attach sources, or run Library RAG before sending."
-)
 CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Configure API+API Key"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
@@ -854,6 +856,7 @@ class ChatScreen(BaseAppScreen):
         self._last_console_workbench_state: Any | None = None
         self._last_console_rail_state: ConsoleRailState | None = None
         self._console_guidance_dismissed = False
+        self._console_first_send_completed_cached: bool | None = None
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -3205,6 +3208,48 @@ class ChatScreen(BaseAppScreen):
             severity="warning",
         )
 
+    def _console_first_send_completed(self) -> bool:
+        """Return the persisted global first-send flag (cached per screen)."""
+        if self._console_first_send_completed_cached is None:
+            app_config = getattr(self.app_instance, "app_config", None)
+            raw = None
+            if isinstance(app_config, dict):
+                onboarding = app_config.get("console", {})
+                if isinstance(onboarding, dict):
+                    onboarding = onboarding.get("onboarding", {})
+                raw = (
+                    onboarding.get("first_send_completed")
+                    if isinstance(onboarding, dict)
+                    else None
+                )
+            self._console_first_send_completed_cached = coerce_console_first_send_completed(raw)
+        return self._console_first_send_completed_cached
+
+    def _record_console_first_send(self) -> None:
+        """Persist the one-time global first-send flag and refresh guidance."""
+        if self._console_first_send_completed():
+            return
+        self._console_first_send_completed_cached = True
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            app_config.setdefault("console", {}).setdefault("onboarding", {})[
+                "first_send_completed"
+            ] = True
+        self._save_console_onboarding_flag()
+        self._sync_console_transcript_guidance()
+
+    @work(thread=True)
+    def _save_console_onboarding_flag(self) -> None:
+        """Persist the first-send flag without blocking the UI thread."""
+        try:
+            save_setting_to_cli_config(
+                "console.onboarding",
+                "first_send_completed",
+                True,
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist Console onboarding flag: {}", exc)
+
     def _migrate_console_rail_fallback_preferences(
         self,
         key: str,
@@ -3971,36 +4016,6 @@ class ChatScreen(BaseAppScreen):
         return f"Provider setup needed: {settings_readiness.detail}"
 
     @staticmethod
-    def _console_empty_transcript_copy(
-        blocker_copy: str,
-        *,
-        guidance_visible: bool,
-    ) -> str:
-        """Return compact empty transcript copy while setup details live nearby."""
-        blocker = blocker_copy.strip()
-        if blocker:
-            return ChatScreen._console_blocked_empty_transcript_copy(blocker)
-        if guidance_visible:
-            return CONSOLE_READY_EMPTY_TRANSCRIPT_COPY
-        return ""
-
-    @staticmethod
-    def _console_blocked_empty_transcript_copy(blocker_copy: str) -> str:
-        """Return setup-aware empty transcript activation copy."""
-        blocker = blocker_copy.strip().lower()
-        if "choose a provider" in blocker:
-            action = "Choose a provider"
-        elif "choose a model" in blocker:
-            action = "Choose a model"
-        elif "api key" in blocker:
-            action = "Add an API key"
-        elif "endpoint" in blocker:
-            action = "Configure the endpoint"
-        else:
-            action = "Finish provider setup"
-        return f"{action} to enable Send. Then type in Composer or attach context."
-
-    @staticmethod
     def _console_empty_recovery_action_copy(
         blocker_copy: str,
         *,
@@ -4143,6 +4158,29 @@ class ChatScreen(BaseAppScreen):
                     continue
         return False
 
+    def _active_console_transcript_has_messages(self) -> bool:
+        """Return whether the active Console session's store transcript has messages."""
+        store = self._console_chat_store
+        if store is None:
+            return False
+        session_id = store.active_session_id
+        if session_id is None:
+            return False
+        return bool(store.messages_for_session(session_id))
+
+    def _build_console_setup_card_state(self) -> ConsoleSetupCardState:
+        """Build the empty-transcript onboarding state from current readiness."""
+        settings, readiness = self._active_console_settings_readiness()
+        has_model = _has_selected_text(getattr(settings, "model", None))
+        return build_console_setup_card_state(
+            readiness=readiness,
+            provider_label=str(getattr(settings, "provider", "") or "Provider"),
+            has_model=has_model,
+            first_send_completed=self._console_first_send_completed(),
+            has_messages=self._active_console_transcript_has_messages(),
+            guidance_dismissed=self._console_guidance_dismissed,
+        )
+
     def _console_guidance_visible(self, blocker_copy: str | None = None) -> bool:
         """Return whether first-run Console guidance should still be visible."""
         if self._console_guidance_dismissed:
@@ -4207,29 +4245,17 @@ class ChatScreen(BaseAppScreen):
                 visible=guidance_visible,
             )
 
+        card_state = self._build_console_setup_card_state()
         try:
             surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
         except QueryError:
             pass
         else:
-            empty_copy = self._console_empty_transcript_copy(
-                blocker_copy,
-                guidance_visible=guidance_visible,
-            )
             surface.sync_inline_guidance(
-                visible=bool(empty_copy),
-                copy=empty_copy,
+                card_state,
+                provider_action_label=empty_action_label,
+                provider_action_tooltip=empty_action_tooltip,
             )
-            try:
-                transcript = surface.query_one("#console-native-transcript", ConsoleTranscript)
-            except QueryError:
-                pass
-            else:
-                transcript.sync_empty_state(
-                    empty_copy if empty_copy else "",
-                    provider_action_label=empty_action_label,
-                    provider_action_tooltip=empty_action_tooltip,
-                )
 
         try:
             provider_strip = self.query_one("#console-provider-recovery-strip", Horizontal)
@@ -5887,6 +5913,8 @@ class ChatScreen(BaseAppScreen):
             composer = None
         if result.should_clear_draft and composer is not None:
             composer.clear_draft()
+        if result.accepted:
+            self._record_console_first_send()
         await self._sync_native_console_chat_ui()
 
     def _console_send_blocked_reason(self) -> str:

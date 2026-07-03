@@ -2159,11 +2159,75 @@ async def test_console_empty_transcript_teaches_setup_and_start_paths():
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         empty_text = _visible_text(transcript)
-        assert "Start Console" in empty_text
+        assert "Get started" in empty_text
         assert "Add an API key" in empty_text
-        assert "type in Composer" in empty_text
+        assert "Send your first message" in empty_text
         assert "Attach context" in empty_text
         assert "Run Library RAG" in empty_text
+
+
+def _assert_selector_hidden_or_absent(console, selector: str) -> None:
+    """Assert a selector is either absent or mounted but not displayed."""
+    for widget in console.query(selector):
+        assert not widget.display, f"{selector} unexpectedly displayed"
+
+
+@pytest.mark.asyncio
+async def test_console_blocked_empty_transcript_shows_setup_card_steps():
+    app = _build_test_app()
+    _configure_openai_missing_api_key(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-transcript-empty-state")
+        text = _visible_text(console)
+        assert "Get started" in text
+        assert "Add an API key" in text
+        assert "Pick a model" in text
+        assert "Send your first message" in text
+        # The legacy provider recovery strip must not compete with the setup card.
+        _assert_selector_hidden_or_absent(console, "#console-provider-recovery-strip")
+
+
+@pytest.mark.asyncio
+async def test_console_first_send_flag_switches_empty_state_to_quiet():
+    app = _build_test_app()
+    app.app_config.setdefault("console", {})["onboarding"] = {"first_send_completed": True}
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-transcript-empty-state")
+        text = _visible_text(console)
+        assert "No messages yet." in text
+        assert "Get started" not in text
+        assert "Add an API key" not in text
+
+
+@pytest.mark.asyncio
+async def test_console_accepted_send_records_first_send_flag():
+    # Reuse the ready-provider send harness from
+    # test_console_send_refreshes_workspace_conversation_rail_after_persistence:
+    # same fixtures/gateway stub, then assert the persisted global flag.
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: CapturingGateway(chunks=("accepted",))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        store.persistence = WorkspaceLinkingPersistence(app.workspace_registry_service)
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "accepted")
+
+        onboarding = app.app_config.get("console", {}).get("onboarding", {})
+        assert onboarding.get("first_send_completed") is True
 
 
 @pytest.mark.asyncio
@@ -2851,7 +2915,7 @@ async def test_console_native_tab_switch_restores_transcript_messages():
         await pilot.click("#console-new-chat-tab")
         second = await _wait_for_active_session_change(store, pilot, previous)
         await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
-        await _wait_for_text(console, pilot, "Start Console")
+        await _wait_for_text(console, pilot, "Get started")
         assert "first tab assistant reply" not in _visible_text(console)
 
         await pilot.click(f"#console-session-tab-{first.id}")
@@ -2896,7 +2960,7 @@ async def test_console_workspace_conversation_switch_restores_transcript_message
             "Chat 2",
             selected=True,
         )
-        await _wait_for_text(console, pilot, "Start Console")
+        await _wait_for_text(console, pilot, "Get started")
         assert "workspace row assistant reply" not in _visible_text(console)
 
         await _click_console_workspace_conversation_for_session(

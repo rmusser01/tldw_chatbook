@@ -420,10 +420,10 @@ async def test_console_empty_transcript_exposes_beginner_activation_actions():
 
         empty_panel = console.query_one("#console-transcript-empty-state")
         assert _is_displayed(empty_panel)
-        assert _widget_text(console.query_one("#console-empty-title")) == "Start Console"
-        assert _widget_text(console.query_one("#console-empty-body")) == (
-            "Choose a model to enable Send. Then type in Composer or attach context."
-        )
+        # Setup-incomplete transcripts show the numbered setup card, not a banner.
+        assert _widget_text(console.query_one("#console-empty-title")) == "Get started"
+        assert "Pick a model" in _widget_text(empty_panel)
+        assert "Send your first message" in _widget_text(empty_panel)
         assert "Choose model" in _widget_text(empty_panel)
         assert _is_displayed(console.query_one("#console-empty-choose-model"))
         assert _is_displayed(console.query_one("#console-empty-attach-context"))
@@ -443,15 +443,12 @@ async def test_console_ready_empty_transcript_exposes_activation_panel_copy():
         empty_panel = console.query_one("#console-transcript-empty-state")
         assert isinstance(empty_panel, Vertical)
         assert _is_displayed(empty_panel)
-        assert _widget_text(console.query_one("#console-empty-title")) == "Start Console"
+        # Ready state shows one ready line and hides the setup card + action row.
         assert _widget_text(console.query_one("#console-empty-body")) == (
-            "Type in Composer, attach sources, or run Library RAG before sending."
+            "Ready — type a message to begin."
         )
-        assert _widget_text(console.query_one("#console-empty-choose-model")) == "Choose model"
-        assert _widget_text(console.query_one("#console-empty-attach-context")) == "Attach context"
-        assert _widget_text(console.query_one("#console-empty-run-library-rag")) == (
-            "Run Library RAG"
-        )
+        assert not _is_displayed(console.query_one("#console-empty-title"))
+        assert not _is_displayed(console.query_one("#console-empty-action-row"))
 
 
 @pytest.mark.asyncio
@@ -473,7 +470,9 @@ async def test_console_empty_transcript_choose_model_opens_settings():
 
 
 @pytest.mark.asyncio
-async def test_console_ready_empty_transcript_choose_model_opens_console_settings():
+async def test_console_ready_empty_transcript_omits_setup_action_row():
+    # A ready Console no longer surfaces the empty-state choose-model action;
+    # the spec routes ready users straight to typing (no setup action row).
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -481,12 +480,13 @@ async def test_console_ready_empty_transcript_choose_model_opens_console_setting
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
-        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+        await _wait_for_selector(console, pilot, "#console-transcript-empty-state")
 
-        await pilot.click("#console-empty-choose-model")
-        await pilot.pause()
-
-        assert host.screen.query("#console-settings-modal")
+        assert not _is_displayed(console.query_one("#console-empty-action-row"))
+        assert not _is_displayed(console.query_one("#console-empty-choose-model"))
+        assert _widget_text(console.query_one("#console-empty-body")) == (
+            "Ready — type a message to begin."
+        )
 
 
 @pytest.mark.asyncio
@@ -532,42 +532,10 @@ async def test_console_transcript_empty_fallback_uses_ready_activation_copy():
         )
 
 
-@pytest.mark.parametrize(
-    ("blocker_copy", "expected"),
-    (
-        (
-            "Provider setup needed: choose a model",
-            "Choose a model to enable Send. Then type in Composer or attach context.",
-        ),
-        (
-            "Provider setup needed: choose a provider",
-            "Choose a provider to enable Send. Then type in Composer or attach context.",
-        ),
-        (
-            "Provider setup needed: OpenAI missing API key",
-            "Add an API key to enable Send. Then type in Composer or attach context.",
-        ),
-        (
-            "Provider setup needed: save the endpoint in settings",
-            "Configure the endpoint to enable Send. Then type in Composer or attach context.",
-        ),
-        (
-            "Provider setup needed: verify local runtime",
-            "Finish provider setup to enable Send. Then type in Composer or attach context.",
-        ),
-    ),
-)
-def test_console_empty_transcript_copy_matches_setup_blocker(
-    blocker_copy: str,
-    expected: str,
-):
-    assert (
-        ChatScreen._console_empty_transcript_copy(
-            blocker_copy,
-            guidance_visible=False,
-        )
-        == expected
-    )
+# NOTE: The static ``_console_empty_transcript_copy`` / blocked-copy adapters were
+# removed with the setup-card rewire; their setup-blocker mapping now lives in
+# ``build_console_setup_card_state`` and is covered by
+# ``Tests/Chat/test_console_onboarding_state.py``.
 
 
 @pytest.mark.parametrize(
