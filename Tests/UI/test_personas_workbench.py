@@ -2993,6 +2993,65 @@ class TestPreviewIntegration:
             )
             assert "Provider error" in status
 
+    async def test_provider_failure_logs_native_exception_with_preview_context(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        """Provider failures include Loguru-native exceptions and safe context."""
+        from loguru import logger as loguru_logger
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            PreviewReplyRequested,
+        )
+
+        records: list[dict[str, Any]] = []
+        sink_id = loguru_logger.add(
+            lambda message: records.append(message.record), level="ERROR"
+        )
+        mock_app_instance.app_config = {
+            "character_defaults": {
+                "provider": "openai",
+                "model": "gpt-4o-mini",
+            }
+        }
+        fake = _FakePreviewGateway(error=RuntimeError("provider exploded"))
+        app = PersonasTestApp(mock_app_instance)
+        try:
+            async with app.run_test(size=(160, 50)) as pilot:
+                screen = await self._select_first_character(pilot)
+                screen.preview.ensure_gateway = lambda: fake
+                screen.post_message(PreviewReplyRequested("Hi"))
+                await pilot.pause()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+        finally:
+            loguru_logger.remove(sink_id)
+
+        stream_failure = next(
+            record
+            for record in records
+            if record["message"]
+            == "Preview provider call failed; retrying without streaming."
+        )
+        retry_failure = next(
+            record
+            for record in records
+            if record["message"] == "Preview non-streaming retry failed."
+        )
+        assert stream_failure["exception"] is not None
+        assert retry_failure["exception"] is not None
+        extra = stream_failure["extra"]
+        assert extra["attempt"] == "streaming"
+        assert extra["streaming"] is True
+        assert retry_failure["extra"]["attempt"] == "non_streaming"
+        assert retry_failure["extra"]["streaming"] is False
+        assert extra["provider"] == "openai"
+        assert extra["model"] == "gpt-4o-mini"
+        assert extra["selection_kind"] == "character"
+        assert extra["selection_id"] == "1"
+        assert extra["resolved_provider"] == "openai"
+        assert extra["resolved_model"] == "test-model"
+        assert isinstance(extra["generation"], int)
+
     async def test_draft_aware_system_prompt_uses_editor_data(
         self, mock_app_instance, stub_characters, stub_conversations
     ):

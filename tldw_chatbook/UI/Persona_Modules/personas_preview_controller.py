@@ -97,7 +97,9 @@ class PersonasPreviewController:
         try:
             await gateway.aclose()
         except Exception:
-            logger.warning("Could not close the preview provider gateway.", exc_info=True)
+            logger.bind(gateway_type=type(gateway).__name__).opt(
+                exception=True
+            ).warning("Could not close the preview provider gateway.")
 
     async def handle_character_loaded(
         self, *, character_id: str, card_data: dict[str, Any] | None
@@ -165,9 +167,13 @@ class PersonasPreviewController:
                         or {}
                     )
                 except Exception:
-                    logger.warning(
-                        "Could not collect editor data for the preview.",
-                        exc_info=True,
+                    logger.bind(
+                        active_mode=screen.state.active_mode,
+                        edit_mode=screen._edit_mode,
+                        selection_kind=screen.state.selected_entity_kind,
+                        selection_id=str(screen.state.selected_entity_id or ""),
+                    ).opt(exception=True).warning(
+                        "Could not collect editor data for the preview."
                     )
                     record = {}
             else:
@@ -220,6 +226,39 @@ class PersonasPreviewController:
         if self.history and self.history[-1].get("role") == "user":
             self.history.pop()
 
+    @staticmethod
+    def _selection_model(selection: ConsoleProviderSelection) -> str:
+        """Return the effective model label from a provider selection."""
+        return selection.explicit_model or selection.configured_model or ""
+
+    def _reply_log_context(
+        self,
+        *,
+        selection: ConsoleProviderSelection,
+        selection_key: tuple[str | None, Any],
+        generation: int,
+        attempt: str,
+        resolution: Any | None = None,
+    ) -> dict[str, Any]:
+        """Build safe context fields for preview provider exception logs."""
+        selected_kind, selected_id = selection_key
+        context: dict[str, Any] = {
+            "operation": "personas_preview_reply",
+            "provider": selection.provider,
+            "model": self._selection_model(selection),
+            "selection_kind": selected_kind or "",
+            "selection_id": str(selected_id or ""),
+            "generation": generation,
+            "attempt": attempt,
+            "streaming": selection.streaming,
+        }
+        if resolution is not None:
+            context.update(
+                resolved_provider=str(getattr(resolution, "provider", "") or ""),
+                resolved_model=str(getattr(resolution, "model", "") or ""),
+            )
+        return context
+
     async def _run_reply(self) -> None:
         """Resolve the configured provider and stream one preview reply."""
         screen = self.screen
@@ -244,7 +283,14 @@ class PersonasPreviewController:
         try:
             resolution = await gateway.resolve_for_send(selection)
         except Exception:
-            logger.error("Preview provider resolution failed.", exc_info=True)
+            logger.bind(
+                **self._reply_log_context(
+                    selection=selection,
+                    selection_key=selection_key,
+                    generation=generation,
+                    attempt="resolve",
+                )
+            ).opt(exception=True).error("Preview provider resolution failed.")
             if not _stale():
                 self._pop_orphaned_user_turn()
                 pane.set_status("Provider error - try again or configure in Settings")
@@ -288,26 +334,41 @@ class PersonasPreviewController:
         try:
             reply = await _consume(resolution)
         except Exception:
-            logger.error(
-                "Preview provider call failed; retrying without streaming.",
-                exc_info=True,
+            logger.bind(
+                **self._reply_log_context(
+                    selection=selection,
+                    selection_key=selection_key,
+                    generation=generation,
+                    attempt="streaming",
+                    resolution=resolution,
+                )
+            ).opt(exception=True).error(
+                "Preview provider call failed; retrying without streaming."
             )
             if _stale():
                 await pane.discard_partial_reply()
                 return
             await pane.discard_partial_reply()
             pane.set_status("Retrying without streaming...")
+            retry_selection = dataclasses.replace(selection, streaming=False)
+            retry_resolution = None
             try:
-                retry_resolution = await gateway.resolve_for_send(
-                    dataclasses.replace(selection, streaming=False)
-                )
+                retry_resolution = await gateway.resolve_for_send(retry_selection)
                 if not retry_resolution.ready:
                     raise RuntimeError(
                         retry_resolution.visible_copy or "provider unavailable"
                     )
                 reply = await _consume(retry_resolution)
             except Exception:
-                logger.error("Preview non-streaming retry failed.", exc_info=True)
+                logger.bind(
+                    **self._reply_log_context(
+                        selection=retry_selection,
+                        selection_key=selection_key,
+                        generation=generation,
+                        attempt="non_streaming",
+                        resolution=retry_resolution,
+                    )
+                ).opt(exception=True).error("Preview non-streaming retry failed.")
                 if not _stale():
                     self._pop_orphaned_user_turn()
                     await pane.discard_partial_reply()
