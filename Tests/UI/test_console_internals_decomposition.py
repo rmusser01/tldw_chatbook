@@ -263,8 +263,8 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
         ) in css
         assert (
             "#console-workspace-context {\n"
-            "    height: 1fr;\n"
-            "    min-height: 8;"
+            "    height: auto;\n"
+            "    min-height: 0;"
         ) in css
         assert (
             ".console-transcript-action-guide {\n"

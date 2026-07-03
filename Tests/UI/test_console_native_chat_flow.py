@@ -3206,6 +3206,13 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
         open_ws_a.persisted_conversation_id = "shared-open-chat"
         store.switch_session(open_ws_a.id)
         await console._sync_native_console_chat_ui()
+        # _sync_native_console_chat_ui reentrancy-guards concurrent calls: if one
+        # is already running when this call lands, it just flags a follow-up sync
+        # and returns immediately, deferring the real rebuild to an unawaited
+        # background worker. Give that worker a chance to finish so the browser
+        # rows below are the final settled set rather than a transient one whose
+        # underlying widget can be unmounted while the click below is in flight.
+        await pilot.pause(0.2)
         ws_b_row = _workspace_conversation_row_by_key(
             console,
             "workspace:ws-b:conversation:shared-open-chat",
