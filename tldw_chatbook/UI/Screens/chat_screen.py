@@ -3379,6 +3379,7 @@ class ChatScreen(BaseAppScreen):
 
     def _sync_console_rail_visibility(self, rail_state: ConsoleRailState) -> None:
         """Apply Console rail visibility without recomposing the screen."""
+        self._sync_console_rail_sections(rail_state)
         for selector, label, badge in (
             (
                 "#console-context-rail-handle",
@@ -3501,6 +3502,34 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_rail_visibility_if_changed(rail_state)
         return rail_state
 
+    def _sync_console_rail_sections(self, rail_state: ConsoleRailState) -> None:
+        """Apply left-rail section open flags to section bodies and headers.
+
+        Stored section preferences are scoped per workspace/conversation, so a
+        runtime scope switch (for example resuming a saved conversation after a
+        relaunch) can change the effective flags without a recompose.
+        """
+        for section_id in CONSOLE_RAIL_SECTION_IDS:
+            section_open = bool(getattr(rail_state, f"{section_id}_open", True))
+            self._apply_console_rail_section_open(section_id, section_open)
+
+    def _apply_console_rail_section_open(
+        self,
+        section_id: str,
+        section_open: bool,
+    ) -> None:
+        """Sync one section's body display and header glyph to an open state."""
+        try:
+            body = self.query_one(f"#console-rail-section-body-{section_id}")
+            header = self.query_one(
+                f"#console-rail-section-header-{section_id}",
+                ConsoleRailSectionHeader,
+            )
+        except (NoMatches, QueryError):
+            return
+        body.styles.display = "block" if section_open else "none"
+        header.sync_open(section_open)
+
     def _toggle_console_rail_section(self, section_id: str) -> None:
         """Flip one left-rail section open state, then sync body and header."""
         if section_id not in CONSOLE_RAIL_SECTION_IDS:
@@ -3511,16 +3540,7 @@ class ChatScreen(BaseAppScreen):
             section_updates={section_id: next_open},
             notify_on_failure=False,
         )
-        try:
-            body = self.query_one(f"#console-rail-section-body-{section_id}")
-            header = self.query_one(
-                f"#console-rail-section-header-{section_id}",
-                ConsoleRailSectionHeader,
-            )
-        except NoMatches:
-            return
-        body.styles.display = "block" if next_open else "none"
-        header.sync_open(next_open)
+        self._apply_console_rail_section_open(section_id, next_open)
 
     def _sync_console_workspace_context(
         self,

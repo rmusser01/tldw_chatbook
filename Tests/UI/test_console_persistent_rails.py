@@ -17,6 +17,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_rail_state import (
     CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS,
+    build_console_rail_preference_key,
 )
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -1141,3 +1142,47 @@ async def test_console_details_toggle_expands_and_persists():
         isinstance(value, dict) and value.get("details_open") is True
         for value in rail_state_config.values()
     )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_section_sync_applies_stored_scope_preferences():
+    """Runtime rail syncs re-apply stored section prefs for the current scope.
+
+    This is the resume path: when the preference scope switches to a
+    conversation whose stored prefs differ from the composed defaults (for
+    example Details was expanded there before a relaunch), the next rail
+    sync must apply those flags to the section bodies and headers.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-details")
+        assert not _is_displayed(console.query_one("#console-rail-section-body-details"))
+        assert _is_displayed(console.query_one("#console-rail-section-body-model"))
+
+        workspace_context = console._current_console_workspace_context()
+        key = build_console_rail_preference_key(
+            workspace_id=workspace_context.active_workspace_id,
+            conversation_id=console._current_console_rail_conversation_id(),
+            session_id=console._current_console_session_id(),
+        )
+        rail_config = app.app_config.setdefault("console", {}).setdefault(
+            "rail_state", {}
+        )
+        rail_config[key.value] = {"details_open": True, "model_open": False}
+
+        console._sync_console_rail_visibility_if_changed(
+            console._current_console_rail_state()
+        )
+        await pilot.pause(0.1)
+
+        assert _is_displayed(console.query_one("#console-rail-section-body-details"))
+        assert not _is_displayed(console.query_one("#console-rail-section-body-model"))
+        details_toggle = console.query_one(
+            "#console-rail-section-toggle-details", Button
+        )
+        model_toggle = console.query_one("#console-rail-section-toggle-model", Button)
+        assert _button_text(details_toggle) == "-"
+        assert _button_text(model_toggle) == "+"
