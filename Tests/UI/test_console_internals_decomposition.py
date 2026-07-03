@@ -64,9 +64,26 @@ def _repo_text(path: Path) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
+def _without_trailing_cursor(text: str) -> str:
+    """Strip a blinking-cursor glyph from rendered composer text.
+
+    The composer draft is often focused by default in these harnesses, so a
+    solid caret (``ConsoleComposerBar.CURSOR_GLYPH``) may be present in the
+    rendered text: trailing when there is draft content, or leading (ahead of
+    the dim placeholder copy) when the draft is empty. Draft-content
+    assertions should stay agnostic to that focus/blink state.
+    """
+    glyph = ConsoleComposerBar.CURSOR_GLYPH
+    if text.startswith(glyph):
+        return text[len(glyph) :]
+    if text.endswith(glyph):
+        return text[: -len(glyph)]
+    return text
+
+
 def _assert_visible_literal_projection(visible_plain: str, expected: str) -> None:
     """Assert the bounded composer is showing literal text, allowing wrap/clipping."""
-    flattened = visible_plain.replace("\n", "")
+    flattened = _without_trailing_cursor(visible_plain).replace("\n", "")
     if flattened.startswith("..."):
         visible_suffix = flattened[3:]
         assert visible_suffix
@@ -477,6 +494,76 @@ async def test_console_composer_marks_has_draft_state():
 
 
 @pytest.mark.asyncio
+async def test_console_composer_shows_cursor_when_focused():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+
+        composer.focus()
+        await pilot.pause(0.1)
+
+        assert composer.has_focus_within
+        assert ConsoleComposerBar.CURSOR_GLYPH in visible_draft.renderable.plain
+        assert ConsoleComposerBar.DRAFT_PLACEHOLDER in visible_draft.renderable.plain
+
+
+@pytest.mark.asyncio
+async def test_console_composer_hides_cursor_when_blurred():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+        transcript = console.query_one("#console-native-transcript")
+
+        composer.focus()
+        await pilot.pause(0.1)
+        assert ConsoleComposerBar.CURSOR_GLYPH in visible_draft.renderable.plain
+
+        transcript.can_focus = True
+        transcript.focus()
+        await pilot.pause(0.1)
+
+        assert not composer.has_focus_within
+        assert not composer.has_class("console-composer-focused")
+        assert ConsoleComposerBar.CURSOR_GLYPH not in visible_draft.renderable.plain
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == ConsoleComposerBar.DRAFT_PLACEHOLDER
+
+
+@pytest.mark.asyncio
+async def test_console_composer_cursor_blink_toggles():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        visible_draft = composer.query_one("#console-command-visible-text", Static)
+
+        composer.focus()
+        await pilot.pause(0.1)
+        assert ConsoleComposerBar.CURSOR_GLYPH in visible_draft.renderable.plain
+
+        composer._toggle_cursor_blink()
+        assert ConsoleComposerBar.CURSOR_GLYPH not in visible_draft.renderable.plain
+
+        composer._toggle_cursor_blink()
+        assert ConsoleComposerBar.CURSOR_GLYPH in visible_draft.renderable.plain
+
+
+@pytest.mark.asyncio
 async def test_console_composer_send_is_primary_only_with_draft():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -588,7 +675,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         )
         await pilot.pause(0.1)
 
-        assert visible_draft.renderable.plain == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == ConsoleComposerBar.DRAFT_PLACEHOLDER
         assert recovery.styles.display == "none"
         assert disabled_reason.styles.display == "none"
         assert send_button.disabled is False
@@ -597,7 +684,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         composer.load_draft("draft despite missing setup")
         await pilot.pause(0.1)
 
-        assert visible_draft.renderable.plain == "draft despite missing setup"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "draft despite missing setup"
         assert send_button.disabled is False
         assert send_button.tooltip == "Choose a model in Console Settings before sending."
 
@@ -625,7 +712,7 @@ async def test_console_composer_active_run_blocker_keeps_generic_placeholder():
         await pilot.pause(0.1)
 
         assert "Setup required" not in visible_draft.renderable.plain
-        assert visible_draft.renderable.plain == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == ConsoleComposerBar.DRAFT_PLACEHOLDER
         assert send_button.tooltip == "Wait for the active Console run to finish before sending."
 
 
@@ -861,7 +948,7 @@ async def test_console_paste_threshold_can_be_configured_from_app_config():
         await pilot.pause(0.1)
 
         assert composer.draft_text() == over_custom_threshold
-        assert visible_draft.renderable.plain == "Pasted Text: 81 Characters"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Pasted Text: 81 Characters"
 
 
 @pytest.mark.parametrize("collapse_setting", [False, "false"])
@@ -909,7 +996,7 @@ async def test_console_clear_draft_keeps_canonical_payload_empty():
         await pilot.pause(0.1)
 
         assert composer.draft_text() == ""
-        assert visible_draft.renderable.plain == ConsoleComposerBar.DRAFT_PLACEHOLDER
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == ConsoleComposerBar.DRAFT_PLACEHOLDER
         assert pasted_text not in visible_draft.renderable.plain
 
 
@@ -934,7 +1021,7 @@ async def test_console_collapsed_paste_backspace_deletes_whole_chunk():
 
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == prefix
-        assert visible_plain == prefix
+        assert _without_trailing_cursor(visible_plain) == prefix
         assert pasted_text not in composer.draft_text()
         assert "Pasted Text:" not in visible_plain
 
@@ -961,7 +1048,7 @@ async def test_console_collapsed_paste_delete_key_deletes_whole_chunk():
 
         visible_plain = visible_draft.renderable.plain
         assert composer.draft_text() == prefix
-        assert visible_plain == prefix
+        assert _without_trailing_cursor(visible_plain) == prefix
         assert pasted_text not in composer.draft_text()
         assert "Pasted Text:" not in visible_plain
 
@@ -983,7 +1070,7 @@ async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
 
-        assert visible_draft.renderable.plain == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
         assert composer.draft_text() == pasted_text
         assert isinstance(visible_draft.renderable, Text)
         _assert_single_style_span(
@@ -1010,7 +1097,7 @@ async def test_console_collapsed_paste_composer_row_click_enters_unfurl_prompt()
         await pilot.click("#console-native-composer", offset=(13, 1))
         await pilot.pause(0.1)
 
-        assert visible_draft.renderable.plain == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
         assert composer.draft_text() == pasted_text
 
 
@@ -1036,7 +1123,7 @@ async def test_console_collapsed_paste_textual_web_row_click_enters_unfurl_promp
             visible_region.y - 1,
         )
 
-        assert visible_draft.renderable.plain == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
         assert composer.draft_text() == pasted_text
 
 
@@ -1062,7 +1149,7 @@ async def test_console_collapsed_paste_textual_web_bottom_boundary_click_enters_
             visible_region.y + visible_draft.size.height,
         )
 
-        assert visible_draft.renderable.plain == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
         assert composer.draft_text() == pasted_text
 
 
@@ -1088,7 +1175,7 @@ async def test_console_collapsed_paste_row_click_keeps_focus_on_composer():
             visible_region.y + visible_draft.size.height,
         )
 
-        assert visible_draft.renderable.plain == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
         assert console.app.focused is composer
         assert composer.draft_text() == pasted_text
 
@@ -1166,7 +1253,7 @@ async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_f
         await pilot.pause(0.1)
 
         assert console.app.focused is composer
-        assert visible_draft.renderable.plain == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
         assert composer.draft_text() == pasted_text
 
         await pilot.press("enter")
@@ -1199,7 +1286,7 @@ async def test_console_collapsed_paste_click_targets_token_after_literal_newline
         await pilot.click("#console-command-visible-text", offset=(0, 1))
         await pilot.pause(0.1)
 
-        assert visible_draft.renderable.plain == "prefix\nUnfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "prefix\nUnfurl?"
         assert composer.draft_text() == f"prefix\n{pasted_text}"
 
 
@@ -1222,14 +1309,14 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
         composer.insert_pasted_text(first_paste)
         composer.insert_pasted_text(second_paste)
         await pilot.pause(0.1)
-        assert visible_draft.renderable.plain == f"{first_token}{second_token}"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == f"{first_token}{second_token}"
 
         await pilot.click(
             "#console-command-visible-text",
             offset=(len(first_token) + 2, 0),
         )
         await pilot.pause(0.1)
-        assert visible_draft.renderable.plain == f"{first_token}Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == f"{first_token}Unfurl?"
 
         await pilot.click(
             "#console-command-visible-text",
@@ -1262,16 +1349,16 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text", offset=(1, 0))
         await pilot.pause(0.1)
-        assert visible_draft.renderable.plain == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
 
         await pilot.press("x")
         await pilot.pause(0.1)
-        assert visible_draft.renderable.plain == f"{expected_token}x"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == f"{expected_token}x"
         assert composer.draft_text() == f"{pasted_text}x"
 
         await pilot.click("#console-command-visible-text", offset=(1, 0))
         await pilot.pause(0.1)
-        assert visible_draft.renderable.plain == "Unfurl?x"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?x"
         assert composer.draft_text() == f"{pasted_text}x"
 
 
@@ -1350,7 +1437,7 @@ async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
-        assert visible_draft.renderable.plain == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
 
         await pilot.click("#console-workspace-grid")
         await pilot.pause(0.1)
@@ -1378,7 +1465,7 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
-        assert visible_draft.renderable.plain == "Unfurl?"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Unfurl?"
 
         composer.suppress_next_draft_click()
         await pilot.click("#console-workspace-grid")
@@ -1461,7 +1548,7 @@ async def test_console_native_composer_select_all_shortcut_preserves_draft_and_c
 
         assert composer.draft_text() == "replace this text"
         assert composer.has_full_draft_selection()
-        assert visible_draft.renderable.plain == "replace this text"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "replace this text"
 
         await pilot.press("ctrl+c")
         await pilot.pause(0.1)
@@ -1473,7 +1560,7 @@ async def test_console_native_composer_select_all_shortcut_preserves_draft_and_c
         await pilot.pause(0.1)
 
         assert composer.draft_text() == "new"
-        assert visible_draft.renderable.plain == "new"
+        assert _without_trailing_cursor(visible_draft.renderable.plain) == "new"
         assert not composer.has_full_draft_selection()
 
 
