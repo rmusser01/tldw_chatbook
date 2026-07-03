@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import total_ordering
 from typing import Iterable, Mapping
 
@@ -11,6 +12,52 @@ from .models import DEFAULT_WORKSPACE_ID
 
 CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT = 75
 CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT = 12
+
+
+def _parse_browser_timestamp(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def format_console_relative_age(value: str, *, now: datetime) -> str:
+    """Return a compact age label such as ``2m``, ``1h``, ``3d`` for a timestamp.
+
+    Args:
+        value: ISO-8601-ish timestamp text; naive values are treated as UTC.
+        now: Reference time for age calculation.
+
+    Returns:
+        Compact age label, or an empty string when the value is unparseable.
+    """
+    parsed = _parse_browser_timestamp(value)
+    if parsed is None:
+        return ""
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    total_seconds = max(0.0, (now - parsed).total_seconds())
+    minutes = int(total_seconds // 60)
+    if minutes < 1:
+        return "now"
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h"
+    days = hours // 24
+    if days < 7:
+        return f"{days}d"
+    weeks = days // 7
+    if days < 365:
+        return f"{weeks}w"
+    return f"{days // 365}y"
 
 
 @dataclass(frozen=True)
@@ -173,6 +220,7 @@ def build_console_conversation_browser_state(
     result_total_count: int | None = None,
     result_limit: int = CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     group_row_limit: int = CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
+    now: datetime | None = None,
 ) -> ConsoleConversationBrowserState:
     """Build a deterministic grouped conversation browser snapshot.
 
@@ -190,6 +238,7 @@ def build_console_conversation_browser_state(
             larger search result count.
         result_limit: Caller-level result cap retained on the resulting state.
         group_row_limit: Maximum visible rows per section or workspace group.
+        now: Reference time for computing relative age labels. Defaults to now.
 
     Returns:
         Grouped, capped, immutable display state.
@@ -200,7 +249,8 @@ def build_console_conversation_browser_state(
     query_active = bool(normalized_query)
     safe_result_limit = max(1, int(result_limit))
     safe_group_row_limit = max(0, int(group_row_limit))
-    prepared_rows = tuple(_normalize_input_row(row) for row in rows)
+    reference_now = now or datetime.now(timezone.utc)
+    prepared_rows = tuple(_normalize_input_row(row, now=reference_now) for row in rows)
     filtered_rows = tuple(
         row for row in prepared_rows if not query_active or _row_matches(row, normalized_query)
     )
@@ -307,7 +357,7 @@ def build_console_conversation_browser_state(
 
 
 def _normalize_input_row(
-    row: ConsoleConversationBrowserInputRow,
+    row: ConsoleConversationBrowserInputRow, *, now: datetime
 ) -> ConsoleConversationBrowserInputRow:
     conversation_id = _text_or_none(row.conversation_id)
     native_session_id = _text_or_none(row.native_session_id)
@@ -322,7 +372,10 @@ def _normalize_input_row(
         workspace_id=_text_or_none(row.workspace_id),
         workspace_label=str(row.workspace_label or ""),
         status=str(row.status or ""),
-        updated_label=str(row.updated_label or ""),
+        updated_label=(
+            str(row.updated_label or "")
+            or format_console_relative_age(str(row.updated_sort or ""), now=now)
+        ),
         selected=bool(row.selected),
         starred=bool(row.starred),
         star_enabled=star_enabled,

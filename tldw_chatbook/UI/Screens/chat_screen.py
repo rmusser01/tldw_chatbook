@@ -1,5 +1,6 @@
 """Chat screen implementation with comprehensive state management."""
 
+from collections.abc import Mapping
 from dataclasses import asdict, replace
 from datetime import datetime
 import inspect
@@ -52,6 +53,7 @@ from ...Chat.console_session_settings import (
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
     build_console_context_estimate,
+    build_console_model_section_lines,
     build_default_console_session_settings,
     build_console_settings_readiness,
     build_console_settings_summary_state,
@@ -86,6 +88,7 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkStatusCardState,
 )
 from ...Chat.console_rail_state import (
+    CONSOLE_RAIL_SECTION_IDS,
     ConsoleRailPreferences,
     ConsoleRailState,
     build_console_rail_preference_key,
@@ -144,6 +147,11 @@ from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
+from ...Widgets.Console.console_rail_section import (
+    CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
+    ConsoleRailSectionHeader,
+)
+from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
 from ...Workspaces.display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
@@ -1155,12 +1163,20 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _sync_console_settings_summary(self) -> None:
-        """Refresh the mounted Console settings summary if present."""
+        """Refresh the mounted Console settings summary surfaces if present."""
+        summary_state = self._build_console_settings_summary_state()
         try:
             summary = self.query_one("#console-settings-summary", ConsoleSettingsSummary)
         except (NoMatches, QueryError):
-            return
-        summary.sync_state(self._build_console_settings_summary_state())
+            pass
+        else:
+            summary.sync_state(summary_state)
+        model_line1, model_line2 = build_console_model_section_lines(summary_state)
+        try:
+            self.query_one("#console-model-section-line1", Static).update(model_line1)
+            self.query_one("#console-model-section-line2", Static).update(model_line2)
+        except (NoMatches, QueryError):
+            pass
 
     def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
         """Return explicit workspace policy context for native Console sends."""
@@ -2136,7 +2152,7 @@ class ChatScreen(BaseAppScreen):
                 status="active session" if selected else "open session",
                 selected=selected,
                 source_kind="native",
-                updated_sort="",
+                updated_sort=str(session.updated_at or ""),
             )
             rows.append(self._apply_console_browser_star_state(row, starred_ids))
         return rows
@@ -3363,6 +3379,7 @@ class ChatScreen(BaseAppScreen):
 
     def _sync_console_rail_visibility(self, rail_state: ConsoleRailState) -> None:
         """Apply Console rail visibility without recomposing the screen."""
+        self._sync_console_rail_sections(rail_state)
         for selector, label, badge in (
             (
                 "#console-context-rail-handle",
@@ -3444,6 +3461,7 @@ class ChatScreen(BaseAppScreen):
         *,
         left_open: bool | None = None,
         right_open: bool | None = None,
+        section_updates: Mapping[str, bool] | None = None,
         notify_on_failure: bool = True,
     ) -> ConsoleRailState:
         """Persist requested Console rail preference changes and return new state."""
@@ -3461,10 +3479,15 @@ class ChatScreen(BaseAppScreen):
         current = coerce_console_rail_preferences(
             rail_state_config.get(preference_key.value)
         )
-        next_preferences = ConsoleRailPreferences(
-            left_open=current.left_open if left_open is None else bool(left_open),
-            right_open=current.right_open if right_open is None else bool(right_open),
-        )
+        changes: dict[str, bool] = {}
+        if left_open is not None:
+            changes["left_open"] = bool(left_open)
+        if right_open is not None:
+            changes["right_open"] = bool(right_open)
+        for section_id, section_open in (section_updates or {}).items():
+            if section_id in CONSOLE_RAIL_SECTION_IDS:
+                changes[f"{section_id}_open"] = bool(section_open)
+        next_preferences = replace(current, **changes)
         rail_state_config[preference_key.value] = serialize_console_rail_preferences(
             next_preferences
         )
@@ -3479,6 +3502,46 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_rail_visibility_if_changed(rail_state)
         return rail_state
 
+    def _sync_console_rail_sections(self, rail_state: ConsoleRailState) -> None:
+        """Apply left-rail section open flags to section bodies and headers.
+
+        Stored section preferences are scoped per workspace/conversation, so a
+        runtime scope switch (for example resuming a saved conversation after a
+        relaunch) can change the effective flags without a recompose.
+        """
+        for section_id in CONSOLE_RAIL_SECTION_IDS:
+            section_open = bool(getattr(rail_state, f"{section_id}_open", True))
+            self._apply_console_rail_section_open(section_id, section_open)
+
+    def _apply_console_rail_section_open(
+        self,
+        section_id: str,
+        section_open: bool,
+    ) -> None:
+        """Sync one section's body display and header glyph to an open state."""
+        try:
+            body = self.query_one(f"#console-rail-section-body-{section_id}")
+            header = self.query_one(
+                f"#console-rail-section-header-{section_id}",
+                ConsoleRailSectionHeader,
+            )
+        except (NoMatches, QueryError):
+            return
+        body.styles.display = "block" if section_open else "none"
+        header.sync_open(section_open)
+
+    def _toggle_console_rail_section(self, section_id: str) -> None:
+        """Flip one left-rail section open state, then sync body and header."""
+        if section_id not in CONSOLE_RAIL_SECTION_IDS:
+            return
+        rail_state = self._current_console_rail_state()
+        next_open = not getattr(rail_state, f"{section_id}_open")
+        self._set_console_rail_preference(
+            section_updates={section_id: next_open},
+            notify_on_failure=False,
+        )
+        self._apply_console_rail_section_open(section_id, next_open)
+
     def _sync_console_workspace_context(
         self,
         session_data: Optional[ChatSessionData] = None,
@@ -3490,6 +3553,14 @@ class ChatScreen(BaseAppScreen):
             )
             state = self._build_console_workspace_context_state(session_data)
             workspace_context.sync_state(state)
+            try:
+                details_tray = self.query_one(
+                    "#console-workspace-details", ConsoleWorkspaceDetailsTray
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                details_tray.sync_state(state)
             self.call_after_refresh(
                 lambda: self.run_worker(
                     self._sync_console_legacy_workspace_context_aliases,
@@ -3520,16 +3591,8 @@ class ChatScreen(BaseAppScreen):
                 compact=True,
                 disabled=not bool(state.new_conversation_enabled),
             )
-            before_status = None
-            for selector in (
-                "#console-workspace-conversations",
-                "#console-workspace-server-readiness-label",
-                "#console-workspace-handoff-label",
-            ):
-                matches = list(self.query(selector))
-                if matches:
-                    before_status = matches[0]
-                    break
+            matches = list(self.query("#console-workspace-conversations"))
+            before_status = matches[0] if matches else None
             if before_status is not None:
                 await workspace_context.mount(new_button, before=before_status)
             else:
@@ -4580,36 +4643,136 @@ class ChatScreen(BaseAppScreen):
                         id="console-left-rail-body",
                         classes="console-left-rail-body",
                     ):
-                        staged_context_tray = ConsoleStagedContextTray(
-                            staged_context_state,
-                            id="console-staged-context-tray",
-                            classes="console-left-rail-section",
+                        # Section 1: Session (workspace + conversations).
+                        yield ConsoleRailSectionHeader(
+                            "Session",
+                            section_id="session",
+                            open=rail_state.session_open,
+                            id="console-rail-section-header-session",
                         )
-                        staged_context_tray.styles.width = "100%"
-                        staged_context_tray.styles.min_width = 0
-                        staged_context_tray.styles.height = "auto"
-                        staged_context_tray.styles.min_height = (
-                            3 if staged_context_state.is_empty else 4
+                        session_body = Vertical(
+                            id="console-rail-section-body-session",
+                            classes="console-rail-section-body",
                         )
-                        staged_context_tray.styles.max_height = (
-                            6 if staged_context_state.is_empty else 10
-                        )
-                        yield self._frame_console_region(
-                            staged_context_tray,
-                            variant=self._staged_context_frame_variant(staged_context_state),
-                        )
+                        session_body.styles.height = "auto"
+                        if not rail_state.session_open:
+                            session_body.styles.display = "none"
+                        with session_body:
+                            workspace_context_tray = ConsoleWorkspaceContextTray(
+                                workspace_context_state,
+                                show_heading=False,
+                                id="console-workspace-context",
+                                classes="console-left-rail-section",
+                            )
+                            workspace_context_tray.styles.width = "100%"
+                            workspace_context_tray.styles.min_width = 0
+                            yield self._frame_console_region(
+                                workspace_context_tray,
+                                variant=self._workspace_context_frame_variant(
+                                    workspace_context_state
+                                ),
+                            )
 
-                        workspace_context_tray = ConsoleWorkspaceContextTray(
-                            workspace_context_state,
-                            id="console-workspace-context",
-                            classes="console-left-rail-section",
+                        # Section 2: Context (staged sources).
+                        yield ConsoleRailSectionHeader(
+                            "Context",
+                            section_id="context",
+                            open=rail_state.context_open,
+                            id="console-rail-section-header-context",
                         )
-                        workspace_context_tray.styles.width = "100%"
-                        workspace_context_tray.styles.min_width = 0
-                        yield self._frame_console_region(
-                            workspace_context_tray,
-                            variant=self._workspace_context_frame_variant(workspace_context_state),
+                        context_body = Vertical(
+                            id="console-rail-section-body-context",
+                            classes="console-rail-section-body",
                         )
+                        context_body.styles.height = "auto"
+                        if not rail_state.context_open:
+                            context_body.styles.display = "none"
+                        with context_body:
+                            staged_context_tray = ConsoleStagedContextTray(
+                                staged_context_state,
+                                id="console-staged-context-tray",
+                                classes="console-left-rail-section",
+                            )
+                            staged_context_tray.styles.width = "100%"
+                            staged_context_tray.styles.min_width = 0
+                            staged_context_tray.styles.height = "auto"
+                            staged_context_tray.styles.min_height = (
+                                3 if staged_context_state.is_empty else 4
+                            )
+                            staged_context_tray.styles.max_height = (
+                                6 if staged_context_state.is_empty else 10
+                            )
+                            yield self._frame_console_region(
+                                staged_context_tray,
+                                variant=self._staged_context_frame_variant(
+                                    staged_context_state
+                                ),
+                            )
+
+                        # Section 3: Model (compact settings summary).
+                        yield ConsoleRailSectionHeader(
+                            "Model",
+                            section_id="model",
+                            open=rail_state.model_open,
+                            id="console-rail-section-header-model",
+                        )
+                        model_body = Vertical(
+                            id="console-rail-section-body-model",
+                            classes="console-rail-section-body",
+                        )
+                        model_body.styles.height = "auto"
+                        if not rail_state.model_open:
+                            model_body.styles.display = "none"
+                        with model_body:
+                            model_line1, model_line2 = build_console_model_section_lines(
+                                self._build_console_settings_summary_state()
+                            )
+                            line1 = Static(
+                                model_line1,
+                                id="console-model-section-line1",
+                                classes="console-model-section-line",
+                                markup=False,
+                            )
+                            yield line1
+                            line2 = Static(
+                                model_line2,
+                                id="console-model-section-line2",
+                                classes="console-model-section-line",
+                                markup=False,
+                            )
+                            yield line2
+                            configure = Button(
+                                "Configure",
+                                id="console-model-section-configure",
+                                classes="console-workspace-action",
+                                compact=True,
+                            )
+                            configure.tooltip = "Configure Console session settings"
+                            yield configure
+
+                        # Section 4: Details (storage, sync, handoff plumbing).
+                        yield ConsoleRailSectionHeader(
+                            "Details",
+                            section_id="details",
+                            open=rail_state.details_open,
+                            id="console-rail-section-header-details",
+                        )
+                        details_body = Vertical(
+                            id="console-rail-section-body-details",
+                            classes="console-rail-section-body",
+                        )
+                        details_body.styles.height = "auto"
+                        if not rail_state.details_open:
+                            details_body.styles.display = "none"
+                        with details_body:
+                            details_tray = ConsoleWorkspaceDetailsTray(
+                                workspace_context_state,
+                                id="console-workspace-details",
+                                classes="console-left-rail-section",
+                            )
+                            details_tray.styles.width = "100%"
+                            details_tray.styles.min_width = 0
+                            yield details_tray
 
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"
@@ -4981,6 +5144,7 @@ class ChatScreen(BaseAppScreen):
                     "persisted_conversation_id": session.persisted_conversation_id,
                     "draft": session.draft,
                     "settings": self._serialize_console_settings(session.settings),
+                    "updated_at": session.updated_at,
                 }
                 for session in store.sessions()
             ],
@@ -5014,7 +5178,7 @@ class ChatScreen(BaseAppScreen):
             if not isinstance(raw_session, dict):
                 continue
             session_id = str(raw_session.get("id") or uuid.uuid4())
-            session = ConsoleChatSession(
+            session_kwargs: dict[str, Any] = dict(
                 id=session_id,
                 title=str(raw_session.get("title") or DEFAULT_CONSOLE_SESSION_TITLE),
                 workspace_id=str(
@@ -5030,6 +5194,13 @@ class ChatScreen(BaseAppScreen):
                 settings=self._restore_console_settings(raw_session.get("settings")),
                 draft=str(raw_session.get("draft") or ""),
             )
+            # Legacy payloads saved before `updated_at` was serialized omit the
+            # key entirely; keep the ConsoleChatSession factory default (now)
+            # for those instead of forcing an empty/invalid timestamp.
+            raw_updated_at = raw_session.get("updated_at")
+            if raw_updated_at:
+                session_kwargs["updated_at"] = str(raw_updated_at)
+            session = ConsoleChatSession(**session_kwargs)
             restored_sessions.append(session)
             restored_messages_by_session[session.id] = []
             raw_messages = messages_by_session.get(session.id, [])
@@ -7401,6 +7572,15 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id == "console-settings-open":
             await self.on_console_settings_open(event)
+            return
+        if button_id == "console-model-section-configure":
+            await self.on_console_settings_open(event)
+            return
+        if button_id and button_id.startswith(CONSOLE_RAIL_SECTION_TOGGLE_PREFIX):
+            event.stop()
+            self._toggle_console_rail_section(
+                button_id.removeprefix(CONSOLE_RAIL_SECTION_TOGGLE_PREFIX)
+            )
             return
         if button_id == "console-new-chat-tab":
             event.stop()

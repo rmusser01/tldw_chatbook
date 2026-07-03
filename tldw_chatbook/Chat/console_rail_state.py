@@ -9,6 +9,7 @@ from typing import Any
 
 CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
+CONSOLE_RAIL_SECTION_IDS = ("session", "context", "model", "details")
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
 CONSOLE_RAIL_CONTEXT_LABEL = "Context >"
 CONSOLE_RAIL_INSPECTOR_LABEL = "< Inspector"
@@ -64,6 +65,10 @@ class ConsoleRailPreferences:
 
     left_open: bool = CONSOLE_RAIL_LEFT_DEFAULT_OPEN
     right_open: bool = CONSOLE_RAIL_RIGHT_DEFAULT_OPEN
+    session_open: bool = True
+    context_open: bool = True
+    model_open: bool = True
+    details_open: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,6 +95,10 @@ class ConsoleRailState:
     right_badge: str = ""
     persistence_key: str = ""
     right_forced_collapsed: bool = False
+    session_open: bool = True
+    context_open: bool = True
+    model_open: bool = True
+    details_open: bool = False
 
 
 def _sanitize_key_part(value: Any) -> str:
@@ -183,6 +192,10 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
     return ConsoleRailPreferences(
         left_open=_coerce_bool(raw.get("left_open"), defaults.left_open),
         right_open=_coerce_bool(raw.get("right_open"), defaults.right_open),
+        session_open=_coerce_bool(raw.get("session_open"), defaults.session_open),
+        context_open=_coerce_bool(raw.get("context_open"), defaults.context_open),
+        model_open=_coerce_bool(raw.get("model_open"), defaults.model_open),
+        details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
     )
 
 
@@ -193,6 +206,10 @@ def serialize_console_rail_preferences(
     return {
         "left_open": bool(preferences.left_open),
         "right_open": bool(preferences.right_open),
+        "session_open": bool(preferences.session_open),
+        "context_open": bool(preferences.context_open),
+        "model_open": bool(preferences.model_open),
+        "details_open": bool(preferences.details_open),
     }
 
 
@@ -394,4 +411,8 @@ def build_console_rail_state(
         ),
         persistence_key=preference_key.value,
         right_forced_collapsed=right_forced_collapsed,
+        session_open=preferences.session_open,
+        context_open=preferences.context_open,
+        model_open=preferences.model_open,
+        details_open=preferences.details_open,
     )

@@ -1004,6 +1004,31 @@ Button#console-open-provider-settings.console-provider-api-key-action:hover:focu
     content-align: left middle;
 }
 
+.console-rail-section-header {
+    height: 1;
+    margin-top: 1;
+}
+
+.console-rail-section-title {
+    width: 1fr;
+    text-style: bold;
+}
+
+.console-rail-section-toggle {
+    width: 3;
+    min-width: 3;
+}
+
+.console-rail-section-body {
+    height: auto;
+    min-height: 0;
+}
+
+.console-model-section-line {
+    height: 1;
+    color: $ds-text-muted;
+}
+
 .console-inspector-group-heading {
     height: 1;
     min-height: 1;

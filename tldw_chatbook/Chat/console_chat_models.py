@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
@@ -34,6 +35,38 @@ ConsoleMessageStatus = Literal["complete", "pending", "streaming", "stopped", "f
 ConsoleMessageFeedback = Literal["up", "down"]
 CONSOLE_GLOBAL_WORKSPACE_ID = "global"
 DEFAULT_CONSOLE_SESSION_TITLE = "Chat 1"
+
+CONSOLE_AUTO_TITLE_MAX_LENGTH = 30
+_DEFAULT_CONSOLE_SESSION_TITLE_RE = re.compile(r"^Chat \d+$")
+
+
+def is_default_console_session_title(title: str) -> bool:
+    """Return whether a session title is an auto-numbered default like ``Chat 3``."""
+    return bool(_DEFAULT_CONSOLE_SESSION_TITLE_RE.match(str(title or "").strip()))
+
+
+def derive_console_session_title(
+    draft: str,
+    *,
+    max_length: int = CONSOLE_AUTO_TITLE_MAX_LENGTH,
+) -> str:
+    """Derive a conversation title from the first user message.
+
+    Args:
+        draft: Validated composer draft text.
+        max_length: Maximum title length including the ellipsis suffix.
+
+    Returns:
+        A collapsed, truncated title, or an empty string for blank drafts.
+    """
+    collapsed = " ".join(str(draft or "").split())
+    if not collapsed:
+        return ""
+    if len(collapsed) <= max_length:
+        return collapsed
+    if max_length < 3:
+        return collapsed[:max_length]
+    return f"{collapsed[: max_length - 3].rstrip()}..."
 
 
 @dataclass(frozen=True)

@@ -17,6 +17,9 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
+from tldw_chatbook.Widgets.Console.console_workspace_details import (
+    ConsoleWorkspaceDetailsTray,
+)
 from tldw_chatbook.Workspaces import (
     ConsoleWorkspaceACPHandoffState,
     ConsoleConversationBrowserInputRow,
@@ -380,16 +383,20 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
         await _wait_for_selector(console, pilot, "#console-workspace-context")
         tray = console.query_one("#console-workspace-context", ConsoleWorkspaceContextTray)
         tray.sync_state(_base_grouped_workspace_state(rows=rows))
+        # Status rows now live in the collapsible Details section below the
+        # grouped conversation browser; expand it to lay out those rows.
+        if not console._current_console_rail_state().details_open:
+            console._toggle_console_rail_section("details")
         await pilot.pause()
 
-        workspace_context = console.query_one("#console-workspace-context")
+        details_tray = console.query_one("#console-workspace-details")
         left_rail_body = console.query_one("#console-left-rail-body")
         conversation_list = console.query_one("#console-workspace-conversations")
         sync_label = console.query_one("#console-workspace-sync-label")
         server_readiness = console.query_one("#console-workspace-server-readiness-label")
         handoff_label = console.query_one("#console-workspace-handoff-label")
         composer = console.query_one("#console-native-composer")
-        workspace_bottom = workspace_context.region.y + workspace_context.region.height
+        details_bottom = details_tray.region.y + details_tray.region.height
 
         assert _static_plain(console, "#console-workspace-sync-label") == "Sync"
         assert sync_label.region.y > conversation_list.region.y
@@ -401,8 +408,8 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
         await pilot.pause(0.1)
 
         assert left_rail_body.scroll_y > 0
-        assert handoff_label.region.y >= workspace_context.region.y
-        assert handoff_label.region.y + handoff_label.region.height <= workspace_bottom
+        assert handoff_label.region.y >= details_tray.region.y
+        assert handoff_label.region.y + handoff_label.region.height <= details_bottom
         assert handoff_label.region.y + handoff_label.region.height <= composer.region.y
 
 
@@ -723,8 +730,14 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
     async with host.run_test(size=(120, 34)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-conversations")
+        # Storage/Server-handoff status rows now live in the collapsible Details
+        # section beneath the Session (workspace) section; expand it.
+        if not console._current_console_rail_state().details_open:
+            console._toggle_console_rail_section("details")
+        await pilot.pause()
 
         workspace_context = console.query_one("#console-workspace-context")
+        details_tray = console.query_one("#console-workspace-details")
         left_rail_body = console.query_one("#console-left-rail-body")
         conversation_list = console.query_one("#console-workspace-conversations")
         new_conversation = console.query_one("#console-new-workspace-conversation", Button)
@@ -736,6 +749,7 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
         hit_widget, _region = console.get_widget_at(hit_x, hit_y)
 
         workspace_bottom = workspace_context.region.y + workspace_context.region.height
+        details_bottom = details_tray.region.y + details_tray.region.height
 
         assert conversation_list.region.height > left_rail_body.region.height
         assert new_conversation.region.y + new_conversation.region.height <= composer.region.y
@@ -749,8 +763,8 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
         await pilot.pause(0.1)
 
         assert left_rail_body.scroll_y > 0
-        assert handoff_label.region.y >= workspace_context.region.y
-        assert handoff_label.region.y + handoff_label.region.height <= workspace_bottom
+        assert handoff_label.region.y >= details_tray.region.y
+        assert handoff_label.region.y + handoff_label.region.height <= details_bottom
         assert handoff_label.region.y + handoff_label.region.height <= composer.region.y
 
 
@@ -894,7 +908,7 @@ def test_console_workspace_switcher_modal_documents_constructor_contract() -> No
 
 def test_console_workspace_runtime_label_is_case_insensitive() -> None:
     assert (
-        ConsoleWorkspaceContextTray._friendly_status_label(
+        ConsoleWorkspaceDetailsTray._friendly_status_label(
             "Runtime: 2 bindings, 1 Ready, 1 Missing"
         )
         == "File tools: 1 ready, 1 missing"
@@ -903,30 +917,30 @@ def test_console_workspace_runtime_label_is_case_insensitive() -> None:
 
 def test_console_workspace_authority_label_preserves_non_local_state() -> None:
     assert (
-        ConsoleWorkspaceContextTray._friendly_status_label("Authority: runtime-missing")
+        ConsoleWorkspaceDetailsTray._friendly_status_label("Authority: runtime-missing")
         == "Storage: runtime missing"
     )
     assert (
-        ConsoleWorkspaceContextTray._friendly_status_label("Authority: server-backed")
+        ConsoleWorkspaceDetailsTray._friendly_status_label("Authority: server-backed")
         == "Storage: server backed"
     )
 
 
 def test_console_workspace_readiness_detail_preserves_error_copy() -> None:
     assert (
-        ConsoleWorkspaceContextTray._friendly_detail_copy(
+        ConsoleWorkspaceDetailsTray._friendly_detail_copy(
             "Workspace registry service is not ready. No background sync is running."
         )
         == "Workspace registry service is not ready. No background sync is running."
     )
     assert (
-        ConsoleWorkspaceContextTray._friendly_detail_copy(
+        ConsoleWorkspaceDetailsTray._friendly_detail_copy(
             "Workspace registry could not be read. No background sync is running."
         )
         == "Workspace registry could not be read. No background sync is running."
     )
     assert (
-        ConsoleWorkspaceContextTray._friendly_detail_copy(
+        ConsoleWorkspaceDetailsTray._friendly_detail_copy(
             "Local registry fallback is active. No background sync is running."
         )
         == "Chats stay local. Connect a server later for explicit handoff."
@@ -945,7 +959,9 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         left_rail = console.query_one("#console-left-rail")
         staged_context = console.query_one("#console-staged-context-tray")
         workspace_context = console.query_one("#console-workspace-context")
-        assert staged_context.region.y < workspace_context.region.y
+        # Session (workspace context) now precedes Context (staged sources) in
+        # the four-section left rail, so workspace context renders above staged.
+        assert workspace_context.region.y < staged_context.region.y
         assert staged_context.region.x == workspace_context.region.x
         assert staged_context.region.x >= left_rail.region.x
         assert (
@@ -962,7 +978,9 @@ async def test_console_left_rail_splits_staged_context_from_workspace_context() 
         assert new_conversation.disabled is False
         text = _visible_text(console)
         assert "Staged Context" in text
-        assert "Convos & Workspaces" in text
+        # The workspace context tray no longer renders its own heading; the
+        # "Session" rail-section header labels this section instead.
+        assert "Session" in text
         assert "Default" in text
         assert "Workspace switching: locked" not in text
         assert DEFAULT_WORKSPACE_ID in {

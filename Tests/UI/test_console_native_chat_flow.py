@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import re
 from dataclasses import replace
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -23,7 +24,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunStatus,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -38,6 +39,9 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+)
+from tldw_chatbook.Widgets.Console.console_workspace_details import (
+    ConsoleWorkspaceDetailsTray,
 )
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
@@ -77,7 +81,7 @@ def test_console_provider_recovery_strip_visible_handles_missing_blocker_copy():
 
 def test_console_workspace_status_row_empty_value_uses_unavailable():
     """Status labels ending in a colon should not repeat the label as the value."""
-    assert ConsoleWorkspaceContextTray._split_status_row("Authority: ", "Authority") == (
+    assert ConsoleWorkspaceDetailsTray._split_status_row("Authority: ", "Authority") == (
         "Authority",
         "unavailable",
     )
@@ -652,6 +656,10 @@ async def _open_console_context_rail(console: ChatScreen, pilot) -> None:
         left_open=True,
     )
     console._sync_console_rail_visibility(rail_state)
+    # Storage/Sync/handoff status rows now live in the collapsible Details
+    # section; expand it so its rows lay out with a real screen region.
+    if not console._current_console_rail_state().details_open:
+        console._toggle_console_rail_section("details")
     await _wait_for_selector(console, pilot, "#console-workspace-authority-label")
     for _ in range(40):
         label = console.query_one("#console-workspace-authority-label")
@@ -1624,11 +1632,18 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         row = console.query_one("#console-workspace-conversation-0")
         row_text = _widget_text(row)
         assert row_text.startswith("> ")
-        assert "Chat 1" in row_text
+        # Once the first message is accepted, the default "Chat 1" title is
+        # replaced by an auto-title derived from the message (see
+        # _maybe_auto_title_session in console_chat_controller.py).
+        assert "hello" in row_text
+        assert "Chat 1" not in row_text
         assert "\n" in row_text
         assert "Chats" in row_text
         assert "workspace-thread" not in row_text
         assert not re.search(r"\[[0-9a-f]{8}\]", row_text)
+        # The secondary line also carries a relative age label appended after
+        # persistence (e.g. "now", "2m", "1h"...).
+        assert "now" in row_text
         assert len(console.query("#console-workspace-empty-conversations")) == 0
 
 
@@ -3191,6 +3206,13 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
         open_ws_a.persisted_conversation_id = "shared-open-chat"
         store.switch_session(open_ws_a.id)
         await console._sync_native_console_chat_ui()
+        # _sync_native_console_chat_ui reentrancy-guards concurrent calls: if one
+        # is already running when this call lands, it just flags a follow-up sync
+        # and returns immediately, deferring the real rebuild to an unawaited
+        # background worker. Give that worker a chance to finish so the browser
+        # rows below are the final settled set rather than a transient one whose
+        # underlying widget can be unmounted while the click below is in flight.
+        await pilot.pause(0.2)
         ws_b_row = _workspace_conversation_row_by_key(
             console,
             "workspace:ws-b:conversation:shared-open-chat",
@@ -4073,6 +4095,11 @@ async def test_console_conversation_browser_long_list_keeps_readiness_rows_reach
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-conversation-search")
+        # Storage/Server-handoff readiness rows now live in the collapsible
+        # Details section beneath the conversation browser; expand it.
+        if not console._current_console_rail_state().details_open:
+            console._toggle_console_rail_section("details")
+        await pilot.pause()
         conversation_list = console.query_one("#console-workspace-conversations")
         server_label = console.query_one("#console-workspace-server-readiness-label")
         server_value = console.query_one("#console-workspace-server-readiness-value")
@@ -5448,3 +5475,86 @@ def test_native_console_state_serializes_plain_string_message_role():
     serialized = ChatScreen._serialize_console_message(message)
 
     assert serialized["role"] == "assistant"
+
+
+def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
+    """Build a native-console screen shell for direct serialize/restore calls.
+
+    Bypasses ``ChatScreen.__init__`` (which requires a mounted Textual app)
+    while still resolving the class's inherited serialize/restore helpers
+    normally, so ``_serialize_native_console_state`` /
+    ``_restore_native_console_state`` can be exercised as plain, fast
+    unit-level round trips instead of a full pilot-driven screen.
+    """
+    screen = ChatScreen.__new__(ChatScreen)
+    screen._console_chat_store = store
+    screen._console_visible_draft_session_id = None
+    screen._console_composer_or_none = lambda: None
+    return screen
+
+
+def test_native_console_state_round_trip_preserves_session_updated_at():
+    """Verify a restored session keeps its original ``updated_at`` timestamp.
+
+    Without this, every restored session's ``updated_at`` resets to "now" on
+    screen recreation, so restored sessions all show age "now" and recent-
+    first ordering across restored sessions breaks.
+    """
+    store = ConsoleChatStore()
+    session = ConsoleChatSession(
+        id="session-a",
+        title="Chat 1",
+        updated_at="2020-01-01T00:00:00+00:00",
+    )
+    store.restore_state(
+        sessions=[session],
+        messages_by_session={session.id: []},
+        active_session_id=session.id,
+    )
+    screen = _bare_console_screen(store)
+
+    payload = screen._serialize_native_console_state()
+    assert payload is not None
+    assert payload["sessions"][0]["updated_at"] == "2020-01-01T00:00:00+00:00"
+
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+    restored_screen._restore_native_console_state(payload)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.updated_at == "2020-01-01T00:00:00+00:00"
+
+
+def test_native_console_state_restore_tolerates_legacy_payload_without_updated_at():
+    """Verify legacy saved states (no ``updated_at`` key) still restore.
+
+    Older saved screen states were written before ``updated_at`` was
+    serialized, so restore must fall back to the ``ConsoleChatSession``
+    factory default instead of raising or leaving the field unset.
+    """
+    payload = {
+        "version": "1.0",
+        "active_session_id": "session-a",
+        "sessions": [
+            {
+                "id": "session-a",
+                "title": "Chat 1",
+                "workspace_id": CONSOLE_GLOBAL_WORKSPACE_ID,
+                "persisted_conversation_id": None,
+                "draft": "",
+                "settings": None,
+            }
+        ],
+        "messages_by_session": {"session-a": []},
+    }
+    restored_store = ConsoleChatStore()
+    restored_screen = _bare_console_screen(restored_store)
+
+    before = datetime.now(timezone.utc)
+    restored_screen._restore_native_console_state(payload)
+    after = datetime.now(timezone.utc)
+
+    restored_session = restored_store.sessions()[0]
+    assert restored_session.updated_at
+    restored_dt = datetime.fromisoformat(restored_session.updated_at)
+    assert before <= restored_dt <= after

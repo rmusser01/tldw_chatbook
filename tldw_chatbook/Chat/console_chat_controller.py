@@ -11,6 +11,8 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleProviderSelection,
     ConsoleRunState,
     ConsoleRunStatus,
+    derive_console_session_title,
+    is_default_console_session_title,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
@@ -114,6 +116,7 @@ class ConsoleChatController:
             visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
             return self._block(session.id, visible_copy)
 
+        self._maybe_auto_title_session(session, clean_draft)
         self.store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
@@ -147,6 +150,16 @@ class ConsoleChatController:
         )
         self._clear_terminal_run_state()
         return session
+
+    def _maybe_auto_title_session(self, session: ConsoleChatSession, draft: str) -> None:
+        """Title a default-named session from its first accepted message."""
+        if session.persisted_conversation_id is not None:
+            return
+        if not is_default_console_session_title(session.title):
+            return
+        derived = derive_console_session_title(draft)
+        if derived:
+            self.store.rename_session(session.id, derived)
 
     def update_provider_selection(self, selection: ConsoleProviderSelection) -> None:
         """Sync controller provider settings from a Console selection."""

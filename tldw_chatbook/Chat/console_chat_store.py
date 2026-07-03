@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Protocol
 from uuid import uuid4
 
@@ -64,6 +65,10 @@ class ConsoleChatSyncProducer(Protocol):
         """Enqueue a Chat message into the Sync v2 local outbox."""
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 @dataclass
 class ConsoleChatSession:
     """A native Console chat session."""
@@ -74,6 +79,7 @@ class ConsoleChatSession:
     persisted_conversation_id: str | None = None
     settings: ConsoleSessionSettings | None = None
     draft: str = ""
+    updated_at: str = field(default_factory=_utc_now_iso)
 
 
 class ConsoleChatStore:
@@ -320,6 +326,7 @@ class ConsoleChatStore:
             status=self._initial_status(role=role, content=content),
         )
         self._messages_by_session[session_id].append(message)
+        self._sessions[session_id].updated_at = _utc_now_iso()
         self._message_session_index[message.id] = session_id
         if persist:
             self._persist_new_message_or_defer(session_id=session_id, message=message)

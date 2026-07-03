@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from rich.text import Text
@@ -34,17 +33,6 @@ _STATUS_DETAIL_LABELS = {
     "workspace": "saved workspace",
     "active": "active session",
     "open": "open session",
-}
-_AUTHORITY_LABELS = {
-    "local registry ready": "local",
-    "local-only": "local",
-    "server-backed": "server backed",
-    "syncing-to-server": "syncing to server",
-    "syncing-from-server": "syncing from server",
-    "conflict": "conflict",
-    "detached": "detached",
-    "remote-only": "remote only",
-    "runtime-missing": "runtime missing",
 }
 _MAX_CONVERSATION_ROW_TITLE = 20
 _CONVERSATION_BROWSER_HEADER_HEIGHT = 1
@@ -117,9 +105,16 @@ class ConsoleWorkspaceStatusPair(Horizontal):
 class ConsoleWorkspaceContextTray(Vertical):
     """Render workspace selection, conversation scope, and recovery copy."""
 
-    def __init__(self, state: ConsoleWorkspaceContextState, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        state: ConsoleWorkspaceContextState,
+        *,
+        show_heading: bool = True,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.state = state
+        self.show_heading = show_heading
         self.styles.height = "auto"
         self.styles.min_height = 0
 
@@ -251,13 +246,33 @@ class ConsoleWorkspaceContextTray(Vertical):
             )
 
         target_height = max(1, content_bottom - content_top)
-        scroll_parent = self._nearest_scroll_parent()
-        parent_region = getattr(scroll_parent, "region", None)
-        if parent_region is not None and parent_region.height > 0:
-            target_height = max(target_height, int(parent_region.height))
+        # When the tray is nested inside a collapsible left-rail section body,
+        # size to natural content only. Stretching to the shared scroll parent
+        # would push sibling sections (Context/Model/Details) out of the rail
+        # viewport.
+        if not self._is_inside_rail_section_body():
+            scroll_parent = self._nearest_scroll_parent()
+            parent_region = getattr(scroll_parent, "region", None)
+            if parent_region is not None and parent_region.height > 0:
+                target_height = max(target_height, int(parent_region.height))
 
         if int(region.height) != target_height:
             self.styles.height = target_height
+
+    def _is_inside_rail_section_body(self) -> bool:
+        """Return whether this tray is nested in a collapsible rail section body.
+
+        Returns:
+            True when an ancestor carries the ``console-rail-section-body``
+            class, meaning the tray shares the left-rail scroll container with
+            sibling sections and must not stretch to fill it.
+        """
+
+        for ancestor in self.ancestors:
+            has_class = getattr(ancestor, "has_class", None)
+            if callable(has_class) and has_class("console-rail-section-body"):
+                return True
+        return False
 
     @staticmethod
     def _static(text: str, *, id: str, classes: str = "") -> Static:
@@ -272,58 +287,6 @@ class ConsoleWorkspaceContextTray(Vertical):
             Static widget configured for plain text.
         """
         return Static(str(text), id=id, classes=classes, markup=False)
-
-    @staticmethod
-    def _split_status_row(text: str, fallback_label: str) -> tuple[str, str]:
-        """Return a scannable label/value pair from legacy status copy.
-
-        Args:
-            text: Existing status copy, optionally containing ``label: value``.
-            fallback_label: Label to use when ``text`` has no explicit label.
-
-        Returns:
-            Tuple of ``(label, value)`` strings for the status row.
-        """
-        raw = str(text or "").strip()
-        label, separator, value = raw.partition(":")
-        if separator:
-            clean_label = label.strip()
-            clean_value = value.strip()
-            if clean_label and clean_value:
-                return clean_label, clean_value
-            if clean_label:
-                return clean_label, "unavailable"
-        return fallback_label, raw or "unavailable"
-
-    def _status_pair(
-        self,
-        text: str,
-        *,
-        label_id: str,
-        value_id: str,
-        fallback_label: str,
-    ) -> ComposeResult:
-        """Build a two-column status row for scan-heavy workspace metadata.
-
-        Args:
-            text: Source status copy to split into a label/value pair.
-            label_id: Textual widget id for the label cell.
-            value_id: Textual widget id for the value cell.
-            fallback_label: Label used when ``text`` does not provide one.
-
-        Returns:
-            ComposeResult yielding the status-pair widget.
-        """
-        label, value = self._split_status_row(text, fallback_label)
-        if fallback_label == "Handoff" and label != fallback_label:
-            value = f"{label}: {value}"
-            label = fallback_label
-        yield ConsoleWorkspaceStatusPair(
-            label,
-            value,
-            label_id=label_id,
-            value_id=value_id,
-        )
 
     def _conversation_section(self) -> ConsoleWorkspaceConversationSectionState:
         """Return section state, adapting legacy row-only snapshots.
@@ -459,11 +422,12 @@ class ConsoleWorkspaceContextTray(Vertical):
         return max(_CONVERSATION_BROWSER_EMPTY_COPY_HEIGHT, height)
 
     def compose(self) -> ComposeResult:
-        yield self._static(
-            self.state.heading,
-            id="console-workspace-context-title",
-            classes="destination-section",
-        )
+        if self.show_heading:
+            yield self._static(
+                self.state.heading,
+                id="console-workspace-context-title",
+                classes="destination-section",
+            )
         yield self._static(
             self._workspace_selector_label(),
             id="console-active-workspace",
@@ -494,7 +458,6 @@ class ConsoleWorkspaceContextTray(Vertical):
             yield from self._compose_conversation_browser(browser)
         else:
             yield from self._compose_legacy_conversation_section()
-        yield from self._compose_status_rows()
 
     def _compose_legacy_conversation_section(self) -> ComposeResult:
         """Render the transitional active-workspace conversation section."""
@@ -866,75 +829,6 @@ class ConsoleWorkspaceContextTray(Vertical):
             star_button.starred = row.starred
             yield star_button
 
-    def _compose_status_rows(self) -> ComposeResult:
-        """Render workspace status, readiness, runtime, and handoff rows."""
-
-        yield from self._status_pair(
-            self._friendly_status_label(self.state.authority_label),
-            label_id="console-workspace-authority-label",
-            value_id="console-workspace-authority-value",
-            fallback_label="Storage",
-        )
-        yield from self._status_pair(
-            self._friendly_status_label(self.state.sync_label),
-            label_id="console-workspace-sync-label",
-            value_id="console-workspace-sync-value",
-            fallback_label="Sync",
-        )
-        yield from self._status_pair(
-            self._friendly_status_label(self.state.runtime_label),
-            label_id="console-workspace-runtime-label",
-            value_id="console-workspace-runtime-value",
-            fallback_label="File tools",
-        )
-        yield from self._status_pair(
-            self._friendly_status_label(self.state.server_readiness_label),
-            label_id="console-workspace-server-readiness-label",
-            value_id="console-workspace-server-readiness-value",
-            fallback_label="Server handoff",
-        )
-        yield self._static(
-            self._friendly_detail_copy(self.state.server_readiness_detail),
-            id="console-workspace-server-readiness-detail",
-            classes="console-workspace-recovery",
-        )
-        yield self._static(
-            "Handoff",
-            id="console-workspace-handoff-title",
-            classes="destination-section",
-        )
-        with Vertical(id="console-workspace-handoff-rows"):
-            if self.state.handoff_rows:
-                for index, row in enumerate(self.state.handoff_rows):
-                    portability = "" if row.portable else " (not portable)"
-                    yield self._static(
-                        f"{row.title} - {row.transfer_policy.value}{portability}",
-                        id=f"console-workspace-handoff-{index}",
-                        classes="console-workspace-status-row",
-                    )
-            else:
-                yield self._static(
-                    "No handoff package is ready.",
-                    id="console-workspace-handoff-empty",
-                    classes="console-workspace-empty-copy",
-                )
-        yield from self._status_pair(
-            self._friendly_status_label(self.state.acp_handoff_label),
-            label_id="console-workspace-handoff-label",
-            value_id="console-workspace-handoff-value",
-            fallback_label="Handoff",
-        )
-        yield self._static(
-            self._friendly_detail_copy(self.state.acp_handoff_detail),
-            id="console-workspace-acp-handoff-detail",
-            classes="console-workspace-recovery",
-        )
-        yield self._static(
-            self.state.acp_handoff_audit,
-            id="console-workspace-acp-handoff-audit",
-            classes="console-workspace-recovery",
-        )
-
     def _workspace_selector_label(self) -> str:
         """Return the visible active-workspace selector affordance."""
         workspace_label = self.state.workspace_label
@@ -970,54 +864,3 @@ class ConsoleWorkspaceContextTray(Vertical):
         if not normalized:
             return ""
         return _STATUS_DETAIL_LABELS.get(normalized, normalized.replace("-", " "))
-
-    @staticmethod
-    def _friendly_status_label(label: str) -> str:
-        """Return user-facing workspace status copy for the Console rail."""
-        raw = str(label or "").strip()
-        normalized = raw.lower()
-        if normalized.startswith("authority: unavailable"):
-            return "Storage: Unavailable"
-        if normalized.startswith("authority:"):
-            authority = normalized.partition(":")[2].strip()
-            readable = _AUTHORITY_LABELS.get(authority, authority.replace("-", " "))
-            return f"Storage: {readable or 'unavailable'}"
-        if normalized == "sync: not configured":
-            return "Sync: Off"
-        if normalized.startswith("runtime: none, file tools disabled"):
-            return "File tools: Off in Default workspace"
-        if normalized.startswith("runtime: none"):
-            return "File tools: Off"
-        if normalized.startswith("runtime:"):
-            readiness = re.search(r"(\d+) ready(?:,\s+(\d+) missing)?", normalized)
-            if readiness:
-                label = f"File tools: {readiness.group(1)} ready"
-                if readiness.group(2):
-                    label = f"{label}, {readiness.group(2)} missing"
-                return label
-            return raw.replace("Runtime:", "File tools:", 1)
-        if normalized == "server: local fallback":
-            return "Server handoff: Not configured"
-        if normalized.startswith("server: unavailable"):
-            return "Server handoff: Unavailable"
-        if normalized.startswith("server:"):
-            return raw.replace("Server:", "Server handoff:", 1)
-        if normalized.startswith("acp task/run: unavailable"):
-            return "ACP handoff: Not configured"
-        if normalized.startswith("acp task/run:"):
-            return raw.replace("ACP task/run:", "ACP handoff:", 1)
-        return raw
-
-    @staticmethod
-    def _friendly_detail_copy(copy: str) -> str:
-        """Return first-run readable detail while preserving diagnostic intent."""
-        raw = str(copy or "").strip()
-        normalized = raw.lower()
-        if (
-            "local registry fallback is active" in normalized
-            or "local registry is authoritative" in normalized
-        ):
-            return "Chats stay local. Connect a server later for explicit handoff."
-        if "acp task/run package handoff is not wired" in normalized:
-            return "ACP task/run package handoff is not configured yet."
-        return raw

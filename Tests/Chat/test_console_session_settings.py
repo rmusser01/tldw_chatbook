@@ -6,6 +6,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
     ConsoleSettingsContextEstimate,
     ConsoleSessionSettings,
+    ConsoleSettingsSummaryState,
     build_console_context_estimate,
     build_console_settings_summary_state,
     build_console_settings_readiness,
@@ -692,3 +693,37 @@ def test_default_settings_rejects_bool_and_fractional_optional_ints() -> None:
 
     assert settings.top_k is None
     assert settings.max_tokens is None
+
+
+def test_model_section_lines_compact_summary():
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_model_section_lines,
+    )
+
+    summary = ConsoleSettingsSummaryState(
+        model_row="Model: gpt-4o (Missing key)",
+        context_row="Context: 0 / 8,192 tokens; 4,096 response tokens",
+        sampling_row="Sampling: T 0.60, P 0.95, min_p 0.05",
+        identity_row="Persona: General",
+        provider_row="Provider: openai",
+        transport_row="Streaming: off",
+    )
+    line1, line2 = build_console_model_section_lines(summary)
+    assert line1 == "openai / gpt-4o (Missing key)"
+    assert line2 == "T 0.60 · 0 / 8,192 tokens · Streaming: off"
+
+
+def test_model_section_lines_tolerate_missing_rows():
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_model_section_lines,
+    )
+
+    summary = ConsoleSettingsSummaryState(
+        model_row="",
+        context_row="",
+        sampling_row="",
+        identity_row="",
+    )
+    line1, line2 = build_console_model_section_lines(summary)
+    assert line1 == "not selected / no model"
+    assert line2 == ""
