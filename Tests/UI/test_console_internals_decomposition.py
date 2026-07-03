@@ -2333,6 +2333,22 @@ async def test_console_left_rail_sections_use_available_space():
         assert workspace_context.parent is session_body
         assert workspace_context.region.y < staged_context.region.y
         assert workspace_context.region.height > staged_context.region.height
+
+        # Rail section widths can still be converging on the first render pass
+        # (especially under a busy scheduler in a full-suite run), so settle
+        # until the measured widths stop changing before asserting equality.
+        previous_widths: tuple[int, int, int] | None = None
+        for _ in range(20):
+            current_widths = (
+                body.scrollable_content_region.width,
+                staged_context.region.width,
+                workspace_context.region.width,
+            )
+            if current_widths == previous_widths:
+                break
+            previous_widths = current_widths
+            await pilot.pause()
+
         body_content_width = body.scrollable_content_region.width
         assert 0 <= body.region.width - body_content_width <= 2
         assert staged_context.region.width == body_content_width

@@ -1,7 +1,7 @@
 """Chat screen implementation with comprehensive state management."""
 
 from collections.abc import Mapping
-from dataclasses import asdict, replace, replace as dataclass_replace
+from dataclasses import asdict, replace
 from datetime import datetime
 import inspect
 import os
@@ -3487,7 +3487,7 @@ class ChatScreen(BaseAppScreen):
         for section_id, section_open in (section_updates or {}).items():
             if section_id in CONSOLE_RAIL_SECTION_IDS:
                 changes[f"{section_id}_open"] = bool(section_open)
-        next_preferences = dataclass_replace(current, **changes)
+        next_preferences = replace(current, **changes)
         rail_state_config[preference_key.value] = serialize_console_rail_preferences(
             next_preferences
         )
@@ -3591,16 +3591,8 @@ class ChatScreen(BaseAppScreen):
                 compact=True,
                 disabled=not bool(state.new_conversation_enabled),
             )
-            before_status = None
-            for selector in (
-                "#console-workspace-conversations",
-                "#console-workspace-server-readiness-label",
-                "#console-workspace-handoff-label",
-            ):
-                matches = list(self.query(selector))
-                if matches:
-                    before_status = matches[0]
-                    break
+            matches = list(self.query("#console-workspace-conversations"))
+            before_status = matches[0] if matches else None
             if before_status is not None:
                 await workspace_context.mount(new_button, before=before_status)
             else:
