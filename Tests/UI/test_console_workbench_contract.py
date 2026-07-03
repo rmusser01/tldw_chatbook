@@ -723,7 +723,7 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
         setup_blocked_reason="Provider setup needed: choose a model",
     )
 
-    assert reason == "Send disabled: choose a model"
+    assert reason == "Send blocked — choose a model to continue"
 
 
 @pytest.mark.parametrize(
@@ -731,23 +731,23 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
     (
         (
             "Provider setup needed: choose a provider",
-            "Send disabled: choose a provider",
+            "Send blocked — choose a provider to continue",
         ),
         (
             "Provider setup needed: OpenAI missing API key",
-            "Send disabled: add API key",
+            "Send blocked — add an API key to continue",
         ),
         (
             "Provider setup needed: configure endpoint",
-            "Send disabled: configure endpoint",
+            "Send blocked — configure the endpoint to continue",
         ),
         (
             "Provider setup needed: llama.cpp endpoint unavailable",
-            "Send disabled: configure endpoint",
+            "Send blocked — configure the endpoint to continue",
         ),
         (
             "Provider setup needed: verify local runtime",
-            "Send disabled: finish provider setup",
+            "Send blocked — finish provider setup to continue",
         ),
     ),
 )
