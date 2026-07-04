@@ -196,7 +196,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             assert recovery_callout and recovery_callout[0].display is False
             recovery_action = app.screen.query_one("#workbench-recovery-action", Button)
             assert recovery_action.display is False
-            card_action = app.screen.query_one("#console-empty-choose-model", Button)
+            card_action = app.screen.query_one("#console-setup-modal-action", Button)
             assert card_action.display is True
             assert str(card_action.label) == "Choose model"
             assert not list(app.screen.query("#console-open-provider-settings"))
