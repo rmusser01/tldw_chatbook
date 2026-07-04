@@ -24,7 +24,6 @@ from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequeste
 
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
-EMPTY_TRANSCRIPT_COPY = "Type in Composer, attach sources, or run Library RAG before sending."
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL = "Choose model"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
     "Choose the provider and model for this Console session."
@@ -45,6 +44,19 @@ _ACTION_TOOLTIPS = {
     "variant-previous": "Show the previous regenerated variant.",
     "variant-next": "Show the next regenerated variant.",
 }
+
+
+def _coerce_card_state(value: object) -> ConsoleSetupCardState:
+    """Guard against a transiently non-``ConsoleSetupCardState`` value.
+
+    A flaky resume race can hand the empty panel a stale/incorrect value
+    (observed as a bare ``str``) before the real card state lands. Fall back
+    to the quiet copy rather than raising ``AttributeError`` deep in
+    ``compose()``.
+    """
+    if isinstance(value, ConsoleSetupCardState):
+        return value
+    return ConsoleSetupCardState(mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY)
 
 
 def _message_role_label(message: ConsoleChatMessage) -> str:
@@ -239,7 +251,7 @@ class ConsoleTranscriptEmptyPanel(Vertical):
             id="console-transcript-empty-state",
             classes="console-transcript-empty-panel",
         )
-        self.card_state = card_state
+        self.card_state = _coerce_card_state(card_state)
         self.provider_action_label = provider_action_label
         self.provider_action_tooltip = provider_action_tooltip
 
@@ -314,7 +326,7 @@ class ConsoleTranscriptEmptyPanel(Vertical):
         provider_action_tooltip: str,
     ) -> None:
         """Refresh the onboarding surface from a new card state."""
-        self.card_state = card_state
+        self.card_state = _coerce_card_state(card_state)
         self.provider_action_label = provider_action_label
         self.provider_action_tooltip = provider_action_tooltip
         self.refresh(recompose=True)
@@ -370,7 +382,7 @@ class ConsoleTranscript(VerticalScroll):
         provider_action_tooltip: str = "",
     ) -> None:
         """Refresh the empty transcript state while preserving message exports."""
-        next_card_state = card_state
+        next_card_state = _coerce_card_state(card_state)
         next_action_label = (
             provider_action_label.strip() or EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
         )

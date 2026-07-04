@@ -197,3 +197,16 @@ async def test_setup_panel_sync_card_state_transitions_modes():
         assert not list(app.query("#console-setup-step-1"))
         body = app.query_one("#console-empty-body", Static)
         assert CONSOLE_READY_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
+
+
+@pytest.mark.asyncio
+async def test_setup_panel_coerces_non_card_state_to_quiet_copy():
+    # Regression guard: a flaky resume race can transiently hand the panel a
+    # bare value instead of a ``ConsoleSetupCardState``. It must not raise and
+    # should fall back to rendering the quiet empty-state copy.
+    app = _SetupPanelApp("not-a-card-state")
+    async with app.run_test(size=(100, 30)):
+        body = app.query_one("#console-empty-body", Static)
+        assert CONSOLE_QUIET_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
+        assert not list(app.query("#console-setup-step-1"))
+        assert app.query_one("#console-empty-action-row").styles.display == "none"

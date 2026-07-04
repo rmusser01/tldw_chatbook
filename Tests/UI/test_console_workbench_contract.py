@@ -513,7 +513,7 @@ async def test_console_empty_transcript_actions_post_workbench_messages():
 
 
 @pytest.mark.asyncio
-async def test_console_transcript_empty_fallback_uses_ready_activation_copy():
+async def test_console_transcript_empty_state_renders_ready_activation_copy():
     app = EmptyTranscriptActionHarness()
 
     async with app.run_test(size=(80, 24)) as pilot:

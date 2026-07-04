@@ -5771,6 +5771,9 @@ class ChatScreen(BaseAppScreen):
         if result.should_clear_draft and composer is not None:
             composer.clear_draft()
         if result.accepted:
+            # Retry/continue/regenerate paths intentionally don't record the flag here —
+            # they require an existing message, so ``has_messages`` already keeps the
+            # card hidden and the flag was set by the originating submit.
             self._record_console_first_send()
         await self._sync_native_console_chat_ui()
 
@@ -5880,12 +5883,6 @@ class ChatScreen(BaseAppScreen):
             "No Chatbook artifact is available to save yet.",
             severity="warning",
         )
-
-    @on(Button.Pressed, "#console-open-provider-settings")
-    async def handle_console_open_provider_settings(self, event: Button.Pressed) -> None:
-        """Route provider setup recovery to the smallest relevant settings surface."""
-        event.stop()
-        await self._open_console_provider_recovery()
 
     async def _open_console_provider_recovery(self) -> None:
         """Route provider setup recovery to the smallest relevant settings surface."""
