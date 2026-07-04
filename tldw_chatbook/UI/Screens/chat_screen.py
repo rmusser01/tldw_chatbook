@@ -147,6 +147,7 @@ from ...Widgets.Console import (
     ConsoleSessionSurface,
     ConsoleSettingsModal,
     ConsoleSettingsSummary,
+    ConsoleSetupModal,
     ConsoleStagedContextTray,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
@@ -587,6 +588,8 @@ class ChatScreen(BaseAppScreen):
 
     async def action_focus_next_workbench_pane(self) -> None:
         """Move focus to the next visible Console Workbench pane."""
+        if self._focus_console_setup_modal_if_blocking():
+            return
         hidden = {
             pane_id
             for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
@@ -600,6 +603,8 @@ class ChatScreen(BaseAppScreen):
 
     async def action_focus_previous_workbench_pane(self) -> None:
         """Move focus to the previous visible Console Workbench pane."""
+        if self._focus_console_setup_modal_if_blocking():
+            return
         hidden = {
             pane_id
             for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
@@ -661,6 +666,17 @@ class ChatScreen(BaseAppScreen):
             self._last_console_workbench_focus_id = widget_id
             return
 
+    def _focus_console_setup_modal_if_blocking(self) -> bool:
+        """Trap pane cycling on the setup modal while it blocks the workbench."""
+        if not self._console_setup_modal_blocking():
+            return False
+        try:
+            modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
+        except QueryError:
+            return False
+        modal.focus_primary_action()
+        return True
+
     def _ensure_console_workbench_targets_focusable(self) -> None:
         """Make mounted visible Console Workbench focus targets focusable."""
         for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order:
@@ -674,6 +690,9 @@ class ChatScreen(BaseAppScreen):
 
     def _restore_console_workbench_focus(self) -> None:
         """Restore focus to a visible Console Workbench pane after activation."""
+        if self._focus_console_setup_modal_if_blocking():
+            self._apply_console_setup_block(True)
+            return
         self._ensure_console_workbench_targets_focusable()
         current = self._console_workbench_focus_id_for_widget(self.app.focused)
         if current is not None and self._is_console_widget_displayed(current):
@@ -4240,6 +4259,56 @@ class ChatScreen(BaseAppScreen):
                 provider_action_tooltip=empty_action_tooltip,
             )
 
+        self._sync_console_setup_modal(
+            card_state,
+            action_label=empty_action_label,
+            action_tooltip=empty_action_tooltip,
+        )
+
+    def _sync_console_setup_modal(
+        self,
+        card_state: ConsoleSetupCardState,
+        *,
+        action_label: str,
+        action_tooltip: str,
+    ) -> None:
+        """Show/hide the blocking setup modal and keep the workbench inert."""
+        try:
+            modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
+        except QueryError:
+            return
+        modal.sync_card_state(
+            card_state,
+            action_label=action_label,
+            action_tooltip=action_tooltip,
+        )
+        blocking = modal.is_blocking
+        self._apply_console_setup_block(blocking)
+        if blocking:
+            self.call_after_refresh(modal.focus_primary_action)
+
+    def _console_setup_modal_blocking(self) -> bool:
+        """Return True when the first-run setup modal is covering the workbench."""
+        try:
+            modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
+        except QueryError:
+            return False
+        return bool(getattr(modal, "display", False)) and modal.is_blocking
+
+    def _apply_console_setup_block(self, blocking: bool) -> None:
+        """Disable composer focus/typing while the setup modal is up."""
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return
+        composer.can_focus = not blocking
+        if blocking and self._is_descendant_or_self(self.app.focused, composer):
+            # Pull keyboard focus off the covered composer so typing can't tunnel.
+            try:
+                self.query_one("#console-setup-modal", ConsoleSetupModal).focus_primary_action()
+            except QueryError:
+                composer.blur()
+
     @staticmethod
     def _frame_console_region(
         widget: Any,
@@ -4818,6 +4887,12 @@ class ChatScreen(BaseAppScreen):
                     paste_collapse_threshold=self._console_paste_collapse_threshold(),
                 )
             )
+            # Console-scoped first-run blocker. Sits on a dedicated overlay
+            # layer over the whole Console shell so the workbench (rail,
+            # transcript, tabs, composer) is covered/inert while setup is
+            # incomplete; the app tab bar lives outside the shell and stays
+            # reachable. Hidden until a card-mode state is synced in.
+            yield ConsoleSetupModal(id="console-setup-modal")
 
     def _console_collapse_large_pastes_enabled(self) -> bool:
         """Return the app-level Console paste-collapse preference."""
@@ -6456,6 +6531,10 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             return
+        if self._console_setup_modal_blocking():
+            # Workbench is inert behind the first-run setup modal; never route
+            # printable/edit keys into the covered composer.
+            return
         if not self._should_capture_console_input(composer):
             return
         if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
@@ -6509,6 +6588,8 @@ class ChatScreen(BaseAppScreen):
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
+            return
+        if self._console_setup_modal_blocking():
             return
         if not self._should_capture_console_input(composer):
             return

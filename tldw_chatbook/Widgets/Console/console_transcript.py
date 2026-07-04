@@ -18,7 +18,6 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
     CONSOLE_SETUP_CARD_TITLE,
     ConsoleSetupCardState,
-    ConsoleSetupStep,
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 
@@ -256,33 +255,24 @@ class ConsoleTranscriptEmptyPanel(Vertical):
         self.provider_action_tooltip = provider_action_tooltip
 
     def compose(self) -> ComposeResult:
-        is_card_mode = self.card_state.mode == "card"
-
+        # The blocking setup card (title + numbered steps + primary action) now
+        # lives in ``ConsoleSetupModal``; while setup is incomplete
+        # (``mode == "card"``) this in-transcript panel shows only the quiet
+        # empty line, dimmed under the overlay. ``ready_line``/``quiet`` render
+        # as before.
         title = Static(
             CONSOLE_SETUP_CARD_TITLE,
             id="console-empty-title",
             classes="console-transcript-empty-title",
         )
-        if not is_card_mode:
-            title.styles.display = "none"
+        title.styles.display = "none"
         yield title
 
-        if is_card_mode and self.card_state.steps:
-            for index, step in enumerate(self.card_state.steps, start=1):
-                yield Static(
-                    self._step_text(index, step),
-                    id=f"console-setup-step-{index}",
-                    classes=f"console-setup-step console-setup-step-{step.state}",
-                    markup=False,
-                )
-
         body = Static(
-            self.card_state.body_copy,
+            self.card_state.body_copy or CONSOLE_QUIET_EMPTY_COPY,
             id="console-empty-body",
             classes="console-transcript-empty-body console-transcript-empty-state",
         )
-        if is_card_mode:
-            body.styles.display = "none"
         yield body
 
         action_row = Horizontal(
@@ -307,16 +297,11 @@ class ConsoleTranscriptEmptyPanel(Vertical):
             id="console-empty-action-row",
             classes="console-transcript-empty-action-row",
         )
-        if not is_card_mode:
-            action_row.styles.display = "none"
+        # The setup action row is owned by ``ConsoleSetupModal`` now; the
+        # in-transcript row is retained (hidden) only so legacy selectors keep
+        # resolving.
+        action_row.styles.display = "none"
         yield action_row
-
-    @staticmethod
-    def _step_text(index: int, step: ConsoleSetupStep) -> str:
-        text = f"{index}. {step.glyph} {step.label}"
-        if step.detail:
-            text = f"{text}  {step.detail}"
-        return text
 
     def sync_card_state(
         self,
