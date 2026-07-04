@@ -5,7 +5,6 @@ from __future__ import annotations
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.UI.Workbench.workbench_state import (
     Density,
-    RecoveryState,
     WorkbenchAction,
     WorkbenchHeaderState,
     WorkbenchMode,
@@ -29,7 +28,14 @@ def build_console_workbench_state(
     Args:
         control_state: Current Console control labels and readiness state.
         provider_blocker_copy: Provider/setup blocker copy, if send is blocked.
-        provider_action_label: Label for the recovery action shown when blocked.
+            Only used to derive header/mode "blocked" status; the shared
+            Workbench recovery banner is never populated from it. First-run
+            and setup guidance now live in the empty-transcript setup card
+            and the composer disabled-reason (see the Phase 2 spec, section
+            2), so this state never duplicates that guidance in a banner.
+        provider_action_label: Reserved for callers; unused by this function
+            now that Workbench recovery is never populated. Kept so existing
+            call sites do not need to change.
         can_send: Whether the visible composer draft can be sent.
         can_stop: Whether an active generation can be stopped.
         can_save_chatbook: Whether the current session can be saved as a Chatbook.
@@ -108,19 +114,11 @@ def build_console_workbench_state(
         WorkbenchMode(id="approvals", label=control_state.approvals_label),
     )
 
-    recovery = None
-    if blocker:
-        recovery = RecoveryState(
-            title="Console setup blocked",
-            body=f"{blocker}\nImpact: Send is blocked until setup is finished.",
-            action=WorkbenchAction(
-                id="provider-recovery",
-                label=provider_action_label,
-                tooltip=provider_action_label,
-                primary=True,
-            ),
-        )
-
+    # Note: the shared Workbench `recovery` banner is intentionally never
+    # populated here. The empty-transcript setup card and the composer
+    # blocked-reason now own first-run/provider-setup guidance; surfacing it
+    # again here would duplicate that guidance in a second top-level banner
+    # (see the Phase 2 spec, section 2).
     return WorkbenchState(
         route_id="chat",
         density=workbench_density,
@@ -138,5 +136,5 @@ def build_console_workbench_state(
             WorkbenchPaneState(id="inspector", title="Inspector"),
             WorkbenchPaneState(id="composer", title="Composer"),
         ),
-        recovery=recovery,
+        recovery=None,
     )

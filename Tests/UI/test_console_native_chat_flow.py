@@ -1880,9 +1880,12 @@ async def test_console_add_api_key_recovery_targets_provider_settings_category()
             ConsoleSessionSettings(provider="huggingface", model="meta-llama/test-model"),
         )
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
+        # The shared Workbench recovery banner stays hidden now — the setup
+        # card's action button carries this recovery instead (Phase 2 spec,
+        # section 2).
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
 
-        await pilot.click("#workbench-recovery-action")
+        await pilot.click("#console-empty-choose-model")
 
         assert len(host.navigation_messages) == 1
         message = host.navigation_messages[0]
@@ -1910,14 +1913,17 @@ async def test_console_add_api_key_recovery_tolerates_missing_session_settings()
             ConsoleSessionSettings(provider="huggingface", model="meta-llama/test-model"),
         )
         await console._sync_native_console_chat_ui()
-        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
+        # The shared Workbench recovery banner stays hidden now — the setup
+        # card's action button carries this recovery instead (Phase 2 spec,
+        # section 2).
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
         console._active_console_provider_model_display = lambda: (
             "huggingface",
             "meta-llama/test-model",
             None,
         )
 
-        await pilot.click("#workbench-recovery-action")
+        await pilot.click("#console-empty-choose-model")
 
         assert len(host.navigation_messages) == 1
         message = host.navigation_messages[0]
@@ -2141,17 +2147,20 @@ async def test_console_setup_required_state_groups_recovery_and_action_copy():
 
     async with host.run_test(size=(180, 54)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#workbench-recovery-callout")
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
 
+        # The shared Workbench recovery banner stays hidden — the setup card
+        # groups the setup-blocked copy and the recovery action together
+        # instead (Phase 2 spec, section 2).
         recovery = console.query_one("#workbench-recovery-callout")
-        recovery_text = getattr(recovery.renderable, "plain", str(recovery.renderable))
-        assert "Provider setup needed" in recovery_text
-        assert "Impact: Send is blocked until setup is finished." in recovery_text
+        assert recovery.display is False
+        setup_card = console.query_one("#console-transcript-empty-state")
+        card_text = _visible_text(setup_card)
+        assert "Add an API key" in card_text
         assert (
-            str(console.query_one("#workbench-recovery-action", Button).label)
+            str(console.query_one("#console-empty-choose-model", Button).label)
             == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         )
-        assert recovery.region.y < console.query_one("#console-native-transcript").region.y
 
 
 @pytest.mark.asyncio
@@ -2297,7 +2306,10 @@ async def test_console_composer_setup_blocker_keeps_recovery_outside_input():
         composer_text = _visible_text(composer)
         assert ConsoleComposerBar.DRAFT_PLACEHOLDER in composer_text
         assert "Setup required" not in composer_text
-        assert "Impact: Send is blocked" in _visible_text(console)
+        # The composer's own blocked-reason (the Send tooltip) carries the
+        # "blocked" impact guidance now instead of the shared Workbench
+        # recovery banner (Phase 2 spec, section 2).
+        assert not console.query_one("#workbench-recovery-callout").display
         assert console.query_one("#console-send-message", Button).tooltip == (
             "Add API key in Settings > Providers & Models before sending."
         )

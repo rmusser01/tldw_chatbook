@@ -189,11 +189,16 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
                 app.screen._console_provider_blocker_copy()
                 == "Provider setup needed: choose a model"
             )
+            # The shared Workbench recovery banner stays hidden — the setup
+            # card's action button is the recovery/control surface now
+            # (Phase 2 spec, section 2).
             recovery_callout = app.screen.query("#workbench-recovery-callout")
-            assert recovery_callout and recovery_callout[0].display is True
+            assert recovery_callout and recovery_callout[0].display is False
             recovery_action = app.screen.query_one("#workbench-recovery-action", Button)
-            assert recovery_action.display is True
-            assert str(recovery_action.label) == "Choose model"
+            assert recovery_action.display is False
+            card_action = app.screen.query_one("#console-empty-choose-model", Button)
+            assert card_action.display is True
+            assert str(card_action.label) == "Choose model"
             assert not list(app.screen.query("#console-open-provider-settings"))
             assert "More: Ctrl+P" in _screen_text(app)
 

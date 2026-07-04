@@ -352,7 +352,7 @@ async def test_console_ready_inspector_shows_run_recipe_and_operational_groups()
 
 
 @pytest.mark.asyncio
-async def test_console_composer_keeps_primary_actions_and_setup_recovery_visible():
+async def test_console_composer_keeps_primary_actions_and_setup_card_recovery_visible():
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
@@ -373,10 +373,14 @@ async def test_console_composer_keeps_primary_actions_and_setup_recovery_visible
         assert _is_displayed(console.query_one("#console-stop-generation"))
         assert _is_displayed(console.query_one("#console-save-chatbook"))
         assert not _is_displayed(console.query_one("#console-composer-recovery"))
-        assert _is_displayed(console.query_one("#workbench-recovery-callout"))
-        recovery_action = console.query_one("#workbench-recovery-action")
-        assert _is_displayed(recovery_action)
-        assert "Choose model" in _widget_text(recovery_action)
+        # The shared Workbench recovery banner must stay hidden — the setup
+        # card in the empty transcript owns first-run recovery guidance now.
+        assert not _is_displayed(console.query_one("#workbench-recovery-callout"))
+        setup_card = console.query_one("#console-transcript-empty-state")
+        assert _is_displayed(setup_card)
+        card_action = console.query_one("#console-empty-choose-model")
+        assert _is_displayed(card_action)
+        assert "Choose model" in _widget_text(card_action)
         visible_draft = console.query_one("#console-command-visible-text")
         assert visible_draft.region.width >= 32
 
@@ -655,7 +659,10 @@ def test_console_workbench_state_exposes_core_actions_visibly():
     assert state.recovery is None
 
 
-def test_console_workbench_state_surfaces_provider_recovery():
+def test_console_workbench_state_hides_recovery_banner_when_provider_blocked():
+    """The setup card + composer own first-run guidance now (Phase 2 spec
+    section 2); the shared Workbench recovery banner must stay absent even
+    while a provider blocker keeps Send disabled."""
     state = build_console_workbench_state(
         control_state=ConsoleControlState(
             provider_label="Provider: OpenAI",
@@ -673,19 +680,18 @@ def test_console_workbench_state_surfaces_provider_recovery():
         can_save_chatbook=False,
     )
 
-    assert state.recovery is not None
-    assert "choose a model" in state.recovery.body.lower()
-    assert state.recovery.action is not None
-    assert state.recovery.action.label == "Choose model"
-    assert state.recovery.action.id == "provider-recovery"
-    assert state.recovery.action.primary is True
+    assert state.recovery is None
+    assert state.header.status == "blocked"
 
     modes = {mode.id: mode for mode in state.modes}
     assert modes["provider"].status == "blocked"
     assert modes["model"].status == "blocked"
 
 
-def test_console_workbench_recovery_names_specific_setup_action():
+def test_console_workbench_state_never_resurfaces_recovery_for_named_setup_action():
+    """A blocker copy that names a specific recovery action (e.g. "Choose
+    model") must still not leak into a duplicate workbench recovery banner;
+    that copy belongs to the setup card and composer disabled-reason only."""
     state = build_console_workbench_state(
         control_state=_control_state(),
         provider_blocker_copy="Provider setup needed: choose a model",
@@ -693,12 +699,8 @@ def test_console_workbench_recovery_names_specific_setup_action():
         can_send=False,
     )
 
-    assert state.recovery is not None
-    assert state.recovery.action is not None
-    assert state.recovery.action.label == "Choose model"
-    assert state.recovery.action.tooltip == "Choose model"
-    assert state.recovery.action.primary is True
-    assert "Send is blocked" in state.recovery.body
+    assert state.recovery is None
+    assert state.header.status == "blocked"
 
 
 def test_console_disabled_reason_copy_prefers_setup_blocker():
@@ -811,7 +813,7 @@ async def test_console_core_controls_are_visible_without_command_palette():
 
 
 @pytest.mark.asyncio
-async def test_console_recovery_action_is_visible_when_provider_setup_blocks_send():
+async def test_console_setup_card_carries_blocked_send_guidance_instead_of_banner():
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
@@ -825,17 +827,19 @@ async def test_console_recovery_action_is_visible_when_provider_setup_blocks_sen
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 
+        # The shared Workbench recovery banner must stay hidden while the
+        # setup card and the composer's Send tooltip carry the "blocked"
+        # guidance instead (Phase 2 spec, section 2).
         recovery = console.query_one("#workbench-recovery-callout")
-        assert _is_displayed(recovery)
-        recovery_text = " ".join(
-            getattr(child.renderable, "plain", str(getattr(child, "renderable", "")))
-            for child in recovery.query("Static")
-        )
-        assert "Send is blocked" in recovery_text
+        assert not _is_displayed(recovery)
+        setup_card = console.query_one("#console-transcript-empty-state")
+        assert _is_displayed(setup_card)
+        send_button = console.query_one("#console-send-message")
+        assert "model" in (send_button.tooltip or "").lower()
 
 
 @pytest.mark.asyncio
-async def test_console_blocked_setup_recovery_has_primary_choose_model_action():
+async def test_console_setup_card_choose_model_action_is_visible_and_primary_recovery():
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
@@ -850,15 +854,15 @@ async def test_console_blocked_setup_recovery_has_primary_choose_model_action():
         await _wait_for_selector(console, pilot, "#console-shell")
 
         recovery = console.query_one("#workbench-recovery-callout")
-        assert _is_displayed(recovery)
-        action = console.query_one("#workbench-recovery-action")
+        assert not _is_displayed(recovery)
+        action = console.query_one("#console-empty-choose-model")
         assert _is_displayed(action)
         assert str(action.label) == "Choose model"
         assert action.disabled is False
 
 
 @pytest.mark.asyncio
-async def test_console_recovery_action_button_is_visible_and_actionable():
+async def test_console_setup_card_recovery_action_button_is_visible_and_actionable():
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
@@ -871,12 +875,13 @@ async def test_console_recovery_action_button_is_visible_and_actionable():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
-        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
 
-        action = console.query_one("#workbench-recovery-action")
+        assert not _is_displayed(console.query_one("#workbench-recovery-callout"))
+        action = console.query_one("#console-empty-choose-model")
         assert _is_displayed(action)
         assert not action.disabled
-        await pilot.click("#workbench-recovery-action")
+        await pilot.click("#console-empty-choose-model")
         await pilot.pause()
 
         assert host.screen.query("#console-settings-modal") or host.screen.query(

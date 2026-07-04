@@ -3048,9 +3048,12 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _visible_console_settings_button(console, pilot)
-        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
+        # The shared Workbench recovery banner stays hidden — the setup
+        # card's action button carries this recovery instead (Phase 2 spec,
+        # section 2).
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
 
-        recovery_button = console.query_one("#workbench-recovery-action", Button)
+        recovery_button = console.query_one("#console-empty-choose-model", Button)
         assert str(recovery_button.label) == "Choose model"
         assert recovery_button.display is True
 

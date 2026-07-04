@@ -1710,7 +1710,10 @@ async def test_console_send_without_ready_runtime_keeps_setup_block_tooltip_only
 
         text = _visible_text(console)
         assert "Console send blocked" not in text
-        assert "missing API key" in text
+        # The setup card + composer own setup guidance now (the shared
+        # Workbench recovery banner no longer duplicates it); the durable
+        # transcript feedback carries the same "add an API key" guidance.
+        assert "Add API key in Settings > Providers & Models before sending." in text
         assert "Internal Error" not in text
         assert "Missing UI elements" not in text
         assert composer.draft_text() == "hello console"
@@ -1746,7 +1749,10 @@ async def test_console_enter_sends_native_composer_draft(monkeypatch):
         assert send_button.tooltip == (
             "Add API key in Settings > Providers & Models before sending."
         )
-        assert "missing API key" in text
+        # The setup card + composer own setup guidance now (the shared
+        # Workbench recovery banner no longer duplicates it); the durable
+        # transcript feedback carries the same "add an API key" guidance.
+        assert "Add API key in Settings > Providers & Models before sending." in text
         assert "Internal Error" not in text
         assert "Missing UI elements" not in text
         assert composer.draft_text() == "hello"
@@ -1773,24 +1779,23 @@ async def test_console_empty_transcript_promotes_setup_card_over_banner():
 
         start_here = console.query_one("#console-start-here", Static)
         action_hints = console.query_one("#console-action-hints", Static)
+        # The shared Workbench recovery banner must stay hidden — the setup
+        # card owns first-run/provider-setup guidance now (Phase 2 spec,
+        # section 2), so it must not be duplicated in a top-level banner.
         recovery = console.query_one("#workbench-recovery-callout")
         recovery_action = console.query_one("#workbench-recovery-action", Button)
-        transcript = console.query_one("#console-native-transcript")
+        setup_card = console.query_one("#console-transcript-empty-state")
         assert not list(console.query("#console-provider-recovery-strip"))
         assert not list(console.query("#console-provider-blocker"))
         assert not list(console.query("#console-open-provider-settings"))
-        assert recovery.display is True
-        assert recovery.region.y < transcript.region.y
-        assert recovery_action.display is True
-        assert str(recovery_action.label) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
+        assert recovery.display is False
+        assert recovery_action.display is False
+        assert setup_card.display is True
         assert start_here.styles.display == "none"
         assert action_hints.styles.display == "none"
 
         text = _visible_text(console)
         for expected in (
-            "Provider setup needed",
-            "OpenAI missing API key",
-            "Impact: Send is blocked until setup is finished.",
             CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
             "Get started",
             "Add an API key",
@@ -1811,17 +1816,18 @@ async def test_console_empty_transcript_promotes_setup_card_over_banner():
             "1. Finish provider setup",
             "2. Attach Library, runs, Artifacts, or RAG",
             "3. Type a message or command in Composer",
+            "Provider setup needed",
+            "Impact: Send is blocked until setup is finished.",
         ):
             assert redundant_copy not in text
         assert "Provider: OpenAI is not ready" not in text
         assert "Provider setup is shown in the recovery strip above." not in text
-        recovery_text = getattr(recovery.renderable, "plain", str(recovery.renderable))
-        assert recovery_text.startswith("Console setup blocked")
-        assert "Provider setup needed: OpenAI missing API key" in recovery_text
-        assert "Impact: Send is blocked until setup is finished." in recovery_text
         assert console.query_one("#console-inspector-rail-handle").display is True
         assert console.query_one("#console-right-rail").display is False
-        assert text.lower().count("missing api key") == 1
+        # "missing API key" no longer appears anywhere — the setup card uses
+        # "Add an API key" and the banner that used to carry that literal
+        # phrase is gone.
+        assert text.lower().count("missing api key") == 0
 
 
 @pytest.mark.asyncio
@@ -1863,36 +1869,33 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#workbench-recovery-callout")
-        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
+        await _wait_for_selector(console, pilot, "#console-transcript-empty-state")
         await _wait_for_selector(console, pilot, "#console-empty-choose-model")
 
         assert not list(console.query("#console-provider-recovery-strip"))
         assert not list(console.query("#console-provider-blocker"))
         assert not list(console.query("#console-open-provider-settings"))
 
+        # The shared Workbench recovery banner must stay hidden — the setup
+        # card's own "open settings" action carries this guidance instead
+        # (Phase 2 spec, section 2).
         recovery = console.query_one("#workbench-recovery-callout")
         button = console.query_one("#workbench-recovery-action", Button)
         card_button = console.query_one("#console-empty-choose-model", Button)
-        assert button.display is True
-        assert button.disabled is False
-        assert button.region.height == 1
-        assert button.region.width >= len(CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL)
-        assert str(button.label) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
-        assert button.has_class("is-primary")
-        assert recovery.region.y < button.region.y
+        assert recovery.display is False
+        assert button.display is False
         assert card_button.display is True
+        assert card_button.disabled is False
         assert str(card_button.label) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         assert card_button.tooltip == "Configure OpenAI API and API key in Settings"
-        recovery_text = getattr(recovery.renderable, "plain", str(recovery.renderable))
-        assert recovery_text.startswith("Console setup blocked")
-        assert "Provider setup needed: OpenAI missing API key" in recovery_text
-        assert "Impact: Send is blocked until setup is finished." in recovery_text
         text = _visible_text(console)
         assert CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL in text
         assert console.query_one("#console-inspector-rail-handle").display is True
         assert console.query_one("#console-right-rail").display is False
-        assert text.lower().count("missing api key") == 1
+        # "missing API key" no longer appears anywhere — the setup card uses
+        # "Add an API key" and the banner that used to carry that literal
+        # phrase is gone.
+        assert text.lower().count("missing api key") == 0
 
 
 @pytest.mark.asyncio
@@ -1954,8 +1957,11 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#workbench-recovery-callout")
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
+        # The shared Workbench recovery banner must stay hidden — the setup
+        # card's action button and the composer's Send tooltip carry this
+        # guidance instead (Phase 2 spec, section 2).
         recovery = console.query_one("#workbench-recovery-callout")
         recovery_action = console.query_one("#workbench-recovery-action", Button)
         store = console._ensure_console_chat_store()
@@ -1964,11 +1970,8 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
 
         assert not list(console.query("#console-provider-recovery-strip"))
         assert not list(console.query("#console-provider-blocker"))
-        assert recovery.display is True
-        assert str(recovery_action.label) == "Choose model"
-        assert "Provider setup needed: choose a model" in getattr(
-            recovery.renderable, "plain", str(recovery.renderable)
-        )
+        assert recovery.display is False
+        assert recovery_action.display is False
         assert "Provider setup needed: choose a model" not in _visible_text(
             console.query_one("#console-native-transcript")
         )
@@ -1978,7 +1981,8 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert "Choose model" in _visible_text(console)
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
         assert "No messages yet." not in _visible_text(console)
-        assert "Impact: Send is blocked" in _visible_text(console)
+        send_button = console.query_one("#console-send-message", Button)
+        assert send_button.tooltip == "Choose a model in Console Settings before sending."
         assert "Setup required: Choose model before sending." not in _visible_text(console)
 
         store.replace_session_settings(
@@ -2004,11 +2008,8 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
 
         assert not list(console.query("#console-provider-blocker"))
         assert not list(console.query("#console-provider-recovery-strip"))
-        assert recovery.display is True
-        assert str(recovery_action.label) == "Choose model"
-        assert "Provider setup needed: choose a model" in getattr(
-            recovery.renderable, "plain", str(recovery.renderable)
-        )
+        assert recovery.display is False
+        assert recovery_action.display is False
         assert "Provider setup needed: choose a model" not in _visible_text(
             console.query_one("#console-native-transcript")
         )
@@ -2017,6 +2018,8 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert str(card_button.label) == "Choose model"
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
         assert "No messages yet." not in _visible_text(console)
+        send_button = console.query_one("#console-send-message", Button)
+        assert send_button.tooltip == "Choose a model in Console Settings before sending."
 
 
 @pytest.mark.asyncio

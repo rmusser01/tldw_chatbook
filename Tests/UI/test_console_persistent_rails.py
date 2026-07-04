@@ -797,9 +797,12 @@ async def test_console_provider_blocked_badge_does_not_auto_open_inspector():
             "#console-inspector-rail-badge",
             "setup",
         )
+        # The shared Workbench recovery banner must stay hidden — the setup
+        # card's own action button carries this guidance instead (Phase 2
+        # spec, section 2).
         recovery = console.query_one("#workbench-recovery-callout")
-        assert _is_displayed(recovery)
-        settings_button = console.query_one("#workbench-recovery-action", Button)
+        assert not _is_displayed(recovery)
+        settings_button = console.query_one("#console-empty-choose-model", Button)
         assert _is_displayed(settings_button)
         assert settings_button.disabled is False
 
