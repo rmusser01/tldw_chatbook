@@ -74,11 +74,6 @@ def test_console_workspace_conversation_title_preserves_duplicate_suffix():
     assert ConsoleWorkspaceContextTray._conversation_visible_title(title) == title
 
 
-def test_console_provider_recovery_strip_visible_handles_missing_blocker_copy():
-    """Missing blocker copy should keep the recovery strip hidden."""
-    assert ChatScreen._console_provider_recovery_strip_visible(object(), None) is False
-
-
 def test_console_workspace_status_row_empty_value_uses_unavailable():
     """Status labels ending in a colon should not repeat the label as the value."""
     assert ConsoleWorkspaceDetailsTray._split_status_row("Authority: ", "Authority") == (

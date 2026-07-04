@@ -4112,22 +4112,6 @@ class ChatScreen(BaseAppScreen):
             )
         return ("Review settings", "console", "Review this Console session's settings")
 
-    def _console_provider_recovery_strip_visible(self, blocker_copy: str | None) -> bool:
-        """Return whether provider recovery needs a persistent transcript row."""
-        return bool(blocker_copy and blocker_copy.strip())
-
-    @staticmethod
-    def _console_provider_blocker_display_copy(copy: str, action_label: str) -> str:
-        """Return one coherent setup callout with problem, impact, and action."""
-        copy = copy.strip()
-        if not copy:
-            return ""
-        return (
-            f"{copy}\n"
-            "Impact: Send is blocked until setup is finished.\n"
-            f"Action: {action_label or 'Open Settings'}"
-        )
-
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
         if self._console_chat_store is not None:
@@ -4225,7 +4209,6 @@ class ChatScreen(BaseAppScreen):
         blocker_copy = self._console_provider_blocker_copy()
         guidance_visible = self._console_guidance_visible(blocker_copy)
         action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
-        is_api_key_recovery = self._console_provider_recovery_field() == "api_key"
         empty_action_label, empty_action_tooltip = self._console_empty_recovery_action_copy(
             blocker_copy,
             provider_action_label=action_label if blocker_copy else "",
@@ -4256,85 +4239,6 @@ class ChatScreen(BaseAppScreen):
                 provider_action_label=empty_action_label,
                 provider_action_tooltip=empty_action_tooltip,
             )
-
-        try:
-            provider_strip = self.query_one("#console-provider-recovery-strip", Horizontal)
-            provider_blocker = self.query_one("#console-provider-blocker", Static)
-        except QueryError:
-            return
-        # Legacy recovery selectors stay mounted for parity, but Workbench owns
-        # the visible setup recovery UI through #workbench-recovery-callout.
-        recovery_visible = False
-        self._configure_console_provider_recovery_strip(
-            provider_strip,
-            provider_blocker,
-            blocker_copy,
-            visible=recovery_visible,
-            action_label=action_label,
-        )
-        try:
-            settings_button = self.query_one("#console-open-provider-settings", Button)
-        except QueryError:
-            return
-        self._configure_console_provider_settings_action(
-            settings_button,
-            visible=recovery_visible,
-            label=action_label,
-            tooltip=action_tooltip,
-            is_api_key_recovery=is_api_key_recovery,
-        )
-
-    @staticmethod
-    def _configure_console_provider_recovery_strip(
-        strip: Horizontal,
-        blocker: Static,
-        copy: str,
-        *,
-        visible: bool,
-        action_label: str,
-    ) -> None:
-        """Show provider recovery as one compact warning/action row."""
-        display_copy = (
-            ChatScreen._console_provider_blocker_display_copy(copy, action_label)
-            if visible
-            else ""
-        )
-        row_count = display_copy.count("\n") + 1 if display_copy else 0
-        strip.styles.height = "auto" if visible else 0
-        strip.styles.min_height = row_count if visible else 0
-        strip.styles.display = "block" if visible else "none"
-        blocker.update(display_copy)
-        blocker.styles.display = "block" if visible else "none"
-        blocker.styles.width = "1fr"
-        blocker.styles.height = "auto" if visible else 0
-        blocker.styles.min_height = row_count if visible else 0
-        blocker.styles.margin = 0
-
-    @staticmethod
-    def _configure_console_provider_settings_action(
-        button: Button,
-        *,
-        visible: bool,
-        label: str = "Open Settings",
-        tooltip: str = "Open provider settings",
-        is_api_key_recovery: bool = False,
-    ) -> None:
-        """Show or hide the provider recovery action with the blocker copy."""
-        button.label = label or "Open Settings"
-        button.tooltip = tooltip
-        button.disabled = not visible
-        if visible and is_api_key_recovery:
-            button.add_class("console-provider-api-key-action")
-        else:
-            button.remove_class("console-provider-api-key-action")
-        if visible:
-            button.styles.display = "block"
-            button.styles.height = 1
-            button.styles.min_height = 1
-            return
-        button.styles.display = "none"
-        button.styles.height = 0
-        button.styles.min_height = 0
 
     @staticmethod
     def _frame_console_region(
@@ -4811,53 +4715,6 @@ class ChatScreen(BaseAppScreen):
                     with transcript_region:
                         provider_blocker_copy = self._console_provider_blocker_copy()
                         guidance_visible = self._console_guidance_visible(provider_blocker_copy)
-                        recovery_visible = self._console_provider_recovery_strip_visible(
-                            provider_blocker_copy
-                        )
-                        provider_action_label, _provider_action_target, provider_action_tooltip = (
-                            self._console_provider_recovery_action()
-                        )
-                        provider_recovery_field = self._console_provider_recovery_field()
-                        provider_recovery_strip = Horizontal(
-                            id="console-provider-recovery-strip",
-                            classes="console-provider-recovery-strip",
-                        )
-                        with provider_recovery_strip:
-                            blocker = Static(
-                                provider_blocker_copy,
-                                id="console-provider-blocker",
-                                classes="console-provider-blocker",
-                            )
-                            self._configure_console_provider_recovery_strip(
-                                provider_recovery_strip,
-                                blocker,
-                                provider_blocker_copy,
-                                visible=False,
-                                action_label=provider_action_label,
-                            )
-                            yield blocker
-                            provider_settings_action = Button(
-                                provider_action_label,
-                                id="console-open-provider-settings",
-                                classes="destination-action-button console-provider-settings-action",
-                                disabled=not recovery_visible,
-                                compact=True,
-                                variant="primary",
-                            )
-                            self._configure_console_provider_settings_action(
-                                provider_settings_action,
-                                visible=False,
-                                label=provider_action_label,
-                                tooltip=provider_action_tooltip,
-                                is_api_key_recovery=provider_recovery_field == "api_key",
-                            )
-                            yield provider_settings_action
-                        # Compatibility selectors retained during Console
-                        # Workbench parity: #console-provider-recovery-strip,
-                        # #console-provider-blocker, and
-                        # #console-open-provider-settings are superseded by
-                        # #workbench-recovery-callout and
-                        # #workbench-recovery-action.
                         start_here = Static(
                             CONSOLE_START_HERE_COPY,
                             id="console-start-here",

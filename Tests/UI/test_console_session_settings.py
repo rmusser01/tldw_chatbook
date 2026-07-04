@@ -3212,16 +3212,6 @@ def test_console_missing_key_recovery_action_is_provider_specific() -> None:
         == "Add API key in Settings > Providers & Models before sending."
     )
 
-    settings_button = Button("Sentinel")
-    ChatScreen._configure_console_provider_settings_action(
-        settings_button,
-        visible=True,
-        label="Localized recovery label",
-        tooltip=tooltip,
-        is_api_key_recovery=True,
-    )
-    assert settings_button.has_class("console-provider-api-key-action")
-
 
 def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details() -> None:
     app = _build_test_app()

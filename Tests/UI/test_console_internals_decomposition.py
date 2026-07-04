@@ -13,6 +13,7 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
     _wait_for_visible_text,
 )
+from Tests.UI.test_console_native_chat_flow import ConsoleNavigationHarness
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
@@ -115,14 +116,6 @@ class StaticConsoleLibraryRagSearchService:
             }
         )
         return self.result
-
-
-class _PressedEvent:
-    def __init__(self) -> None:
-        self.stopped = False
-
-    def stop(self) -> None:
-        self.stopped = True
 
 
 def _configure_native_ready_console(app, model: str = "local-model") -> None:
@@ -1760,7 +1753,7 @@ async def test_console_enter_sends_native_composer_draft(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_console_empty_transcript_promotes_start_here_and_provider_recovery():
+async def test_console_empty_transcript_promotes_setup_card_over_banner():
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {
@@ -1775,16 +1768,17 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-provider-blocker")
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         start_here = console.query_one("#console-start-here", Static)
         action_hints = console.query_one("#console-action-hints", Static)
-        provider_strip = console.query_one("#console-provider-recovery-strip")
         recovery = console.query_one("#workbench-recovery-callout")
         recovery_action = console.query_one("#workbench-recovery-action", Button)
         transcript = console.query_one("#console-native-transcript")
-        assert provider_strip.styles.display == "none"
+        assert not list(console.query("#console-provider-recovery-strip"))
+        assert not list(console.query("#console-provider-blocker"))
+        assert not list(console.query("#console-open-provider-settings"))
         assert recovery.display is True
         assert recovery.region.y < transcript.region.y
         assert recovery_action.display is True
@@ -1821,8 +1815,6 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             assert redundant_copy not in text
         assert "Provider: OpenAI is not ready" not in text
         assert "Provider setup is shown in the recovery strip above." not in text
-        blocker = console.query_one("#console-provider-blocker", Static)
-        assert blocker.styles.display == "none"
         recovery_text = getattr(recovery.renderable, "plain", str(recovery.renderable))
         assert recovery_text.startswith("Console setup blocked")
         assert "Provider setup needed: OpenAI missing API key" in recovery_text
@@ -1873,15 +1865,15 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#workbench-recovery-callout")
         await _wait_for_selector(console, pilot, "#workbench-recovery-action")
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
 
-        strip = console.query_one("#console-provider-recovery-strip")
-        blocker = console.query_one("#console-provider-blocker", Static)
-        legacy_button = console.query_one("#console-open-provider-settings", Button)
+        assert not list(console.query("#console-provider-recovery-strip"))
+        assert not list(console.query("#console-provider-blocker"))
+        assert not list(console.query("#console-open-provider-settings"))
+
         recovery = console.query_one("#workbench-recovery-callout")
         button = console.query_one("#workbench-recovery-action", Button)
-        assert strip.styles.display == "none"
-        assert blocker.styles.display == "none"
-        assert legacy_button.styles.display == "none"
+        card_button = console.query_one("#console-empty-choose-model", Button)
         assert button.display is True
         assert button.disabled is False
         assert button.region.height == 1
@@ -1889,6 +1881,9 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         assert str(button.label) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         assert button.has_class("is-primary")
         assert recovery.region.y < button.region.y
+        assert card_button.display is True
+        assert str(card_button.label) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
+        assert card_button.tooltip == "Configure OpenAI API and API key in Settings"
         recovery_text = getattr(recovery.renderable, "plain", str(recovery.renderable))
         assert recovery_text.startswith("Console setup blocked")
         assert "Provider setup needed: OpenAI missing API key" in recovery_text
@@ -1902,18 +1897,29 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
 
 @pytest.mark.asyncio
 async def test_console_provider_settings_action_posts_navigation_message(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
-    console = ChatScreen(app)
-    event = _PressedEvent()
-    posted_messages: list[object] = []
-    monkeypatch.setattr(console, "post_message", posted_messages.append)
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleNavigationHarness(app)
 
-    await console.handle_console_open_provider_settings(event)  # type: ignore[arg-type]
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
 
-    assert event.stopped is True
+        await pilot.click("#console-empty-choose-model")
+        await pilot.pause()
+
     assert [
         message.screen_name
-        for message in posted_messages
+        for message in host.navigation_messages
         if isinstance(message, NavigateToScreen)
     ] == ["settings"]
 
@@ -1930,12 +1936,10 @@ async def test_console_provider_settings_action_hidden_when_provider_ready(monke
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await pilot.pause(0.1)
 
-        buttons = [
-            button
-            for button in console.query("#console-open-provider-settings")
-            if button.display
-        ]
-        assert buttons == []
+        assert not list(console.query("#console-open-provider-settings"))
+        action_row = console.query_one("#console-empty-action-row")
+        assert action_row.styles.display == "none"
+        assert action_row.display is False
 
 
 @pytest.mark.asyncio
@@ -1952,16 +1956,14 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#workbench-recovery-callout")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        strip = console.query_one("#console-provider-recovery-strip")
         recovery = console.query_one("#workbench-recovery-callout")
         recovery_action = console.query_one("#workbench-recovery-action", Button)
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         await pilot.pause()
-        blocker = console.query_one("#console-provider-blocker", Static)
 
-        assert strip.styles.display == "none"
-        assert blocker.styles.display == "none"
+        assert not list(console.query("#console-provider-recovery-strip"))
+        assert not list(console.query("#console-provider-blocker"))
         assert recovery.display is True
         assert str(recovery_action.label) == "Choose model"
         assert "Provider setup needed: choose a model" in getattr(
@@ -1970,6 +1972,9 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert "Provider setup needed: choose a model" not in _visible_text(
             console.query_one("#console-native-transcript")
         )
+        card_button = console.query_one("#console-empty-choose-model", Button)
+        assert card_button.display is True
+        assert str(card_button.label) == "Choose model"
         assert "Choose model" in _visible_text(console)
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
         assert "No messages yet." not in _visible_text(console)
@@ -1983,9 +1988,10 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         console._sync_console_control_bar()
         await pilot.pause()
 
-        assert blocker.styles.display == "none"
-        assert str(blocker.renderable) == ""
-        assert strip.styles.display == "none"
+        assert not list(console.query("#console-provider-blocker"))
+        assert not list(console.query("#console-provider-recovery-strip"))
+        action_row = console.query_one("#console-empty-action-row")
+        assert action_row.styles.display == "none"
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
         assert "Setup required: Choose model before sending." not in _visible_text(console)
 
@@ -1996,8 +2002,8 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         console._sync_console_control_bar()
         await pilot.pause()
 
-        assert blocker.styles.display == "none"
-        assert strip.styles.display == "none"
+        assert not list(console.query("#console-provider-blocker"))
+        assert not list(console.query("#console-provider-recovery-strip"))
         assert recovery.display is True
         assert str(recovery_action.label) == "Choose model"
         assert "Provider setup needed: choose a model" in getattr(
@@ -2006,6 +2012,9 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert "Provider setup needed: choose a model" not in _visible_text(
             console.query_one("#console-native-transcript")
         )
+        card_button = console.query_one("#console-empty-choose-model", Button)
+        assert card_button.display is True
+        assert str(card_button.label) == "Choose model"
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
         assert "No messages yet." not in _visible_text(console)
 
