@@ -754,13 +754,25 @@ async def _click_console_workspace_conversation_for_id(
     *,
     attempts: int = 40,
 ) -> str:
-    """Click a workspace conversation row by persisted conversation id."""
+    """Click a workspace conversation row by persisted conversation id.
+
+    Retries until the click actually registers. The Console conversation rail is
+    still settling its layout for a beat after the rows first become queryable
+    (the empty transcript recomposes into the multi-line setup card on the first
+    guidance sync), so a single ``pilot.click`` fired the instant the row appears
+    can land on a mid-reflow offset and miss without ever invoking the row
+    handler. Mirror the click-until-effect pattern used by
+    ``_click_console_workspace_conversation_for_session`` and re-click until the
+    press is delivered (``pilot.click`` returns ``True``).
+    """
     for _ in range(attempts):
+        row_id: str | None = None
         for row in console.query(".console-workspace-conversation-row"):
             if getattr(row, "conversation_id", None) == conversation_id:
                 row_id = str(row.id)
-                await pilot.click(f"#{row_id}")
-                return row_id
+                break
+        if row_id is not None and await pilot.click(f"#{row_id}"):
+            return row_id
         await pilot.pause(0.05)
     rows = [
         (getattr(row, "id", ""), getattr(row, "conversation_id", None), _widget_text(row))
