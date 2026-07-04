@@ -71,11 +71,12 @@ The top blocker banner is **removed**. Its job moves to a **setup card** in the 
 ```
 
 - **Live state.** Step 1 reflects credential presence (reusing the merged API-key recovery action); step 2 reflects model selection. Steps derive from the same provider-readiness check as the composer blocker (§5).
-- **Keyboard-reachable.** Card buttons are focusable and included in pane cycling.
-- **Composer.** Typing is always allowed. Send stays blocked until the provider is ready, with the reason inline: `Send blocked — add an API key to continue`.
+- **Modal presentation (revised 2026-07-04, user-directed).** While setup is incomplete, the card renders as a BLOCKING MODAL on top of the Console workbench: rail, transcript, tabs, and composer are covered/inert — the user cannot type, send, attach, or run RAG until setup completes. The block is Console-scoped: the top screen tab bar stays reachable, so Library/Settings/etc. remain usable, and the modal reappears whenever the user returns to Console with setup still incomplete. The modal's primary action routes to provider setup (API-key recovery / settings); it dismisses automatically the moment readiness+model are satisfied.
+- **Keyboard-reachable.** Modal buttons are focusable; the modal captures focus while visible.
+- **Composer.** Fully blocked while the modal is up (no typing). Once setup completes, normal composing; the `Send blocked — …` inline-reason path remains for any transient non-setup blocks.
 - **Lifecycle:**
-  - Setup incomplete + empty transcript → full card.
-  - Setup complete, user has never sent a message → card collapses to one line: `Ready — type a message to begin.`
+  - Setup incomplete → blocking setup modal over the Console (regardless of transcript content).
+  - Setup complete, user has never sent a message → empty transcript shows one line: `Ready — type a message to begin.`
   - After the first successful send ever (persisted flag alongside rail preferences) → empty transcripts show only `No messages yet.`, forever, including new tabs and new workspaces.
 
 ## 3. Keyboard layer
