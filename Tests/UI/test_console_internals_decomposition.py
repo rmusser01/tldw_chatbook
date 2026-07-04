@@ -1861,6 +1861,117 @@ async def test_console_setup_modal_visible_again_on_fresh_blocked_mount():
         assert composer.can_focus is False
 
 
+def _console_widget_is_inside_setup_modal(widget: object) -> bool:
+    """Return True when ``widget`` is the setup modal or nested inside it."""
+    node = widget
+    while node is not None:
+        if getattr(node, "id", None) == "console-setup-modal":
+            return True
+        node = getattr(node, "parent", None)
+    return False
+
+
+@pytest.mark.asyncio
+async def test_console_setup_modal_traps_tab_focus_cycle():
+    # Regression: the setup modal is a hand-rolled overlay inside
+    # #console-shell (deliberately not a ModalScreen), so Textual's default
+    # focus_chain still walks through the workbench beneath it. Tab must not
+    # tunnel focus past the modal's own (single) focusable action button
+    # while the modal is blocking.
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal-action")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.is_blocking
+
+        action = console.query_one("#console-setup-modal-action", Button)
+        action.focus()
+        await pilot.pause()
+        assert console.app.focused is action
+
+        for _ in range(5):
+            await pilot.press("tab")
+            await pilot.pause()
+            focused = console.app.focused
+            assert focused is not None
+            assert _console_widget_is_inside_setup_modal(focused), (
+                f"Tab escaped the setup modal to {focused!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_console_setup_modal_traps_shift_tab_focus_cycle():
+    # Shift+Tab counterpart of the Tab focus-trap regression above.
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal-action")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.is_blocking
+
+        action = console.query_one("#console-setup-modal-action", Button)
+        action.focus()
+        await pilot.pause()
+        assert console.app.focused is action
+
+        for _ in range(5):
+            await pilot.press("shift+tab")
+            await pilot.pause()
+            focused = console.app.focused
+            assert focused is not None
+            assert _console_widget_is_inside_setup_modal(focused), (
+                f"Shift+Tab escaped the setup modal to {focused!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_console_on_screen_resume_resyncs_stale_setup_modal_block():
+    # Regression: some provider recovery flows navigate to the full Settings
+    # SCREEN and back (rather than completing setup via the in-Console
+    # settings modal callback). `on_screen_resume` used to only restore focus,
+    # which re-read the modal's STALE `is_blocking` snapshot and re-applied
+    # the block -- so the modal could stick showing "Add an API key" forever
+    # even once setup was completed elsewhere. `on_screen_resume` must
+    # re-evaluate guidance before touching focus.
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.is_blocking
+
+        # Satisfy readiness + model the way an out-of-Console recovery flow
+        # would -- mutate app config / session settings directly, without
+        # going through the in-Console settings modal callback (which would
+        # itself call `_sync_console_transcript_guidance()`).
+        _configure_native_ready_console(app)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="local-model"),
+        )
+
+        # Nothing has re-synced guidance yet, so the modal is still stale.
+        assert modal.is_blocking
+
+        console.on_screen_resume()
+        await pilot.pause(0.1)
+
+        assert modal.display is False
+        assert modal.is_blocking is False
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert composer.can_focus is True
+        assert "Ready — type a message to begin." in _visible_text(console)
+
+
 @pytest.mark.asyncio
 async def test_console_empty_transcript_promotes_setup_card_over_banner():
     app = _build_test_app()

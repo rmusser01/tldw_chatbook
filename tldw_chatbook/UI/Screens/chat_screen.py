@@ -333,7 +333,23 @@ class ChatScreen(BaseAppScreen):
     """
 
     BINDINGS = [
-        *BaseAppScreen.BINDINGS,
+        # Textual's Screen base class binds tab/shift+tab to the "app."-namespaced
+        # focus_next/focus_previous actions, which always dispatch to App.action_focus_next
+        # (never to a Screen override of the same name). Re-declaring the keys here without
+        # the "app." prefix replaces those merged bindings for this screen, so the actions
+        # below run on ChatScreen and can trap focus inside the blocking Console setup modal
+        # instead of tunnelling into the workbench beneath it. The inherited tab/shift+tab
+        # entries are dropped from the ``BaseAppScreen.BINDINGS`` spread below (rather than
+        # simply appended after them): Textual merges same-class BINDINGS entries that share
+        # a key into one list checked in declaration order, so keeping both would let the
+        # inherited "app.focus_next"/"app.focus_previous" entries win every time.
+        *(
+            binding
+            for binding in BaseAppScreen.BINDINGS
+            if binding.key not in ("tab", "shift+tab")
+        ),
+        Binding("tab", "focus_next", "Focus Next", show=False),
+        Binding("shift+tab", "focus_previous", "Focus Previous", show=False),
         Binding("f1", "show_workbench_help", "Help", show=False),
         Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
         Binding(
@@ -344,6 +360,26 @@ class ChatScreen(BaseAppScreen):
             priority=True,
         ),
     ]
+
+    def action_focus_next(self) -> None:
+        """Move focus to the next widget, trapping Tab inside a blocking modal.
+
+        While the Console setup modal is blocking the workbench, this keeps
+        focus cycling within the modal's own focusables instead of letting
+        Tab tunnel into rail/transcript/composer controls hidden beneath it.
+        """
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        self.focus_next()
+
+    def action_focus_previous(self) -> None:
+        """Move focus to the previous widget, trapping Shift+Tab inside a blocking modal.
+
+        Mirrors ``action_focus_next`` for the reverse direction.
+        """
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        self.focus_previous()
     
     @on(Select.Changed, "#chat-api-provider")
     async def handle_provider_change(self, event: Select.Changed) -> None:
@@ -7495,6 +7531,15 @@ class ChatScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
+        # Re-evaluate setup-card/model readiness before touching focus. Some
+        # recovery flows (e.g. certain providers' API-key recovery) navigate to
+        # the full Settings screen and back rather than completing setup via
+        # the in-Console settings modal callback, so the setup modal's blocking
+        # state can be stale by the time this screen resumes. Without this,
+        # `_restore_console_workbench_focus` below would just re-apply the
+        # stale block and the modal could stick even after setup completed
+        # elsewhere.
+        self._sync_console_transcript_guidance()
         self.sync_task_resume_state()
         self._register_console_footer_shortcuts()
         self.call_after_refresh(self._restore_console_workbench_focus)
