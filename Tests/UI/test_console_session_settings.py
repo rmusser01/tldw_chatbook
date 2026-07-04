@@ -2647,7 +2647,7 @@ async def test_console_settings_modal_restores_freeform_model_after_provider_rou
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_orders_staged_context_before_workspace_context() -> None:
+async def test_console_left_rail_orders_session_before_staged_context() -> None:
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2659,10 +2659,13 @@ async def test_console_left_rail_orders_staged_context_before_workspace_context(
         settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
 
-        assert staged_context.region.y < workspace_context.region.y
+        # Phase 1 rail restructure: the rail is four sections in order
+        # Session (workspace context), Context (staged context), Model,
+        # Details -- so workspace context renders above staged context.
+        assert workspace_context.region.y < staged_context.region.y
         assert settings.parent.id == "console-run-inspector"
-        assert staged_context.parent.id == "console-left-rail-body"
-        assert workspace_context.parent.id == "console-left-rail-body"
+        assert workspace_context.parent.id == "console-rail-section-body-session"
+        assert staged_context.parent.id == "console-rail-section-body-context"
 
 
 @pytest.mark.asyncio
@@ -2677,6 +2680,8 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         left_rail = console.query_one("#console-left-rail")
         header = console.query_one(".console-rail-header")
         body = console.query_one("#console-left-rail-body")
+        session_body = console.query_one("#console-rail-section-body-session")
+        context_body = console.query_one("#console-rail-section-body-context")
         staged_context = console.query_one("#console-staged-context-tray")
         settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
@@ -2685,8 +2690,12 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
         assert settings.parent.id == "console-run-inspector"
-        assert workspace_context.parent is body
-        assert staged_context.parent is body
+        # Phase 1 nests each tray inside its own rail-section body, which is
+        # itself a direct child of the scrolling rail body.
+        assert workspace_context.parent is session_body
+        assert staged_context.parent is context_body
+        assert session_body.parent is body
+        assert context_body.parent is body
         assert staged_context.region.width == workspace_context.region.width
         assert workspace_context.region.width <= body.region.width
         assert body.region.width - workspace_context.region.width <= 2
