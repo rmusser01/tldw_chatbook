@@ -1186,3 +1186,20 @@ async def test_console_rail_section_sync_applies_stored_scope_preferences():
         model_toggle = console.query_one("#console-rail-section-toggle-model", Button)
         assert _button_text(details_toggle) == "-"
         assert _button_text(model_toggle) == "+"
+
+
+def test_generated_console_stylesheet_includes_setup_card_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for selector in (
+        ".console-setup-step",
+        ".console-setup-step-done",
+        ".console-setup-step-active",
+        ".console-setup-step-pending",
+    ):
+        assert selector in component_css, selector
+        assert selector in generated_css, selector
+    for stale in (".console-provider-recovery-strip", ".console-provider-blocker"):
+        assert stale not in component_css, stale
+        assert stale not in generated_css, stale
