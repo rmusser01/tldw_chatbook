@@ -19,6 +19,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
@@ -53,6 +54,27 @@ class EmptyTranscriptActionHarness(App):
 
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
+
+    def on_workbench_action_requested(self, event: WorkbenchActionRequested) -> None:
+        event.stop()
+        self.workbench_actions.append(event.action_id)
+
+
+class SetupModalActionHarness(App):
+    def __init__(self, state: ConsoleSetupCardState):
+        super().__init__()
+        self._state = state
+        self.workbench_actions: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleSetupModal(id="console-setup-modal")
+
+    async def on_mount(self) -> None:
+        self.query_one("#console-setup-modal", ConsoleSetupModal).sync_card_state(
+            self._state,
+            action_label="Configure API",
+            action_tooltip="Open provider settings.",
+        )
 
     def on_workbench_action_requested(self, event: WorkbenchActionRequested) -> None:
         event.stop()
@@ -373,12 +395,12 @@ async def test_console_composer_keeps_primary_actions_and_setup_card_recovery_vi
         assert _is_displayed(console.query_one("#console-stop-generation"))
         assert _is_displayed(console.query_one("#console-save-chatbook"))
         assert not _is_displayed(console.query_one("#console-composer-recovery"))
-        # The shared Workbench recovery banner must stay hidden — the setup
-        # card in the empty transcript owns first-run recovery guidance now.
+        # The shared Workbench recovery banner must stay hidden — the blocking
+        # setup modal owns first-run recovery guidance now.
         assert not _is_displayed(console.query_one("#workbench-recovery-callout"))
-        setup_card = console.query_one("#console-transcript-empty-state")
-        assert _is_displayed(setup_card)
-        card_action = console.query_one("#console-empty-choose-model")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert _is_displayed(modal)
+        card_action = console.query_one("#console-setup-modal-action")
         assert _is_displayed(card_action)
         assert "Choose model" in _widget_text(card_action)
         visible_draft = console.query_one("#console-command-visible-text")
@@ -422,16 +444,22 @@ async def test_console_empty_transcript_exposes_beginner_activation_actions():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 
-        empty_panel = console.query_one("#console-transcript-empty-state")
-        assert _is_displayed(empty_panel)
-        # Setup-incomplete transcripts show the numbered setup card, not a banner.
-        assert _widget_text(console.query_one("#console-empty-title")) == "Get started"
-        assert "Pick a model" in _widget_text(empty_panel)
-        assert "Send your first message" in _widget_text(empty_panel)
-        assert "Choose model" in _widget_text(empty_panel)
-        assert _is_displayed(console.query_one("#console-empty-choose-model"))
-        assert _is_displayed(console.query_one("#console-empty-attach-context"))
-        assert _is_displayed(console.query_one("#console-empty-run-library-rag"))
+        # Setup-incomplete consoles show the numbered setup card on the blocking
+        # modal, not in the transcript. Attach/Run-RAG stay reachable on the
+        # control bar (never on the modal).
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert _is_displayed(modal)
+        assert _widget_text(console.query_one("#console-setup-modal-title")) == "Get started"
+        assert "Pick a model" in _widget_text(console.query_one("#console-setup-step-2"))
+        assert "Send your first message" in _widget_text(
+            console.query_one("#console-setup-step-3")
+        )
+        assert "Choose model" in _widget_text(console.query_one("#console-setup-modal-action"))
+        # The modal carries no attach/RAG affordances; those stay on the control bar.
+        assert not _is_displayed(console.query_one("#console-empty-attach-context"))
+        assert not _is_displayed(console.query_one("#console-empty-run-library-rag"))
+        assert _is_displayed(console.query_one("#console-control-attach-context"))
+        assert _is_displayed(console.query_one("#console-control-run-library-rag"))
 
 
 @pytest.mark.asyncio
@@ -463,9 +491,9 @@ async def test_console_empty_transcript_choose_model_opens_settings():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
-        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+        await _wait_for_selector(console, pilot, "#console-setup-modal-action")
 
-        await pilot.click("#console-empty-choose-model")
+        await pilot.click("#console-setup-modal-action")
         await pilot.pause()
 
         assert host.screen.query("#console-settings-modal") or host.screen.query(
@@ -494,26 +522,21 @@ async def test_console_ready_empty_transcript_omits_setup_action_row():
 
 
 @pytest.mark.asyncio
-async def test_console_empty_transcript_actions_post_workbench_messages():
-    app = EmptyTranscriptActionHarness()
+async def test_console_setup_modal_action_posts_provider_recovery_message():
+    app = SetupModalActionHarness(
+        ConsoleSetupCardState(
+            mode="card",
+            steps=(ConsoleSetupStep(state="active", label="Add an API key"),),
+        )
+    )
 
     async with app.run_test(size=(80, 24)) as pilot:
-        transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
-        transcript.sync_empty_state(
-            ConsoleSetupCardState(
-                mode="card",
-                steps=(ConsoleSetupStep(state="active", label="Add an API key"),),
-            ),
-            provider_action_label="Configure API",
-            provider_action_tooltip="Open provider settings.",
-        )
+        modal = app.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
+        await pilot.click("#console-setup-modal-action")
         await pilot.pause()
 
-        await pilot.click("#console-empty-attach-context")
-        await pilot.click("#console-empty-run-library-rag")
-        await pilot.pause()
-
-        assert app.workbench_actions == ["attach-context", "run-library-rag"]
+        assert app.workbench_actions == ["provider-recovery"]
 
 
 @pytest.mark.asyncio
@@ -855,7 +878,7 @@ async def test_console_setup_card_choose_model_action_is_visible_and_primary_rec
 
         recovery = console.query_one("#workbench-recovery-callout")
         assert not _is_displayed(recovery)
-        action = console.query_one("#console-empty-choose-model")
+        action = console.query_one("#console-setup-modal-action")
         assert _is_displayed(action)
         assert str(action.label) == "Choose model"
         assert action.disabled is False
@@ -875,13 +898,13 @@ async def test_console_setup_card_recovery_action_button_is_visible_and_actionab
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
-        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+        await _wait_for_selector(console, pilot, "#console-setup-modal-action")
 
         assert not _is_displayed(console.query_one("#workbench-recovery-callout"))
-        action = console.query_one("#console-empty-choose-model")
+        action = console.query_one("#console-setup-modal-action")
         assert _is_displayed(action)
         assert not action.disabled
-        await pilot.click("#console-empty-choose-model")
+        await pilot.click("#console-setup-modal-action")
         await pilot.pause()
 
         assert host.screen.query("#console-settings-modal") or host.screen.query(

@@ -797,12 +797,12 @@ async def test_console_provider_blocked_badge_does_not_auto_open_inspector():
             "#console-inspector-rail-badge",
             "setup",
         )
-        # The shared Workbench recovery banner must stay hidden — the setup
-        # card's own action button carries this guidance instead (Phase 2
-        # spec, section 2).
+        # The shared Workbench recovery banner must stay hidden — the blocking
+        # setup modal's own action button carries this guidance instead (Phase 2
+        # spec, section 2 revised).
         recovery = console.query_one("#workbench-recovery-callout")
         assert not _is_displayed(recovery)
-        settings_button = console.query_one("#console-empty-choose-model", Button)
+        settings_button = console.query_one("#console-setup-modal-action", Button)
         assert _is_displayed(settings_button)
         assert settings_button.disabled is False
 
@@ -1129,6 +1129,15 @@ async def test_console_left_rail_renders_four_sections_with_details_collapsed():
 @pytest.mark.asyncio
 async def test_console_details_toggle_expands_and_persists():
     app = _build_test_app()
+    # Ready console so the first-run setup modal is not blocking the rail.
+    app.app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "local-model"}
+        },
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "local-model"
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(180, 48)) as pilot:
@@ -1206,3 +1215,19 @@ def test_generated_console_stylesheet_includes_setup_card_rules():
     for stale in (".console-provider-recovery-strip", ".console-provider-blocker"):
         assert stale not in component_css, stale
         assert stale not in generated_css, stale
+
+
+def test_generated_console_stylesheet_includes_setup_modal_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for selector in (
+        "#console-setup-modal",
+        ".console-setup-modal-card",
+        ".console-setup-modal-title",
+        ".console-setup-modal-action",
+        "layer: console-setup-overlay",
+        "layers: console-workbench console-setup-overlay",
+    ):
+        assert selector in component_css, selector
+        assert selector in generated_css, selector

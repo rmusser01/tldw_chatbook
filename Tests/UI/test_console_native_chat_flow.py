@@ -37,6 +37,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
+    ConsoleSetupModal,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
 )
@@ -54,6 +55,21 @@ def _configure_openai_missing_api_key(app) -> None:
     """Keep setup-state tests on the API-key recovery path."""
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4o"}
     app.app_config["api_settings"] = {"openai": {"api_key": ""}}
+
+
+def _configure_native_ready_console(app, model: str = "local-model") -> None:
+    """Configure a send-ready Console so the first-run setup modal stays hidden.
+
+    Workbench-interaction tests (rail/tab/composer clicks and focus) need the
+    blocking setup modal dismissed; a ready llama.cpp provider satisfies the
+    readiness single source that drives it.
+    """
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": model}
+    app.app_config["api_settings"] = {
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": model}
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = model
 
 
 def test_console_workspace_conversation_visible_title_is_rail_safe():
@@ -1009,7 +1025,11 @@ async def test_console_native_missing_key_blocks_before_clearing_generic_draft()
 
 
 @pytest.mark.asyncio
-async def test_console_native_enter_on_setup_blocked_send_shows_recovery_feedback():
+async def test_console_native_enter_while_setup_blocked_is_inert_behind_modal():
+    # Formerly asserted an Enter-triggered recovery notification; with the
+    # blocking modal, Enter/typing never reach the covered composer, so no send
+    # is attempted and no recovery notification fires (Phase 2 spec, section 2
+    # revised). The modal's own action button owns recovery now.
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {
@@ -1025,25 +1045,28 @@ async def test_console_native_enter_on_setup_blocked_send_shows_recovery_feedbac
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        composer.load_draft("preserve this from keyboard")
+        assert composer.can_focus is False
 
+        await pilot.press("h", "i")
         await pilot.press("enter")
         await pilot.pause(0.05)
 
-        assert composer.draft_text() == "preserve this from keyboard"
-        assert notifications == [
-            (
-                "Add API key in Settings > Providers & Models before sending.",
-                {"severity": "warning"},
-            )
-        ]
+        assert composer.draft_text() == ""
+        assert notifications == []
 
 
 @pytest.mark.asyncio
-async def test_console_setup_blocked_send_adds_durable_transcript_recovery_feedback():
-    """Verify setup-blocked sends leave durable transcript recovery feedback."""
+async def test_console_setup_blocked_send_is_unreachable_behind_modal():
+    """The blocking setup modal makes the Enter send path unreachable.
+
+    Formerly this asserted a durable SYSTEM recovery message; with setup blocked
+    behind the modal the composer is inert, so Enter never triggers a send and
+    no transcript message is appended (Phase 2 spec, section 2 revised).
+    """
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {
@@ -1059,31 +1082,21 @@ async def test_console_setup_blocked_send_adds_durable_transcript_recovery_feedb
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        composer.load_draft("blocked setup draft")
 
+        await pilot.press("b", "l", "o", "c", "k", "e", "d")
         await pilot.press("enter")
-        await _wait_for_text(
-            console,
-            pilot,
-            "Add API key in Settings > Providers & Models before sending.",
-        )
+        await pilot.pause(0.1)
 
         store = console._ensure_console_chat_store()
         messages = store.messages_for_session(store.active_session_id)
-        assert composer.draft_text() == "blocked setup draft"
-        assert messages[-1].role is ConsoleMessageRole.SYSTEM
-        assert messages[-1].content == (
-            "Add API key in Settings > Providers & Models before sending."
-        )
+        assert composer.draft_text() == ""
+        assert messages == []
 
-    assert notifications == [
-        (
-            "Add API key in Settings > Providers & Models before sending.",
-            {"severity": "warning"},
-        )
-    ]
+    assert notifications == []
 
 
 @pytest.mark.asyncio
@@ -1883,9 +1896,9 @@ async def test_console_add_api_key_recovery_targets_provider_settings_category()
         # The shared Workbench recovery banner stays hidden now — the setup
         # card's action button carries this recovery instead (Phase 2 spec,
         # section 2).
-        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+        await _wait_for_selector(console, pilot, "#console-setup-modal-action")
 
-        await pilot.click("#console-empty-choose-model")
+        await pilot.click("#console-setup-modal-action")
 
         assert len(host.navigation_messages) == 1
         message = host.navigation_messages[0]
@@ -1916,14 +1929,14 @@ async def test_console_add_api_key_recovery_tolerates_missing_session_settings()
         # The shared Workbench recovery banner stays hidden now — the setup
         # card's action button carries this recovery instead (Phase 2 spec,
         # section 2).
-        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+        await _wait_for_selector(console, pilot, "#console-setup-modal-action")
         console._active_console_provider_model_display = lambda: (
             "huggingface",
             "meta-llama/test-model",
             None,
         )
 
-        await pilot.click("#console-empty-choose-model")
+        await pilot.click("#console-setup-modal-action")
 
         assert len(host.navigation_messages) == 1
         message = host.navigation_messages[0]
@@ -2149,16 +2162,16 @@ async def test_console_setup_required_state_groups_recovery_and_action_copy():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-empty-choose-model")
 
-        # The shared Workbench recovery banner stays hidden — the setup card
-        # groups the setup-blocked copy and the recovery action together
-        # instead (Phase 2 spec, section 2).
+        # The shared Workbench recovery banner stays hidden — the blocking setup
+        # modal groups the setup-blocked copy and the recovery action together
+        # instead (Phase 2 spec, section 2 revised).
         recovery = console.query_one("#workbench-recovery-callout")
         assert recovery.display is False
-        setup_card = console.query_one("#console-transcript-empty-state")
-        card_text = _visible_text(setup_card)
-        assert "Add an API key" in card_text
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
+        assert "Add an API key" in _visible_text(console)
         assert (
-            str(console.query_one("#console-empty-choose-model", Button).label)
+            str(console.query_one("#console-setup-modal-action", Button).label)
             == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         )
 
@@ -2171,15 +2184,18 @@ async def test_console_empty_transcript_teaches_setup_and_start_paths():
 
     async with host.run_test(size=(180, 54)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
 
-        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
-        empty_text = _visible_text(transcript)
-        assert "Get started" in empty_text
-        assert "Add an API key" in empty_text
-        assert "Send your first message" in empty_text
-        assert "Attach context" in empty_text
-        assert "Run Library RAG" in empty_text
+        # Setup guidance is on the blocking modal; Attach/Run-RAG start paths
+        # stay reachable on the control bar (never on the modal).
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
+        console_text = _visible_text(console)
+        assert "Get started" in console_text
+        assert "Add an API key" in console_text
+        assert "Send your first message" in console_text
+        assert "Attach context" in console_text
+        assert "Run Library RAG" in console_text
 
 
 def _assert_selector_hidden_or_absent(console, selector: str) -> None:
@@ -2948,6 +2964,7 @@ async def test_console_native_tab_switch_restores_transcript_messages():
 async def test_console_workspace_conversation_switch_restores_transcript_messages():
     """Verify workspace conversation switching restores the prior transcript."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -2979,7 +2996,9 @@ async def test_console_workspace_conversation_switch_restores_transcript_message
             "Chat 2",
             selected=True,
         )
-        await _wait_for_text(console, pilot, "Get started")
+        # Ready console: the fresh empty tab shows the ready line, not the
+        # blocking setup modal (which only appears when setup is incomplete).
+        await _wait_for_text(console, pilot, "Ready — type a message to begin.")
         assert "workspace row assistant reply" not in _visible_text(console)
 
         await _click_console_workspace_conversation_for_session(
@@ -3150,6 +3169,7 @@ async def test_console_conversation_browser_search_filters_all_groups():
 @pytest.mark.asyncio
 async def test_console_browser_selecting_non_default_workspace_native_session_switches_active_workspace():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
     service = _configure_grouped_browser_workspaces(app)
     service.set_active_workspace("ws-a")
@@ -3189,6 +3209,7 @@ async def test_console_browser_selecting_non_default_workspace_native_session_sw
 @pytest.mark.asyncio
 async def test_console_browser_selecting_non_default_workspace_persisted_row_switches_active_workspace_before_resume():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
     service = _configure_grouped_browser_workspaces(app)
     service.set_active_workspace("ws-a")
@@ -3248,6 +3269,7 @@ async def test_console_browser_selecting_non_default_workspace_persisted_row_swi
 @pytest.mark.asyncio
 async def test_console_browser_selecting_duplicate_membership_row_ignores_other_workspace_open_session():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
     service = _configure_grouped_browser_workspaces(app)
     service.set_active_workspace("ws-a")
@@ -3357,6 +3379,7 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
 @pytest.mark.asyncio
 async def test_console_browser_selecting_default_native_session_switches_to_default_and_keeps_file_tools_disabled():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
     service = _configure_grouped_browser_workspaces(app)
     service.set_active_workspace("ws-a")
@@ -3402,6 +3425,7 @@ async def test_console_browser_selecting_default_native_session_switches_to_defa
 @pytest.mark.asyncio
 async def test_console_browser_selecting_default_persisted_row_switches_to_default_and_keeps_file_tools_disabled():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
     service = _configure_grouped_browser_workspaces(app)
     service.set_active_workspace("ws-a")
@@ -3464,6 +3488,7 @@ async def test_console_browser_selecting_default_persisted_row_switches_to_defau
 @pytest.mark.asyncio
 async def test_console_browser_selecting_global_persisted_row_preserves_active_workspace():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
     service = _configure_grouped_browser_workspaces(app)
     service.set_active_workspace("ws-a")
@@ -4300,6 +4325,7 @@ async def test_console_workspace_conversation_search_includes_all_workspace_pers
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_search_selection_keeps_query_active():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     app.chat_conversation_scope_service = SearchableConversationService(
@@ -4342,6 +4368,7 @@ async def test_console_workspace_conversation_search_selection_keeps_query_activ
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_search_blank_selection_keeps_composer_focus():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     service.link_membership(
@@ -4402,6 +4429,7 @@ async def test_console_workspace_conversation_search_blank_selection_keeps_compo
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_search_selection_invalidates_pending_worker():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     app.chat_conversation_scope_service = SlowFirstSearchableConversationService({})
     host = ConsoleHarness(app)
 
@@ -4900,6 +4928,7 @@ async def test_console_workspace_rail_new_conversation_stays_scoped_to_active_wo
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_row_switches_native_session():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -4934,6 +4963,7 @@ async def test_console_workspace_conversation_row_switches_native_session():
 async def test_console_workspace_conversation_row_resumes_persisted_conversation():
     """Resume a saved workspace conversation directly from the Console rail."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     service.link_membership(
@@ -5033,6 +5063,7 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
 async def test_console_workspace_conversation_resume_uses_persisted_workspace():
     """Resume into the persisted conversation workspace when it differs from active."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     service = app.workspace_registry_service
     active_workspace = service.get_active_workspace()
     target_workspace = service.create_workspace(
@@ -5154,6 +5185,7 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
     )
 
     app = _build_test_app()
+    _configure_native_ready_console(app)
     app.workspace_registry_service = workspace_service
     app.chat_conversation_scope_service = ChatConversationScopeService(
         local_service=chat_service,
@@ -5287,6 +5319,7 @@ async def test_console_workspace_conversation_search_keeps_selected_global_nativ
 @pytest.mark.asyncio
 async def test_console_new_chat_focuses_composer_for_immediate_typing():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -5312,6 +5345,7 @@ async def test_console_new_chat_focuses_composer_for_immediate_typing():
 @pytest.mark.asyncio
 async def test_console_tab_switch_focuses_composer_for_immediate_typing():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:

@@ -16,6 +16,8 @@ from tldw_chatbook.Widgets.Console.console_rail_section import (
     CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
     ConsoleRailSectionHeader,
 )
+from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
+from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscriptEmptyPanel
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceContextTray,
@@ -140,22 +142,91 @@ class _SetupPanelApp(App):
 
 
 @pytest.mark.asyncio
-async def test_setup_panel_card_mode_renders_steps_and_actions():
+async def test_setup_panel_card_mode_shows_quiet_line_without_steps_or_actions():
+    # The numbered setup card (title + steps + primary action) moved to the
+    # blocking ``ConsoleSetupModal``; while setup is incomplete the in-transcript
+    # panel shows only the quiet line, dimmed under the overlay.
     app = _SetupPanelApp(_card_state())
     async with app.run_test(size=(100, 30)):
-        title = app.query_one("#console-empty-title", Static)
+        body = app.query_one("#console-empty-body", Static)
+        assert CONSOLE_QUIET_EMPTY_COPY in str(
+            getattr(body.renderable, "plain", body.renderable)
+        )
+        assert not list(app.query("#console-setup-step-1"))
+        assert app.query_one("#console-empty-title").styles.display == "none"
+        assert app.query_one("#console-empty-action-row").styles.display == "none"
+
+
+class _SetupModalApp(App):
+    def __init__(self, state: ConsoleSetupCardState) -> None:
+        super().__init__()
+        self._state = state
+        self.workbench_actions: list[str] = []
+
+    def compose(self):
+        modal = ConsoleSetupModal(id="console-setup-modal")
+        yield modal
+
+    async def on_mount(self) -> None:
+        modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
+        modal.sync_card_state(
+            self._state,
+            action_label="Configure API",
+            action_tooltip="Open provider settings.",
+        )
+
+    def on_workbench_action_requested(self, event: WorkbenchActionRequested) -> None:
+        event.stop()
+        self.workbench_actions.append(event.action_id)
+
+
+@pytest.mark.asyncio
+async def test_setup_modal_card_mode_renders_title_steps_and_primary_action():
+    app = _SetupModalApp(_card_state())
+    async with app.run_test(size=(100, 30)):
+        modal = app.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
+        assert modal.is_blocking
+        title = app.query_one("#console-setup-modal-title", Static)
         assert "Get started" in str(getattr(title.renderable, "plain", title.renderable))
         step1 = app.query_one("#console-setup-step-1", Static)
-        text1 = str(getattr(step1.renderable, "plain", step1.renderable))
-        assert "1. ● Add an API key" in text1
+        assert "1. ● Add an API key" in str(getattr(step1.renderable, "plain", step1.renderable))
         step2 = app.query_one("#console-setup-step-2", Static)
         assert "2. ✓ Pick a model" in str(getattr(step2.renderable, "plain", step2.renderable))
         step3 = app.query_one("#console-setup-step-3", Static)
         text3 = str(getattr(step3.renderable, "plain", step3.renderable))
         assert "3. ○ Send your first message" in text3
         assert "Type below, Enter to send" in text3
-        assert app.query_one("#console-empty-action-row").styles.display != "none"
-        assert app.query_one("#console-empty-body").styles.display == "none"
+        action = app.query_one("#console-setup-modal-action", Button)
+        assert str(action.label) == "Configure API"
+        # No attach/RAG controls on the modal.
+        assert not list(app.query("#console-empty-attach-context"))
+        assert not list(app.query("#console-empty-run-library-rag"))
+
+
+@pytest.mark.asyncio
+async def test_setup_modal_primary_action_routes_provider_recovery():
+    app = _SetupModalApp(_card_state())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.click("#console-setup-modal-action")
+        await pilot.pause()
+        assert app.workbench_actions == ["provider-recovery"]
+
+
+@pytest.mark.asyncio
+async def test_setup_modal_hides_when_state_leaves_card_mode():
+    app = _SetupModalApp(_card_state())
+    async with app.run_test(size=(100, 30)) as pilot:
+        modal = app.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
+        modal.sync_card_state(
+            ConsoleSetupCardState(mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY),
+            action_label="Choose model",
+            action_tooltip="Pick a model.",
+        )
+        await pilot.pause()
+        assert modal.display is False
+        assert modal.is_blocking is False
 
 
 @pytest.mark.asyncio
