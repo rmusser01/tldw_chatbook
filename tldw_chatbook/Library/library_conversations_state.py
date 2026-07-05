@@ -184,7 +184,8 @@ def build_library_conversations_state(
     )
 
     if normalized_query:
-        match_count = len(limited_entries)
+        # match_count is from the filtered-but-unlimited entries list, not the limited rows
+        match_count = len(entries)
         suffix = "match" if match_count == 1 else "matches"
         status_copy = f"{match_count} {suffix} for '{normalized_query}'"
     else:

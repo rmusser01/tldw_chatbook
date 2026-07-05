@@ -167,3 +167,76 @@ def test_id_title_count_key_fallbacks_using_conversation_id_and_messages_total()
     assert row.conversation_id == "cid-99"
     assert row.title == "Fallback Chat"
     assert row.secondary == "7 messages - 3m"
+
+
+def test_match_count_reflects_filtered_set_before_limit_truncation():
+    """Match count in status_copy is total filtered matches, not limited rows."""
+    records = [
+        {"id": "1", "title": "Alpha One", "updated_at": "2026-07-05T11:00:00+00:00"},
+        {"id": "2", "title": "Alpha Two", "updated_at": "2026-07-05T10:00:00+00:00"},
+        {"id": "3", "title": "Alpha Three", "updated_at": "2026-07-05T09:00:00+00:00"},
+        {"id": "4", "title": "Alpha Four", "updated_at": "2026-07-05T08:00:00+00:00"},
+        {"id": "5", "title": "Alpha Five", "updated_at": "2026-07-05T07:00:00+00:00"},
+    ]
+
+    # Query matches all 5, but limit=2 displays only 2 rows.
+    # Status should reflect 5 matches (before limit), not 2 (after limit).
+    state = build_library_conversations_state(
+        records, query="alpha", limit=2, now=NOW
+    )
+
+    assert len(state.rows) == 2
+    assert state.status_copy == "5 matches for 'alpha'"
+    assert [row.conversation_id for row in state.rows] == ["1", "2"]
+
+
+def test_secondary_fallback_is_conversation_when_no_message_count():
+    """Record with no message_count key has secondary='conversation' (age not appended)."""
+    records = [
+        {
+            "id": "conv-a",
+            "title": "Chat With No Count",
+            "updated_at": "2026-07-05T11:57:00+00:00",  # Has age, but...
+            # No message_count key at all
+        },
+    ]
+
+    state = build_library_conversations_state(records, now=NOW)
+
+    assert len(state.rows) == 1
+    row = state.rows[0]
+    # Contract: fallback replaces the whole secondary, age is NOT appended
+    assert row.secondary == "conversation"
+
+
+def test_tolerates_invalid_and_missing_records():
+    """Records with None, non-mapping, empty dict, invalid fields are skipped gracefully."""
+    records = [
+        None,  # Not a mapping
+        "not-a-mapping",  # String, not a mapping
+        {},  # No id key -> skipped
+        {
+            "id": "invalid",
+            "title": None,  # Invalid title -> uses fallback
+            "updated_at": "garbage",  # Invalid timestamp -> parsed as None
+            "message_count": "NaN",  # Invalid count -> parsed as None
+        },
+        {
+            "id": "valid",
+            "title": "Valid Chat",
+            "updated_at": "2026-07-05T11:57:00+00:00",
+            "message_count": 5,
+        },
+    ]
+
+    # Should not raise, should return only the valid record
+    state = build_library_conversations_state(records, now=NOW)
+
+    assert len(state.rows) == 2
+    valid_ids = [row.conversation_id for row in state.rows]
+    assert "invalid" in valid_ids
+    assert "valid" in valid_ids
+    # Check that "invalid" record was processed with fallbacks
+    invalid_row = next(r for r in state.rows if r.conversation_id == "invalid")
+    assert invalid_row.title == "Untitled conversation"
+    assert invalid_row.secondary == "conversation"
