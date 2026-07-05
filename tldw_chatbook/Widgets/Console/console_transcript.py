@@ -14,11 +14,15 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
+from tldw_chatbook.Chat.console_onboarding_state import (
+    CONSOLE_QUIET_EMPTY_COPY,
+    CONSOLE_SETUP_CARD_TITLE,
+    ConsoleSetupCardState,
+)
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
-EMPTY_TRANSCRIPT_COPY = "Type in Composer, attach sources, or run Library RAG before sending."
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL = "Choose model"
 EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP = (
     "Choose the provider and model for this Console session."
@@ -39,6 +43,19 @@ _ACTION_TOOLTIPS = {
     "variant-previous": "Show the previous regenerated variant.",
     "variant-next": "Show the next regenerated variant.",
 }
+
+
+def _coerce_card_state(value: object) -> ConsoleSetupCardState:
+    """Guard against a transiently non-``ConsoleSetupCardState`` value.
+
+    A flaky resume race can hand the empty panel a stale/incorrect value
+    (observed as a bare ``str``) before the real card state lands. Fall back
+    to the quiet copy rather than raising ``AttributeError`` deep in
+    ``compose()``.
+    """
+    if isinstance(value, ConsoleSetupCardState):
+        return value
+    return ConsoleSetupCardState(mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY)
 
 
 def _message_role_label(message: ConsoleChatMessage) -> str:
@@ -75,6 +92,7 @@ class _TranscriptRow:
     renderable: str = ""
     action_label: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
     action_tooltip: str = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
+    card_state: ConsoleSetupCardState | None = None
 
 
 class ConsoleTranscriptMessage(Static):
@@ -219,11 +237,11 @@ class ConsoleTranscriptEmptyAction(Button):
 
 
 class ConsoleTranscriptEmptyPanel(Vertical):
-    """Actionable Console transcript empty state."""
+    """Actionable Console transcript empty state, driven by a setup card state."""
 
     def __init__(
         self,
-        copy: str,
+        card_state: ConsoleSetupCardState,
         *,
         provider_action_label: str,
         provider_action_tooltip: str,
@@ -232,22 +250,32 @@ class ConsoleTranscriptEmptyPanel(Vertical):
             id="console-transcript-empty-state",
             classes="console-transcript-empty-panel",
         )
-        self.empty_state_copy = copy
+        self.card_state = _coerce_card_state(card_state)
         self.provider_action_label = provider_action_label
         self.provider_action_tooltip = provider_action_tooltip
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            "Start Console",
+        # The blocking setup card (title + numbered steps + primary action) now
+        # lives in ``ConsoleSetupModal``; while setup is incomplete
+        # (``mode == "card"``) this in-transcript panel shows only the quiet
+        # empty line, dimmed under the overlay. ``ready_line``/``quiet`` render
+        # as before.
+        title = Static(
+            CONSOLE_SETUP_CARD_TITLE,
             id="console-empty-title",
             classes="console-transcript-empty-title",
         )
-        yield Static(
-            self.empty_state_copy,
+        title.styles.display = "none"
+        yield title
+
+        body = Static(
+            self.card_state.body_copy or CONSOLE_QUIET_EMPTY_COPY,
             id="console-empty-body",
             classes="console-transcript-empty-body console-transcript-empty-state",
         )
-        yield Horizontal(
+        yield body
+
+        action_row = Horizontal(
             ConsoleTranscriptEmptyAction(
                 self.provider_action_label,
                 action_id="provider-recovery",
@@ -269,25 +297,24 @@ class ConsoleTranscriptEmptyPanel(Vertical):
             id="console-empty-action-row",
             classes="console-transcript-empty-action-row",
         )
+        # The setup action row is owned by ``ConsoleSetupModal`` now; the
+        # in-transcript row is retained (hidden) only so legacy selectors keep
+        # resolving.
+        action_row.styles.display = "none"
+        yield action_row
 
-    def sync_empty_state(
+    def sync_card_state(
         self,
-        copy: str,
+        card_state: ConsoleSetupCardState,
         *,
         provider_action_label: str,
         provider_action_tooltip: str,
     ) -> None:
-        """Update the mounted body copy without remounting the action row."""
-        self.empty_state_copy = copy
+        """Refresh the onboarding surface from a new card state."""
+        self.card_state = _coerce_card_state(card_state)
         self.provider_action_label = provider_action_label
         self.provider_action_tooltip = provider_action_tooltip
-        try:
-            self.query_one("#console-empty-body", Static).update(copy)
-            action = self.query_one("#console-empty-choose-model", Button)
-            action.label = provider_action_label
-            action.tooltip = provider_action_tooltip
-        except Exception:
-            return
+        self.refresh(recompose=True)
 
 
 class ConsoleTranscript(VerticalScroll):
@@ -306,7 +333,9 @@ class ConsoleTranscript(VerticalScroll):
         self._messages: list[ConsoleChatMessage] = []
         self.selected_message_id: str | None = None
         self._refresh_lock = asyncio.Lock()
-        self.empty_state_copy = EMPTY_TRANSCRIPT_COPY
+        self._empty_card_state = ConsoleSetupCardState(
+            mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
+        )
         self.empty_state_action_label = EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
         self.empty_state_action_tooltip = EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
         self._row_widgets: dict[str, Widget] = {}
@@ -332,13 +361,13 @@ class ConsoleTranscript(VerticalScroll):
 
     def sync_empty_state(
         self,
-        copy: str = "",
+        card_state: ConsoleSetupCardState,
         *,
         provider_action_label: str = "",
         provider_action_tooltip: str = "",
     ) -> None:
-        """Refresh the empty transcript copy while preserving message exports."""
-        next_copy = copy.strip() or EMPTY_TRANSCRIPT_COPY
+        """Refresh the empty transcript state while preserving message exports."""
+        next_card_state = _coerce_card_state(card_state)
         next_action_label = (
             provider_action_label.strip() or EMPTY_TRANSCRIPT_PROVIDER_ACTION_LABEL
         )
@@ -346,12 +375,12 @@ class ConsoleTranscript(VerticalScroll):
             provider_action_tooltip.strip() or EMPTY_TRANSCRIPT_PROVIDER_ACTION_TOOLTIP
         )
         if (
-            self.empty_state_copy == next_copy
+            self._empty_card_state == next_card_state
             and self.empty_state_action_label == next_action_label
             and self.empty_state_action_tooltip == next_action_tooltip
         ):
             return
-        self.empty_state_copy = next_copy
+        self._empty_card_state = next_card_state
         self.empty_state_action_label = next_action_label
         self.empty_state_action_tooltip = next_action_tooltip
         if self.is_mounted and not self._messages:
@@ -532,13 +561,13 @@ class ConsoleTranscript(VerticalScroll):
                     kind="empty",
                     signature=(
                         "empty",
-                        self.empty_state_copy,
+                        self._empty_card_state,
                         self.empty_state_action_label,
                         self.empty_state_action_tooltip,
                     ),
-                    renderable=self.empty_state_copy,
                     action_label=self.empty_state_action_label,
                     action_tooltip=self.empty_state_action_tooltip,
+                    card_state=self._empty_card_state,
                 )
             )
         return rows
@@ -601,8 +630,9 @@ class ConsoleTranscript(VerticalScroll):
                 classes="console-transcript-rule",
             )
         if row.kind == "empty":
+            assert row.card_state is not None
             return ConsoleTranscriptEmptyPanel(
-                row.renderable,
+                row.card_state,
                 provider_action_label=row.action_label,
                 provider_action_tooltip=row.action_tooltip,
             )
@@ -623,8 +653,9 @@ class ConsoleTranscript(VerticalScroll):
             widget.sync_message(row.message, selected=row.selected)
             return widget
         if row.kind == "empty" and isinstance(widget, ConsoleTranscriptEmptyPanel):
-            widget.sync_empty_state(
-                row.renderable,
+            assert row.card_state is not None
+            widget.sync_card_state(
+                row.card_state,
                 provider_action_label=row.action_label,
                 provider_action_tooltip=row.action_tooltip,
             )

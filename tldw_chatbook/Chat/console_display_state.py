@@ -78,17 +78,17 @@ def build_console_disabled_reason(
     setup_reason_lower = setup_reason.lower()
     if send_blocked and setup_reason:
         if "model" in setup_reason_lower:
-            return "Send disabled: choose a model"
+            return "Send blocked — choose a model to continue"
         if "api key" in setup_reason_lower:
-            return "Send disabled: add API key"
+            return "Send blocked — add an API key to continue"
         if "endpoint" in setup_reason_lower:
-            return "Send disabled: configure endpoint"
+            return "Send blocked — configure the endpoint to continue"
         if (
             "choose a provider" in setup_reason_lower
             or "missing provider" in setup_reason_lower
         ):
-            return "Send disabled: choose a provider"
-        return "Send disabled: finish provider setup"
+            return "Send blocked — choose a provider to continue"
+        return "Send blocked — finish provider setup to continue"
     if not has_draft:
         return "Send disabled: type a message"
     return ""

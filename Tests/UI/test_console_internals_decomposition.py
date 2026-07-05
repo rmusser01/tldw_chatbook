@@ -13,6 +13,7 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
     _wait_for_visible_text,
 )
+from Tests.UI.test_console_native_chat_flow import ConsoleNavigationHarness
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
@@ -32,7 +33,11 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
 )
 from tldw_chatbook.config import resolve_provider_name
-from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleStagedContextTray
+from tldw_chatbook.Widgets.Console import (
+    ConsoleComposerBar,
+    ConsoleSetupModal,
+    ConsoleStagedContextTray,
+)
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 
 
@@ -115,14 +120,6 @@ class StaticConsoleLibraryRagSearchService:
             }
         )
         return self.result
-
-
-class _PressedEvent:
-    def __init__(self) -> None:
-        self.stopped = False
-
-    def stop(self) -> None:
-        self.stopped = True
 
 
 def _configure_native_ready_console(app, model: str = "local-model") -> None:
@@ -430,6 +427,7 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
 @pytest.mark.asyncio
 async def test_console_native_composer_receives_typing_on_open():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -452,6 +450,7 @@ async def test_console_native_composer_receives_typing_on_open():
 @pytest.mark.asyncio
 async def test_console_composer_marks_focus_state():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -504,6 +503,7 @@ async def test_console_composer_marks_has_draft_state():
 @pytest.mark.asyncio
 async def test_console_composer_shows_cursor_when_focused():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -524,6 +524,7 @@ async def test_console_composer_shows_cursor_when_focused():
 @pytest.mark.asyncio
 async def test_console_composer_hides_cursor_when_blurred():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -551,6 +552,7 @@ async def test_console_composer_hides_cursor_when_blurred():
 @pytest.mark.asyncio
 async def test_console_composer_cursor_blink_toggles():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -581,6 +583,7 @@ async def test_console_composer_cursor_blink_keeps_row_count_stable_at_wrap_widt
     blink phase rendered one row fewer, clipping/jittering the composer.
     """
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -852,6 +855,7 @@ async def test_console_native_composer_auto_expands_for_long_drafts():
 @pytest.mark.asyncio
 async def test_console_large_paste_collapses_visible_token_but_preserves_payload():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1003,6 +1007,7 @@ async def test_console_paste_threshold_can_be_configured_from_app_config():
 @pytest.mark.asyncio
 async def test_console_large_paste_collapse_can_be_disabled_from_config(collapse_setting):
     app = _build_test_app()
+    _configure_native_ready_console(app)
     app.app_config["console"] = {"collapse_large_pastes": collapse_setting}
     host = ConsoleHarness(app)
 
@@ -1051,6 +1056,7 @@ async def test_console_clear_draft_keeps_canonical_payload_empty():
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_backspace_deletes_whole_chunk():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1077,6 +1083,7 @@ async def test_console_collapsed_paste_backspace_deletes_whole_chunk():
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_delete_key_deletes_whole_chunk():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1204,6 +1211,7 @@ async def test_console_collapsed_paste_textual_web_bottom_boundary_click_enters_
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_row_click_keeps_focus_on_composer():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(205, 62)) as pilot:
@@ -1285,6 +1293,7 @@ async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_col
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_flow():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1383,6 +1392,7 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1528,6 +1538,7 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
 @pytest.mark.asyncio
 async def test_console_normal_typing_remains_literal_over_paste_threshold():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1553,6 +1564,7 @@ async def test_console_normal_typing_remains_literal_over_paste_threshold():
 @pytest.mark.asyncio
 async def test_console_native_composer_captures_printable_typing_from_non_text_focus():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1578,6 +1590,7 @@ async def test_console_native_composer_captures_printable_typing_from_non_text_f
 @pytest.mark.asyncio
 async def test_console_native_composer_select_all_shortcut_preserves_draft_and_copies():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     copied: list[str] = []
     app.copy_to_clipboard = copied.append
@@ -1615,6 +1628,7 @@ async def test_console_native_composer_select_all_shortcut_preserves_draft_and_c
 @pytest.mark.asyncio
 async def test_console_native_composer_clicking_visible_draft_captures_typing():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1635,6 +1649,7 @@ async def test_console_native_composer_clicking_visible_draft_captures_typing():
 @pytest.mark.asyncio
 async def test_console_native_composer_click_focuses_composer_not_visible_static():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1717,14 +1732,20 @@ async def test_console_send_without_ready_runtime_keeps_setup_block_tooltip_only
 
         text = _visible_text(console)
         assert "Console send blocked" not in text
-        assert "missing API key" in text
+        # The setup card + composer own setup guidance now (the shared
+        # Workbench recovery banner no longer duplicates it); the durable
+        # transcript feedback carries the same "add an API key" guidance.
+        assert "Add API key in Settings > Providers & Models before sending." in text
         assert "Internal Error" not in text
         assert "Missing UI elements" not in text
         assert composer.draft_text() == "hello console"
 
 
 @pytest.mark.asyncio
-async def test_console_enter_sends_native_composer_draft(monkeypatch):
+async def test_console_enter_while_setup_blocked_is_inert_behind_modal(monkeypatch):
+    # Formerly ``test_console_enter_sends_native_composer_draft``: while setup
+    # is incomplete the blocking modal covers the composer, so Enter/typing are
+    # inert. The composer's Send tooltip still carries the recovery guidance.
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
     _configure_openai_missing_key_console(app)
@@ -1732,7 +1753,7 @@ async def test_console_enter_sends_native_composer_draft(monkeypatch):
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         store.replace_session_settings(
@@ -1741,26 +1762,218 @@ async def test_console_enter_sends_native_composer_draft(monkeypatch):
         )
         await console._sync_native_console_chat_ui()
 
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert composer.can_focus is False
         await pilot.press("h", "e", "l", "l", "o")
         await pilot.press("enter")
         await pilot.pause(0.2)
 
-        text = _visible_text(console)
+        # Typing/Enter never reached the covered composer.
+        assert composer.draft_text() == ""
+        # No system message was appended (send path unreachable while blocked).
+        messages = store.messages_for_session(store.active_session_id)
+        assert messages == []
         send_button = console.query_one("#console-send-message", Button)
-        assert "Console send blocked" not in text
-        assert send_button.disabled is False
         assert send_button.tooltip == (
             "Add API key in Settings > Providers & Models before sending."
         )
-        assert "missing API key" in text
-        assert "Internal Error" not in text
-        assert "Missing UI elements" not in text
-        assert composer.draft_text() == "hello"
 
 
 @pytest.mark.asyncio
-async def test_console_empty_transcript_promotes_start_here_and_provider_recovery():
+async def test_console_setup_modal_blocks_workbench_with_three_steps():
+    # Spec section 2 (revised): setup incomplete -> blocking modal over the
+    # Console workbench; three live steps; composer inert (typing does nothing,
+    # composer not focusable).
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
+        assert modal.is_blocking
+        for index in (1, 2, 3):
+            step = console.query_one(f"#console-setup-step-{index}", Static)
+            assert step.display is True
+        assert "Get started" in _visible_text(console)
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert composer.can_focus is False
+        await pilot.press("b", "l", "o", "c", "k", "e", "d")
+        await pilot.pause(0.1)
+        assert composer.draft_text() == ""
+        assert console.app.focused is not composer
+
+
+@pytest.mark.asyncio
+async def test_console_setup_modal_dismisses_when_readiness_and_model_satisfied():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
+
+        # Satisfy readiness + model, then run the guidance sync refresh hook.
+        _configure_native_ready_console(app)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="local-model"),
+        )
+        console._sync_console_transcript_guidance()
+        await pilot.pause(0.1)
+
+        assert modal.display is False
+        assert modal.is_blocking is False
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert composer.can_focus is True
+        assert "Ready — type a message to begin." in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_setup_modal_visible_again_on_fresh_blocked_mount():
+    # Returning to a Console with setup still incomplete re-runs the same
+    # guidance sync on mount, so a fresh blocked mount shows the modal again.
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        assert console.query_one("#console-setup-modal", ConsoleSetupModal).display is True
+
+    host_again = ConsoleHarness(app)
+    async with host_again.run_test(size=(160, 48)) as pilot:
+        console = host_again.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
+        assert modal.is_blocking
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert composer.can_focus is False
+
+
+def _console_widget_is_inside_setup_modal(widget: object) -> bool:
+    """Return True when ``widget`` is the setup modal or nested inside it."""
+    node = widget
+    while node is not None:
+        if getattr(node, "id", None) == "console-setup-modal":
+            return True
+        node = getattr(node, "parent", None)
+    return False
+
+
+@pytest.mark.asyncio
+async def test_console_setup_modal_traps_tab_focus_cycle():
+    # Regression: the setup modal is a hand-rolled overlay inside
+    # #console-shell (deliberately not a ModalScreen), so Textual's default
+    # focus_chain still walks through the workbench beneath it. Tab must not
+    # tunnel focus past the modal's own (single) focusable action button
+    # while the modal is blocking.
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal-action")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.is_blocking
+
+        action = console.query_one("#console-setup-modal-action", Button)
+        action.focus()
+        await pilot.pause()
+        assert console.app.focused is action
+
+        for _ in range(5):
+            await pilot.press("tab")
+            await pilot.pause()
+            focused = console.app.focused
+            assert focused is not None
+            assert _console_widget_is_inside_setup_modal(focused), (
+                f"Tab escaped the setup modal to {focused!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_console_setup_modal_traps_shift_tab_focus_cycle():
+    # Shift+Tab counterpart of the Tab focus-trap regression above.
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal-action")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.is_blocking
+
+        action = console.query_one("#console-setup-modal-action", Button)
+        action.focus()
+        await pilot.pause()
+        assert console.app.focused is action
+
+        for _ in range(5):
+            await pilot.press("shift+tab")
+            await pilot.pause()
+            focused = console.app.focused
+            assert focused is not None
+            assert _console_widget_is_inside_setup_modal(focused), (
+                f"Shift+Tab escaped the setup modal to {focused!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_console_on_screen_resume_resyncs_stale_setup_modal_block():
+    # Regression: some provider recovery flows navigate to the full Settings
+    # SCREEN and back (rather than completing setup via the in-Console
+    # settings modal callback). `on_screen_resume` used to only restore focus,
+    # which re-read the modal's STALE `is_blocking` snapshot and re-applied
+    # the block -- so the modal could stick showing "Add an API key" forever
+    # even once setup was completed elsewhere. `on_screen_resume` must
+    # re-evaluate guidance before touching focus.
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.is_blocking
+
+        # Satisfy readiness + model the way an out-of-Console recovery flow
+        # would -- mutate app config / session settings directly, without
+        # going through the in-Console settings modal callback (which would
+        # itself call `_sync_console_transcript_guidance()`).
+        _configure_native_ready_console(app)
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        store.replace_session_settings(
+            session.id,
+            ConsoleSessionSettings(provider="llama_cpp", model="local-model"),
+        )
+
+        # Nothing has re-synced guidance yet, so the modal is still stale.
+        assert modal.is_blocking
+
+        console.on_screen_resume()
+        await pilot.pause(0.1)
+
+        assert modal.display is False
+        assert modal.is_blocking is False
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert composer.can_focus is True
+        assert "Ready — type a message to begin." in _visible_text(console)
+
+
+@pytest.mark.asyncio
+async def test_console_empty_transcript_promotes_setup_card_over_banner():
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {
@@ -1775,33 +1988,33 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-provider-blocker")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         start_here = console.query_one("#console-start-here", Static)
         action_hints = console.query_one("#console-action-hints", Static)
-        provider_strip = console.query_one("#console-provider-recovery-strip")
+        # The shared Workbench recovery banner must stay hidden — the blocking
+        # setup modal owns first-run/provider-setup guidance now (Phase 2 spec,
+        # section 2 revised), so it must not be duplicated in a top-level banner.
         recovery = console.query_one("#workbench-recovery-callout")
         recovery_action = console.query_one("#workbench-recovery-action", Button)
-        transcript = console.query_one("#console-native-transcript")
-        assert provider_strip.styles.display == "none"
-        assert recovery.display is True
-        assert recovery.region.y < transcript.region.y
-        assert recovery_action.display is True
-        assert str(recovery_action.label) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert not list(console.query("#console-provider-recovery-strip"))
+        assert not list(console.query("#console-provider-blocker"))
+        assert not list(console.query("#console-open-provider-settings"))
+        assert recovery.display is False
+        assert recovery_action.display is False
+        assert modal.display is True
+        assert modal.is_blocking
         assert start_here.styles.display == "none"
         assert action_hints.styles.display == "none"
 
         text = _visible_text(console)
         for expected in (
-            "Provider setup needed",
-            "OpenAI missing API key",
-            "Impact: Send is blocked until setup is finished.",
             CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
-            "Start Console",
-            "Add an API key to enable Send. Then type in Composer or attach context.",
-            "Attach context",
-            "Run Library RAG",
+            "Get started",
+            "Add an API key",
+            "Send your first message",
         ):
             assert expected in text
         for redundant_copy in (
@@ -1810,25 +2023,23 @@ async def test_console_empty_transcript_promotes_start_here_and_provider_recover
             "Finish provider setup to start chatting.",
             "Enter send",
             "Ctrl+P commands",
-            "No messages yet.",
-            "Setup required: finish provider setup.",
             "No messages yet. Send a prompt or attach context.",
+            "Setup required: finish provider setup.",
             "1. Finish provider setup",
             "2. Attach Library, runs, Artifacts, or RAG",
             "3. Type a message or command in Composer",
+            "Provider setup needed",
+            "Impact: Send is blocked until setup is finished.",
         ):
             assert redundant_copy not in text
         assert "Provider: OpenAI is not ready" not in text
         assert "Provider setup is shown in the recovery strip above." not in text
-        blocker = console.query_one("#console-provider-blocker", Static)
-        assert blocker.styles.display == "none"
-        recovery_text = getattr(recovery.renderable, "plain", str(recovery.renderable))
-        assert recovery_text.startswith("Console setup blocked")
-        assert "Provider setup needed: OpenAI missing API key" in recovery_text
-        assert "Impact: Send is blocked until setup is finished." in recovery_text
         assert console.query_one("#console-inspector-rail-handle").display is True
         assert console.query_one("#console-right-rail").display is False
-        assert text.lower().count("missing api key") == 1
+        # "missing API key" no longer appears anywhere — the setup card uses
+        # "Add an API key" and the banner that used to carry that literal
+        # phrase is gone.
+        assert text.lower().count("missing api key") == 0
 
 
 @pytest.mark.asyncio
@@ -1842,11 +2053,9 @@ async def test_console_empty_ready_transcript_shows_first_run_guidance():
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
         text = _visible_text(console)
-        assert "Start Console" in text
-        assert "Type in Composer, attach sources, or run Library RAG before sending." in text
-        assert "Choose model" in text
-        assert "Attach context" in text
-        assert "Run Library RAG" in text
+        assert "Ready — type a message to begin." in text
+        assert "Type in Composer, attach sources, or run Library RAG before sending." not in text
+        assert "Start Console" not in text
 
         await pilot.press("h")
         await pilot.pause(0.1)
@@ -1872,49 +2081,60 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#workbench-recovery-callout")
-        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
+        await _wait_for_selector(console, pilot, "#console-transcript-empty-state")
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
 
-        strip = console.query_one("#console-provider-recovery-strip")
-        blocker = console.query_one("#console-provider-blocker", Static)
-        legacy_button = console.query_one("#console-open-provider-settings", Button)
+        assert not list(console.query("#console-provider-recovery-strip"))
+        assert not list(console.query("#console-provider-blocker"))
+        assert not list(console.query("#console-open-provider-settings"))
+
+        # The shared Workbench recovery banner must stay hidden — the setup
+        # card's own "open settings" action carries this guidance instead
+        # (Phase 2 spec, section 2).
         recovery = console.query_one("#workbench-recovery-callout")
         button = console.query_one("#workbench-recovery-action", Button)
-        assert strip.styles.display == "none"
-        assert blocker.styles.display == "none"
-        assert legacy_button.styles.display == "none"
-        assert button.display is True
-        assert button.disabled is False
-        assert button.region.height == 1
-        assert button.region.width >= len(CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL)
-        assert str(button.label) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
-        assert button.has_class("is-primary")
-        assert recovery.region.y < button.region.y
-        recovery_text = getattr(recovery.renderable, "plain", str(recovery.renderable))
-        assert recovery_text.startswith("Console setup blocked")
-        assert "Provider setup needed: OpenAI missing API key" in recovery_text
-        assert "Impact: Send is blocked until setup is finished." in recovery_text
+        card_button = console.query_one("#console-empty-choose-model", Button)
+        assert recovery.display is False
+        assert button.display is False
+        assert card_button.display is True
+        assert card_button.disabled is False
+        assert str(card_button.label) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
+        assert card_button.tooltip == "Configure OpenAI API and API key in Settings"
         text = _visible_text(console)
         assert CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL in text
         assert console.query_one("#console-inspector-rail-handle").display is True
         assert console.query_one("#console-right-rail").display is False
-        assert text.lower().count("missing api key") == 1
+        # "missing API key" no longer appears anywhere — the setup card uses
+        # "Add an API key" and the banner that used to carry that literal
+        # phrase is gone.
+        assert text.lower().count("missing api key") == 0
 
 
 @pytest.mark.asyncio
 async def test_console_provider_settings_action_posts_navigation_message(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
-    console = ChatScreen(app)
-    event = _PressedEvent()
-    posted_messages: list[object] = []
-    monkeypatch.setattr(console, "post_message", posted_messages.append)
+    app.app_config = {
+        "chat_defaults": {
+            "provider": "OpenAI",
+            "model": "gpt-4.1-2025-04-14",
+        },
+        "api_settings": {"openai": {"api_key": ""}},
+    }
+    app.chat_api_provider_value = "OpenAI"
+    app.chat_api_model_value = "gpt-4.1-2025-04-14"
+    host = ConsoleNavigationHarness(app)
 
-    await console.handle_console_open_provider_settings(event)  # type: ignore[arg-type]
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal-action")
 
-    assert event.stopped is True
+        await pilot.click("#console-setup-modal-action")
+        await pilot.pause()
+
     assert [
         message.screen_name
-        for message in posted_messages
+        for message in host.navigation_messages
         if isinstance(message, NavigateToScreen)
     ] == ["settings"]
 
@@ -1931,12 +2151,10 @@ async def test_console_provider_settings_action_hidden_when_provider_ready(monke
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await pilot.pause(0.1)
 
-        buttons = [
-            button
-            for button in console.query("#console-open-provider-settings")
-            if button.display
-        ]
-        assert buttons == []
+        assert not list(console.query("#console-open-provider-settings"))
+        action_row = console.query_one("#console-empty-action-row")
+        assert action_row.styles.display == "none"
+        assert action_row.display is False
 
 
 @pytest.mark.asyncio
@@ -1951,30 +2169,32 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#workbench-recovery-callout")
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        strip = console.query_one("#console-provider-recovery-strip")
+        # The shared Workbench recovery banner must stay hidden — the setup
+        # card's action button and the composer's Send tooltip carry this
+        # guidance instead (Phase 2 spec, section 2).
         recovery = console.query_one("#workbench-recovery-callout")
         recovery_action = console.query_one("#workbench-recovery-action", Button)
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         await pilot.pause()
-        blocker = console.query_one("#console-provider-blocker", Static)
 
-        assert strip.styles.display == "none"
-        assert blocker.styles.display == "none"
-        assert recovery.display is True
-        assert str(recovery_action.label) == "Choose model"
-        assert "Provider setup needed: choose a model" in getattr(
-            recovery.renderable, "plain", str(recovery.renderable)
-        )
+        assert not list(console.query("#console-provider-recovery-strip"))
+        assert not list(console.query("#console-provider-blocker"))
+        assert recovery.display is False
+        assert recovery_action.display is False
         assert "Provider setup needed: choose a model" not in _visible_text(
             console.query_one("#console-native-transcript")
         )
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
+        card_button = console.query_one("#console-setup-modal-action", Button)
+        assert str(card_button.label) == "Choose model"
         assert "Choose model" in _visible_text(console)
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
-        assert "No messages yet." not in _visible_text(console)
-        assert "Impact: Send is blocked" in _visible_text(console)
+        send_button = console.query_one("#console-send-message", Button)
+        assert send_button.tooltip == "Choose a model in Console Settings before sending."
         assert "Setup required: Choose model before sending." not in _visible_text(console)
 
         store.replace_session_settings(
@@ -1984,9 +2204,10 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         console._sync_console_control_bar()
         await pilot.pause()
 
-        assert blocker.styles.display == "none"
-        assert str(blocker.renderable) == ""
-        assert strip.styles.display == "none"
+        assert not list(console.query("#console-provider-blocker"))
+        assert not list(console.query("#console-provider-recovery-strip"))
+        action_row = console.query_one("#console-empty-action-row")
+        assert action_row.styles.display == "none"
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
         assert "Setup required: Choose model before sending." not in _visible_text(console)
 
@@ -1997,18 +2218,20 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         console._sync_console_control_bar()
         await pilot.pause()
 
-        assert blocker.styles.display == "none"
-        assert strip.styles.display == "none"
-        assert recovery.display is True
-        assert str(recovery_action.label) == "Choose model"
-        assert "Provider setup needed: choose a model" in getattr(
-            recovery.renderable, "plain", str(recovery.renderable)
-        )
+        assert not list(console.query("#console-provider-blocker"))
+        assert not list(console.query("#console-provider-recovery-strip"))
+        assert recovery.display is False
+        assert recovery_action.display is False
         assert "Provider setup needed: choose a model" not in _visible_text(
             console.query_one("#console-native-transcript")
         )
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
+        card_button = console.query_one("#console-setup-modal-action", Button)
+        assert str(card_button.label) == "Choose model"
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
-        assert "No messages yet." not in _visible_text(console)
+        send_button = console.query_one("#console-send-message", Button)
+        assert send_button.tooltip == "Choose a model in Console Settings before sending."
 
 
 @pytest.mark.asyncio
@@ -2023,18 +2246,20 @@ async def test_console_empty_transcript_stays_neutral_when_setup_blocked(monkeyp
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
 
-        transcript = console.query_one("#console-native-transcript")
-        text = _visible_text(transcript)
+        # The transcript itself stays neutral (dimmed quiet line under the
+        # modal); the numbered setup guidance lives on the blocking modal.
+        transcript_text = _visible_text(console.query_one("#console-native-transcript"))
+        assert "Choose a model in Console Settings to start chatting." not in transcript_text
+        assert "Ready. Ask a question" not in transcript_text
 
-        assert "Start Console" in text
-        assert "Choose a model to enable Send. Then type in Composer or attach context." in text
+        text = _visible_text(console)
+        assert "Get started" in text
+        assert "Send your first message" in text
         assert "Choose model" in text
         assert "Attach context" in text
         assert "Run Library RAG" in text
-        assert "Choose a model in Console Settings to start chatting." not in text
-        assert "Ready. Ask a question" not in text
 
 
 @pytest.mark.asyncio
@@ -2184,11 +2409,8 @@ async def test_console_native_transcript_is_visible_transcript_surface():
         assert transcript.region.height > 0
         assert transcript.styles.display != "none"
         text = _visible_text(console)
-        assert "Start Console" in text
-        assert "Type in Composer, attach sources, or run Library RAG before sending." in text
-        assert "Choose model" in text
-        assert "Attach context" in text
-        assert "Run Library RAG" in text
+        assert "Ready — type a message to begin." in text
+        assert "Type in Composer, attach sources, or run Library RAG before sending." not in text
         assert "No messages yet. Send a prompt or attach context." not in text
 
 
@@ -2208,10 +2430,14 @@ async def test_console_empty_transcript_uses_compact_ready_state():
 
         assert len(empty_rows) == 1
         empty_panel = empty_rows[0]
-        assert _visible_text(empty_panel) == (
-            "Start Console Type in Composer, attach sources, or run Library RAG before "
-            "sending. Choose model Attach context Run Library RAG"
+        # Ready state is compact: one displayed ready line, no visible action row.
+        body = empty_panel.query_one("#console-empty-body", Static)
+        action_row = empty_panel.query_one("#console-empty-action-row")
+        assert getattr(body.render(), "plain", str(body.render())) == (
+            "Ready — type a message to begin."
         )
+        assert body.display is True
+        assert action_row.styles.display == "none"
         assert "No messages yet. Send a prompt or attach context." not in _visible_text(
             empty_panel
         )

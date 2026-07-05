@@ -12,6 +12,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Utils.console_background_effects import ConsoleBackgroundEffectSettings
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from tldw_chatbook.Widgets.Console.console_background_effect import ConsoleTranscriptSurface
@@ -230,8 +231,14 @@ class ConsoleSessionSurface(Vertical):
             await tab_strip.mount(self._build_new_tab_button())
             self._record_mount_churn(mounted=mounted_count, removed=removed_count)
 
-    def sync_inline_guidance(self, *, visible: bool, copy: str = "") -> None:
-        """Keep guidance out of the title and sync empty transcript copy."""
+    def sync_inline_guidance(
+        self,
+        card_state: ConsoleSetupCardState,
+        *,
+        provider_action_label: str = "",
+        provider_action_tooltip: str = "",
+    ) -> None:
+        """Keep guidance out of the title and sync the empty transcript card state."""
         try:
             title = self.query_one("#console-transcript-title", Static)
         except Exception:
@@ -242,7 +249,11 @@ class ConsoleSessionSurface(Vertical):
             transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
         except Exception:
             return
-        transcript.sync_empty_state(copy if visible else "")
+        transcript.sync_empty_state(
+            card_state,
+            provider_action_label=provider_action_label,
+            provider_action_tooltip=provider_action_tooltip,
+        )
 
     def sync_background_effect_settings(
         self,

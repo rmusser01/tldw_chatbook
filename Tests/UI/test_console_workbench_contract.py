@@ -8,6 +8,10 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleControlState,
     build_console_disabled_reason,
 )
+from tldw_chatbook.Chat.console_onboarding_state import (
+    ConsoleSetupCardState,
+    ConsoleSetupStep,
+)
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_FOCUS_TARGETS_BY_PANE,
     CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
@@ -15,6 +19,7 @@ from tldw_chatbook.UI.Screens.chat_screen import (
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
@@ -49,6 +54,27 @@ class EmptyTranscriptActionHarness(App):
 
     def compose(self) -> ComposeResult:
         yield ConsoleTranscript(id="console-native-transcript")
+
+    def on_workbench_action_requested(self, event: WorkbenchActionRequested) -> None:
+        event.stop()
+        self.workbench_actions.append(event.action_id)
+
+
+class SetupModalActionHarness(App):
+    def __init__(self, state: ConsoleSetupCardState):
+        super().__init__()
+        self._state = state
+        self.workbench_actions: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        yield ConsoleSetupModal(id="console-setup-modal")
+
+    async def on_mount(self) -> None:
+        self.query_one("#console-setup-modal", ConsoleSetupModal).sync_card_state(
+            self._state,
+            action_label="Configure API",
+            action_tooltip="Open provider settings.",
+        )
 
     def on_workbench_action_requested(self, event: WorkbenchActionRequested) -> None:
         event.stop()
@@ -348,7 +374,7 @@ async def test_console_ready_inspector_shows_run_recipe_and_operational_groups()
 
 
 @pytest.mark.asyncio
-async def test_console_composer_keeps_primary_actions_and_setup_recovery_visible():
+async def test_console_composer_keeps_primary_actions_and_setup_card_recovery_visible():
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
@@ -369,10 +395,14 @@ async def test_console_composer_keeps_primary_actions_and_setup_recovery_visible
         assert _is_displayed(console.query_one("#console-stop-generation"))
         assert _is_displayed(console.query_one("#console-save-chatbook"))
         assert not _is_displayed(console.query_one("#console-composer-recovery"))
-        assert _is_displayed(console.query_one("#workbench-recovery-callout"))
-        recovery_action = console.query_one("#workbench-recovery-action")
-        assert _is_displayed(recovery_action)
-        assert "Choose model" in _widget_text(recovery_action)
+        # The shared Workbench recovery banner must stay hidden — the blocking
+        # setup modal owns first-run recovery guidance now.
+        assert not _is_displayed(console.query_one("#workbench-recovery-callout"))
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert _is_displayed(modal)
+        card_action = console.query_one("#console-setup-modal-action")
+        assert _is_displayed(card_action)
+        assert "Choose model" in _widget_text(card_action)
         visible_draft = console.query_one("#console-command-visible-text")
         assert visible_draft.region.width >= 32
 
@@ -414,16 +444,22 @@ async def test_console_empty_transcript_exposes_beginner_activation_actions():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 
-        empty_panel = console.query_one("#console-transcript-empty-state")
-        assert _is_displayed(empty_panel)
-        assert _widget_text(console.query_one("#console-empty-title")) == "Start Console"
-        assert _widget_text(console.query_one("#console-empty-body")) == (
-            "Choose a model to enable Send. Then type in Composer or attach context."
+        # Setup-incomplete consoles show the numbered setup card on the blocking
+        # modal, not in the transcript. Attach/Run-RAG stay reachable on the
+        # control bar (never on the modal).
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert _is_displayed(modal)
+        assert _widget_text(console.query_one("#console-setup-modal-title")) == "Get started"
+        assert "Pick a model" in _widget_text(console.query_one("#console-setup-step-2"))
+        assert "Send your first message" in _widget_text(
+            console.query_one("#console-setup-step-3")
         )
-        assert "Choose model" in _widget_text(empty_panel)
-        assert _is_displayed(console.query_one("#console-empty-choose-model"))
-        assert _is_displayed(console.query_one("#console-empty-attach-context"))
-        assert _is_displayed(console.query_one("#console-empty-run-library-rag"))
+        assert "Choose model" in _widget_text(console.query_one("#console-setup-modal-action"))
+        # The modal carries no attach/RAG affordances; those stay on the control bar.
+        assert not _is_displayed(console.query_one("#console-empty-attach-context"))
+        assert not _is_displayed(console.query_one("#console-empty-run-library-rag"))
+        assert _is_displayed(console.query_one("#console-control-attach-context"))
+        assert _is_displayed(console.query_one("#console-control-run-library-rag"))
 
 
 @pytest.mark.asyncio
@@ -439,15 +475,12 @@ async def test_console_ready_empty_transcript_exposes_activation_panel_copy():
         empty_panel = console.query_one("#console-transcript-empty-state")
         assert isinstance(empty_panel, Vertical)
         assert _is_displayed(empty_panel)
-        assert _widget_text(console.query_one("#console-empty-title")) == "Start Console"
+        # Ready state shows one ready line and hides the setup card + action row.
         assert _widget_text(console.query_one("#console-empty-body")) == (
-            "Type in Composer, attach sources, or run Library RAG before sending."
+            "Ready — type a message to begin."
         )
-        assert _widget_text(console.query_one("#console-empty-choose-model")) == "Choose model"
-        assert _widget_text(console.query_one("#console-empty-attach-context")) == "Attach context"
-        assert _widget_text(console.query_one("#console-empty-run-library-rag")) == (
-            "Run Library RAG"
-        )
+        assert not _is_displayed(console.query_one("#console-empty-title"))
+        assert not _is_displayed(console.query_one("#console-empty-action-row"))
 
 
 @pytest.mark.asyncio
@@ -458,9 +491,9 @@ async def test_console_empty_transcript_choose_model_opens_settings():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
-        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+        await _wait_for_selector(console, pilot, "#console-setup-modal-action")
 
-        await pilot.click("#console-empty-choose-model")
+        await pilot.click("#console-setup-modal-action")
         await pilot.pause()
 
         assert host.screen.query("#console-settings-modal") or host.screen.query(
@@ -469,7 +502,9 @@ async def test_console_empty_transcript_choose_model_opens_settings():
 
 
 @pytest.mark.asyncio
-async def test_console_ready_empty_transcript_choose_model_opens_console_settings():
+async def test_console_ready_empty_transcript_omits_setup_action_row():
+    # A ready Console no longer surfaces the empty-state choose-model action;
+    # the spec routes ready users straight to typing (no setup action row).
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -477,36 +512,46 @@ async def test_console_ready_empty_transcript_choose_model_opens_console_setting
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
-        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+        await _wait_for_selector(console, pilot, "#console-transcript-empty-state")
 
-        await pilot.click("#console-empty-choose-model")
-        await pilot.pause()
-
-        assert host.screen.query("#console-settings-modal")
+        assert not _is_displayed(console.query_one("#console-empty-action-row"))
+        assert not _is_displayed(console.query_one("#console-empty-choose-model"))
+        assert _widget_text(console.query_one("#console-empty-body")) == (
+            "Ready — type a message to begin."
+        )
 
 
 @pytest.mark.asyncio
-async def test_console_empty_transcript_actions_post_workbench_messages():
-    app = EmptyTranscriptActionHarness()
+async def test_console_setup_modal_action_posts_provider_recovery_message():
+    app = SetupModalActionHarness(
+        ConsoleSetupCardState(
+            mode="card",
+            steps=(ConsoleSetupStep(state="active", label="Add an API key"),),
+        )
+    )
 
     async with app.run_test(size=(80, 24)) as pilot:
+        modal = app.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.display is True
+        await pilot.click("#console-setup-modal-action")
         await pilot.pause()
 
-        await pilot.click("#console-empty-attach-context")
-        await pilot.click("#console-empty-run-library-rag")
-        await pilot.pause()
-
-        assert app.workbench_actions == ["attach-context", "run-library-rag"]
+        assert app.workbench_actions == ["provider-recovery"]
 
 
 @pytest.mark.asyncio
-async def test_console_transcript_empty_fallback_uses_ready_activation_copy():
+async def test_console_transcript_empty_state_renders_ready_activation_copy():
     app = EmptyTranscriptActionHarness()
 
     async with app.run_test(size=(80, 24)) as pilot:
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
 
-        transcript.sync_empty_state("")
+        transcript.sync_empty_state(
+            ConsoleSetupCardState(
+                mode="ready_line",
+                body_copy="Type in Composer, attach sources, or run Library RAG before sending.",
+            )
+        )
         await pilot.pause()
 
         assert _widget_text(app.query_one("#console-empty-body")) == (
@@ -514,42 +559,10 @@ async def test_console_transcript_empty_fallback_uses_ready_activation_copy():
         )
 
 
-@pytest.mark.parametrize(
-    ("blocker_copy", "expected"),
-    (
-        (
-            "Provider setup needed: choose a model",
-            "Choose a model to enable Send. Then type in Composer or attach context.",
-        ),
-        (
-            "Provider setup needed: choose a provider",
-            "Choose a provider to enable Send. Then type in Composer or attach context.",
-        ),
-        (
-            "Provider setup needed: OpenAI missing API key",
-            "Add an API key to enable Send. Then type in Composer or attach context.",
-        ),
-        (
-            "Provider setup needed: save the endpoint in settings",
-            "Configure the endpoint to enable Send. Then type in Composer or attach context.",
-        ),
-        (
-            "Provider setup needed: verify local runtime",
-            "Finish provider setup to enable Send. Then type in Composer or attach context.",
-        ),
-    ),
-)
-def test_console_empty_transcript_copy_matches_setup_blocker(
-    blocker_copy: str,
-    expected: str,
-):
-    assert (
-        ChatScreen._console_empty_transcript_copy(
-            blocker_copy,
-            guidance_visible=False,
-        )
-        == expected
-    )
+# NOTE: The static ``_console_empty_transcript_copy`` / blocked-copy adapters were
+# removed with the setup-card rewire; their setup-blocker mapping now lives in
+# ``build_console_setup_card_state`` and is covered by
+# ``Tests/Chat/test_console_onboarding_state.py``.
 
 
 @pytest.mark.parametrize(
@@ -669,7 +682,10 @@ def test_console_workbench_state_exposes_core_actions_visibly():
     assert state.recovery is None
 
 
-def test_console_workbench_state_surfaces_provider_recovery():
+def test_console_workbench_state_hides_recovery_banner_when_provider_blocked():
+    """The setup card + composer own first-run guidance now (Phase 2 spec
+    section 2); the shared Workbench recovery banner must stay absent even
+    while a provider blocker keeps Send disabled."""
     state = build_console_workbench_state(
         control_state=ConsoleControlState(
             provider_label="Provider: OpenAI",
@@ -687,19 +703,18 @@ def test_console_workbench_state_surfaces_provider_recovery():
         can_save_chatbook=False,
     )
 
-    assert state.recovery is not None
-    assert "choose a model" in state.recovery.body.lower()
-    assert state.recovery.action is not None
-    assert state.recovery.action.label == "Choose model"
-    assert state.recovery.action.id == "provider-recovery"
-    assert state.recovery.action.primary is True
+    assert state.recovery is None
+    assert state.header.status == "blocked"
 
     modes = {mode.id: mode for mode in state.modes}
     assert modes["provider"].status == "blocked"
     assert modes["model"].status == "blocked"
 
 
-def test_console_workbench_recovery_names_specific_setup_action():
+def test_console_workbench_state_never_resurfaces_recovery_for_named_setup_action():
+    """A blocker copy that names a specific recovery action (e.g. "Choose
+    model") must still not leak into a duplicate workbench recovery banner;
+    that copy belongs to the setup card and composer disabled-reason only."""
     state = build_console_workbench_state(
         control_state=_control_state(),
         provider_blocker_copy="Provider setup needed: choose a model",
@@ -707,12 +722,8 @@ def test_console_workbench_recovery_names_specific_setup_action():
         can_send=False,
     )
 
-    assert state.recovery is not None
-    assert state.recovery.action is not None
-    assert state.recovery.action.label == "Choose model"
-    assert state.recovery.action.tooltip == "Choose model"
-    assert state.recovery.action.primary is True
-    assert "Send is blocked" in state.recovery.body
+    assert state.recovery is None
+    assert state.header.status == "blocked"
 
 
 def test_console_disabled_reason_copy_prefers_setup_blocker():
@@ -723,7 +734,7 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
         setup_blocked_reason="Provider setup needed: choose a model",
     )
 
-    assert reason == "Send disabled: choose a model"
+    assert reason == "Send blocked — choose a model to continue"
 
 
 @pytest.mark.parametrize(
@@ -731,23 +742,23 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
     (
         (
             "Provider setup needed: choose a provider",
-            "Send disabled: choose a provider",
+            "Send blocked — choose a provider to continue",
         ),
         (
             "Provider setup needed: OpenAI missing API key",
-            "Send disabled: add API key",
+            "Send blocked — add an API key to continue",
         ),
         (
             "Provider setup needed: configure endpoint",
-            "Send disabled: configure endpoint",
+            "Send blocked — configure the endpoint to continue",
         ),
         (
             "Provider setup needed: llama.cpp endpoint unavailable",
-            "Send disabled: configure endpoint",
+            "Send blocked — configure the endpoint to continue",
         ),
         (
             "Provider setup needed: verify local runtime",
-            "Send disabled: finish provider setup",
+            "Send blocked — finish provider setup to continue",
         ),
     ),
 )
@@ -825,7 +836,7 @@ async def test_console_core_controls_are_visible_without_command_palette():
 
 
 @pytest.mark.asyncio
-async def test_console_recovery_action_is_visible_when_provider_setup_blocks_send():
+async def test_console_setup_card_carries_blocked_send_guidance_instead_of_banner():
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
@@ -839,17 +850,19 @@ async def test_console_recovery_action_is_visible_when_provider_setup_blocks_sen
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 
+        # The shared Workbench recovery banner must stay hidden while the
+        # setup card and the composer's Send tooltip carry the "blocked"
+        # guidance instead (Phase 2 spec, section 2).
         recovery = console.query_one("#workbench-recovery-callout")
-        assert _is_displayed(recovery)
-        recovery_text = " ".join(
-            getattr(child.renderable, "plain", str(getattr(child, "renderable", "")))
-            for child in recovery.query("Static")
-        )
-        assert "Send is blocked" in recovery_text
+        assert not _is_displayed(recovery)
+        setup_card = console.query_one("#console-transcript-empty-state")
+        assert _is_displayed(setup_card)
+        send_button = console.query_one("#console-send-message")
+        assert "model" in (send_button.tooltip or "").lower()
 
 
 @pytest.mark.asyncio
-async def test_console_blocked_setup_recovery_has_primary_choose_model_action():
+async def test_console_setup_card_choose_model_action_is_visible_and_primary_recovery():
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
@@ -864,15 +877,15 @@ async def test_console_blocked_setup_recovery_has_primary_choose_model_action():
         await _wait_for_selector(console, pilot, "#console-shell")
 
         recovery = console.query_one("#workbench-recovery-callout")
-        assert _is_displayed(recovery)
-        action = console.query_one("#workbench-recovery-action")
+        assert not _is_displayed(recovery)
+        action = console.query_one("#console-setup-modal-action")
         assert _is_displayed(action)
         assert str(action.label) == "Choose model"
         assert action.disabled is False
 
 
 @pytest.mark.asyncio
-async def test_console_recovery_action_button_is_visible_and_actionable():
+async def test_console_setup_card_recovery_action_button_is_visible_and_actionable():
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
@@ -885,12 +898,13 @@ async def test_console_recovery_action_button_is_visible_and_actionable():
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
-        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
+        await _wait_for_selector(console, pilot, "#console-setup-modal-action")
 
-        action = console.query_one("#workbench-recovery-action")
+        assert not _is_displayed(console.query_one("#workbench-recovery-callout"))
+        action = console.query_one("#console-setup-modal-action")
         assert _is_displayed(action)
         assert not action.disabled
-        await pilot.click("#workbench-recovery-action")
+        await pilot.click("#console-setup-modal-action")
         await pilot.pause()
 
         assert host.screen.query("#console-settings-modal") or host.screen.query(

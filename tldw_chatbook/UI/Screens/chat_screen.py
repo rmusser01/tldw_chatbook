@@ -78,6 +78,11 @@ from ...Chat.console_display_state import (
     build_console_evidence_display_state,
     coerce_non_negative_int,
 )
+from ...Chat.console_onboarding_state import (
+    ConsoleSetupCardState,
+    build_console_setup_card_state,
+    coerce_console_first_send_completed,
+)
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
@@ -142,6 +147,7 @@ from ...Widgets.Console import (
     ConsoleSessionSurface,
     ConsoleSettingsModal,
     ConsoleSettingsSummary,
+    ConsoleSetupModal,
     ConsoleStagedContextTray,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
@@ -189,9 +195,6 @@ CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
-CONSOLE_READY_EMPTY_TRANSCRIPT_COPY = (
-    "Type in Composer, attach sources, or run Library RAG before sending."
-)
 CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Configure API+API Key"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
@@ -330,7 +333,23 @@ class ChatScreen(BaseAppScreen):
     """
 
     BINDINGS = [
-        *BaseAppScreen.BINDINGS,
+        # Textual's Screen base class binds tab/shift+tab to the "app."-namespaced
+        # focus_next/focus_previous actions, which always dispatch to App.action_focus_next
+        # (never to a Screen override of the same name). Re-declaring the keys here without
+        # the "app." prefix replaces those merged bindings for this screen, so the actions
+        # below run on ChatScreen and can trap focus inside the blocking Console setup modal
+        # instead of tunnelling into the workbench beneath it. The inherited tab/shift+tab
+        # entries are dropped from the ``BaseAppScreen.BINDINGS`` spread below (rather than
+        # simply appended after them): Textual merges same-class BINDINGS entries that share
+        # a key into one list checked in declaration order, so keeping both would let the
+        # inherited "app.focus_next"/"app.focus_previous" entries win every time.
+        *(
+            binding
+            for binding in BaseAppScreen.BINDINGS
+            if binding.key not in ("tab", "shift+tab")
+        ),
+        Binding("tab", "focus_next", "Focus Next", show=False),
+        Binding("shift+tab", "focus_previous", "Focus Previous", show=False),
         Binding("f1", "show_workbench_help", "Help", show=False),
         Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
         Binding(
@@ -341,6 +360,26 @@ class ChatScreen(BaseAppScreen):
             priority=True,
         ),
     ]
+
+    def action_focus_next(self) -> None:
+        """Move focus to the next widget, trapping Tab inside a blocking modal.
+
+        While the Console setup modal is blocking the workbench, this keeps
+        focus cycling within the modal's own focusables instead of letting
+        Tab tunnel into rail/transcript/composer controls hidden beneath it.
+        """
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        self.focus_next()
+
+    def action_focus_previous(self) -> None:
+        """Move focus to the previous widget, trapping Shift+Tab inside a blocking modal.
+
+        Mirrors ``action_focus_next`` for the reverse direction.
+        """
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        self.focus_previous()
     
     @on(Select.Changed, "#chat-api-provider")
     async def handle_provider_change(self, event: Select.Changed) -> None:
@@ -585,6 +624,8 @@ class ChatScreen(BaseAppScreen):
 
     async def action_focus_next_workbench_pane(self) -> None:
         """Move focus to the next visible Console Workbench pane."""
+        if self._focus_console_setup_modal_if_blocking():
+            return
         hidden = {
             pane_id
             for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
@@ -598,6 +639,8 @@ class ChatScreen(BaseAppScreen):
 
     async def action_focus_previous_workbench_pane(self) -> None:
         """Move focus to the previous visible Console Workbench pane."""
+        if self._focus_console_setup_modal_if_blocking():
+            return
         hidden = {
             pane_id
             for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
@@ -659,6 +702,17 @@ class ChatScreen(BaseAppScreen):
             self._last_console_workbench_focus_id = widget_id
             return
 
+    def _focus_console_setup_modal_if_blocking(self) -> bool:
+        """Trap pane cycling on the setup modal while it blocks the workbench."""
+        if not self._console_setup_modal_blocking():
+            return False
+        try:
+            modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
+        except QueryError:
+            return False
+        modal.focus_primary_action()
+        return True
+
     def _ensure_console_workbench_targets_focusable(self) -> None:
         """Make mounted visible Console Workbench focus targets focusable."""
         for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order:
@@ -672,6 +726,9 @@ class ChatScreen(BaseAppScreen):
 
     def _restore_console_workbench_focus(self) -> None:
         """Restore focus to a visible Console Workbench pane after activation."""
+        if self._focus_console_setup_modal_if_blocking():
+            self._apply_console_setup_block(True)
+            return
         self._ensure_console_workbench_targets_focusable()
         current = self._console_workbench_focus_id_for_widget(self.app.focused)
         if current is not None and self._is_console_widget_displayed(current):
@@ -854,6 +911,7 @@ class ChatScreen(BaseAppScreen):
         self._last_console_workbench_state: Any | None = None
         self._last_console_rail_state: ConsoleRailState | None = None
         self._console_guidance_dismissed = False
+        self._console_first_send_completed_cached: bool | None = None
         self.ui_state = UIState()
         self._load_sidebar_state()
 
@@ -3205,6 +3263,54 @@ class ChatScreen(BaseAppScreen):
             severity="warning",
         )
 
+    def _console_first_send_completed(self) -> bool:
+        """Return the persisted global first-send flag (cached per screen)."""
+        if self._console_first_send_completed_cached is None:
+            app_config = getattr(self.app_instance, "app_config", None)
+            raw = None
+            if isinstance(app_config, dict):
+                onboarding = app_config.get("console", {})
+                if isinstance(onboarding, dict):
+                    onboarding = onboarding.get("onboarding", {})
+                raw = (
+                    onboarding.get("first_send_completed")
+                    if isinstance(onboarding, dict)
+                    else None
+                )
+            self._console_first_send_completed_cached = coerce_console_first_send_completed(raw)
+        return self._console_first_send_completed_cached
+
+    def _record_console_first_send(self) -> None:
+        """Persist the one-time global first-send flag and refresh guidance."""
+        if self._console_first_send_completed():
+            return
+        self._console_first_send_completed_cached = True
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            console_cfg = app_config.get("console")
+            if not isinstance(console_cfg, dict):
+                console_cfg = {}
+                app_config["console"] = console_cfg
+            onboarding_cfg = console_cfg.get("onboarding")
+            if not isinstance(onboarding_cfg, dict):
+                onboarding_cfg = {}
+                console_cfg["onboarding"] = onboarding_cfg
+            onboarding_cfg["first_send_completed"] = True
+        self._save_console_onboarding_flag()
+        self._sync_console_transcript_guidance()
+
+    @work(thread=True)
+    def _save_console_onboarding_flag(self) -> None:
+        """Persist the first-send flag without blocking the UI thread."""
+        try:
+            save_setting_to_cli_config(
+                "console.onboarding",
+                "first_send_completed",
+                True,
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist Console onboarding flag: {}", exc)
+
     def _migrate_console_rail_fallback_preferences(
         self,
         key: str,
@@ -3971,36 +4077,6 @@ class ChatScreen(BaseAppScreen):
         return f"Provider setup needed: {settings_readiness.detail}"
 
     @staticmethod
-    def _console_empty_transcript_copy(
-        blocker_copy: str,
-        *,
-        guidance_visible: bool,
-    ) -> str:
-        """Return compact empty transcript copy while setup details live nearby."""
-        blocker = blocker_copy.strip()
-        if blocker:
-            return ChatScreen._console_blocked_empty_transcript_copy(blocker)
-        if guidance_visible:
-            return CONSOLE_READY_EMPTY_TRANSCRIPT_COPY
-        return ""
-
-    @staticmethod
-    def _console_blocked_empty_transcript_copy(blocker_copy: str) -> str:
-        """Return setup-aware empty transcript activation copy."""
-        blocker = blocker_copy.strip().lower()
-        if "choose a provider" in blocker:
-            action = "Choose a provider"
-        elif "choose a model" in blocker:
-            action = "Choose a model"
-        elif "api key" in blocker:
-            action = "Add an API key"
-        elif "endpoint" in blocker:
-            action = "Configure the endpoint"
-        else:
-            action = "Finish provider setup"
-        return f"{action} to enable Send. Then type in Composer or attach context."
-
-    @staticmethod
     def _console_empty_recovery_action_copy(
         blocker_copy: str,
         *,
@@ -4097,22 +4173,6 @@ class ChatScreen(BaseAppScreen):
             )
         return ("Review settings", "console", "Review this Console session's settings")
 
-    def _console_provider_recovery_strip_visible(self, blocker_copy: str | None) -> bool:
-        """Return whether provider recovery needs a persistent transcript row."""
-        return bool(blocker_copy and blocker_copy.strip())
-
-    @staticmethod
-    def _console_provider_blocker_display_copy(copy: str, action_label: str) -> str:
-        """Return one coherent setup callout with problem, impact, and action."""
-        copy = copy.strip()
-        if not copy:
-            return ""
-        return (
-            f"{copy}\n"
-            "Impact: Send is blocked until setup is finished.\n"
-            f"Action: {action_label or 'Open Settings'}"
-        )
-
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
         if self._console_chat_store is not None:
@@ -4142,6 +4202,29 @@ class ChatScreen(BaseAppScreen):
                 except Exception:
                     continue
         return False
+
+    def _active_console_transcript_has_messages(self) -> bool:
+        """Return whether the active Console session's store transcript has messages."""
+        store = self._console_chat_store
+        if store is None:
+            return False
+        session_id = store.active_session_id
+        if session_id is None:
+            return False
+        return bool(store.messages_for_session(session_id))
+
+    def _build_console_setup_card_state(self) -> ConsoleSetupCardState:
+        """Build the empty-transcript onboarding state from current readiness."""
+        settings, readiness = self._active_console_settings_readiness()
+        has_model = _has_selected_text(getattr(settings, "model", None))
+        return build_console_setup_card_state(
+            readiness=readiness,
+            provider_label=str(getattr(settings, "provider", "") or "Provider"),
+            has_model=has_model,
+            first_send_completed=self._console_first_send_completed(),
+            has_messages=self._active_console_transcript_has_messages(),
+            guidance_dismissed=self._console_guidance_dismissed,
+        )
 
     def _console_guidance_visible(self, blocker_copy: str | None = None) -> bool:
         """Return whether first-run Console guidance should still be visible."""
@@ -4187,7 +4270,6 @@ class ChatScreen(BaseAppScreen):
         blocker_copy = self._console_provider_blocker_copy()
         guidance_visible = self._console_guidance_visible(blocker_copy)
         action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
-        is_api_key_recovery = self._console_provider_recovery_field() == "api_key"
         empty_action_label, empty_action_tooltip = self._console_empty_recovery_action_copy(
             blocker_copy,
             provider_action_label=action_label if blocker_copy else "",
@@ -4207,108 +4289,67 @@ class ChatScreen(BaseAppScreen):
                 visible=guidance_visible,
             )
 
+        card_state = self._build_console_setup_card_state()
         try:
             surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
         except QueryError:
             pass
         else:
-            empty_copy = self._console_empty_transcript_copy(
-                blocker_copy,
-                guidance_visible=guidance_visible,
-            )
             surface.sync_inline_guidance(
-                visible=bool(empty_copy),
-                copy=empty_copy,
+                card_state,
+                provider_action_label=empty_action_label,
+                provider_action_tooltip=empty_action_tooltip,
             )
-            try:
-                transcript = surface.query_one("#console-native-transcript", ConsoleTranscript)
-            except QueryError:
-                pass
-            else:
-                transcript.sync_empty_state(
-                    empty_copy if empty_copy else "",
-                    provider_action_label=empty_action_label,
-                    provider_action_tooltip=empty_action_tooltip,
-                )
 
-        try:
-            provider_strip = self.query_one("#console-provider-recovery-strip", Horizontal)
-            provider_blocker = self.query_one("#console-provider-blocker", Static)
-        except QueryError:
-            return
-        # Legacy recovery selectors stay mounted for parity, but Workbench owns
-        # the visible setup recovery UI through #workbench-recovery-callout.
-        recovery_visible = False
-        self._configure_console_provider_recovery_strip(
-            provider_strip,
-            provider_blocker,
-            blocker_copy,
-            visible=recovery_visible,
-            action_label=action_label,
-        )
-        try:
-            settings_button = self.query_one("#console-open-provider-settings", Button)
-        except QueryError:
-            return
-        self._configure_console_provider_settings_action(
-            settings_button,
-            visible=recovery_visible,
-            label=action_label,
-            tooltip=action_tooltip,
-            is_api_key_recovery=is_api_key_recovery,
+        self._sync_console_setup_modal(
+            card_state,
+            action_label=empty_action_label,
+            action_tooltip=empty_action_tooltip,
         )
 
-    @staticmethod
-    def _configure_console_provider_recovery_strip(
-        strip: Horizontal,
-        blocker: Static,
-        copy: str,
+    def _sync_console_setup_modal(
+        self,
+        card_state: ConsoleSetupCardState,
         *,
-        visible: bool,
         action_label: str,
+        action_tooltip: str,
     ) -> None:
-        """Show provider recovery as one compact warning/action row."""
-        display_copy = (
-            ChatScreen._console_provider_blocker_display_copy(copy, action_label)
-            if visible
-            else ""
-        )
-        row_count = display_copy.count("\n") + 1 if display_copy else 0
-        strip.styles.height = "auto" if visible else 0
-        strip.styles.min_height = row_count if visible else 0
-        strip.styles.display = "block" if visible else "none"
-        blocker.update(display_copy)
-        blocker.styles.display = "block" if visible else "none"
-        blocker.styles.width = "1fr"
-        blocker.styles.height = "auto" if visible else 0
-        blocker.styles.min_height = row_count if visible else 0
-        blocker.styles.margin = 0
-
-    @staticmethod
-    def _configure_console_provider_settings_action(
-        button: Button,
-        *,
-        visible: bool,
-        label: str = "Open Settings",
-        tooltip: str = "Open provider settings",
-        is_api_key_recovery: bool = False,
-    ) -> None:
-        """Show or hide the provider recovery action with the blocker copy."""
-        button.label = label or "Open Settings"
-        button.tooltip = tooltip
-        button.disabled = not visible
-        if visible and is_api_key_recovery:
-            button.add_class("console-provider-api-key-action")
-        else:
-            button.remove_class("console-provider-api-key-action")
-        if visible:
-            button.styles.display = "block"
-            button.styles.height = 1
-            button.styles.min_height = 1
+        """Show/hide the blocking setup modal and keep the workbench inert."""
+        try:
+            modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
+        except QueryError:
             return
-        button.styles.display = "none"
-        button.styles.height = 0
-        button.styles.min_height = 0
+        modal.sync_card_state(
+            card_state,
+            action_label=action_label,
+            action_tooltip=action_tooltip,
+        )
+        blocking = modal.is_blocking
+        self._apply_console_setup_block(blocking)
+        if blocking:
+            self.call_after_refresh(modal.focus_primary_action)
+
+    def _console_setup_modal_blocking(self) -> bool:
+        """Return True when the first-run setup modal is covering the workbench."""
+        try:
+            modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
+        except QueryError:
+            return False
+        return bool(getattr(modal, "display", False)) and modal.is_blocking
+
+    def _apply_console_setup_block(self, blocking: bool) -> None:
+        """Disable composer focus/typing while the setup modal is up."""
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return
+        composer.can_focus = not blocking
+        if blocking and self._is_descendant_or_self(self.app.focused, composer):
+            # Pull keyboard focus off the covered composer so typing can't tunnel.
+            try:
+                self.query_one("#console-setup-modal", ConsoleSetupModal).focus_primary_action()
+            except QueryError:
+                composer.blur()
 
     @staticmethod
     def _frame_console_region(
@@ -4785,53 +4826,6 @@ class ChatScreen(BaseAppScreen):
                     with transcript_region:
                         provider_blocker_copy = self._console_provider_blocker_copy()
                         guidance_visible = self._console_guidance_visible(provider_blocker_copy)
-                        recovery_visible = self._console_provider_recovery_strip_visible(
-                            provider_blocker_copy
-                        )
-                        provider_action_label, _provider_action_target, provider_action_tooltip = (
-                            self._console_provider_recovery_action()
-                        )
-                        provider_recovery_field = self._console_provider_recovery_field()
-                        provider_recovery_strip = Horizontal(
-                            id="console-provider-recovery-strip",
-                            classes="console-provider-recovery-strip",
-                        )
-                        with provider_recovery_strip:
-                            blocker = Static(
-                                provider_blocker_copy,
-                                id="console-provider-blocker",
-                                classes="console-provider-blocker",
-                            )
-                            self._configure_console_provider_recovery_strip(
-                                provider_recovery_strip,
-                                blocker,
-                                provider_blocker_copy,
-                                visible=False,
-                                action_label=provider_action_label,
-                            )
-                            yield blocker
-                            provider_settings_action = Button(
-                                provider_action_label,
-                                id="console-open-provider-settings",
-                                classes="destination-action-button console-provider-settings-action",
-                                disabled=not recovery_visible,
-                                compact=True,
-                                variant="primary",
-                            )
-                            self._configure_console_provider_settings_action(
-                                provider_settings_action,
-                                visible=False,
-                                label=provider_action_label,
-                                tooltip=provider_action_tooltip,
-                                is_api_key_recovery=provider_recovery_field == "api_key",
-                            )
-                            yield provider_settings_action
-                        # Compatibility selectors retained during Console
-                        # Workbench parity: #console-provider-recovery-strip,
-                        # #console-provider-blocker, and
-                        # #console-open-provider-settings are superseded by
-                        # #workbench-recovery-callout and
-                        # #workbench-recovery-action.
                         start_here = Static(
                             CONSOLE_START_HERE_COPY,
                             id="console-start-here",
@@ -4935,6 +4929,12 @@ class ChatScreen(BaseAppScreen):
                     paste_collapse_threshold=self._console_paste_collapse_threshold(),
                 )
             )
+            # Console-scoped first-run blocker. Sits on a dedicated overlay
+            # layer over the whole Console shell so the workbench (rail,
+            # transcript, tabs, composer) is covered/inert while setup is
+            # incomplete; the app tab bar lives outside the shell and stays
+            # reachable. Hidden until a card-mode state is synced in.
+            yield ConsoleSetupModal(id="console-setup-modal")
 
     def _console_collapse_large_pastes_enabled(self) -> bool:
         """Return the app-level Console paste-collapse preference."""
@@ -5887,6 +5887,11 @@ class ChatScreen(BaseAppScreen):
             composer = None
         if result.should_clear_draft and composer is not None:
             composer.clear_draft()
+        if result.accepted:
+            # Retry/continue/regenerate paths intentionally don't record the flag here —
+            # they require an existing message, so ``has_messages`` already keeps the
+            # card hidden and the flag was set by the originating submit.
+            self._record_console_first_send()
         await self._sync_native_console_chat_ui()
 
     def _console_send_blocked_reason(self) -> str:
@@ -5995,12 +6000,6 @@ class ChatScreen(BaseAppScreen):
             "No Chatbook artifact is available to save yet.",
             severity="warning",
         )
-
-    @on(Button.Pressed, "#console-open-provider-settings")
-    async def handle_console_open_provider_settings(self, event: Button.Pressed) -> None:
-        """Route provider setup recovery to the smallest relevant settings surface."""
-        event.stop()
-        await self._open_console_provider_recovery()
 
     async def _open_console_provider_recovery(self) -> None:
         """Route provider setup recovery to the smallest relevant settings surface."""
@@ -6574,6 +6573,10 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             return
+        if self._console_setup_modal_blocking():
+            # Workbench is inert behind the first-run setup modal; never route
+            # printable/edit keys into the covered composer.
+            return
         if not self._should_capture_console_input(composer):
             return
         if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
@@ -6627,6 +6630,8 @@ class ChatScreen(BaseAppScreen):
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
+            return
+        if self._console_setup_modal_blocking():
             return
         if not self._should_capture_console_input(composer):
             return
@@ -7532,6 +7537,15 @@ class ChatScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
+        # Re-evaluate setup-card/model readiness before touching focus. Some
+        # recovery flows (e.g. certain providers' API-key recovery) navigate to
+        # the full Settings screen and back rather than completing setup via
+        # the in-Console settings modal callback, so the setup modal's blocking
+        # state can be stale by the time this screen resumes. Without this,
+        # `_restore_console_workbench_focus` below would just re-apply the
+        # stale block and the modal could stick even after setup completed
+        # elsewhere.
+        self._sync_console_transcript_guidance()
         self.sync_task_resume_state()
         self._register_console_footer_shortcuts()
         self.call_after_refresh(self._restore_console_workbench_focus)

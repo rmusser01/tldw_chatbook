@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageActionService,
     ConsoleSaveDestination,
 )
+from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
@@ -236,7 +237,12 @@ async def test_console_transcript_empty_state_accepts_setup_copy():
     async with app.run_test() as pilot:
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
 
-        transcript.sync_empty_state("Choose a model in Console Settings to start chatting.")
+        transcript.sync_empty_state(
+            ConsoleSetupCardState(
+                mode="ready_line",
+                body_copy="Choose a model in Console Settings to start chatting.",
+            )
+        )
         await pilot.pause()
 
         empty_state = transcript.query_one(".console-transcript-empty-state", Static)

@@ -2647,7 +2647,7 @@ async def test_console_settings_modal_restores_freeform_model_after_provider_rou
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_orders_staged_context_before_workspace_context() -> None:
+async def test_console_left_rail_orders_session_before_staged_context() -> None:
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -2659,10 +2659,13 @@ async def test_console_left_rail_orders_staged_context_before_workspace_context(
         settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
 
-        assert staged_context.region.y < workspace_context.region.y
+        # Phase 1 rail restructure: the rail is four sections in order
+        # Session (workspace context), Context (staged context), Model,
+        # Details -- so workspace context renders above staged context.
+        assert workspace_context.region.y < staged_context.region.y
         assert settings.parent.id == "console-run-inspector"
-        assert staged_context.parent.id == "console-left-rail-body"
-        assert workspace_context.parent.id == "console-left-rail-body"
+        assert workspace_context.parent.id == "console-rail-section-body-session"
+        assert staged_context.parent.id == "console-rail-section-body-context"
 
 
 @pytest.mark.asyncio
@@ -2677,6 +2680,8 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         left_rail = console.query_one("#console-left-rail")
         header = console.query_one(".console-rail-header")
         body = console.query_one("#console-left-rail-body")
+        session_body = console.query_one("#console-rail-section-body-session")
+        context_body = console.query_one("#console-rail-section-body-context")
         staged_context = console.query_one("#console-staged-context-tray")
         settings = console.query_one("#console-settings-summary")
         workspace_context = console.query_one("#console-workspace-context")
@@ -2685,8 +2690,12 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         assert body.region.y >= header.region.y + header.region.height
         assert body.region.height <= left_rail.region.height - header.region.height
         assert settings.parent.id == "console-run-inspector"
-        assert workspace_context.parent is body
-        assert staged_context.parent is body
+        # Phase 1 nests each tray inside its own rail-section body, which is
+        # itself a direct child of the scrolling rail body.
+        assert workspace_context.parent is session_body
+        assert staged_context.parent is context_body
+        assert session_body.parent is body
+        assert context_body.parent is body
         assert staged_context.region.width == workspace_context.region.width
         assert workspace_context.region.width <= body.region.width
         assert body.region.width - workspace_context.region.width <= 2
@@ -3048,9 +3057,12 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _visible_console_settings_button(console, pilot)
-        await _wait_for_selector(console, pilot, "#workbench-recovery-action")
+        # The shared Workbench recovery banner stays hidden — the setup
+        # card's action button carries this recovery instead (Phase 2 spec,
+        # section 2).
+        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
 
-        recovery_button = console.query_one("#workbench-recovery-action", Button)
+        recovery_button = console.query_one("#console-empty-choose-model", Button)
         assert str(recovery_button.label) == "Choose model"
         assert recovery_button.display is True
 
@@ -3211,16 +3223,6 @@ def test_console_missing_key_recovery_action_is_provider_specific() -> None:
         screen._console_setup_blocked_reason()
         == "Add API key in Settings > Providers & Models before sending."
     )
-
-    settings_button = Button("Sentinel")
-    ChatScreen._configure_console_provider_settings_action(
-        settings_button,
-        visible=True,
-        label="Localized recovery label",
-        tooltip=tooltip,
-        is_api_key_recovery=True,
-    )
-    assert settings_button.has_class("console-provider-api-key-action")
 
 
 def test_console_unsaved_generic_endpoint_blocks_inspector_with_endpoint_details() -> None:
