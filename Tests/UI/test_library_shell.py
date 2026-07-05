@@ -419,3 +419,24 @@ async def test_library_shell_workspaces_body_lives_under_details():
         details_body = screen.query_one("#library-rail-section-body-details")
         create_button = screen.query_one("#library-create-local-workspace")
         assert details_body in create_button.ancestors
+
+
+def test_generated_stylesheet_includes_library_shell_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for selector in (
+        "#library-shell-grid",
+        "#library-header-line",
+        ".library-rail-row",
+        ".library-rail-row-selected",
+        ".library-conversation-row",
+        ".library-conversation-row-selected",
+        ".library-canvas-action",
+        "#library-search-input",
+    ):
+        assert selector in component_css, selector
+        assert selector in generated_css, selector
+    for stale in ("#library-mode-bar", "#library-contract-grid"):
+        assert stale not in component_css, stale
+        assert stale not in generated_css, stale

@@ -538,6 +538,79 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     border: none;
 }
 
+#library-shell-grid {
+    padding: 0 1;
+    margin: 0;
+    border: solid $ds-column-line;
+    background: $ds-surface-panel;
+}
+
+#library-header-line {
+    height: $ds-home-compact-row-height;
+    min-height: $ds-home-compact-row-height;
+    padding: 0 1;
+    margin: 0;
+    border: none;
+}
+
+.library-rail-row {
+    width: 100%;
+    min-width: 0;
+    height: 2;
+    min-height: 2;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.library-rail-row-selected {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.library-conversation-row {
+    width: 100%;
+    min-width: 0;
+    height: 2;
+    min-height: 2;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.library-conversation-row-selected {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+
+.library-canvas-action {
+    height: $ds-home-control-button-height;
+    min-height: $ds-home-control-button-height;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    border: none;
+}
+
+#library-search-input {
+    margin: 0 0 1 0;
+}
+
 #console-workspace-grid {
     height: $ds-console-workspace-grid-height;
     min-height: 20;
@@ -1722,20 +1795,6 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     min-width: 0;
 }
 
-#library-mode-bar {
-    height: $ds-library-mode-bar-height;
-    min-height: $ds-library-mode-bar-height;
-    padding: 0 1;
-    margin: 0;
-    overflow: hidden;
-}
-
-#library-mode-label {
-    width: $ds-library-mode-label-width;
-    min-width: $ds-library-mode-label-width;
-    height: $ds-library-mode-bar-height;
-    min-height: $ds-library-mode-bar-height;
-}
 
 #notes-status-row {
     width: 1fr;
@@ -1746,7 +1805,6 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-muted;
 }
 
-Button.library-mode-chip,
 Button.notes-mode-chip {
     width: auto;
     min-width: $ds-library-mode-chip-min-width;
@@ -1756,7 +1814,6 @@ Button.notes-mode-chip {
     border: none;
 }
 
-.library-mode-chip:focus,
 .notes-mode-chip:focus {
     outline: none;
     background: $ds-focus-bg;
@@ -1764,7 +1821,6 @@ Button.notes-mode-chip {
     text-style: bold underline;
 }
 
-#library-contract-grid,
 #artifacts-workbench,
 #personas-workbench,
 #watchlists-workbench,
