@@ -11,10 +11,14 @@ def test_shell_sections_rows_and_targets_are_fixed():
     ))
     assert shell.header_line == "Library | Local"
     assert [s.section_id for s in shell.sections] == ["browse", "create", "ingest"]
+    assert [s.title for s in shell.sections] == ["Browse", "Create", "Ingest"]
     browse = shell.sections[0]
     assert [r.row_id for r in browse.rows] == [
         "browse-media", "browse-conversations", "browse-notes", "browse-collections",
         "browse-search",
+    ]
+    assert [r.title for r in browse.rows] == [
+        "Media", "Conversations", "Notes", "Collections", "Search / RAG"
     ]
     assert browse.rows[4].target_kind == "mode" and browse.rows[4].target_id == "search"
     assert browse.rows[4].count is None
@@ -24,8 +28,12 @@ def test_shell_sections_rows_and_targets_are_fixed():
     assert (media.target_kind, media.target_id) == ("screen", TAB_MEDIA)
     create_ids = [r.row_id for r in shell.sections[1].rows]
     assert create_ids == ["create-note", "create-study", "create-flashcards", "create-quizzes"]
+    assert [r.title for r in shell.sections[1].rows] == [
+        "New note", "Study decks", "Flashcards", "Quizzes"
+    ]
     assert shell.sections[1].rows[0].target_id == TAB_NOTES
     ingest = shell.sections[2]
+    assert [r.title for r in ingest.rows] == ["Import media", "Import / Export"]
     assert ingest.rows[0].target_id == TAB_INGEST
     assert (ingest.rows[1].target_kind, ingest.rows[1].target_id) == ("mode", "import-export")
     assert all(r.count is None for r in shell.sections[1].rows)
