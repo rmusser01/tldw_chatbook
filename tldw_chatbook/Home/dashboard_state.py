@@ -310,21 +310,25 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
     return tuple(controls)
 
 
-def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
-    next_action = choose_next_best_action(state)
-    approval_label = "Approval required" if _pending_approval_count(state) else "Ready"
-    active_count = _active_run_count(state)
-    approval_count = _pending_approval_count(state)
-    status_summary = (
+def _status_summary_line(state: HomeDashboardInput) -> str:
+    return (
         f"Model: {'Ready' if state.model_ready else 'Blocked'} | "
         f"RAG: {'Ready' if state.rag_ready else 'Missing sources'} | "
         f"MCP: {'Ready' if state.mcp_ready else 'Blocked'} | "
         f"ACP: {'Ready' if state.acp_ready else 'Blocked'} | "
         f"Mode: {_runtime_source_label(state.runtime_source)} | "
         f"Server: {_server_status_label(state)} | "
-        f"Active: {active_count} | "
-        f"Approvals: {approval_count}"
+        f"Active: {_active_run_count(state)} | "
+        f"Approvals: {_pending_approval_count(state)}"
     )
+
+
+def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
+    next_action = choose_next_best_action(state)
+    approval_label = "Approval required" if _pending_approval_count(state) else "Ready"
+    active_count = _active_run_count(state)
+    approval_count = _pending_approval_count(state)
+    status_summary = _status_summary_line(state)
     return HomeDashboard(
         next_action=next_action,
         sections=(
@@ -638,7 +642,9 @@ def build_home_triage_state(
         category = categorize_run_status(item.status)
         if category in _ATTENTION_CATEGORIES:
             attention_rows.append(_item_row(item, "attention", reference_now))
-        elif category in _RUNNING_CATEGORIES:
+        else:
+            # Running, paused, and unknown/ready items all remain visible
+            # as active work rather than silently dropping.
             running_rows.append(_item_row(item, "running", reference_now))
     recent_rows = tuple(
         _item_row(item, "recent", reference_now) for item in state.recent_work_items
@@ -694,19 +700,27 @@ def build_home_triage_state(
         )
         selected_id = selected.row_id
     else:
+        # Count-only inputs (no item list) still expose their controls so
+        # approvals/retries remain reachable without a selectable row.
+        controls = build_home_controls(state)
         canvas = HomeCanvasState(
             title=next_action.label,
             lines=(next_action.reason,),
-            actions=(),
+            actions=controls,
             next_action=next_action,
-            next_action_is_canvas=True,
+            next_action_is_canvas=not controls,
         )
         selected_id = ""
 
+    details_lines = (_status_summary_line(state),) + _system_status_lines(state)
+    if state.notification_count:
+        details_lines = details_lines + (
+            f"Notifications: {state.notification_count} unread",
+        )
     return HomeTriageState(
         header_line=_header_line(state),
         sections=sections,
-        details_lines=_system_status_lines(state),
+        details_lines=details_lines,
         canvas=canvas,
         selected_row_id=selected_id,
     )

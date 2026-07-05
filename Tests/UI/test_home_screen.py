@@ -92,14 +92,15 @@ async def test_home_screen_shows_dashboard_sections():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        assert home.query_one("#home-title").has_class("ds-destination-header")
-        assert home.query_one("#home-next-best-action").has_class("ds-panel")
+        assert home.query_one("#home-header-line").has_class("destination-status-row")
         for selector in [
-            "#home-status",
-            "#home-attention",
-            "#home-system-status",
-            "#home-next-best-action",
-            "#home-recent-work",
+            "#home-rail",
+            "#home-canvas",
+            "#home-rail-section-header-attention",
+            "#home-rail-section-header-running",
+            "#home-rail-section-header-recent",
+            "#home-rail-section-header-details",
+            "#home-details-body",
         ]:
             assert home.query_one(selector)
 
@@ -122,7 +123,7 @@ async def test_home_screen_compacts_multi_module_readiness_summary():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        status_text = str(home.query_one("#home-status").renderable)
+        status_text = str(home.query_one("#home-details-body").renderable)
         assert "Model: Ready" in status_text
         assert "RAG: Missing sources" in status_text
         assert "MCP: Ready" in status_text
@@ -150,8 +151,8 @@ async def test_home_screen_acp_readiness_uses_runtime_process_state():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        status_text = str(home.query_one("#home-status").renderable)
-        system_text = str(home.query_one("#home-system-status-body").renderable)
+        status_text = str(home.query_one("#home-details-body").renderable)
+        system_text = str(home.query_one("#home-details-body").renderable)
 
         assert "ACP: Blocked" in status_text
         assert "ACP blocked" in system_text
@@ -177,10 +178,8 @@ async def test_home_system_status_groups_runtime_readiness_and_work_state():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        system_title = str(home.query_one("#home-system-status").renderable)
-        system_text = str(home.query_one("#home-system-status-body").renderable)
+        system_text = str(home.query_one("#home-details-body").renderable)
 
-        assert "System Status" in system_title
         assert "Runtime: Local" in system_text
         assert "Server sync: Not configured (local mode)" in system_text
         assert "Local mode is active. Server sync is optional." in system_text
@@ -205,8 +204,8 @@ async def test_home_screen_status_row_surfaces_server_auth_state():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        status_text = str(home.query_one("#home-status").renderable)
-        status_row_text = str(home.query_one("#home-status-row").renderable)
+        status_text = str(home.query_one("#home-details-body").renderable)
+        status_row_text = str(home.query_one("#home-header-line").renderable)
         assert "Mode: Server" in status_text
         assert "Server: Auth expired" in status_text
         assert "Primary Server" in status_row_text
@@ -225,18 +224,13 @@ async def test_home_empty_state_inspector_explains_selected_primary_action():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        selected_title = str(home.query_one("#home-selected-item-title").renderable)
-        selected_text = str(home.query_one("#home-selected-item-body").renderable)
-        assert "Selected action" in selected_title
-        assert "Import Library sources" in selected_text
-        assert "Destination: Library" in selected_text
-        assert "Enter: Open Library" in selected_text
+        selected_title = str(home.query_one("#home-canvas-title").renderable)
+        selected_text = str(home.query_one("#home-canvas-lines").renderable)
+        assert "Import Library sources" in selected_title
+        assert "Library content makes Console and RAG more useful." in selected_text
         assert "Ctrl+P" not in selected_text
-
-        hint_text = str(home.query_one("#home-action-hints").renderable)
-        assert "Enter open selected" in hint_text
-        assert "Tab switch pane" in hint_text
-        assert "Ctrl+P" not in hint_text
+        primary = home.query_one("#home-primary-action")
+        assert "Import Library sources" in str(primary.label)
 
 
 @pytest.mark.asyncio
@@ -252,11 +246,11 @@ async def test_home_next_actions_offer_distinct_followup_choices():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        next_actions_text = str(home.query_one("#home-next-best-action-body").renderable)
-        assert "Import Library sources" in next_actions_text
-        assert "Open Console" in next_actions_text
-        assert "Configure RAG" in next_actions_text
-        assert next_actions_text.count("Import Library sources") == 1
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        assert "Import Library sources" in canvas_title
+        assert canvas_title.count("Import Library sources") == 1
+        primary = home.query_one("#home-primary-action")
+        assert "Import Library sources" in str(primary.label)
 
 
 @pytest.mark.asyncio
@@ -273,10 +267,9 @@ async def test_home_next_actions_prioritize_recent_work_without_console_duplicat
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        next_actions_text = str(home.query_one("#home-next-best-action-body").renderable)
-        assert "Start in Console" in next_actions_text
-        assert "Review recent work" in next_actions_text
-        assert "Open Console" not in next_actions_text
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        assert "Start in Console" in canvas_title
+        assert canvas_title.count("Start in Console") == 1
 
 
 @pytest.mark.asyncio
@@ -289,9 +282,10 @@ async def test_home_selected_action_uses_user_facing_route_labels():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        selected_text = str(home.query_one("#home-selected-item-body").renderable)
-        assert "Set up Console model" in selected_text
-        assert "Destination: Settings" in selected_text
+        selected_title = str(home.query_one("#home-canvas-title").renderable)
+        selected_text = str(home.query_one("#home-canvas-lines").renderable)
+        assert "Set up Console model" in selected_title
+        assert "tab_llm" not in selected_text
         assert "Destination: Llm" not in selected_text
 
 
@@ -309,8 +303,7 @@ async def test_home_recent_work_empty_state_sets_expectation():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        recent_text = str(home.query_one("#home-recent-work-body").renderable)
-        assert "No recent work yet" in recent_text
+        recent_text = str(home.query_one("#home-rail-empty-recent").renderable)
         assert "Runs, chatbooks, imports, and schedules will appear here." in recent_text
 
 
@@ -321,6 +314,15 @@ async def test_home_recent_work_available_state_points_to_resume_paths():
         model_ready=True,
         has_library_content=True,
         has_recent_work=True,
+        recent_work_items=(
+            HomeActiveWorkItem(
+                item_id="recent:digest",
+                title="Nightly digest run",
+                source="Watchlists",
+                status="completed",
+                detail_route="subscriptions",
+            ),
+        ),
     )
     host = HomeHarness(app)
 
@@ -328,9 +330,11 @@ async def test_home_recent_work_available_state_points_to_resume_paths():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        recent_text = str(home.query_one("#home-recent-work-body").renderable)
-        assert "Recent work available" in recent_text
-        assert "Open Console, Library, or Artifacts to resume." in recent_text
+        recent_row = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == "recent:digest"
+        )
+        assert "Nightly digest run" in str(recent_row.label)
 
 
 @pytest.mark.asyncio
@@ -342,23 +346,10 @@ async def test_home_dashboard_uses_bordered_terminal_panes():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        assert home.query_one("#home-dashboard-grid").has_class("destination-workbench")
-        for selector in [
-            "#home-attention-queue",
-            "#home-active-work-region",
-            "#home-inspector",
-        ]:
+        assert home.query_one("#home-triage-grid").has_class("destination-workbench")
+        assert home.query_one("#home-triage-grid").has_class("ds-panel")
+        for selector in ["#home-rail", "#home-canvas"]:
             assert home.query_one(selector).has_class("destination-workbench-pane")
-        assert home.query_one("#home-attention-queue").has_class("home-narrow-pane")
-        assert home.query_one("#home-active-work-region").has_class("home-wide-pane")
-        assert home.query_one("#home-active-work-region").has_class("home-system-status-region")
-        assert home.query_one("#home-inspector").has_class("ds-inspector")
-        for selector in [
-            "#home-attention-active-divider",
-            "#home-active-inspector-divider",
-            "#home-followup-divider",
-        ]:
-            assert home.query_one(selector).has_class("home-pane-divider")
 
 
 @pytest.mark.asyncio
@@ -370,14 +361,11 @@ async def test_home_followup_row_stays_compact_below_dashboard_grid():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        dashboard_grid = home.query_one("#home-dashboard-grid")
-        followup_row = home.query_one("#home-followup-row")
-        next_actions = home.query_one("#home-next-actions-region")
-        recent_work = home.query_one("#home-recent-work-region")
+        header = home.query_one("#home-header-line")
+        dashboard_grid = home.query_one("#home-triage-grid")
 
-        assert followup_row.region.y <= dashboard_grid.region.y + dashboard_grid.region.height + 1
-        assert next_actions.region.height <= HOME_FOLLOWUP_ROW_MAX_HEIGHT
-        assert recent_work.region.height <= HOME_FOLLOWUP_ROW_MAX_HEIGHT
+        assert dashboard_grid.region.y <= header.region.y + header.region.height + 1
+        assert dashboard_grid.region.height >= 12
 
 
 @pytest.mark.asyncio
@@ -443,8 +431,8 @@ async def test_home_screen_renders_unread_notification_snapshot_without_controls
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        assert "Unread notifications: 2" in str(
-            home.query_one("#home-attention-body").renderable
+        assert "Notifications: 2 unread" in str(
+            home.query_one("#home-details-body").renderable
         )
         assert len(home.query("#home-approve")) == 0
         assert len(home.query("#home-pause")) == 0
@@ -691,8 +679,9 @@ async def test_home_saved_chatbook_artifact_resume_controls_pass_artifact_target
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
-        active_work_text = str(home.query_one("#home-active-work-body").renderable)
-        assert "Grounded Answer" in active_work_text
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        active_work_text = str(home.query_one("#home-canvas-lines").renderable)
+        assert "Grounded Answer" in canvas_title
         assert "Artifacts" in active_work_text
         assert "ready" in active_work_text
 

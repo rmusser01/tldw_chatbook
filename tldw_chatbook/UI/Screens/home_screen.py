@@ -9,12 +9,27 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Constants import TAB_LLM, get_tab_display_label
+from tldw_chatbook.config import save_setting_to_cli_config
 from tldw_chatbook.Home.dashboard_state import (
     HomeDashboard,
     HomeDashboardInput,
+    HomeTriageState,
+    build_home_triage_state,
     choose_home_selected_item,
     summarize_home_dashboard,
 )
+from tldw_chatbook.Home.home_rail_state import (
+    HOME_RAIL_SECTION_IDS,
+    HomeRailPreferences,
+    coerce_home_rail_preferences,
+    serialize_home_rail_preferences,
+)
+from tldw_chatbook.Widgets.Console.console_rail_section import (
+    CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
+    ConsoleRailSectionHeader,
+)
+from tldw_chatbook.Widgets.Home.home_canvas import HomeCanvas
+from tldw_chatbook.Widgets.Home.home_rail import HOME_RAIL_ROW_PREFIX, HomeRail
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -95,6 +110,7 @@ class HomeScreen(BaseAppScreen):
         super().__init__(app_instance, "home", **kwargs)
         self._current_dashboard: HomeDashboard | None = None
         self._current_dashboard_input: HomeDashboardInput | None = None
+        self._home_selected_row_id: str = ""
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -136,128 +152,133 @@ class HomeScreen(BaseAppScreen):
         return dashboard_input
 
     def compose_content(self) -> ComposeResult:
-        """Compose the Home dashboard route."""
+        """Compose the Home triage route: header, rail, focus canvas."""
         dashboard_input = self._build_dashboard_input()
-        dashboard = summarize_home_dashboard(dashboard_input)
-        self._current_dashboard = dashboard
-        self._current_dashboard_input = dashboard_input
-
-        sections = {section.section_id: section for section in dashboard.sections}
-
-        def section_text(section_id: str) -> str:
-            section = sections.get(section_id)
-            return "\n".join(section.lines) if section is not None else ""
-
-        selected_item = self._selected_home_item(dashboard_input)
-        selected_item_title = "Selected item" if selected_item is not None else "Selected action"
-        selected_item_copy = (
-            f"{selected_item.title}\n"
-            f"Source: {selected_item.source}\n"
-            f"Status: {selected_item.status}\n"
-            f"Target: {selected_item.detail_route}"
-            if selected_item is not None
-            else (
-                f"{dashboard.next_action.label}\n"
-                f"{dashboard.next_action.reason}\n"
-                f"Destination: {_home_route_label(dashboard.next_action.target_route)}\n"
-                f"Enter: Open {_home_route_label(dashboard.next_action.target_route)}"
-            )
+        triage = build_home_triage_state(
+            dashboard_input,
+            selected_row_id=self._home_selected_row_id,
         )
-        next_action_copy = section_text("next_best_action")
+        # Keep the legacy dashboard object for the unchanged control dispatch.
+        self._current_dashboard = summarize_home_dashboard(dashboard_input)
+        self._current_dashboard_input = dashboard_input
+        self._home_selected_row_id = triage.selected_row_id
 
-        with Vertical(id="home-dashboard"):
-            yield Static("Home", id="home-title", classes="ds-destination-header")
-            yield Static(
-                "Dashboard, notifications, status, active work, and next actions.",
-                id="home-purpose",
-                classes="destination-purpose",
+        yield Static(
+            triage.header_line,
+            id="home-header-line",
+            classes="destination-status-row",
+        )
+        triage_grid = Horizontal(
+            id="home-triage-grid", classes="ds-panel destination-workbench"
+        )
+        triage_grid.styles.height = "1fr"
+        triage_grid.styles.min_height = 12
+        with triage_grid:
+            rail = HomeRail(
+                triage,
+                self._home_rail_preferences(),
+                id="home-rail",
+                classes="destination-workbench-pane",
             )
-            yield Static(
-                (
-                    "Home | Status, notifications, active work | "
-                    f"{'Ready' if dashboard_input.model_ready else 'Blocked'} | "
-                    f"{_home_runtime_status_label(dashboard_input)}"
-                ),
-                id="home-status-row",
-                classes="destination-status-row",
+            rail.styles.height = "100%"
+            yield rail
+            canvas = HomeCanvas(
+                triage.canvas,
+                action_button_factory=self._home_action_button,
+                id="home-canvas",
+                classes="destination-workbench-pane",
             )
-            yield Static(section_text("status"), id="home-status", classes="destination-status-row")
-            yield Static(
-                "Scope: All modules | Filter: Needs attention / Running / Recent",
-                id="home-scope-filter-row",
-                classes="ds-panel",
+            canvas.styles.height = "100%"
+            yield canvas
+
+    def _home_action_button(self, label: str, control_id: str) -> HomeActionButton:
+        """Build a canvas action button with the fallback-press wiring."""
+        if control_id == "home-primary-action":
+            return HomeActionButton(
+                label,
+                id="home-primary-action",
+                classes="ds-toolbar",
+                fallback_press=self._activate_home_primary_action,
             )
-            yield Static(
-                "Keys: Enter open selected | Tab switch pane",
-                id="home-action-hints",
-                classes="destination-status-row",
+        return HomeActionButton(
+            label,
+            id=control_id,
+            classes="ds-toolbar",
+            fallback_press=lambda control_id=control_id: (
+                self._activate_home_control(control_id)
+            ),
+        )
+
+    def _home_rail_preferences(self) -> HomeRailPreferences:
+        """Read persisted Home rail section preferences."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        raw = None
+        if isinstance(app_config, dict):
+            home_config = app_config.get("home")
+            if isinstance(home_config, dict):
+                rail_state = home_config.get("rail_state")
+                if isinstance(rail_state, dict):
+                    raw = rail_state.get("sections")
+        return coerce_home_rail_preferences(raw)
+
+    def _set_home_rail_section(self, section_id: str, open_state: bool) -> None:
+        """Persist one section preference and sync the rail body/header."""
+        if section_id not in HOME_RAIL_SECTION_IDS:
+            return
+        from dataclasses import replace as dataclass_replace
+
+        preferences = dataclass_replace(
+            self._home_rail_preferences(), **{f"{section_id}_open": open_state}
+        )
+        serialized = serialize_home_rail_preferences(preferences)
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            home_config = app_config.get("home")
+            if not isinstance(home_config, dict):
+                home_config = {}
+                app_config["home"] = home_config
+            rail_state = home_config.get("rail_state")
+            if not isinstance(rail_state, dict):
+                rail_state = {}
+                home_config["rail_state"] = rail_state
+            rail_state["sections"] = serialized
+        self._save_home_rail_preferences(serialized)
+        try:
+            body = self.query_one(f"#home-rail-section-body-{section_id}")
+            header = self.query_one(
+                f"#home-rail-section-header-{section_id}", ConsoleRailSectionHeader
             )
-            with Horizontal(id="home-dashboard-grid", classes="ds-panel destination-workbench"):
-                with Vertical(
-                    id="home-attention-queue",
-                    classes="home-dashboard-region home-narrow-pane destination-workbench-pane",
-                ):
-                    yield Static("Attention Queue", id="home-attention", classes="destination-section")
-                    yield HomeActionButton(
-                        dashboard.next_action.label,
-                        id="home-primary-action",
-                        classes="ds-toolbar",
-                        fallback_press=self._activate_home_primary_action,
-                    )
-                    yield Static(section_text("attention"), id="home-attention-body")
-                yield Static("", id="home-attention-active-divider", classes="home-pane-divider")
-                with Vertical(
-                    id="home-active-work-region",
-                    classes=(
-                        "home-dashboard-region home-wide-pane "
-                        "home-system-status-region destination-workbench-pane"
-                    ),
-                ):
-                    yield Static("System Status", id="home-system-status", classes="destination-section")
-                    for control in dashboard.controls:
-                        yield HomeActionButton(
-                            control.label,
-                            id=control.control_id,
-                            classes="ds-toolbar",
-                            fallback_press=lambda control_id=control.control_id: (
-                                self._activate_home_control(control_id)
-                            ),
-                        )
-                    yield Static(section_text("system_status"), id="home-system-status-body")
-                    yield Static(section_text("active_work"), id="home-active-work-body")
-                yield Static("", id="home-active-inspector-divider", classes="home-pane-divider")
-                with Vertical(
-                    id="home-inspector",
-                    classes="home-dashboard-region destination-workbench-pane ds-inspector",
-                ):
-                    yield Static(
-                        selected_item_title,
-                        id="home-selected-item-title",
-                        classes="destination-section",
-                    )
-                    yield Static(selected_item_copy, id="home-selected-item-body")
-            with Horizontal(id="home-followup-row"):
-                with Vertical(
-                    id="home-next-actions-region",
-                    classes="home-followup-region destination-workbench-pane",
-                ):
-                    yield Static(
-                        "Next Best Action",
-                        id="home-next-best-action",
-                        classes="ds-panel destination-section",
-                    )
-                    yield Static(next_action_copy, id="home-next-best-action-body")
-                yield Static("", id="home-followup-divider", classes="home-pane-divider")
-                with Vertical(
-                    id="home-recent-work-region",
-                    classes="home-followup-region destination-workbench-pane",
-                ):
-                    yield Static(
-                        "Recent Work",
-                        id="home-recent-work",
-                        classes="ds-panel destination-section",
-                    )
-                    yield Static(section_text("recent_work"), id="home-recent-work-body")
+        except Exception:
+            return
+        body.styles.display = "block" if open_state else "none"
+        header.sync_open(open_state)
+
+    @work(thread=True)
+    def _save_home_rail_preferences(self, serialized: dict[str, bool]) -> None:
+        """Persist Home rail preferences without blocking the UI thread."""
+        try:
+            save_setting_to_cli_config("home.rail_state", "sections", serialized)
+        except Exception:
+            pass
+
+    def _sync_home_triage(self) -> None:
+        """Rebuild triage state and refresh rail + canvas in place."""
+        dashboard_input = self._build_dashboard_input()
+        triage = build_home_triage_state(
+            dashboard_input,
+            selected_row_id=self._home_selected_row_id,
+        )
+        self._current_dashboard = summarize_home_dashboard(dashboard_input)
+        self._current_dashboard_input = dashboard_input
+        self._home_selected_row_id = triage.selected_row_id
+        try:
+            self.query_one("#home-rail", HomeRail).sync_state(
+                triage, self._home_rail_preferences()
+            )
+            self.query_one("#home-canvas", HomeCanvas).sync_state(triage.canvas)
+            self.query_one("#home-header-line", Static).update(triage.header_line)
+        except Exception:
+            pass
 
     def _selected_home_item(self, dashboard_input: HomeDashboardInput):
         return choose_home_selected_item(dashboard_input)
@@ -266,6 +287,25 @@ class HomeScreen(BaseAppScreen):
     def handle_home_button(self, event: Button.Pressed) -> None:
         button_id = event.button.id
         if not button_id:
+            return
+
+        if button_id.startswith(HOME_RAIL_ROW_PREFIX):
+            event.stop()
+            row_id = str(getattr(event.button, "row_id", "") or "")
+            if row_id:
+                self._home_selected_row_id = row_id
+                self._sync_home_triage()
+            return
+
+        if button_id.startswith(f"{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}home-"):
+            event.stop()
+            section_id = button_id.removeprefix(
+                f"{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}home-"
+            )
+            currently_open = bool(
+                getattr(self._home_rail_preferences(), f"{section_id}_open", True)
+            )
+            self._set_home_rail_section(section_id, not currently_open)
             return
 
         if button_id == "home-primary-action":
