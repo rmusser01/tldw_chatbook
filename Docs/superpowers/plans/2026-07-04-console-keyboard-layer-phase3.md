@@ -19,7 +19,7 @@
 ## Global Constraints
 
 - Run tests: `env HOME=/private/tmp/tldw-chatbook-test-home XDG_DATA_HOME=/private/tmp/tldw-chatbook-test-home/.local/share .venv/bin/python -m pytest -q <target> --tb=short`. The `timeout` shell command is unavailable.
-- Keys (verified unbound anywhere): `ctrl+k` switcher, `ctrl+m` popover, `ctrl+t` new tab, `alt+1`..`alt+9` tab jump, `escape` to composer (screen-level, non-priority), `c`/`e`/`r` on the focused transcript. The ACTIONS are fixed; if a key proves dead in a terminal, substitute and document — never silently drop the action.
+- Keys: `ctrl+k` switcher, `alt+m` popover (SUBSTITUTED 2026-07-05: `ctrl+m` is byte-identical to Enter on non-Kitty terminals per Textual KEY_ALIASES — an accidental-send hazard; Alt+M keeps the mnemonic and encodes distinctly), `ctrl+t` new tab, `alt+1`..`alt+9` tab jump, `escape` to composer (screen-level, non-priority), `c`/`e`/`r` on the focused transcript. The ACTIONS are fixed; if a key proves dead in a terminal, substitute and document — never silently drop the action.
 - **Documented deviation from spec §3:** no Ctrl+Enter "open in new tab" in the switcher — resuming a persisted conversation already opens as a new tab (existing `restore_persisted_session` semantics), and native rows ARE tabs; Enter activates, full stop. F2-rename in the switcher is kept via a rename result chained to the existing rename modal.
 - **Every new screen-level binding/action must no-op while `_console_setup_modal_blocking()`** (except palette/tab-bar behavior, which stays app-level).
 - New modals use inline `DEFAULT_CSS` like the existing Console modals (no generated-stylesheet work in this phase).
@@ -698,7 +698,7 @@ git commit -m "feat(console): ctrl+k session switcher wiring"
   - `ConsoleModelPopover(ModalScreen["ConsoleSessionSettings | str | None"])` with `__init__(self, *, settings: ConsoleSessionSettings, providers_models: Mapping[str, Sequence[str]], **kwargs: Any)`.
   - Layout: title `Model`; provider `Select` (`#console-popover-provider`, options from `build_console_provider_options`, value = current provider); model `Select` (`#console-popover-model`, options from `build_console_model_options`, rebuilt on provider change); temperature `Input` (`#console-popover-temperature`, current value or blank); streaming `Button` toggle (`#console-popover-streaming`, label `Streaming: on|off`, flips on press); `Apply` (`#console-popover-apply`, primary), `Full settings…` (`#console-popover-full-settings`), Escape cancels (None).
   - Apply dismisses `dataclasses.replace(self._settings, provider=…, model=…, temperature=…, streaming=…)` — ONLY those four fields change; temperature parse failure keeps the original value. `Full settings…` dismisses the sentinel string.
-  - chat_screen: `Binding("ctrl+m", "open_console_model_popover", "Model", show=False)`; `action_open_console_model_popover` (guarded by `_console_setup_modal_blocking()` — the popover is a power-user shortcut; first-run goes through the modal's own action) pushing the popover with the ACTIVE session settings (`store.session_settings(active_id)` or the same default-settings source `_open_console_settings` uses — mirror it); callback: sentinel → `self.run_worker(self._open_console_settings(), exclusive=False)`; `ConsoleSessionSettings` → `_replace_active_console_session_settings(result)`.
+  - chat_screen: `Binding("alt+m", "open_console_model_popover", "Model", show=False)`; `action_open_console_model_popover` (guarded by `_console_setup_modal_blocking()` — the popover is a power-user shortcut; first-run goes through the modal's own action) pushing the popover with the ACTIVE session settings (`store.session_settings(active_id)` or the same default-settings source `_open_console_settings` uses — mirror it); callback: sentinel → `self.run_worker(self._open_console_settings(), exclusive=False)`; `ConsoleSessionSettings` → `_replace_active_console_session_settings(result)`.
 
 - [ ] **Step 1: Write failing widget tests** (append to `Tests/UI/test_console_rail_sections.py`)
 
@@ -937,14 +937,14 @@ Append to `Tests/UI/test_console_internals_decomposition.py`:
 
 ```python
 @pytest.mark.asyncio
-async def test_ctrl_m_opens_model_popover_and_apply_updates_session_settings():
+async def test_alt_m_opens_model_popover_and_apply_updates_session_settings():
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        await pilot.press("ctrl+m")
+        await pilot.press("alt+m")
         await pilot.pause(0.2)
         assert app.screen.__class__.__name__ == "ConsoleModelPopover"
         await pilot.press("escape")
@@ -1047,7 +1047,7 @@ git commit -m "feat(console): direct copy/edit/regenerate keys on transcript sel
   - `def action_focus_console_composer_home(self) -> None` — guard blocking, then `_focus_console_composer_if_needed(force=True)`.
   - `def action_new_console_tab(self) -> None` — guard blocking, then `self.run_worker(self._create_native_console_session_from_active_context(), exclusive=False)`.
   - `def action_jump_console_tab(self, number: int) -> None` — guard blocking; sessions = `store.sessions()`; if `1 <= number <= len(sessions)`, activate `sessions[number-1].id` via a new shared helper `_activate_native_console_session(session_id)` extracted from the tab-click block (:7833-7843) so the tab click, the switcher (Task 3), and alt-jump share one path (refactor the tab-click handler and Task 3's callback to call it).
-  - `def build_console_footer_shortcuts(pane: str) -> tuple[tuple[str, str], ...]` — MODULE-LEVEL pure function in chat_screen.py: `pane` in `{"composer", "transcript", "rail", "blocked"}` returning at most 5 pairs: composer → `(("Ctrl+K", "Switch"), ("Ctrl+M", "Model"), ("Ctrl+T", "New tab"), ("F6", "Panes"), ("Ctrl+P", "Palette"))`; transcript → `(("↑/↓", "Select"), ("C", "Copy"), ("E", "Edit"), ("R", "Regen"), ("Esc", "Composer"))`; rail → `(("Enter", "Open"), ("Ctrl+K", "Switch"), ("Esc", "Composer"), ("F6", "Panes"))`; blocked → `(("Enter", "Configure"), ("Ctrl+P", "Palette"))`.
+  - `def build_console_footer_shortcuts(pane: str) -> tuple[tuple[str, str], ...]` — MODULE-LEVEL pure function in chat_screen.py: `pane` in `{"composer", "transcript", "rail", "blocked"}` returning at most 5 pairs: composer → `(("Ctrl+K", "Switch"), ("Alt+M", "Model"), ("Ctrl+T", "New tab"), ("F6", "Panes"), ("Ctrl+P", "Palette"))`; transcript → `(("↑/↓", "Select"), ("C", "Copy"), ("E", "Edit"), ("R", "Regen"), ("Esc", "Composer"))`; rail → `(("Enter", "Open"), ("Ctrl+K", "Switch"), ("Esc", "Composer"), ("F6", "Panes"))`; blocked → `(("Enter", "Configure"), ("Ctrl+P", "Palette"))`.
   - `_register_console_footer_shortcuts` gains an optional `pane: str = "composer"` parameter and passes `build_console_footer_shortcuts(pane)`; a screen-level `on_descendant_focus` hook (extend the existing one if present — grep `def on_descendant_focus` in chat_screen.py) maps the focused widget to a pane (composer bar → composer; transcript → transcript; left rail/handles → rail; setup modal → blocked) and re-registers.
 
 - [ ] **Step 1: Failing tests** (append to `Tests/UI/test_console_internals_decomposition.py`):
@@ -1187,7 +1187,7 @@ class ConsoleCommandProvider(Provider):
             ("Console: Switch session…", screen.action_open_console_session_switcher,
              "Fuzzy-find and activate a conversation (Ctrl+K)"),
             ("Console: Change model…", screen.action_open_console_model_popover,
-             "Quick provider/model/temperature switch (Ctrl+M)"),
+             "Quick provider/model/temperature switch (Alt+M)"),
             ("Console: New chat tab", screen.action_new_console_tab,
              "Open a new Console chat tab (Ctrl+T)"),
             ("Console: Focus composer", screen.action_focus_console_composer_home,
@@ -1249,7 +1249,7 @@ Expected: ALL PASS except the one documented pre-existing dev failure (`test_con
 
 Proven recipe (bundled chromium, `.intro-dialog` wait, route-abort external, fresh/seeded HOMEs, kill stale app processes first; driver `/private/tmp/tldw-console-rail-ia-cdp-20260702/cap.py` — copy it if missing). Use the ready-seeded config (llama_cpp) HOME. Capture:
 1. Ctrl+K switcher open with a query typed and filtered results.
-2. Ctrl+M popover open.
+2. Alt+M popover open.
 3. Footer hints with composer focused vs transcript focused (two frames showing different hint sets).
 4. Command palette (Ctrl+P) filtered to `Console:` commands.
 
