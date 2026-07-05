@@ -7,7 +7,7 @@ import inspect
 import os
 from pathlib import Path
 import re
-from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, Iterable, Optional, TYPE_CHECKING
 import uuid
 
 import toml
@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
-from textual.events import Click, Key, MouseUp, Paste
+from textual.events import Click, DescendantFocus, Key, MouseUp, Paste
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
@@ -230,6 +230,45 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Enter", "send"),
     ("Ctrl+P", "palette"),
 )
+CONSOLE_FOOTER_SHORTCUTS_BY_PANE: dict[str, tuple[tuple[str, str], ...]] = {
+    "composer": (
+        ("Ctrl+K", "Switch"),
+        ("Alt+M", "Model"),
+        ("Ctrl+T", "New tab"),
+        ("F6", "Panes"),
+        ("Ctrl+P", "Palette"),
+    ),
+    "transcript": (
+        ("↑/↓", "Select"),
+        ("C", "Copy"),
+        ("E", "Edit"),
+        ("R", "Regen"),
+        ("Esc", "Composer"),
+    ),
+    "rail": (
+        ("Enter", "Open"),
+        ("Ctrl+K", "Switch"),
+        ("Esc", "Composer"),
+        ("F6", "Panes"),
+    ),
+    "blocked": (
+        ("Enter", "Configure"),
+        ("Ctrl+P", "Palette"),
+    ),
+}
+
+
+def build_console_footer_shortcuts(pane: str) -> tuple[tuple[str, str], ...]:
+    """Return contextual Console footer shortcut hints for a Workbench pane.
+
+    Args:
+        pane: One of ``"composer"``, ``"transcript"``, ``"rail"``, ``"blocked"``.
+            Unrecognized values fall back to the composer hint set.
+
+    Returns:
+        At most five ``(key, label)`` pairs for the app footer status bar.
+    """
+    return CONSOLE_FOOTER_SHORTCUTS_BY_PANE.get(pane, CONSOLE_FOOTER_SHORTCUTS_BY_PANE["composer"])
 
 
 def _is_empty_select_value(value: Any) -> bool:
@@ -369,6 +408,19 @@ class ChatScreen(BaseAppScreen):
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=False),
         Binding("alt+m", "open_console_model_popover", "Model", show=False),
+        # NOT priority: widget-level escapes (transcript clear-selection, modal
+        # dismiss) must keep winning before this screen-level fallback runs.
+        Binding("escape", "focus_console_composer_home", "Composer", show=False),
+        Binding("ctrl+t", "new_console_tab", "New tab", show=False),
+        Binding("alt+1", "jump_console_tab(1)", "Tab 1", show=False),
+        Binding("alt+2", "jump_console_tab(2)", "Tab 2", show=False),
+        Binding("alt+3", "jump_console_tab(3)", "Tab 3", show=False),
+        Binding("alt+4", "jump_console_tab(4)", "Tab 4", show=False),
+        Binding("alt+5", "jump_console_tab(5)", "Tab 5", show=False),
+        Binding("alt+6", "jump_console_tab(6)", "Tab 6", show=False),
+        Binding("alt+7", "jump_console_tab(7)", "Tab 7", show=False),
+        Binding("alt+8", "jump_console_tab(8)", "Tab 8", show=False),
+        Binding("alt+9", "jump_console_tab(9)", "Tab 9", show=False),
     ]
 
     def action_focus_next(self) -> None:
@@ -753,15 +805,20 @@ class ChatScreen(BaseAppScreen):
                 self._focus_console_workbench_target(widget_id)
                 return
 
-    def _register_console_footer_shortcuts(self) -> None:
-        """Register Console Workbench shortcuts with the app footer if mounted."""
+    def _register_console_footer_shortcuts(self, pane: str = "composer") -> None:
+        """Register contextual Console Workbench shortcuts with the app footer.
+
+        Args:
+            pane: Focused Workbench pane bucket (``"composer"``, ``"transcript"``,
+                ``"rail"``, or ``"blocked"``) used to pick the hint set.
+        """
         try:
             footer = self.app.query_one(AppFooterStatus)
         except QueryError:
             return
         set_shortcuts = getattr(footer, "set_workbench_shortcuts", None)
         if callable(set_shortcuts):
-            set_shortcuts(source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS)
+            set_shortcuts(source="console", shortcuts=build_console_footer_shortcuts(pane))
 
     def _clear_console_footer_shortcuts(self) -> None:
         """Clear Console Workbench shortcuts from the app footer if mounted."""
@@ -842,19 +899,58 @@ class ChatScreen(BaseAppScreen):
             return
         self._replace_active_console_session_settings(result)
 
+    def action_focus_console_composer_home(self) -> None:
+        """Return keyboard focus to the Console composer (Escape, non-priority).
+
+        Deliberately not ``priority=True`` so widget-level escapes — transcript
+        selection-clear, and any pushed modal's own dismiss binding — are
+        resolved first as the key event bubbles up; this screen-level action
+        only fires once nothing closer to focus has claimed Escape.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self._focus_console_composer_if_needed(force=True)
+
+    def action_new_console_tab(self) -> None:
+        """Open a new native Console session tab from the active context (Ctrl+T)."""
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(self._create_native_console_session_from_active_context(), exclusive=False)
+
+    async def action_jump_console_tab(self, number: int) -> None:
+        """Jump directly to the Nth native Console session tab (Alt+1..9)."""
+        if self._console_setup_modal_blocking():
+            return
+        store = self._ensure_console_chat_store()
+        sessions = store.sessions()
+        if not (1 <= number <= len(sessions)):
+            return
+        await self._activate_native_console_session(sessions[number - 1].id)
+
+    async def _activate_native_console_session(self, session_id: str) -> None:
+        """Activate a native Console session through the shared activation sequence.
+
+        Set the active workspace, switch the native session, await the UI
+        sync, then force composer focus. Shared by the session-tab click
+        handler, the Ctrl+K switcher callback, and Alt+1..9 tab-jump so all
+        three entry points follow one activation path.
+        """
+        controller = self._ensure_console_chat_controller()
+        if controller.store.active_session_id != session_id:
+            self._set_active_workspace_for_console_session(session_id)
+            controller.switch_session(session_id)
+            await self._sync_native_console_chat_ui()
+        self._focus_console_composer_if_needed(force=True)
+
     async def _apply_console_switcher_choice(
         self, choice: ConsoleSwitcherChoice | None
     ) -> None:
-        """Apply a switcher selection through the existing activation seams.
+        """Apply a switcher selection through the shared native-session activation helper.
 
-        Mirrors the session-tab click handler's activation sequence
-        (``chat_screen.py`` ``console-session-tab-`` branch): set the active
-        workspace, switch the native session, then await the UI sync and
-        force composer focus. That branch is itself a plain ``async`` method
-        awaited directly (no worker), so this callback follows suit instead
-        of the run_worker-wrapped sketch in the task brief — Textual awaits
-        ``push_screen`` result callbacks directly via its message pump, so no
-        worker is required here either.
+        Mirrors the session-tab click handler and Alt+1..9 tab-jump: all three
+        call ``_activate_native_console_session`` so there is one activation
+        sequence (set workspace, switch, sync UI, focus composer) shared
+        across Console session-selection entry points.
         """
         if choice is None:
             return
@@ -865,12 +961,7 @@ class ChatScreen(BaseAppScreen):
         if choice.kind != "activate":
             return
         if entry.native_session_id:
-            controller = self._ensure_console_chat_controller()
-            if controller.store.active_session_id != entry.native_session_id:
-                self._set_active_workspace_for_console_session(entry.native_session_id)
-                controller.switch_session(entry.native_session_id)
-                await self._sync_native_console_chat_ui()
-            self._focus_console_composer_if_needed(force=True)
+            await self._activate_native_console_session(entry.native_session_id)
             return
         if entry.conversation_id:
             await self._resume_console_workspace_conversation(
@@ -6654,6 +6745,44 @@ class ChatScreen(BaseAppScreen):
             composer,
         ) or self._is_legacy_chat_input_focus(focused)
 
+    _CONSOLE_FOOTER_PANE_WIDGET_IDS: ClassVar[dict[str, str]] = {
+        "console-setup-modal": "blocked",
+        "console-native-composer": "composer",
+        "console-native-transcript": "transcript",
+        "console-transcript-surface": "transcript",
+        "console-left-rail": "rail",
+        "console-right-rail": "rail",
+        "console-context-rail-collapse": "rail",
+        "console-inspector-rail-collapse": "rail",
+        "console-context-rail-handle": "rail",
+        "console-inspector-rail-handle": "rail",
+    }
+
+    def _console_footer_pane_for_widget(self, widget: object | None) -> str:
+        """Map a focused descendant to its Console footer shortcut pane bucket.
+
+        Walks up from ``widget`` looking for a known composer/transcript/rail
+        widget id; falls back to ``"composer"`` when nothing matches (and to
+        ``"blocked"`` while the first-run setup modal is trapping focus).
+        """
+        current = widget
+        while current is not None:
+            widget_id = getattr(current, "id", None)
+            pane = self._CONSOLE_FOOTER_PANE_WIDGET_IDS.get(widget_id or "")
+            if pane is not None:
+                return pane
+            current = getattr(current, "parent", None)
+        return "composer"
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Re-register contextual Console footer shortcuts as focus moves between panes."""
+        if self._console_setup_modal_blocking():
+            self._register_console_footer_shortcuts("blocked")
+            return
+        self._register_console_footer_shortcuts(
+            self._console_footer_pane_for_widget(event.widget)
+        )
+
     def on_key(self, event: Key) -> None:
         """Treat the Console composer as the default printable text target."""
         try:
@@ -7924,10 +8053,7 @@ class ChatScreen(BaseAppScreen):
             if controller.store.active_session_id == session_id:
                 self._open_console_session_rename_modal(session_id)
                 return
-            self._set_active_workspace_for_console_session(session_id)
-            controller.switch_session(session_id)
-            await self._sync_native_console_chat_ui()
-            self._focus_console_composer_if_needed(force=True)
+            await self._activate_native_console_session(session_id)
             return
         if button_id and button_id.startswith("console-message-action-"):
             handled = await self.handle_console_message_action(event)

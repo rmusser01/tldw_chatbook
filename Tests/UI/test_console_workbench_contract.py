@@ -1105,8 +1105,10 @@ async def test_console_registers_footer_workbench_shortcuts():
         await _wait_for_selector(console, pilot, "#console-shell")
         footer = host.query_one(AppFooterStatus)
 
+        # Console footer hints are now pane-contextual (Task 6): the composer
+        # is focused by default on mount, so the composer hint set registers.
         assert footer.shortcut_text == (
-            "F6 next pane | Shift+F6 previous pane | F1 help | Enter send | Ctrl+P palette"
+            "Ctrl+K Switch | Alt+M Model | Ctrl+T New tab | F6 Panes | Ctrl+P Palette"
         )
 
         await console.remove()

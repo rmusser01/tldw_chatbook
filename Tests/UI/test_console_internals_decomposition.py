@@ -3565,3 +3565,60 @@ async def test_alt_m_opens_model_popover_and_apply_updates_session_settings():
         await pilot.press("escape")
         await pilot.pause(0.2)
         assert host.screen_stack[-1].__class__.__name__ != "ConsoleModelPopover"
+
+
+def test_build_console_footer_shortcuts_per_pane():
+    from tldw_chatbook.UI.Screens.chat_screen import build_console_footer_shortcuts
+    composer = build_console_footer_shortcuts("composer")
+    assert ("Ctrl+K", "Switch") in composer and len(composer) <= 5
+    transcript = build_console_footer_shortcuts("transcript")
+    assert ("C", "Copy") in transcript and ("Esc", "Composer") in transcript
+    assert build_console_footer_shortcuts("blocked") == (
+        ("Enter", "Configure"), ("Ctrl+P", "Palette"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_escape_returns_focus_to_composer_and_ctrl_t_opens_tab():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        rail = console.query_one("#console-left-rail")
+        rail.focus()
+        await pilot.pause(0.1)
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        composer = console.query_one("#console-native-composer")
+        # NOTE: brief used `app.focused` (the un-run TldwCli app_instance data
+        # object passed into ConsoleHarness), which never has an active screen
+        # stack and always raises ScreenStackError. `host` is the actual
+        # running Textual App under test here (see every other assertion in
+        # this file that checks focus/screen state via `host`), so this uses
+        # `host.focused` instead.
+        assert host.focused is composer or composer in getattr(host.focused, "ancestors", [])
+        store = console._console_chat_store
+        before = len(store.sessions())
+        await pilot.press("ctrl+t")
+        await pilot.pause(0.4)
+        assert len(store.sessions()) == before + 1
+
+
+@pytest.mark.asyncio
+async def test_alt_digit_jumps_to_tab():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.press("ctrl+t")
+        await pilot.pause(0.4)
+        store = console._console_chat_store
+        first = store.sessions()[0]
+        assert store.active_session_id != first.id
+        await pilot.press("alt+1")
+        await pilot.pause(0.4)
+        assert store.active_session_id == first.id
