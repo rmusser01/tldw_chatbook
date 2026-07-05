@@ -42,6 +42,10 @@ _HOME_WATCHLIST_RUN_STATUSES = frozenset(
         "error",
     }
 )
+_HOME_RECENT_WORK_STATUSES = frozenset(
+    {"completed", "complete", "succeeded", "success", "done", "finished"}
+)
+_HOME_RECENT_WORK_LIMIT = 8
 _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS = 1000
 _MAX_CHATBOOK_FILE_PATH_CHARS = 2000
 _MAX_CHATBOOK_PAYLOAD_TEXT_CHARS = 1000
@@ -226,16 +230,18 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             providers_models=providers_models,
             has_recent_work=has_recent_work,
         )
+        runs = self._watchlist_run_snapshot()
         return replace(
             dashboard_input,
             notification_count=self._unread_notification_count(),
             **self._server_event_status_fields(),
             active_work_items=tuple(
                 [
-                    *self._local_watchlist_run_items(),
+                    *self._local_watchlist_run_items(runs),
                     *self._local_chatbook_artifact_items(),
                 ]
             ),
+            recent_work_items=self._local_recent_work_items(runs),
         )
 
     def handle_control(
@@ -395,15 +401,17 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             ),
         }
 
-    def _local_watchlist_run_items(self) -> list[HomeActiveWorkItem]:
+    def _watchlist_run_snapshot(self) -> list[Any]:
+        """Fetch the watchlist run snapshot once per dashboard build."""
         if self.watchlist_service is None:
             return []
         try:
-            runs = self.watchlist_service.list_home_run_snapshot(limit=20)
+            return list(self.watchlist_service.list_home_run_snapshot(limit=20))
         except Exception as e:
             logger.warning(f"Failed to fetch local watchlist runs for Home: {e}")
             return []
 
+    def _local_watchlist_run_items(self, runs: list[Any]) -> list[HomeActiveWorkItem]:
         items: list[HomeActiveWorkItem] = []
         for run in runs:
             status = str(_mapping_value(run, "status") or "unknown").strip().lower()
@@ -426,9 +434,49 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     status=status,
                     detail_route="subscriptions",
                     console_available=True,
+                    updated_at=_item_updated_at(run),
                 )
             )
         return items
+
+    def _local_recent_work_items(self, runs: list[Any]) -> tuple[HomeActiveWorkItem, ...]:
+        """Return terminal local work as recent rows, most recent first."""
+        recents: list[HomeActiveWorkItem] = []
+        for run in runs:
+            status = str(_mapping_value(run, "status") or "").strip().lower()
+            if status not in _HOME_RECENT_WORK_STATUSES:
+                continue
+            item_id = self._local_watchlist_run_item_id(run)
+            if not item_id:
+                continue
+            recents.append(
+                HomeActiveWorkItem(
+                    item_id=item_id,
+                    title=self._watchlist_run_title(run),
+                    source="Watchlists",
+                    status=status,
+                    detail_route="subscriptions",
+                    console_available=True,
+                    updated_at=_item_updated_at(run),
+                )
+            )
+        for record in self._local_chatbook_artifacts()[1:]:
+            item_id = self._local_chatbook_item_id(record)
+            if not item_id:
+                continue
+            recents.append(
+                HomeActiveWorkItem(
+                    item_id=item_id,
+                    title=self._chatbook_title(record),
+                    source="Artifacts",
+                    status="ready",
+                    detail_route="artifacts",
+                    console_available=True,
+                    updated_at=_item_updated_at(record),
+                )
+            )
+        recents.sort(key=lambda item: item.updated_at, reverse=True)
+        return tuple(recents[:_HOME_RECENT_WORK_LIMIT])
 
     def _local_chatbook_artifact_items(self) -> list[HomeActiveWorkItem]:
         items: list[HomeActiveWorkItem] = []
@@ -444,6 +492,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     status="ready",
                     detail_route="artifacts",
                     console_available=True,
+                    updated_at=_item_updated_at(record),
                 )
             )
         return items
@@ -538,6 +587,15 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         }
         payload.update(_console_metadata_payload(_mapping_value(record, "metadata")))
         return payload
+
+
+def _item_updated_at(record: Any) -> str:
+    """Return the freshest ISO-ish timestamp text a record exposes, or blank."""
+    for key in ("updated_at", "completed_at", "created_at"):
+        value = _mapping_value(record, key)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
 
 
 def _notification_is_unread(notification: Any) -> bool:
