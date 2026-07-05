@@ -70,7 +70,7 @@ def build_console_switcher_entries(
         )
     )
     entries = []
-    for row in deduped[: max(1, int(limit))]:
+    for row in deduped[: max(0, int(limit))]:
         subtitle = " - ".join(
             part
             for part in (row.workspace_label, row.status, row.updated_label)
