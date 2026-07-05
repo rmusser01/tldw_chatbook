@@ -845,7 +845,11 @@ class ChatScreen(BaseAppScreen):
     def _apply_console_model_popover_result(
         self, result: "ConsoleSessionSettings | str | None"
     ) -> None:
-        """Apply the popover result: sentinel opens full settings, else replaces settings."""
+        """Apply the popover result: sentinel opens full settings, else replaces settings.
+
+        Args:
+            result: Popover result, full-settings sentinel, or ``None`` on cancel.
+        """
         if result is None:
             return
         if result == CONSOLE_POPOVER_OPEN_FULL_SETTINGS:
@@ -884,7 +888,11 @@ class ChatScreen(BaseAppScreen):
         self.run_worker(self._open_console_settings(), exclusive=False)
 
     async def action_jump_console_tab(self, number: int) -> None:
-        """Jump directly to the Nth native Console session tab (Alt+1..9)."""
+        """Jump directly to the Nth native Console session tab (Alt+1..9).
+
+        Args:
+            number: One-based session tab number to activate.
+        """
         if self._console_setup_modal_blocking():
             return
         store = self._ensure_console_chat_store()
@@ -900,6 +908,9 @@ class ChatScreen(BaseAppScreen):
         sync, then force composer focus. Shared by the session-tab click
         handler, the Ctrl+K switcher callback, and Alt+1..9 tab-jump so all
         three entry points follow one activation path.
+
+        Args:
+            session_id: Native Console session id to activate.
         """
         controller = self._ensure_console_chat_controller()
         if controller.store.active_session_id != session_id:
@@ -917,6 +928,9 @@ class ChatScreen(BaseAppScreen):
         call ``_activate_native_console_session`` so there is one activation
         sequence (set workspace, switch, sync UI, focus composer) shared
         across Console session-selection entry points.
+
+        Args:
+            choice: Switcher result, or ``None`` if the switcher was cancelled.
         """
         if choice is None:
             return

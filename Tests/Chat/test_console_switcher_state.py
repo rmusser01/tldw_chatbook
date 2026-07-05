@@ -2,6 +2,7 @@
 
 from tldw_chatbook.Chat.console_switcher_state import (
     ConsoleSwitcherEntry,
+    _matches,
     build_console_switcher_entries,
 )
 from tldw_chatbook.Workspaces.conversation_browser_state import (
@@ -78,3 +79,17 @@ def test_subtitle_joins_available_parts():
         [_row(row_key="x", workspace_label="", status="", updated_label="")]
     )[0]
     assert bare.subtitle == ""
+
+
+def test_matcher_tolerates_none_fields_without_raising():
+    # Rows aren't validated and are assembled by several builders, so a
+    # None in title/workspace_label/status must not raise TypeError when
+    # joined for searching -- an empty query (no tokens) should match
+    # trivially, and a real query should just fail to match.
+    none_row = _row(
+        title=None,  # type: ignore[arg-type]
+        workspace_label=None,  # type: ignore[arg-type]
+        status=None,  # type: ignore[arg-type]
+    )
+    assert _matches(none_row, []) is True
+    assert _matches(none_row, ["anything"]) is False

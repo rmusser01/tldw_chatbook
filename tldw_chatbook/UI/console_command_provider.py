@@ -13,12 +13,21 @@ class ConsoleCommandProvider(Provider):
     """Yield Console actions only while the Console screen is active."""
 
     def _console_screen(self):
+        """Return the active ChatScreen, or ``None`` outside Console."""
         screen = self.screen
         if type(screen).__name__ != "ChatScreen":
             return None
         return screen
 
     def _commands(self, screen) -> tuple[tuple[str, object, str], ...]:
+        """Build Console command-palette actions for ``screen``.
+
+        Args:
+            screen: Active ChatScreen exposing the Console action methods.
+
+        Returns:
+            Tuples of label, callback, and help text.
+        """
         return (
             ("Console: Switch session…", screen.action_open_console_session_switcher,
              "Fuzzy-find and activate a conversation (Ctrl+K)"),
@@ -34,6 +43,7 @@ class ConsoleCommandProvider(Provider):
         )
 
     async def discover(self) -> Hits:
+        """Yield all Console commands when the active screen is Console."""
         screen = self._console_screen()
         if screen is None:
             return
@@ -41,6 +51,11 @@ class ConsoleCommandProvider(Provider):
             yield Hit(1.0, label, callback, help=help_text)
 
     async def search(self, query: str) -> Hits:
+        """Yield Console commands matching the palette query.
+
+        Args:
+            query: User-entered command-palette search text.
+        """
         screen = self._console_screen()
         if screen is None:
             return

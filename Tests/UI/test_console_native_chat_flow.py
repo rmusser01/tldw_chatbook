@@ -2125,6 +2125,39 @@ async def test_transcript_c_key_copies_selected_message():
 
 
 @pytest.mark.asyncio
+async def test_transcript_rapid_select_then_action_retries_after_deferred_mount():
+    # The action row mounts via call_later(refresh_messages) after
+    # select_message; firing the selection and the action key back-to-back
+    # with no settling between them (mirroring the switcher's rapid-refresh
+    # test, which posts two Input.Changed values with no await between them)
+    # reproduces a fast Down->c race where the button isn't mounted yet.
+    app = _build_test_app()
+    app.copy_to_clipboard = Mock()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.focus()
+        transcript.action_select_next()
+        transcript.action_invoke_selected_action("copy")
+        await pilot.pause()
+
+    app.copy_to_clipboard.assert_called_once_with("answer")
+    assert console._last_console_action.action_id == "copy"
+
+
+@pytest.mark.asyncio
 async def test_console_message_action_keyboard_focus_stays_inside_action_row():
     app = _build_test_app()
     host = ConsoleHarness(app)

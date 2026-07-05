@@ -28,7 +28,23 @@ class ConsoleSwitcherEntry:
 
 
 def _matches(row: ConsoleConversationBrowserInputRow, tokens: list[str]) -> bool:
-    haystack = " ".join((row.title, row.workspace_label, row.status)).lower()
+    """Return whether every token matches the row's searchable text.
+
+    ``ConsoleConversationBrowserInputRow`` is an unvalidated dataclass and
+    rows are assembled by several different builders, so ``title``,
+    ``workspace_label``, and ``status`` are coerced through ``str(... or "")``
+    before joining -- a ``None`` in any field must not raise ``TypeError``.
+
+    Args:
+        row: Candidate browser input row.
+        tokens: Lowercased query tokens that must all match.
+
+    Returns:
+        True if every token is a substring of the row's joined text.
+    """
+    haystack = " ".join(
+        str(part or "") for part in (row.title, row.workspace_label, row.status)
+    ).lower()
     return all(token in haystack for token in tokens)
 
 

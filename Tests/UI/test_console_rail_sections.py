@@ -516,6 +516,47 @@ async def test_switcher_f2_requests_rename_for_native_entry():
         assert app.result.entry.native_session_id == "sess-1"
 
 
+def _two_native_switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
+    def row(key, title, native, **kw):
+        return ConsoleConversationBrowserInputRow(
+            row_key=key, conversation_id=None, native_session_id=native,
+            title=title, scope_type="workspace", workspace_id="ws-1",
+            workspace_label="Workspace 1",
+            updated_sort="2026-07-04T10:00:00+00:00", **kw,
+        )
+    return (
+        row("native-1", "Groq testing", "sess-1", selected=True),
+        row("native-2", "Claude testing", "sess-2"),
+    )
+
+
+class _TwoNativeSwitcherApp(App):
+    def __init__(self):
+        super().__init__()
+        self.result = "unset"
+
+    async def on_mount(self) -> None:
+        def _capture(choice):
+            self.result = choice
+        await self.push_screen(
+            ConsoleSessionSwitcherModal(rows=_two_native_switcher_rows()), callback=_capture
+        )
+
+
+@pytest.mark.asyncio
+async def test_switcher_f2_renames_focused_result_not_always_first():
+    app = _TwoNativeSwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        second_button = app.screen.query_one("#console-switcher-result-1", Button)
+        second_button.focus()
+        await pilot.pause()
+        await pilot.press("f2")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSwitcherChoice)
+        assert app.result.kind == "rename"
+        assert app.result.entry.native_session_id == "sess-2"
+
+
 @pytest.mark.asyncio
 async def test_switcher_escape_dismisses_none_and_empty_query_shows_no_matches():
     app = _SwitcherApp()
@@ -598,3 +639,50 @@ async def test_popover_full_settings_returns_sentinel_and_escape_cancels():
         await pilot.press("escape")
         await pilot.pause()
         assert app2.result is None
+
+
+@pytest.mark.asyncio
+async def test_popover_apply_with_blank_temperature_clears_it():
+    from textual.widgets import Input
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        temperature_input = app.screen.query_one("#console-popover-temperature", Input)
+        temperature_input.value = ""
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSessionSettings)
+        assert app.result.temperature is None
+
+
+@pytest.mark.parametrize("invalid_text", ["nan", "5.5", "-1"])
+@pytest.mark.asyncio
+async def test_popover_apply_rejects_nan_and_out_of_range_temperature(invalid_text):
+    from textual.widgets import Input
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        temperature_input = app.screen.query_one("#console-popover-temperature", Input)
+        prior_temperature = temperature_input.value
+        temperature_input.value = invalid_text
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSessionSettings)
+        # Mirrors ConsoleSettingsModal's [0.0, 2.0] bound (NaN always fails
+        # the range comparison too): an invalid value keeps the prior
+        # temperature rather than applying it.
+        assert app.result.temperature == float(prior_temperature)
+
+
+@pytest.mark.asyncio
+async def test_popover_apply_accepts_in_range_temperature():
+    from textual.widgets import Input
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        temperature_input = app.screen.query_one("#console-popover-temperature", Input)
+        temperature_input.value = "1.2"
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSessionSettings)
+        assert app.result.temperature == 1.2

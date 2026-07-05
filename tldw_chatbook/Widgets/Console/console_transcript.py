@@ -472,16 +472,55 @@ class ConsoleTranscript(VerticalScroll):
             self.call_later(self._notify_selection_changed)
 
     def action_invoke_selected_action(self, action_id: str) -> None:
-        """Press the selected message's action button for ``action_id``."""
+        """Press the selected message's action button for ``action_id``.
+
+        The action row mounts via ``call_later(refresh_messages)`` after
+        ``select_message``, so a fast selection-then-shortcut sequence (e.g.
+        Down immediately followed by ``c``) can run before that deferred
+        mount lands and find no button. In that case, retry once after the
+        pending refresh settles instead of silently no-oping.
+
+        Args:
+            action_id: Message action identifier, e.g. ``"copy"``.
+        """
         message_id = self.selected_message_id
         if not message_id:
             return
+        if self._press_selected_action_button(message_id, action_id):
+            return
+        self.call_after_refresh(self._invoke_selected_action_retry, action_id)
+
+    def _invoke_selected_action_retry(self, action_id: str) -> None:
+        """Retry a selected-message action once, after a deferred row mount settles.
+
+        Gives up silently if the button is still absent (no loops, no
+        timers) -- e.g. the selection changed again before the retry ran.
+
+        Args:
+            action_id: Message action identifier to retry.
+        """
+        message_id = self.selected_message_id
+        if not message_id:
+            return
+        self._press_selected_action_button(message_id, action_id)
+
+    def _press_selected_action_button(self, message_id: str, action_id: str) -> bool:
+        """Press the action button for ``message_id``/``action_id`` if mounted.
+
+        Args:
+            message_id: Selected message id owning the action row.
+            action_id: Message action identifier, e.g. ``"copy"``.
+
+        Returns:
+            True if the button was found and pressed, False otherwise.
+        """
         selector = f"#console-message-action-{action_id}-{message_id}"
         try:
             button = self.query_one(selector, Button)
         except NoMatches:
-            return
+            return False
         button.press()
+        return True
 
     def on_key(self, event: Key) -> None:
         if event.key in {"down", "j"}:
