@@ -16,6 +16,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...config import save_setting_to_cli_config
 from ...Constants import (
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
@@ -23,24 +24,39 @@ from ...Constants import (
 )
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import LibraryCollectionsPanelState
+from ...Library.library_conversations_state import build_library_conversations_state
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
     run_library_rag_search,
 )
 from ...Library.library_rag_state import LibraryRagPanelState
+from ...Library.library_rail_state import (
+    LIBRARY_RAIL_SECTION_IDS,
+    coerce_library_rail_preferences,
+    serialize_library_rail_preferences,
+)
+from ...Library.library_shell_state import (
+    LibraryShellInput,
+    build_library_shell_state,
+)
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Workspaces import LibraryWorkspaceDepthState, build_library_workspace_depth_state
+from ...Widgets.Console.console_rail_section import (
+    CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
+    ConsoleRailSectionHeader,
+)
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
+    LibraryConversationsCanvas,
+    LibraryRail,
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
 )
-from ...Widgets.destination_workbench import DestinationModeStrip
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
@@ -211,6 +227,18 @@ def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
     }
 LIBRARY_MODE_BY_BUTTON_ID = {
     mode["button_id"]: mode_id for mode_id, mode in LIBRARY_MODES.items()
+}
+
+# Maps a Library mode id to the shell rail row that selects that canvas so
+# navigation context and legacy mode switches land on the right canvas.
+LIBRARY_MODE_TO_ROW_ID = {
+    "conversations": "browse-conversations",
+    "collections": "browse-collections",
+    "search": "browse-search",
+    "study": "create-study",
+    "flashcards": "create-flashcards",
+    "quizzes": "create-quizzes",
+    "import-export": "ingest-import-export",
 }
 
 
@@ -453,6 +481,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_collection_pending_delete_id = ""
         self._library_workspace_depth_state_cache: LibraryWorkspaceDepthState | None = None
         self._selected_conversation_id = ""
+        self._library_selected_row_id: str = ""
+        self._library_conversation_query: str = ""
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -487,9 +517,13 @@ class LibraryScreen(BaseAppScreen):
             target_mode = LIBRARY_MODE_CONVERSATIONS
         if target_mode:
             self._active_mode = target_mode
+            selected_row_id = LIBRARY_MODE_TO_ROW_ID.get(target_mode)
+            if selected_row_id:
+                self._library_selected_row_id = selected_row_id
             self._invalidate_library_workspace_depth_state()
         if conversation_id:
             self._selected_conversation_id = conversation_id
+            self._library_selected_row_id = "browse-conversations"
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -1153,186 +1187,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _hub_spacer(self, widget_id: str) -> Static:
         return Static("", id=widget_id, classes="library-hub-spacer")
-
-    def _content_hub_rows(self) -> tuple[Static, ...]:
-        return (
-            Static(
-                "Library Content Hub",
-                id="library-content-hub-title",
-                classes="destination-section",
-            ),
-            Static(
-                (
-                    "Source overview, retrieval readiness, movement paths, and next action."
-                ),
-                id="library-content-hub-purpose",
-            ),
-            Static(
-                self._hub_state_summary(),
-                id="library-hub-state-summary",
-                classes="library-hub-card",
-            ),
-            self._hub_section_rule(
-                "Source Inventory",
-                "library-hub-section-source-status",
-            ),
-            Static(
-                (
-                    f"{'Source':<{LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH}} "
-                    f"{'Readiness':<{LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH}} "
-                    f"{'Owner':<{LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH}} "
-                    f"{'Primary action':<{LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH}}"
-                ),
-                id="library-content-hub-table-header",
-                classes="destination-section",
-            ),
-            self._hub_inventory_row(
-                source="Notes",
-                readiness=self._hub_inventory_readiness_label("notes", "item"),
-                owner="Notes screen",
-                action="Open Notes",
-                console=self._hub_inventory_console_label("notes"),
-                widget_id="library-notes-summary",
-            ),
-            self._hub_inventory_row(
-                source="Media",
-                readiness=self._hub_inventory_readiness_label("media", "item"),
-                owner="Media library",
-                action="Open Media",
-                console=self._hub_inventory_console_label("media"),
-                widget_id="library-media-summary",
-            ),
-            self._hub_inventory_row(
-                source="Conversations",
-                readiness=self._hub_inventory_readiness_label("conversations", "chat"),
-                owner="Conversation browser",
-                action="Browse chats",
-                console=self._hub_inventory_console_label("conversations"),
-                widget_id="library-conversations-summary",
-            ),
-            self._hub_inventory_row(
-                source="Collections",
-                readiness="local records",
-                owner="Library Collections",
-                action="Open Collections",
-                console="Console WIP: collection item handoff deferred",
-                widget_id="library-collections-summary",
-            ),
-            self._hub_inventory_row(
-                source="Search/RAG",
-                readiness="query first",
-                owner="Library Search/RAG",
-                action="Run Search/RAG",
-                console="Console disabled until evidence is selected",
-                widget_id="library-search-rag-summary",
-            ),
-            self._hub_inventory_row(
-                source="Import/Export",
-                readiness="ready",
-                owner="Ingest and Media",
-                action="Import sources",
-                console="Console disabled until imported content is staged",
-                widget_id="library-import-export-summary",
-            ),
-            self._hub_inventory_row(
-                source="Study",
-                readiness="source required",
-                owner="Study modules",
-                action="Open Study",
-                console="Console WIP: study handoff deferred",
-                widget_id="library-study-summary",
-            ),
-            Static(
-                "Use in Console requires workspace-eligible Library content.",
-                id="library-hub-source-table-bottom",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            self._hub_spacer("library-hub-spacer-after-source-table"),
-            Static(
-                (
-                    "Owners: Notes screen edits/syncs notes | Media library browses media | "
-                    "Conversation browser resumes chats | Library Search/RAG owns retrieval"
-                ),
-                id="library-hub-source-owner-summary",
-                classes="library-hub-card",
-            ),
-            self._hub_spacer("library-hub-spacer-before-retrieval"),
-            self._hub_section_rule(
-                "Retrieval Readiness",
-                "library-hub-section-retrieval-readiness",
-            ),
-            Static(
-                "Library readiness",
-                id="library-hub-readiness-title",
-                classes="destination-section",
-            ),
-            Static(
-                self._hub_readiness_summary(),
-                markup=False,
-                id="library-hub-readiness-summary",
-                classes="library-hub-card",
-            ),
-            self._hub_spacer("library-hub-spacer-before-movement"),
-            self._hub_section_rule(
-                "Movement + Reuse",
-                "library-hub-section-movement-reuse",
-            ),
-            Static(
-                self._hub_key_value_row(
-                    "Search/RAG",
-                    "Query indexed content, inspect evidence, launch Console.",
-                ),
-                id="library-hub-search-card",
-                classes="library-hub-card",
-            ),
-            Static(
-                self._hub_key_value_row(
-                    "Import/Export",
-                    "Add or move content; imported material returns here.",
-                ),
-                id="library-hub-import-export-card",
-                classes="library-hub-card",
-            ),
-            Static(
-                self._hub_key_value_row(
-                    "Collections",
-                    "Read, review, reuse saved content.",
-                ),
-                id="library-hub-collections-card",
-                classes="library-hub-card",
-            ),
-            self._hub_spacer("library-hub-spacer-before-learning"),
-            self._hub_section_rule(
-                "Learning",
-                "library-hub-section-learning-paths",
-            ),
-            Static(
-                self._hub_key_value_row(
-                    "Study",
-                    "Turn Library content into flashcards and quizzes.",
-                ),
-                id="library-hub-study-card",
-                classes="library-hub-card",
-            ),
-            self._hub_spacer("library-hub-spacer-before-next-action"),
-            self._hub_section_rule(
-                "Next Action",
-                "library-hub-section-next-action",
-            ),
-            Static(
-                "Next best action: Import sources or create a note.",
-                id="library-hub-next-primary",
-                classes="library-hub-card",
-            ),
-            Static(
-                self._hub_key_value_row(
-                    "Then",
-                    "Open Search/RAG after indexing or Collections after saving content.",
-                ),
-                id="library-hub-next-secondary",
-                classes="library-hub-card",
-            ),
-        )
 
     def _import_export_workflow_rows(self) -> tuple[Static, ...]:
         return (
@@ -2580,266 +2434,268 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def compose_content(self) -> ComposeResult:
-        has_sources = self._has_local_sources()
-        handoff_disabled = True
-        handoff_tooltip = "Stage Library source context after Library finishes loading."
-        workspace_depth_state = self._library_workspace_depth_state(refresh=True)
-        if self._library_lookup_error:
-            recovery_state = self._library_lookup_recovery_state
-            handoff_tooltip = (
-                recovery_state.disabled_tooltip
-                if recovery_state is not None
-                else "Library source services are unavailable; retry Library later."
-            )
-        elif not has_sources:
-            handoff_tooltip = "Stage Library source context after adding notes, media, or conversations."
-        else:
-            handoff_disabled = not workspace_depth_state.context_handoff_enabled
-            handoff_tooltip = (
-                workspace_depth_state.context_handoff_tooltip
-                if handoff_disabled
-                else "Stage Library source context in Console."
-            )
-        search_rag_panel_state = (
-            self._library_rag_panel_state() if self._active_mode == "search" else None
+        shell_input = self._build_library_shell_input()
+        shell = build_library_shell_state(
+            shell_input, selected_row_id=self._library_selected_row_id
         )
-        collections_panel_state = (
-            self._library_collections_panel_state()
-            if self._active_mode == "collections"
+        self._library_selected_row_id = shell.selected_row_id
+        preferences = self._library_rail_preferences()
+
+        yield Static(
+            shell.header_line,
+            id="library-header-line",
+            classes="destination-status-row",
+        )
+        shell_grid = Horizontal(
+            id="library-shell-grid", classes="ds-panel destination-workbench"
+        )
+        shell_grid.styles.height = "1fr"
+        shell_grid.styles.min_height = 12
+        with shell_grid:
+            rail = LibraryRail(
+                shell,
+                preferences,
+                id="library-rail",
+                classes="destination-workbench-pane",
+            )
+            rail.styles.height = "100%"
+            yield rail
+            canvas_host = Vertical(
+                id="library-canvas", classes="destination-workbench-pane"
+            )
+            canvas_host.styles.width = "13fr"
+            canvas_host.styles.min_width = 40
+            canvas_host.styles.height = "100%"
+            with canvas_host:
+                if shell.canvas_kind == "conversations":
+                    conversations_state = self._build_library_conversations_state()
+                    self._selected_conversation_id = conversations_state.selected_id
+                    yield LibraryConversationsCanvas(
+                        conversations_state,
+                        id="library-conversations-canvas",
+                    )
+                elif shell.canvas_kind == "mode":
+                    yield from self._compose_mode_canvas(shell.canvas_target)
+                else:
+                    yield Static(
+                        shell.canvas_empty_copy,
+                        id="library-canvas-landing",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
+
+    def _build_library_shell_input(self) -> LibraryShellInput:
+        """Build the pure shell input from live counts and runtime state."""
+        runtime_state = getattr(
+            getattr(self.app_instance, "runtime_policy", None), "state", None
+        )
+        active_source = str(
+            getattr(runtime_state, "active_source", "local") or "local"
+        ).lower()
+        server_label = None
+        if active_source == "server":
+            server_label = getattr(runtime_state, "last_known_server_label", None) or getattr(
+                runtime_state, "active_server_id", None
+            )
+        collections_count = (
+            len(self._library_collections_records)
+            if self._library_collections_loaded
             else None
         )
-        collection_scoped_actions_deferred = self._active_mode == "collections"
-        source_column_title, detail_column_title, inspector_column_title = self._active_column_titles()
-        show_local_snapshot_region = self._should_show_local_snapshot_region()
+        counts = self._local_source_counts
+        known = self._local_source_total_known
+        return LibraryShellInput(
+            media_count=counts.get("media"),
+            media_known=known.get("media", True),
+            conversations_count=counts.get("conversations"),
+            conversations_known=known.get("conversations", True),
+            notes_count=counts.get("notes"),
+            notes_known=known.get("notes", True),
+            collections_count=collections_count,
+            runtime_source=active_source,
+            server_label=str(server_label) if server_label else None,
+            details_lines=self._library_details_lines(active_source, server_label),
+        )
 
-        with Vertical(id="library-shell"):
-            yield Static("Library", id="library-title", classes="ds-destination-header")
+    def _library_details_lines(
+        self, active_source: str, server_label: Any
+    ) -> tuple[str, ...]:
+        """Build the Details disclosure lines for the Library shell rail."""
+        runtime_label = (
+            "Local"
+            if active_source != "server"
+            else f"Server: {server_label or 'unknown'}"
+        )
+        counts = self._local_source_counts
+        lines = [f"Runtime: {runtime_label}"]
+        if self._library_lookup_error:
+            lines.append(self._library_lookup_error)
+        else:
+            lines.append(
+                f"Notes {counts.get('notes', 0)} | "
+                f"Media {counts.get('media', 0)} | "
+                f"Conversations {counts.get('conversations', 0)}"
+            )
+        lines.append("Browse spans all workspaces; staging follows the active workspace.")
+        return tuple(lines)
+
+    def _build_library_conversations_state(self):
+        """Build the conversations canvas display state from local records."""
+        return build_library_conversations_state(
+            self._conversation_records(),
+            query=self._library_conversation_query,
+            selected_id=self._selected_conversation_id,
+        )
+
+    def _compose_mode_canvas(self, mode: str) -> ComposeResult:
+        """Render the canvas body for a mode row (moved middle-pane content)."""
+        self._active_mode = mode
+        active_mode = LIBRARY_MODES.get(mode, LIBRARY_MODES["sources"])
+        active_mode_copy_visible = mode not in {
+            "collections",
+            "search",
+            "sources",
+            "workspaces",
+        }
+        if active_mode_copy_visible:
             yield Static(
-                "Source material, notes, media, conversations, collections, imports/exports, and Search/RAG.",
-                id="library-purpose",
-                classes="destination-purpose",
+                f"{active_mode['label']} mode",
+                id="library-active-mode-title",
+                classes="destination-section",
             )
             yield Static(
-                self._status_row_copy(),
-                id="library-status-row",
-                classes="destination-status-row",
+                active_mode["description"],
+                id="library-active-mode-description",
             )
-            with DestinationModeStrip(id="library-mode-bar", classes="destination-mode-strip"):
-                yield Static(
-                    "Modes:",
-                    id="library-mode-label",
-                    classes="destination-section",
-                )
-                for mode_id, mode in LIBRARY_MODES.items():
-                    if not mode.get("show_in_strip", True):
-                        continue
-                    classes = "library-mode-chip"
-                    if mode_id == self._active_mode:
-                        classes = f"{classes} is-active"
-                    yield Button(
-                        mode["label"],
-                        id=mode["button_id"],
-                        classes=classes,
-                        tooltip=mode["description"],
-                    )
+            yield Static(
+                active_mode["next_action"],
+                id="library-active-mode-next-action",
+            )
+        if mode in LIBRARY_STUDY_HANDOFF_MODES:
+            yield self._study_handoff_detail_widget()
+        elif mode == "search":
+            yield LibrarySearchRagPanel(
+                self._library_rag_panel_state(),
+                id="library-search-rag-panel",
+            )
+        elif mode == "collections":
+            yield LibraryCollectionsPanel(
+                self._library_collections_panel_state(),
+                name_value=self._library_collection_name_input,
+                description_value=self._library_collection_description_input,
+                delete_pending=bool(self._library_collection_pending_delete_id),
+                id="library-collections-panel",
+            )
+        elif mode == "import-export":
+            for row in self._import_export_workflow_rows():
+                yield row
 
-            with Horizontal(id="library-contract-grid", classes="ds-panel destination-workbench"):
-                with Vertical(
-                    id="library-source-browser",
-                    classes="library-region destination-workbench-pane",
-                ):
-                    yield Static(
-                        "Workspace Context",
-                        id="library-workspace-context-title",
-                        classes="destination-section",
-                    )
-                    yield Static(
-                        self._library_workspace_scope_label(workspace_depth_state),
-                        id="library-workspace-scope",
-                    )
-                    yield Static("Browse: all workspaces", id="library-workspace-browse-rule")
-                    yield Static("Use/stage: active workspace only", id="library-workspace-use-rule")
-                    yield Static(
-                        source_column_title,
-                        id="library-source-browser-title",
-                        classes="destination-section",
-                    )
-                    yield from self._source_module_action_widgets()
-                    yield Static(
-                        "Quick Actions",
-                        id="library-quick-actions-title",
-                        classes="destination-section",
-                    )
-                    yield Static(
-                        "Open a mode, then use the inspector for selected-item actions.",
-                        id="library-quick-actions-guidance",
-                    )
+    def _library_rail_preferences(self):
+        """Read persisted Library rail section preferences."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        raw = None
+        if isinstance(app_config, dict):
+            library_config = app_config.get("library")
+            if isinstance(library_config, dict):
+                rail_state = library_config.get("rail_state")
+                if isinstance(rail_state, dict):
+                    raw = rail_state.get("sections")
+        return coerce_library_rail_preferences(raw)
 
-                with Vertical(
-                    id="library-source-detail",
-                    classes="library-region destination-workbench-pane",
-                ):
-                    yield Static(
-                        detail_column_title,
-                        id="library-source-detail-title",
-                        classes="destination-section",
-                    )
-                    if self._active_mode == "workspaces":
-                        with Vertical(id="library-workspaces-depth-panel"):
-                            for row in self._workspaces_detail_rows(workspace_depth_state):
-                                yield row
-                    active_mode = self._active_mode_contract()
-                    active_mode_copy_visible = self._active_mode not in {
-                        "collections",
-                        "search",
-                        "sources",
-                        "workspaces",
-                    }
-                    active_mode_title = Static(
-                        f"{active_mode['label']} mode" if active_mode_copy_visible else "",
-                        id="library-active-mode-title",
-                        classes="destination-section",
-                    )
-                    active_mode_title.display = active_mode_copy_visible
-                    yield active_mode_title
-                    active_mode_description = Static(
-                        active_mode["description"] if active_mode_copy_visible else "",
-                        id="library-active-mode-description",
-                    )
-                    active_mode_description.display = active_mode_copy_visible
-                    yield active_mode_description
-                    active_mode_next_action = Static(
-                        active_mode["next_action"] if active_mode_copy_visible else "",
-                        id="library-active-mode-next-action",
-                    )
-                    active_mode_next_action.display = active_mode_copy_visible
-                    yield active_mode_next_action
-                    if self._active_mode in LIBRARY_STUDY_HANDOFF_MODES:
-                        yield self._study_handoff_detail_widget()
-                    if search_rag_panel_state is not None:
-                        yield LibrarySearchRagPanel(
-                            search_rag_panel_state,
-                            id="library-search-rag-panel",
-                        )
-                    if collections_panel_state is not None:
-                        yield LibraryCollectionsPanel(
-                            collections_panel_state,
-                            name_value=self._library_collection_name_input,
-                            description_value=self._library_collection_description_input,
-                            delete_pending=bool(self._library_collection_pending_delete_id),
-                            id="library-collections-panel",
-                        )
-                    local_snapshot_region = Vertical(id="library-local-snapshot-region")
-                    local_snapshot_region.display = show_local_snapshot_region
-                    with local_snapshot_region:
-                        if show_local_snapshot_region:
-                            if not self._library_loaded:
-                                yield Static(
-                                    "Loading local Library sources...",
-                                    id="library-source-loading",
-                                )
-                            elif self._library_lookup_error:
-                                recovery_state = self._library_lookup_recovery_state
-                                yield Static(
-                                    self._library_lookup_error,
-                                    id=(
-                                        recovery_state.stable_selector
-                                        if recovery_state is not None
-                                        else "library-source-error"
-                                    ),
-                                )
-                            elif self._active_mode == "conversations":
-                                yield from self._conversation_browser_rows(workspace_depth_state)
-                            elif self._active_mode == "import-export":
-                                yield from self._import_export_workflow_rows()
-                            elif not has_sources:
-                                for hub_row in self._content_hub_rows():
-                                    yield hub_row
-                                yield Static(
-                                    LIBRARY_EMPTY_COPY,
-                                    id="library-source-empty",
-                                )
-                                yield Static(
-                                    LIBRARY_EMPTY_NEXT_ACTION_COPY,
-                                    id="library-source-empty-next-action",
-                                )
-                            else:
-                                yield from self._content_hub_rows()
+    def _set_library_rail_section(self, section_id: str, open_state: bool) -> None:
+        """Persist one section preference and sync the rail body/header."""
+        if section_id not in LIBRARY_RAIL_SECTION_IDS:
+            return
+        from dataclasses import replace as dataclass_replace
 
-                with Vertical(
-                    id="library-source-inspector",
-                    classes="library-region destination-workbench-pane",
-                ):
-                    yield Static(
-                        inspector_column_title,
-                        id="library-source-inspector-title",
-                        classes="destination-section",
-                    )
-                    action_region = Vertical(id="library-action-region")
-                    action_region.styles.height = "auto"
-                    with action_region:
-                        yield from self._library_action_widgets(
-                            workspace_depth_state=workspace_depth_state,
-                            collection_scoped_actions_deferred=collection_scoped_actions_deferred,
-                            handoff_disabled=handoff_disabled,
-                            handoff_tooltip=handoff_tooltip,
-                            collections_panel_state=collections_panel_state,
-                        )
-                    inspector_mode_region = Vertical(id="library-inspector-mode-region")
-                    inspector_mode_region.styles.height = "1fr"
-                    with inspector_mode_region:
-                        if search_rag_panel_state is not None:
-                            yield LibrarySearchRagInspectorPanel(
-                                search_rag_panel_state,
-                                id="library-rag-inspector",
-                                classes="library-rag-region",
-                            )
-                        elif collections_panel_state is not None:
-                            yield from self._collections_inspector_rows(collections_panel_state)
-                        elif self._active_mode == "workspaces":
-                            yield from self._workspaces_inspector_rows(workspace_depth_state)
-                        elif self._active_mode == "conversations":
-                            selected = self._selected_conversation_record()
-                            yield Static(
-                                "Conversation inspector",
-                                id="library-inspector-title",
-                                classes="destination-section",
-                            )
-                            if selected is None:
-                                yield Static(
-                                    "No conversation selected.",
-                                    id="library-conversation-inspector-empty",
-                                )
-                                yield Static(
-                                    "Select a saved conversation to inspect metadata and handoff eligibility.",
-                                    id="library-conversation-inspector-empty-next-action",
-                                )
-                            else:
-                                _, record = selected
-                                yield Static(
-                                    self._source_title("conversations", record),
-                                    id="library-conversation-inspector-title",
-                                )
-                                yield Static(
-                                    self._conversation_message_count_label(record),
-                                    id="library-conversation-inspector-message-count",
-                                )
-                                yield Static(
-                                    "Source authority: local",
-                                    id="library-conversation-inspector-authority",
-                                )
-                                yield Static(
-                                    self._conversation_handoff_label(workspace_depth_state),
-                                    id="library-conversation-inspector-handoff",
-                                )
-                                yield Static(
-                                    "Owner: Console/Conversations retains editing and saved-history management.",
-                                    id="library-conversation-inspector-owner",
-                                )
-                        elif self._active_mode == "import-export":
-                            yield from self._import_export_inspector_rows()
-                        else:
-                            yield from self._hub_inspector_rows(workspace_depth_state)
+        preferences = dataclass_replace(
+            self._library_rail_preferences(), **{f"{section_id}_open": open_state}
+        )
+        serialized = serialize_library_rail_preferences(preferences)
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            library_config = app_config.get("library")
+            if not isinstance(library_config, dict):
+                library_config = {}
+                app_config["library"] = library_config
+            rail_state = library_config.get("rail_state")
+            if not isinstance(rail_state, dict):
+                rail_state = {}
+                library_config["rail_state"] = rail_state
+            rail_state["sections"] = serialized
+        self._save_library_rail_preferences(serialized)
+        try:
+            body = self.query_one(f"#library-rail-section-body-{section_id}")
+            header = self.query_one(
+                f"#library-rail-section-header-{section_id}", ConsoleRailSectionHeader
+            )
+        except Exception:
+            return
+        body.styles.display = "block" if open_state else "none"
+        header.sync_open(open_state)
+
+    @work(thread=True)
+    def _save_library_rail_preferences(self, serialized: dict[str, bool]) -> None:
+        """Persist Library rail preferences without blocking the UI thread."""
+        try:
+            save_setting_to_cli_config("library.rail_state", "sections", serialized)
+        except Exception:
+            pass
+
+    @on(Button.Pressed, ".library-rail-row")
+    def handle_library_rail_row(self, event: Button.Pressed) -> None:
+        """Dispatch a Library rail row press: navigate, browse, or open a mode."""
+        event.stop()
+        button = event.button
+        target_kind = str(getattr(button, "target_kind", "") or "")
+        target_id = str(getattr(button, "target_id", "") or "")
+        row_id = str(getattr(button, "row_id", "") or "")
+        if target_kind == "screen":
+            if target_id:
+                self.post_message(NavigateToScreen(target_id))
+            return
+        self._library_selected_row_id = row_id
+        if target_kind == "canvas":
+            self._active_mode = "conversations"
+            self._library_conversation_query = ""
+        elif target_kind == "mode":
+            self._active_mode = target_id
+        self._invalidate_library_workspace_depth_state()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".console-rail-section-toggle")
+    def handle_library_rail_section_toggle(self, event: Button.Pressed) -> None:
+        """Toggle a Library rail section and persist the preference."""
+        button_id = event.button.id or ""
+        prefix = f"{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}library-"
+        if not button_id.startswith(prefix):
+            return
+        event.stop()
+        section_id = button_id.removeprefix(prefix)
+        currently_open = bool(
+            getattr(self._library_rail_preferences(), f"{section_id}_open", True)
+        )
+        self._set_library_rail_section(section_id, not currently_open)
+
+    @on(Button.Pressed, ".library-conversation-row")
+    def handle_library_conversation_row(self, event: Button.Pressed) -> None:
+        """Select a conversation row in the Library conversations canvas."""
+        event.stop()
+        conversation_id = str(getattr(event.button, "conversation_id", "") or "")
+        if conversation_id:
+            self._selected_conversation_id = conversation_id
+        self._library_selected_row_id = "browse-conversations"
+        self._active_mode = "conversations"
+        self.refresh(recompose=True)
+
+    @on(Input.Submitted, "#library-search-input")
+    def handle_library_search_submitted(self, event: Input.Submitted) -> None:
+        """Filter the conversations canvas from the rail search box."""
+        event.stop()
+        self._library_conversation_query = self._safe_text(event.value, max_length=200)
+        self._library_selected_row_id = "browse-conversations"
+        self._active_mode = "conversations"
+        self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-mode-chip")
     async def switch_library_mode(self, event: Button.Pressed) -> None:
@@ -2856,7 +2712,20 @@ class LibraryScreen(BaseAppScreen):
         self._invalidate_library_workspace_depth_state()
         await self._refresh_active_mode_widgets()
 
+    def _legacy_workbench_present(self) -> bool:
+        """Whether the retired 3-pane workbench chrome is still mounted.
+
+        The Library shell replaces the mode strip + contract grid with a rail +
+        canvas. The legacy granular sync helpers below target ids that no longer
+        render, so they early-return through this guard and navigation flows
+        instead go through a full ``refresh(recompose=True)``.
+        """
+        return bool(self.query("#library-source-detail"))
+
     async def _refresh_active_mode_widgets(self) -> None:
+        if not self._legacy_workbench_present():
+            self.refresh(recompose=True)
+            return
         active_mode = self._active_mode_contract()
         source_column_title, detail_column_title, inspector_column_title = self._active_column_titles()
         self.query_one("#library-status-row", Static).update(self._status_row_copy())
@@ -2917,6 +2786,8 @@ class LibraryScreen(BaseAppScreen):
 
     async def _sync_source_module_actions(self) -> None:
         """Rebuild source-map actions so active-mode owned action IDs stay unique."""
+        if not self.query("#library-source-browser"):
+            return
         browser = self.query_one("#library-source-browser", Vertical)
         source_title = self.query_one("#library-source-browser-title", Static)
         quick_actions_title = self.query_one("#library-quick-actions-title", Static)
@@ -2940,6 +2811,8 @@ class LibraryScreen(BaseAppScreen):
         *,
         workspace_depth_state: LibraryWorkspaceDepthState | None = None,
     ) -> None:
+        if not self._legacy_workbench_present():
+            return
         mounted_widgets = list(self.query("#library-search-rag-panel"))
         for widget in mounted_widgets:
             await widget.remove()
@@ -2958,6 +2831,8 @@ class LibraryScreen(BaseAppScreen):
         await self._sync_inspector_mode_region(panel_state)
 
     async def _sync_study_handoff_detail(self) -> None:
+        if not self._legacy_workbench_present():
+            return
         mounted_widgets = list(self.query("#library-study-handoff-detail"))
         for widget in mounted_widgets:
             await widget.remove()
@@ -3092,8 +2967,6 @@ class LibraryScreen(BaseAppScreen):
             for row in self._import_export_workflow_rows():
                 await region.mount(row)
             return
-        for hub_row in self._content_hub_rows():
-            await region.mount(hub_row)
         if not self._has_local_sources():
             await region.mount(Static(LIBRARY_EMPTY_COPY, id="library-source-empty"))
             await region.mount(
@@ -3104,6 +2977,14 @@ class LibraryScreen(BaseAppScreen):
             )
 
     async def _sync_collections_panel(self, *, refresh_snapshot: bool = False) -> None:
+        if not self._legacy_workbench_present():
+            if self._active_mode != "collections":
+                self._library_collection_pending_delete_id = ""
+                return
+            if refresh_snapshot:
+                await self._refresh_library_collections_snapshot()
+            self.refresh(recompose=True)
+            return
         for widget in list(self.query("#library-collections-panel")):
             await widget.remove()
         if self._active_mode != "collections":
@@ -3132,6 +3013,8 @@ class LibraryScreen(BaseAppScreen):
         self,
         workspace_depth_state: LibraryWorkspaceDepthState | None = None,
     ) -> None:
+        if not self._legacy_workbench_present():
+            return
         for widget in list(self.query("#library-workspaces-depth-panel")):
             await widget.remove()
         if self._active_mode != "workspaces":
