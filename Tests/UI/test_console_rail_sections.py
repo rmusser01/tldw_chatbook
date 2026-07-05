@@ -428,3 +428,97 @@ async def test_setup_backdrop_no_resume_intent_stays_paused_after_mount():
         assert backdrop._snow_timer is not None
         assert backdrop._snow_timer._active.is_set() is False
         assert backdrop.timer_paused is True
+
+
+# ---------------------------------------------------------------------------
+# Console session switcher modal (Ctrl+K).
+# ---------------------------------------------------------------------------
+
+from tldw_chatbook.Chat.console_switcher_state import ConsoleSwitcherEntry
+from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
+    ConsoleSessionSwitcherModal,
+    ConsoleSwitcherChoice,
+)
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    ConsoleConversationBrowserInputRow,
+)
+
+
+def _switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
+    def row(key, title, native=None, **kw):
+        return ConsoleConversationBrowserInputRow(
+            row_key=key, conversation_id=None if native else key,
+            native_session_id=native, title=title, scope_type="workspace",
+            workspace_id="ws-1", workspace_label="Workspace 1",
+            updated_sort="2026-07-04T10:00:00+00:00", **kw,
+        )
+    return (
+        row("native-1", "Groq testing", native="sess-1", selected=True),
+        row("conv-2", "API refactor plan"),
+        row("conv-3", "Tides explainer"),
+    )
+
+
+class _SwitcherApp(App):
+    def __init__(self):
+        super().__init__()
+        self.result = "unset"
+
+    async def on_mount(self) -> None:
+        def _capture(choice):
+            self.result = choice
+        await self.push_screen(
+            ConsoleSessionSwitcherModal(rows=_switcher_rows()), callback=_capture
+        )
+
+
+@pytest.mark.asyncio
+async def test_switcher_lists_recent_first_and_filters_on_typing():
+    app = _SwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        first = app.screen.query_one("#console-switcher-result-0", Button)
+        assert "Groq testing" in str(first.label)
+        await pilot.click("#console-switcher-query")
+        await pilot.press(*"refactor")
+        await pilot.pause()
+        first = app.screen.query_one("#console-switcher-result-0", Button)
+        assert "API refactor plan" in str(first.label)
+        assert not list(app.screen.query("#console-switcher-result-1"))
+
+
+@pytest.mark.asyncio
+async def test_switcher_enter_activates_first_result():
+    app = _SwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.click("#console-switcher-query")
+        await pilot.press(*"tides")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSwitcherChoice)
+        assert app.result.kind == "activate"
+        assert app.result.entry.title == "Tides explainer"
+
+
+@pytest.mark.asyncio
+async def test_switcher_f2_requests_rename_for_native_entry():
+    app = _SwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.press("f2")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSwitcherChoice)
+        assert app.result.kind == "rename"
+        assert app.result.entry.native_session_id == "sess-1"
+
+
+@pytest.mark.asyncio
+async def test_switcher_escape_dismisses_none_and_empty_query_shows_no_matches():
+    app = _SwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.click("#console-switcher-query")
+        await pilot.press(*"zzzz")
+        await pilot.pause()
+        assert list(app.screen.query("#console-switcher-empty"))
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.result is None
