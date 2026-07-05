@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
+from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_rail_state import LibraryRailPreferences
@@ -41,17 +43,23 @@ class LibraryRail(Vertical):
     Attributes:
         shell: Current Library shell display state.
         preferences: Section open/collapsed preferences.
+        workspaces_body_factory: Callable building the Workspaces body widgets
+            (depth panel + actions) so the screen keeps its service/callback
+            wiring; rendered inside the collapsed Details section.
     """
 
     def __init__(
         self,
         shell: LibraryShellState,
         preferences: LibraryRailPreferences,
+        *,
+        workspaces_body_factory: Callable[[], Iterable[Widget]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.shell = shell
         self.preferences = preferences
+        self.workspaces_body_factory = workspaces_body_factory
         self.styles.width = "3fr"
         self.styles.min_width = 24
 
@@ -119,6 +127,8 @@ class LibraryRail(Vertical):
                 classes="library-rail-empty-copy",
                 markup=False,
             )
+            if self.workspaces_body_factory is not None:
+                yield from self.workspaces_body_factory()
 
     def _compose_section(self, section: LibraryRailSectionState) -> ComposeResult:
         open_state = self._section_open(section.section_id)

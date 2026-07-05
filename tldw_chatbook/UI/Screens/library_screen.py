@@ -525,7 +525,12 @@ class LibraryScreen(BaseAppScreen):
             self._selected_conversation_id = conversation_id
             self._library_selected_row_id = "browse-conversations"
         if self.is_mounted:
-            self.refresh(recompose=True)
+            if self._active_mode == "collections" and not self._library_collections_loaded:
+                # Deep-link into Collections must load the snapshot the retired
+                # chip flow ran; the panel shows the records once loaded.
+                self.run_worker(self._sync_collections_panel(refresh_snapshot=True))
+            else:
+                self.refresh(recompose=True)
 
     @work(exclusive=True)
     async def _refresh_local_source_snapshot(self) -> None:
@@ -2060,6 +2065,142 @@ class LibraryScreen(BaseAppScreen):
             classes="library-rag-region",
         )
 
+    def _workspace_handoff_action_state(
+        self,
+        workspace_depth_state: LibraryWorkspaceDepthState,
+    ) -> tuple[bool, str]:
+        """Return the Workspaces handoff button disabled flag and tooltip."""
+        handoff_disabled = True
+        handoff_tooltip = "Stage Library source context after Library finishes loading."
+        if self._library_lookup_error:
+            recovery_state = self._library_lookup_recovery_state
+            handoff_tooltip = (
+                recovery_state.disabled_tooltip
+                if recovery_state is not None
+                else "Library source services are unavailable; retry Library later."
+            )
+        elif not self._has_local_sources():
+            handoff_tooltip = "Stage Library source context after adding notes, media, or conversations."
+        else:
+            handoff_disabled = not workspace_depth_state.context_handoff_enabled
+            handoff_tooltip = (
+                workspace_depth_state.context_handoff_tooltip
+                if handoff_disabled
+                else "Stage Library source context in Console."
+            )
+        return handoff_disabled, handoff_tooltip
+
+    def _workspace_action_widgets(
+        self,
+        workspace_depth_state: LibraryWorkspaceDepthState,
+        *,
+        handoff_disabled: bool,
+        handoff_tooltip: str,
+    ) -> tuple[Any, ...]:
+        """Build the Workspaces action controls (create/import/use-in-console)."""
+        widgets: list[Any] = [
+            Static("Workspace actions", classes="destination-section"),
+            Button(
+                "Create local workspace",
+                id="library-create-local-workspace",
+                classes="library-source-action",
+                tooltip=(
+                    "Create a local-only workspace and make it active. "
+                    "Server sync and ACP handoff remain WIP."
+                ),
+            ),
+            Static(
+                "Server sync: WIP/unavailable. Local workspace selection is active.",
+                id="library-workspace-create-local-copy",
+                classes="ds-recovery-callout",
+            ),
+        ]
+        if workspace_depth_state.context_handoff_enabled:
+            widgets.append(
+                Static(
+                    "Ready: eligible sources can be staged in Console.",
+                    id="library-workspace-action-ready",
+                    classes="ds-recovery-callout",
+                )
+            )
+        elif not workspace_depth_state.source_rows:
+            widgets.extend(
+                (
+                    Button(
+                        "Import sources",
+                        id="library-workspace-import-sources",
+                        classes="library-source-action",
+                        tooltip="Open Library Import/Export to add workspace-eligible sources.",
+                    ),
+                    Static(
+                        (
+                            f"{self._workspace_handoff_blocked_label(workspace_depth_state)}\n"
+                            f"{self._workspace_handoff_fix_label(workspace_depth_state)}"
+                        ),
+                        id="library-workspace-action-blocked",
+                        classes="ds-recovery-callout is-blocked",
+                    ),
+                )
+            )
+        else:
+            widgets.append(
+                Static(
+                    (
+                        f"{self._workspace_handoff_blocked_label(workspace_depth_state)}\n"
+                        f"{self._workspace_handoff_fix_label(workspace_depth_state)}"
+                    ),
+                    id="library-workspace-action-blocked",
+                    classes="ds-recovery-callout is-blocked",
+                )
+            )
+        if workspace_depth_state.source_rows:
+            widgets.append(
+                Static(
+                    (
+                        "Next: stage eligible sources in Console."
+                        if workspace_depth_state.context_handoff_enabled
+                        else f"Next: {self._workspace_handoff_recovery_label(workspace_depth_state)}."
+                    ),
+                    id="library-workspace-action-next-step",
+                )
+            )
+        widgets.append(
+            Button(
+                "Use in Console",
+                id="library-use-in-console",
+                classes="library-source-action",
+                disabled=handoff_disabled,
+                tooltip=handoff_tooltip,
+            )
+        )
+        return tuple(widgets)
+
+    def _compose_workspaces_rail_body(self) -> list[Any]:
+        """Build the Workspaces body for the rail Details section.
+
+        Returns the workspace-context depth panel followed by the workspace
+        action controls, mirroring the retired Workspaces mode body. Preserves
+        every legacy widget id so the flows remain reachable from the rail.
+
+        Returns:
+            Freshly constructed widgets for the Details disclosure.
+        """
+        state = self._library_workspace_depth_state()
+        handoff_disabled, handoff_tooltip = self._workspace_handoff_action_state(state)
+        depth_panel = Vertical(
+            *self._workspaces_detail_rows(state),
+            id="library-workspaces-depth-panel",
+        )
+        widgets: list[Any] = [depth_panel]
+        widgets.extend(
+            self._workspace_action_widgets(
+                state,
+                handoff_disabled=handoff_disabled,
+                handoff_tooltip=handoff_tooltip,
+            )
+        )
+        return widgets
+
     def _library_action_widgets(
         self,
         *,
@@ -2070,82 +2211,11 @@ class LibraryScreen(BaseAppScreen):
         collections_panel_state: LibraryCollectionsPanelState | None = None,
     ) -> tuple[Any, ...]:
         if self._active_mode == "workspaces":
-            widgets: list[Any] = [
-                Static("Workspace actions", classes="destination-section"),
-                Button(
-                    "Create local workspace",
-                    id="library-create-local-workspace",
-                    classes="library-source-action",
-                    tooltip=(
-                        "Create a local-only workspace and make it active. "
-                        "Server sync and ACP handoff remain WIP."
-                    ),
-                ),
-                Static(
-                    "Server sync: WIP/unavailable. Local workspace selection is active.",
-                    id="library-workspace-create-local-copy",
-                    classes="ds-recovery-callout",
-                ),
-            ]
-            if workspace_depth_state.context_handoff_enabled:
-                widgets.append(
-                    Static(
-                        "Ready: eligible sources can be staged in Console.",
-                        id="library-workspace-action-ready",
-                        classes="ds-recovery-callout",
-                    )
-                )
-            elif not workspace_depth_state.source_rows:
-                widgets.extend(
-                    (
-                        Button(
-                            "Import sources",
-                            id="library-workspace-import-sources",
-                            classes="library-source-action",
-                            tooltip="Open Library Import/Export to add workspace-eligible sources.",
-                        ),
-                        Static(
-                            (
-                                f"{self._workspace_handoff_blocked_label(workspace_depth_state)}\n"
-                                f"{self._workspace_handoff_fix_label(workspace_depth_state)}"
-                            ),
-                            id="library-workspace-action-blocked",
-                            classes="ds-recovery-callout is-blocked",
-                        ),
-                    )
-                )
-            else:
-                widgets.append(
-                    Static(
-                        (
-                            f"{self._workspace_handoff_blocked_label(workspace_depth_state)}\n"
-                            f"{self._workspace_handoff_fix_label(workspace_depth_state)}"
-                        ),
-                        id="library-workspace-action-blocked",
-                        classes="ds-recovery-callout is-blocked",
-                    )
-                )
-            if workspace_depth_state.source_rows:
-                widgets.append(
-                    Static(
-                        (
-                            "Next: stage eligible sources in Console."
-                            if workspace_depth_state.context_handoff_enabled
-                            else f"Next: {self._workspace_handoff_recovery_label(workspace_depth_state)}."
-                        ),
-                        id="library-workspace-action-next-step",
-                    )
-                )
-            widgets.append(
-                Button(
-                    "Use in Console",
-                    id="library-use-in-console",
-                    classes="library-source-action",
-                    disabled=handoff_disabled,
-                    tooltip=handoff_tooltip,
-                )
+            return self._workspace_action_widgets(
+                workspace_depth_state,
+                handoff_disabled=handoff_disabled,
+                handoff_tooltip=handoff_tooltip,
             )
-            return tuple(widgets)
         if self._active_mode == "conversations":
             handoff_ready = self._conversation_handoff_enabled(workspace_depth_state)
             recovery_copy = self._conversation_handoff_label(workspace_depth_state)
@@ -2455,6 +2525,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
+                workspaces_body_factory=self._compose_workspaces_rail_body,
                 id="library-rail",
                 classes="destination-workbench-pane",
             )
@@ -2643,7 +2714,7 @@ class LibraryScreen(BaseAppScreen):
             pass
 
     @on(Button.Pressed, ".library-rail-row")
-    def handle_library_rail_row(self, event: Button.Pressed) -> None:
+    async def handle_library_rail_row(self, event: Button.Pressed) -> None:
         """Dispatch a Library rail row press: navigate, browse, or open a mode."""
         event.stop()
         button = event.button
@@ -2661,6 +2732,11 @@ class LibraryScreen(BaseAppScreen):
         elif target_kind == "mode":
             self._active_mode = target_id
         self._invalidate_library_workspace_depth_state()
+        if self._active_mode == "collections" and not self._library_collections_loaded:
+            # First Collections entry must load the snapshot the retired chip
+            # flow ran; _sync_collections_panel recomposes once records arrive.
+            await self._sync_collections_panel(refresh_snapshot=True)
+            return
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".console-rail-section-toggle")
@@ -3037,24 +3113,9 @@ class LibraryScreen(BaseAppScreen):
         region = regions[0]
         await region.remove_children()
         workspace_depth_state = workspace_depth_state or self._library_workspace_depth_state()
-        handoff_disabled = True
-        handoff_tooltip = "Stage Library source context after Library finishes loading."
-        if self._library_lookup_error:
-            recovery_state = self._library_lookup_recovery_state
-            handoff_tooltip = (
-                recovery_state.disabled_tooltip
-                if recovery_state is not None
-                else "Library source services are unavailable; retry Library later."
-            )
-        elif not self._has_local_sources():
-            handoff_tooltip = "Stage Library source context after adding notes, media, or conversations."
-        else:
-            handoff_disabled = not workspace_depth_state.context_handoff_enabled
-            handoff_tooltip = (
-                workspace_depth_state.context_handoff_tooltip
-                if handoff_disabled
-                else "Stage Library source context in Console."
-            )
+        handoff_disabled, handoff_tooltip = self._workspace_handoff_action_state(
+            workspace_depth_state
+        )
         for widget in self._library_action_widgets(
             workspace_depth_state=workspace_depth_state,
             collection_scoped_actions_deferred=self._active_mode == "collections",

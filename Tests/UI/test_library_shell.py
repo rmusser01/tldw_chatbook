@@ -13,6 +13,7 @@ from Tests.UI.test_destination_shells import (
     StaticLibraryNotesScopeService,
     _link_library_items_to_active_workspace,
 )
+from Tests.UI.test_library_content_hub import StaticLibraryCollectionsService
 from Tests.UI.test_screen_navigation import _build_test_app
 
 LIBRARY_TEST_SIZE = (170, 48)
@@ -319,3 +320,58 @@ async def test_library_shell_details_toggle_persists():
         app.app_config.get("library", {}).get("rail_state", {}).get("sections", {})
     )
     assert sections.get("details_open") is True
+
+
+@pytest.mark.asyncio
+async def test_library_shell_collections_row_loads_seeded_records():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.library_collections_service = StaticLibraryCollectionsService(
+        [
+            {
+                "collection_id": "collection-1",
+                "name": "Launch Evidence",
+                "description": "Sources for release review.",
+                "item_count": 3,
+                "source_authority": "local",
+                "sync_status": "local-only",
+                "updated_at": "2026-06-09T12:00:00Z",
+            }
+        ]
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # Entering Collections via the rail row must load the snapshot with no
+        # prior create/rename action; the seeded record renders in the canvas.
+        screen.query_one("#library-row-browse-collections").press()
+        select_button = await _wait_for_selector(
+            screen, pilot, "#library-collection-select-0"
+        )
+
+        canvas = screen.query_one("#library-canvas")
+        assert canvas in select_button.ancestors
+        assert "Launch Evidence" in str(select_button.label)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_workspaces_body_lives_under_details():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        toggle = screen.query_one("#console-rail-section-toggle-library-details")
+        toggle.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        details_body = screen.query_one("#library-rail-section-body-details")
+        create_button = screen.query_one("#library-create-local-workspace")
+        assert details_body in create_button.ancestors
