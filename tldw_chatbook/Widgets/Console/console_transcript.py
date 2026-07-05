@@ -8,6 +8,7 @@ from typing import Iterable, Literal
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.events import Click, Key
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -326,6 +327,9 @@ class ConsoleTranscript(VerticalScroll):
         ("up,k", "select_previous", "Previous message"),
         ("enter", "confirm_selection", "Show actions"),
         ("escape", "clear_selection", "Clear selection"),
+        ("c", "invoke_selected_action('copy')", "Copy"),
+        ("e", "invoke_selected_action('edit')", "Edit"),
+        ("r", "invoke_selected_action('regenerate')", "Regenerate"),
     ]
 
     def __init__(self, **kwargs) -> None:
@@ -466,6 +470,18 @@ class ConsoleTranscript(VerticalScroll):
         if self.is_mounted:
             self.call_later(self.refresh_messages)
             self.call_later(self._notify_selection_changed)
+
+    def action_invoke_selected_action(self, action_id: str) -> None:
+        """Press the selected message's action button for ``action_id``."""
+        message_id = self.selected_message_id
+        if not message_id:
+            return
+        selector = f"#console-message-action-{action_id}-{message_id}"
+        try:
+            button = self.query_one(selector, Button)
+        except NoMatches:
+            return
+        button.press()
 
     def on_key(self, event: Key) -> None:
         if event.key in {"down", "j"}:

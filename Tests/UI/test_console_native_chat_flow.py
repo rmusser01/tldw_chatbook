@@ -2095,6 +2095,36 @@ async def test_console_selected_message_copy_action_works_from_keyboard():
 
 
 @pytest.mark.asyncio
+async def test_transcript_c_key_copies_selected_message():
+    app = _build_test_app()
+    app.copy_to_clipboard = Mock()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.focus()
+        await pilot.press("down")
+        await pilot.pause(0.1)
+        assert transcript.selected_message_id is not None
+        await pilot.press("c")
+        await pilot.pause(0.3)
+
+    app.copy_to_clipboard.assert_called_once_with("answer")
+    assert console._last_console_action.action_id == "copy"
+
+
+@pytest.mark.asyncio
 async def test_console_message_action_keyboard_focus_stays_inside_action_row():
     app = _build_test_app()
     host = ConsoleHarness(app)
