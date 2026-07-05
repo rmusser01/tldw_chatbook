@@ -1232,8 +1232,12 @@ def test_generated_console_stylesheet_includes_setup_modal_rules():
         ".console-setup-modal-card",
         ".console-setup-modal-title",
         ".console-setup-modal-action",
+        ".console-setup-modal-backdrop-snow",
         "layer: console-setup-overlay",
         "layers: console-workbench console-setup-overlay",
+        "layers: console-setup-snow console-setup-card",
+        "layer: console-setup-snow",
+        "layer: console-setup-card",
     ):
         assert selector in component_css, selector
         assert selector in generated_css, selector

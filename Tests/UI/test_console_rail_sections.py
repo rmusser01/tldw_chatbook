@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+
 import pytest
 from textual.app import App
 from textual.widgets import Button, Static
@@ -17,7 +19,11 @@ from tldw_chatbook.Widgets.Console.console_rail_section import (
     ConsoleRailSectionHeader,
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
-from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
+from tldw_chatbook.Widgets.Console.console_setup_modal import (
+    CONSOLE_SETUP_MODAL_BACKDROP_ID,
+    ConsoleSetupBackdrop,
+    ConsoleSetupModal,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscriptEmptyPanel
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceContextTray,
@@ -281,3 +287,108 @@ async def test_setup_panel_coerces_non_card_state_to_quiet_copy():
         assert CONSOLE_QUIET_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
         assert not list(app.query("#console-setup-step-1"))
         assert app.query_one("#console-empty-action-row").styles.display == "none"
+
+
+# ---------------------------------------------------------------------------
+# Setup-modal snow backdrop (ZSNES-style falling glyphs behind the card).
+# ---------------------------------------------------------------------------
+
+_SNOW_GLYPHS = ("·", "•", "*")
+
+
+def _snow_glyph_count(text: str) -> int:
+    return sum(text.count(glyph) for glyph in _SNOW_GLYPHS)
+
+
+class _SnowBackdropApp(App):
+    def __init__(self, rng: random.Random) -> None:
+        super().__init__()
+        self._rng = rng
+
+    def compose(self):
+        yield ConsoleSetupBackdrop(id="backdrop-under-test", rng=self._rng)
+
+
+@pytest.mark.asyncio
+async def test_setup_backdrop_seeded_rng_renders_flake_glyphs():
+    # Seeded rng + fixed size => fully deterministic flake field: 40x10 cells
+    # at ~1 flake per 40 cells yields exactly 10 non-overlapping flakes.
+    app = _SnowBackdropApp(random.Random(42))
+    async with app.run_test(size=(40, 10)):
+        backdrop = app.query_one("#backdrop-under-test", ConsoleSetupBackdrop)
+        assert backdrop.flake_count == 10
+        text = str(backdrop.renderable)
+        assert _snow_glyph_count(text) >= 5
+
+
+@pytest.mark.asyncio
+async def test_setup_backdrop_tick_advances_positions_and_repaints():
+    app = _SnowBackdropApp(random.Random(42))
+    async with app.run_test(size=(40, 10)):
+        backdrop = app.query_one("#backdrop-under-test", ConsoleSetupBackdrop)
+        positions_before = [(flake.x, flake.y) for flake in backdrop._flakes]
+        text_before = str(backdrop.renderable)
+
+        backdrop._tick()
+
+        positions_after = [(flake.x, flake.y) for flake in backdrop._flakes]
+        text_after = str(backdrop.renderable)
+        assert positions_after != positions_before
+        assert text_after != text_before
+
+
+@pytest.mark.asyncio
+async def test_setup_backdrop_tick_wraps_flake_past_bottom_to_top():
+    app = _SnowBackdropApp(random.Random(42))
+    async with app.run_test(size=(40, 10)):
+        backdrop = app.query_one("#backdrop-under-test", ConsoleSetupBackdrop)
+        flake = backdrop._flakes[0]
+        flake.y = backdrop._field_height - 0.05
+        flake.speed = 1.0
+
+        backdrop._tick()
+
+        assert flake.y == 0.0
+
+
+@pytest.mark.asyncio
+async def test_setup_backdrop_resize_safe_at_tiny_size():
+    app = _SnowBackdropApp(random.Random(42))
+    async with app.run_test(size=(40, 10)) as pilot:
+        backdrop = app.query_one("#backdrop-under-test", ConsoleSetupBackdrop)
+        await pilot.resize_terminal(1, 1)
+        await pilot.pause()
+        assert backdrop.flake_count >= 1
+        # Must not raise even at the smallest possible field.
+        backdrop._tick()
+        await pilot.resize_terminal(40, 10)
+        await pilot.pause()
+        assert backdrop.flake_count == 10
+
+
+@pytest.mark.asyncio
+async def test_setup_modal_snow_timer_paused_until_blocking():
+    app = _SetupModalApp(_card_state())
+    async with app.run_test(size=(100, 30)) as pilot:
+        backdrop = app.query_one(
+            f"#{CONSOLE_SETUP_MODAL_BACKDROP_ID}", ConsoleSetupBackdrop
+        )
+        # _SetupModalApp.on_mount() immediately syncs card-mode (blocking).
+        assert backdrop.timer_paused is False
+
+        modal = app.query_one("#console-setup-modal", ConsoleSetupModal)
+        modal.sync_card_state(
+            ConsoleSetupCardState(mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY),
+            action_label="Choose model",
+            action_tooltip="Pick a model.",
+        )
+        await pilot.pause()
+        assert backdrop.timer_paused is True
+
+        modal.sync_card_state(
+            _card_state(),
+            action_label="Configure API",
+            action_tooltip="Open provider settings.",
+        )
+        await pilot.pause()
+        assert backdrop.timer_paused is False
