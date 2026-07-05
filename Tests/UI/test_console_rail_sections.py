@@ -522,3 +522,21 @@ async def test_switcher_escape_dismisses_none_and_empty_query_shows_no_matches()
         await pilot.press("escape")
         await pilot.pause()
         assert app.result is None
+
+
+@pytest.mark.asyncio
+async def test_switcher_rapid_refresh_does_not_duplicate_ids():
+    from textual.widgets import Input
+
+    app = _SwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        # Two back-to-back Input.Changed posts with no settling between them —
+        # simulates paste/fast typing faster than pilot.press's per-key
+        # wait_for_idle can produce.
+        query_input = app.screen.query_one("#console-switcher-query", Input)
+        query_input.value = "r"
+        query_input.value = "refactor"
+        await pilot.pause()
+        first = app.screen.query_one("#console-switcher-result-0", Button)
+        assert "API refactor plan" in str(first.label)
+        assert not list(app.screen.query("#console-switcher-result-1"))

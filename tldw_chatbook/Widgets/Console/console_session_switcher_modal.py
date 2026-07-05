@@ -83,29 +83,31 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
             )
             yield Vertical(id="console-switcher-results")
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.query_one("#console-switcher-query", Input).focus()
-        self._refresh_results("")
+        await self._refresh_results("")
 
-    def _refresh_results(self, query: str) -> None:
+    async def _refresh_results(self, query: str) -> None:
+        """Recompute entries and fully replace the results children.
+
+        This is awaited to completion within a single handler invocation
+        (no ``call_later`` deferral) so that Textual's serialized message
+        pump cannot interleave two refresh/mount cycles and mount
+        duplicate widget ids.
+        """
+        # Update entries synchronously first: Enter-activates-first-result
+        # reads self._entries[0] and must never observe a stale value.
         self._entries = build_console_switcher_entries(self._rows, query=query)
         results = self.query_one("#console-switcher-results", Vertical)
 
-        # Clear existing children
-        for child in list(results.children):
-            child.remove()
+        await results.remove_children()
 
-        # Schedule remounting after the event loop processes removals
-        self.app.call_later(self._mount_results_content)
-
-    def _mount_results_content(self) -> None:
-        """Mount result buttons after clearing old ones."""
-        results = self.query_one("#console-switcher-results", Vertical)
         if not self._entries:
-            results.mount(
+            await results.mount(
                 Static("No matches.", id="console-switcher-empty", markup=False)
             )
         else:
+            buttons = []
             for index, entry in enumerate(self._entries):
                 label = entry.title if not entry.subtitle else f"{entry.title}\n  {entry.subtitle}"
                 button = Button(
@@ -116,12 +118,13 @@ class ConsoleSessionSwitcherModal(ModalScreen["ConsoleSwitcherChoice | None"]):
                 )
                 button.set_class(entry.is_active, "console-switcher-result-active")
                 button.tooltip = f"Switch to {entry.title}"
-                results.mount(button)
+                buttons.append(button)
+            await results.mount_all(buttons)
 
     @on(Input.Changed, "#console-switcher-query")
-    def _query_changed(self, event: Input.Changed) -> None:
+    async def _query_changed(self, event: Input.Changed) -> None:
         event.stop()
-        self._refresh_results(event.value)
+        await self._refresh_results(event.value)
 
     @on(Input.Submitted, "#console-switcher-query")
     def _query_submitted(self, event: Input.Submitted) -> None:
