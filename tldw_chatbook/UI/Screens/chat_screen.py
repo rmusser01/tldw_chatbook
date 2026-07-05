@@ -368,7 +368,7 @@ class ChatScreen(BaseAppScreen):
             priority=True,
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=False),
-        Binding("ctrl+m", "open_console_model_popover", "Model", show=False),
+        Binding("alt+m", "open_console_model_popover", "Model", show=False),
     ]
 
     def action_focus_next(self) -> None:
@@ -818,7 +818,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     async def action_open_console_model_popover(self) -> None:
-        """Open the Ctrl+M quick provider/model/temperature/streaming popover."""
+        """Open the Alt+M quick provider/model/temperature/streaming popover."""
         if self._console_setup_modal_blocking():
             return
         settings = self._ensure_active_console_session_settings()

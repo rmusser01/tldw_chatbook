@@ -1,4 +1,4 @@
-"""Console quick model popover (Ctrl+M)."""
+"""Console quick model popover (Alt+M)."""
 
 from __future__ import annotations
 
