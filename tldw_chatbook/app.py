@@ -219,6 +219,7 @@ from .UI.Customize_Window import CustomizeWindow
 from .UI.Tab_Bar import TabBar
 from .UI.Tab_Links import TabLinks
 from .UI.Tab_Dropdown import TabDropdown
+from .UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Chat_Grammars_Interop import (
     ChatGrammarsScopeService,
     LocalChatGrammarsService,
@@ -1139,7 +1140,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         SettingsProvider,
         CharacterProvider,
         MediaProvider,
-        DeveloperProvider
+        DeveloperProvider,
+        ConsoleCommandProvider,
     }
 
     ALL_INGEST_VIEW_IDS = INGEST_VIEW_IDS

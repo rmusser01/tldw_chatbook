@@ -153,9 +153,17 @@ from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
+from ...Widgets.Console.console_model_popover import (
+    CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
+    ConsoleModelPopover,
+)
 from ...Widgets.Console.console_rail_section import (
     CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
     ConsoleRailSectionHeader,
+)
+from ...Widgets.Console.console_session_switcher_modal import (
+    ConsoleSessionSwitcherModal,
+    ConsoleSwitcherChoice,
 )
 from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
@@ -222,8 +230,6 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Enter", "send"),
     ("Ctrl+P", "palette"),
 )
-
-
 def _is_empty_select_value(value: Any) -> bool:
     """Return True for Textual's blank/null select sentinels."""
     return value is None or value == Select.BLANK or str(value).startswith("Select.")
@@ -359,6 +365,21 @@ class ChatScreen(BaseAppScreen):
             show=False,
             priority=True,
         ),
+        Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
+        Binding("alt+m", "open_console_model_popover", "Model", show=True),
+        # NOT priority: widget-level escapes (transcript clear-selection, modal
+        # dismiss) must keep winning before this screen-level fallback runs.
+        Binding("escape", "focus_console_composer_home", "Composer", show=False),
+        Binding("ctrl+t", "new_console_tab", "New tab", show=True),
+        Binding("alt+1", "jump_console_tab(1)", "Tab 1", show=False),
+        Binding("alt+2", "jump_console_tab(2)", "Tab 2", show=False),
+        Binding("alt+3", "jump_console_tab(3)", "Tab 3", show=False),
+        Binding("alt+4", "jump_console_tab(4)", "Tab 4", show=False),
+        Binding("alt+5", "jump_console_tab(5)", "Tab 5", show=False),
+        Binding("alt+6", "jump_console_tab(6)", "Tab 6", show=False),
+        Binding("alt+7", "jump_console_tab(7)", "Tab 7", show=False),
+        Binding("alt+8", "jump_console_tab(8)", "Tab 8", show=False),
+        Binding("alt+9", "jump_console_tab(9)", "Tab 9", show=False),
     ]
 
     def action_focus_next(self) -> None:
@@ -791,6 +812,143 @@ class ChatScreen(BaseAppScreen):
             ConsoleRenameSessionModal(title=session.title),
             callback=_apply_rename,
         )
+
+    def action_open_console_session_switcher(self) -> None:
+        """Open the Ctrl+K fuzzy session switcher."""
+        if self._console_setup_modal_blocking():
+            return
+        rows = [
+            *self._native_console_browser_rows(),
+            *self._membership_console_browser_rows(),
+        ]
+        persisted_rows, _total, _error = self._sync_persisted_console_browser_rows()
+        rows.extend(persisted_rows)
+        self.app.push_screen(
+            ConsoleSessionSwitcherModal(rows=tuple(rows)),
+            callback=self._apply_console_switcher_choice,
+        )
+
+    async def action_open_console_model_popover(self) -> None:
+        """Open the Alt+M quick provider/model/temperature/streaming popover."""
+        if self._console_setup_modal_blocking():
+            return
+        settings = self._ensure_active_console_session_settings()
+        providers_models = await self._providers_models_for_console_settings(
+            settings.provider,
+            current_model=settings.model,
+        )
+        self.app.push_screen(
+            ConsoleModelPopover(settings=settings, providers_models=providers_models),
+            callback=self._apply_console_model_popover_result,
+        )
+
+    def _apply_console_model_popover_result(
+        self, result: "ConsoleSessionSettings | str | None"
+    ) -> None:
+        """Apply the popover result: sentinel opens full settings, else replaces settings.
+
+        Args:
+            result: Popover result, full-settings sentinel, or ``None`` on cancel.
+        """
+        if result is None:
+            return
+        if result == CONSOLE_POPOVER_OPEN_FULL_SETTINGS:
+            self.run_worker(self._open_console_settings(), exclusive=False)
+            return
+        self._replace_active_console_session_settings(result)
+
+    def action_focus_console_composer_home(self) -> None:
+        """Return keyboard focus to the Console composer (Escape, non-priority).
+
+        Deliberately not ``priority=True`` so widget-level escapes — transcript
+        selection-clear, and any pushed modal's own dismiss binding — are
+        resolved first as the key event bubbles up; this screen-level action
+        only fires once nothing closer to focus has claimed Escape.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self._focus_console_composer_if_needed(force=True)
+
+    def action_new_console_tab(self) -> None:
+        """Open a new native Console session tab from the active context (Ctrl+T)."""
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(self._create_native_console_session_from_active_context(), exclusive=False)
+
+    def action_open_console_session_settings(self) -> None:
+        """Open the full Console session settings modal, guarded by the setup modal.
+
+        Routes the command-palette "Console: Session settings…" entry through
+        the same blocking check every other Console action honors, instead of
+        the palette calling ``_open_console_settings`` directly and bypassing
+        the first-run setup modal.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(self._open_console_settings(), exclusive=False)
+
+    async def action_jump_console_tab(self, number: int) -> None:
+        """Jump directly to the Nth native Console session tab (Alt+1..9).
+
+        Args:
+            number: One-based session tab number to activate.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        store = self._ensure_console_chat_store()
+        sessions = store.sessions()
+        if not (1 <= number <= len(sessions)):
+            return
+        await self._activate_native_console_session(sessions[number - 1].id)
+
+    async def _activate_native_console_session(self, session_id: str) -> None:
+        """Activate a native Console session through the shared activation sequence.
+
+        Set the active workspace, switch the native session, await the UI
+        sync, then force composer focus. Shared by the session-tab click
+        handler, the Ctrl+K switcher callback, and Alt+1..9 tab-jump so all
+        three entry points follow one activation path.
+
+        Args:
+            session_id: Native Console session id to activate.
+        """
+        controller = self._ensure_console_chat_controller()
+        if controller.store.active_session_id != session_id:
+            self._set_active_workspace_for_console_session(session_id)
+            controller.switch_session(session_id)
+            await self._sync_native_console_chat_ui()
+        self._focus_console_composer_if_needed(force=True)
+
+    async def _apply_console_switcher_choice(
+        self, choice: ConsoleSwitcherChoice | None
+    ) -> None:
+        """Apply a switcher selection through the shared native-session activation helper.
+
+        Mirrors the session-tab click handler and Alt+1..9 tab-jump: all three
+        call ``_activate_native_console_session`` so there is one activation
+        sequence (set workspace, switch, sync UI, focus composer) shared
+        across Console session-selection entry points.
+
+        Args:
+            choice: Switcher result, or ``None`` if the switcher was cancelled.
+        """
+        if choice is None:
+            return
+        entry = choice.entry
+        if choice.kind == "rename" and entry.native_session_id:
+            self._open_console_session_rename_modal(entry.native_session_id)
+            return
+        if choice.kind != "activate":
+            return
+        if entry.native_session_id:
+            await self._activate_native_console_session(entry.native_session_id)
+            return
+        if entry.conversation_id:
+            await self._resume_console_workspace_conversation(
+                entry.conversation_id,
+                target_scope_type=entry.scope_type or None,
+                target_workspace_id=entry.workspace_id,
+            )
 
     async def _create_native_console_session_from_active_context(self) -> None:
         """Create and focus a native Console session in the active workspace context."""
@@ -7837,10 +7995,7 @@ class ChatScreen(BaseAppScreen):
             if controller.store.active_session_id == session_id:
                 self._open_console_session_rename_modal(session_id)
                 return
-            self._set_active_workspace_for_console_session(session_id)
-            controller.switch_session(session_id)
-            await self._sync_native_console_chat_ui()
-            self._focus_console_composer_if_needed(force=True)
+            await self._activate_native_console_session(session_id)
             return
         if button_id and button_id.startswith("console-message-action-"):
             handled = await self.handle_console_message_action(event)

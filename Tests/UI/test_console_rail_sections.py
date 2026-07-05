@@ -14,6 +14,11 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     ConsoleSetupCardState,
     ConsoleSetupStep,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Widgets.Console.console_model_popover import (
+    CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
+    ConsoleModelPopover,
+)
 from tldw_chatbook.Widgets.Console.console_rail_section import (
     CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
     ConsoleRailSectionHeader,
@@ -428,3 +433,256 @@ async def test_setup_backdrop_no_resume_intent_stays_paused_after_mount():
         assert backdrop._snow_timer is not None
         assert backdrop._snow_timer._active.is_set() is False
         assert backdrop.timer_paused is True
+
+
+# ---------------------------------------------------------------------------
+# Console session switcher modal (Ctrl+K).
+# ---------------------------------------------------------------------------
+
+from tldw_chatbook.Chat.console_switcher_state import ConsoleSwitcherEntry
+from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
+    ConsoleSessionSwitcherModal,
+    ConsoleSwitcherChoice,
+)
+from tldw_chatbook.Workspaces.conversation_browser_state import (
+    ConsoleConversationBrowserInputRow,
+)
+
+
+def _switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
+    def row(key, title, native=None, **kw):
+        return ConsoleConversationBrowserInputRow(
+            row_key=key, conversation_id=None if native else key,
+            native_session_id=native, title=title, scope_type="workspace",
+            workspace_id="ws-1", workspace_label="Workspace 1",
+            updated_sort="2026-07-04T10:00:00+00:00", **kw,
+        )
+    return (
+        row("native-1", "Groq testing", native="sess-1", selected=True),
+        row("conv-2", "API refactor plan"),
+        row("conv-3", "Tides explainer"),
+    )
+
+
+class _SwitcherApp(App):
+    def __init__(self):
+        super().__init__()
+        self.result = "unset"
+
+    async def on_mount(self) -> None:
+        def _capture(choice):
+            self.result = choice
+        await self.push_screen(
+            ConsoleSessionSwitcherModal(rows=_switcher_rows()), callback=_capture
+        )
+
+
+@pytest.mark.asyncio
+async def test_switcher_lists_recent_first_and_filters_on_typing():
+    app = _SwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        first = app.screen.query_one("#console-switcher-result-0", Button)
+        assert "Groq testing" in str(first.label)
+        await pilot.click("#console-switcher-query")
+        await pilot.press(*"refactor")
+        await pilot.pause()
+        first = app.screen.query_one("#console-switcher-result-0", Button)
+        assert "API refactor plan" in str(first.label)
+        assert not list(app.screen.query("#console-switcher-result-1"))
+
+
+@pytest.mark.asyncio
+async def test_switcher_enter_activates_first_result():
+    app = _SwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.click("#console-switcher-query")
+        await pilot.press(*"tides")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSwitcherChoice)
+        assert app.result.kind == "activate"
+        assert app.result.entry.title == "Tides explainer"
+
+
+@pytest.mark.asyncio
+async def test_switcher_f2_requests_rename_for_native_entry():
+    app = _SwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.press("f2")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSwitcherChoice)
+        assert app.result.kind == "rename"
+        assert app.result.entry.native_session_id == "sess-1"
+
+
+def _two_native_switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
+    def row(key, title, native, **kw):
+        return ConsoleConversationBrowserInputRow(
+            row_key=key, conversation_id=None, native_session_id=native,
+            title=title, scope_type="workspace", workspace_id="ws-1",
+            workspace_label="Workspace 1",
+            updated_sort="2026-07-04T10:00:00+00:00", **kw,
+        )
+    return (
+        row("native-1", "Groq testing", "sess-1", selected=True),
+        row("native-2", "Claude testing", "sess-2"),
+    )
+
+
+class _TwoNativeSwitcherApp(App):
+    def __init__(self):
+        super().__init__()
+        self.result = "unset"
+
+    async def on_mount(self) -> None:
+        def _capture(choice):
+            self.result = choice
+        await self.push_screen(
+            ConsoleSessionSwitcherModal(rows=_two_native_switcher_rows()), callback=_capture
+        )
+
+
+@pytest.mark.asyncio
+async def test_switcher_f2_renames_focused_result_not_always_first():
+    app = _TwoNativeSwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        second_button = app.screen.query_one("#console-switcher-result-1", Button)
+        second_button.focus()
+        await pilot.pause()
+        await pilot.press("f2")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSwitcherChoice)
+        assert app.result.kind == "rename"
+        assert app.result.entry.native_session_id == "sess-2"
+
+
+@pytest.mark.asyncio
+async def test_switcher_escape_dismisses_none_and_empty_query_shows_no_matches():
+    app = _SwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.click("#console-switcher-query")
+        await pilot.press(*"zzzz")
+        await pilot.pause()
+        assert list(app.screen.query("#console-switcher-empty"))
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.result is None
+
+
+@pytest.mark.asyncio
+async def test_switcher_rapid_refresh_does_not_duplicate_ids():
+    from textual.widgets import Input
+
+    app = _SwitcherApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        # Two back-to-back Input.Changed posts with no settling between them —
+        # simulates paste/fast typing faster than pilot.press's per-key
+        # wait_for_idle can produce.
+        query_input = app.screen.query_one("#console-switcher-query", Input)
+        query_input.value = "r"
+        query_input.value = "refactor"
+        await pilot.pause()
+        first = app.screen.query_one("#console-switcher-result-0", Button)
+        assert "API refactor plan" in str(first.label)
+        assert not list(app.screen.query("#console-switcher-result-1"))
+
+
+_POPOVER_PROVIDERS = {"llama_cpp": ["model-a", "model-b"], "openai": ["gpt-4o"]}
+
+
+class _PopoverApp(App):
+    def __init__(self):
+        super().__init__()
+        self.result = "unset"
+
+    async def on_mount(self) -> None:
+        settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+        def _capture(result):
+            self.result = result
+
+        await self.push_screen(
+            ConsoleModelPopover(
+                settings=settings, providers_models=_POPOVER_PROVIDERS
+            ),
+            callback=_capture,
+        )
+
+
+@pytest.mark.asyncio
+async def test_popover_apply_returns_replaced_settings():
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        model_select = app.screen.query_one("#console-popover-model")
+        model_select.value = "model-b"
+        await pilot.click("#console-popover-streaming")
+        await pilot.pause()
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSessionSettings)
+        assert app.result.model == "model-b"
+        assert app.result.provider == "llama_cpp"
+        # ConsoleSessionSettings defaults streaming True; one toggle flips it.
+        assert app.result.streaming is False
+
+
+@pytest.mark.asyncio
+async def test_popover_full_settings_returns_sentinel_and_escape_cancels():
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.click("#console-popover-full-settings")
+        await pilot.pause()
+        assert app.result == CONSOLE_POPOVER_OPEN_FULL_SETTINGS
+    app2 = _PopoverApp()
+    async with app2.run_test(size=(90, 30)) as pilot:
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app2.result is None
+
+
+@pytest.mark.asyncio
+async def test_popover_apply_with_blank_temperature_clears_it():
+    from textual.widgets import Input
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        temperature_input = app.screen.query_one("#console-popover-temperature", Input)
+        temperature_input.value = ""
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSessionSettings)
+        assert app.result.temperature is None
+
+
+@pytest.mark.parametrize("invalid_text", ["nan", "5.5", "-1"])
+@pytest.mark.asyncio
+async def test_popover_apply_rejects_nan_and_out_of_range_temperature(invalid_text):
+    from textual.widgets import Input
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        temperature_input = app.screen.query_one("#console-popover-temperature", Input)
+        prior_temperature = temperature_input.value
+        temperature_input.value = invalid_text
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSessionSettings)
+        # Mirrors ConsoleSettingsModal's [0.0, 2.0] bound (NaN always fails
+        # the range comparison too): an invalid value keeps the prior
+        # temperature rather than applying it.
+        assert app.result.temperature == float(prior_temperature)
+
+
+@pytest.mark.asyncio
+async def test_popover_apply_accepts_in_range_temperature():
+    from textual.widgets import Input
+
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        temperature_input = app.screen.query_one("#console-popover-temperature", Input)
+        temperature_input.value = "1.2"
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSessionSettings)
+        assert app.result.temperature == 1.2

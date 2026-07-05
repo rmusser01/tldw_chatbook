@@ -2095,6 +2095,69 @@ async def test_console_selected_message_copy_action_works_from_keyboard():
 
 
 @pytest.mark.asyncio
+async def test_transcript_c_key_copies_selected_message():
+    app = _build_test_app()
+    app.copy_to_clipboard = Mock()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.focus()
+        await pilot.press("down")
+        await pilot.pause(0.1)
+        assert transcript.selected_message_id is not None
+        await pilot.press("c")
+        await pilot.pause(0.3)
+
+    app.copy_to_clipboard.assert_called_once_with("answer")
+    assert console._last_console_action.action_id == "copy"
+
+
+@pytest.mark.asyncio
+async def test_transcript_rapid_select_then_action_retries_after_deferred_mount():
+    # The action row mounts via call_later(refresh_messages) after
+    # select_message; firing the selection and the action key back-to-back
+    # with no settling between them (mirroring the switcher's rapid-refresh
+    # test, which posts two Input.Changed values with no await between them)
+    # reproduces a fast Down->c race where the button isn't mounted yet.
+    app = _build_test_app()
+    app.copy_to_clipboard = Mock()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.focus()
+        transcript.action_select_next()
+        transcript.action_invoke_selected_action("copy")
+        await pilot.pause()
+
+    app.copy_to_clipboard.assert_called_once_with("answer")
+    assert console._last_console_action.action_id == "copy"
+
+
+@pytest.mark.asyncio
 async def test_console_message_action_keyboard_focus_stays_inside_action_row():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -5698,3 +5761,61 @@ def test_native_console_state_restore_tolerates_legacy_payload_without_updated_a
     assert restored_session.updated_at
     restored_dt = datetime.fromisoformat(restored_session.updated_at)
     assert before <= restored_dt <= after
+
+
+@pytest.mark.asyncio
+async def test_ctrl_k_opens_session_switcher_and_activates_native_session():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        # Create a second native session so there is something to switch to.
+        await pilot.click("#console-new-chat-tab")
+        await pilot.pause(0.2)
+        store = console._console_chat_store
+        first_session = store.sessions()[0]
+        assert store.active_session_id != first_session.id
+
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.2)
+        assert host.screen_stack[-1].__class__.__name__ == "ConsoleSessionSwitcherModal"
+        query = host.screen_stack[-1].query_one("#console-switcher-query")
+        assert host.focused is query
+        # First entry is the ACTIVE session; pick the other one by typing its
+        # distinguishing token. Default session titles ("Chat 1", "Chat 2")
+        # share their first word, so the trailing number is what disambiguates.
+        await pilot.press(*first_session.title.split()[-1].lower())
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        assert store.active_session_id == first_session.id
+
+
+@pytest.mark.asyncio
+async def test_ctrl_k_is_inert_while_setup_modal_blocks():
+    app = _build_test_app()  # blocked: no provider ready
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.2)
+        assert host.screen_stack[-1] is console
+
+
+@pytest.mark.asyncio
+async def test_switcher_rename_choice_chains_to_rename_modal():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.2)
+        await pilot.press("f2")
+        await pilot.pause(0.3)
+        assert host.screen_stack[-1].__class__.__name__ == "ConsoleRenameSessionModal"
+        await pilot.press("escape")
