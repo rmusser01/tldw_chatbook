@@ -2263,6 +2263,29 @@ async def test_console_accepted_send_records_first_send_flag():
 
 
 @pytest.mark.asyncio
+async def test_console_record_first_send_repairs_corrupt_config_value():
+    # Regression: a corrupt (non-dict) "console" value used to crash
+    # _record_console_first_send via unguarded .setdefault() chaining -- the
+    # write path must replace the corrupt value with a fresh dict and still
+    # persist the flag rather than silently skipping the write.
+    app = _build_test_app()
+    app.app_config["console"] = "corrupt"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        console._record_console_first_send()
+
+        console_cfg = app.app_config.get("console")
+        assert isinstance(console_cfg, dict)
+        onboarding_cfg = console_cfg.get("onboarding")
+        assert isinstance(onboarding_cfg, dict)
+        assert onboarding_cfg.get("first_send_completed") is True
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_authority_rows_are_structured_for_scanning():
     app = _build_test_app()
     host = ConsoleHarness(app)

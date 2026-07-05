@@ -3287,9 +3287,15 @@ class ChatScreen(BaseAppScreen):
         self._console_first_send_completed_cached = True
         app_config = getattr(self.app_instance, "app_config", None)
         if isinstance(app_config, dict):
-            app_config.setdefault("console", {}).setdefault("onboarding", {})[
-                "first_send_completed"
-            ] = True
+            console_cfg = app_config.get("console")
+            if not isinstance(console_cfg, dict):
+                console_cfg = {}
+                app_config["console"] = console_cfg
+            onboarding_cfg = console_cfg.get("onboarding")
+            if not isinstance(onboarding_cfg, dict):
+                onboarding_cfg = {}
+                console_cfg["onboarding"] = onboarding_cfg
+            onboarding_cfg["first_send_completed"] = True
         self._save_console_onboarding_flag()
         self._sync_console_transcript_guidance()
 

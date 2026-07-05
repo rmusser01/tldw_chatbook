@@ -45,7 +45,22 @@ class ConsoleSetupCardState:
 
 
 def coerce_console_first_send_completed(raw: Any) -> bool:
-    """Normalize the persisted first-send flag; anything unrecognized is False."""
+    """Normalize the persisted first-send flag from arbitrary config input.
+
+    Config values may arrive as a native bool, a legacy int/string form, or
+    anything else if the config was hand-edited or corrupted. Anything
+    unrecognized is treated as not-yet-completed rather than raising.
+
+    Args:
+        raw: The raw ``first_send_completed`` value read from config (or
+            ``None`` if absent).
+
+    Returns:
+        ``True`` if ``raw`` unambiguously represents completion (``True``,
+        a nonzero int, or a truthy string like ``"true"``/``"yes"``/``"1"``/
+        ``"on"``); ``False`` for everything else, including ``None`` and
+        unrecognized types.
+    """
     if isinstance(raw, bool):
         return raw
     if isinstance(raw, int):

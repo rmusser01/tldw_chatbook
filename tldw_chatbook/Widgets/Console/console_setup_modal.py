@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -99,7 +100,7 @@ class ConsoleSetupBackdrop(Static):
     }
     """
 
-    def __init__(self, *, rng: random.Random | None = None, **kwargs) -> None:
+    def __init__(self, *, rng: random.Random | None = None, **kwargs: Any) -> None:
         kwargs.setdefault("id", CONSOLE_SETUP_MODAL_BACKDROP_ID)
         classes = kwargs.pop("classes", "")
         kwargs["classes"] = f"console-setup-modal-backdrop-snow {classes}".strip()
@@ -109,7 +110,10 @@ class ConsoleSetupBackdrop(Static):
         self._field_width = 0
         self._field_height = 0
         self._snow_timer: Timer | None = None
-        self._timer_paused = True
+        # Intent flag: tracks whether the timer *should* be running, even
+        # before the timer object exists (on_mount() runs after __init__, so
+        # resume_snow()/pause_snow() can be called first -- see on_mount()).
+        self._snow_should_run = False
 
     @property
     def flake_count(self) -> int:
@@ -119,7 +123,7 @@ class ConsoleSetupBackdrop(Static):
     @property
     def timer_paused(self) -> bool:
         """Whether the snow-tick timer is currently paused."""
-        return self._timer_paused
+        return not self._snow_should_run
 
     def on_mount(self) -> None:
         self._snow_timer = self.set_interval(
@@ -127,6 +131,10 @@ class ConsoleSetupBackdrop(Static):
             self._tick,
             pause=True,
         )
+        # Apply any resume intent recorded before the timer existed -- a
+        # resume_snow() call that raced ahead of on_mount() must not be lost.
+        if self._snow_should_run:
+            self._snow_timer.resume()
         self._resize_flake_field()
 
     def on_resize(self, event: object) -> None:
@@ -134,13 +142,13 @@ class ConsoleSetupBackdrop(Static):
 
     def resume_snow(self) -> None:
         """Resume the tick timer -- called while the modal is blocking."""
-        self._timer_paused = False
+        self._snow_should_run = True
         if self._snow_timer is not None:
             self._snow_timer.resume()
 
     def pause_snow(self) -> None:
         """Pause the tick timer -- called while the modal is hidden."""
-        self._timer_paused = True
+        self._snow_should_run = False
         if self._snow_timer is not None:
             self._snow_timer.pause()
 
@@ -226,7 +234,7 @@ def _coerce_card_state(value: object) -> ConsoleSetupCardState:
 class ConsoleSetupModal(Vertical):
     """Console-scoped blocking overlay carrying the first-run setup card."""
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         kwargs.setdefault("id", "console-setup-modal")
         classes = kwargs.pop("classes", "")
         kwargs["classes"] = f"console-setup-modal-backdrop {classes}".strip()

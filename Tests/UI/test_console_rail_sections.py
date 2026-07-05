@@ -392,3 +392,39 @@ async def test_setup_modal_snow_timer_paused_until_blocking():
         )
         await pilot.pause()
         assert backdrop.timer_paused is False
+
+
+@pytest.mark.asyncio
+async def test_setup_backdrop_resume_before_mount_starts_timer_running():
+    # Regression: resume_snow() called before on_mount() creates the interval
+    # timer used to be a lost intent -- on_mount() unconditionally created the
+    # timer paused, so a resume() issued against the not-yet-existing timer
+    # never took effect. The widget must remember the intent and apply it once
+    # the timer exists.
+    backdrop = ConsoleSetupBackdrop(rng=random.Random(42))
+    backdrop.resume_snow()
+
+    class _ResumeBeforeMountApp(App):
+        def compose(self):
+            yield backdrop
+
+    app = _ResumeBeforeMountApp()
+    async with app.run_test(size=(40, 10)):
+        assert backdrop._snow_timer is not None
+        assert backdrop._snow_timer._active.is_set() is True
+        assert backdrop.timer_paused is False
+
+
+@pytest.mark.asyncio
+async def test_setup_backdrop_no_resume_intent_stays_paused_after_mount():
+    backdrop = ConsoleSetupBackdrop(rng=random.Random(42))
+
+    class _NoResumeApp(App):
+        def compose(self):
+            yield backdrop
+
+    app = _NoResumeApp()
+    async with app.run_test(size=(40, 10)):
+        assert backdrop._snow_timer is not None
+        assert backdrop._snow_timer._active.is_set() is False
+        assert backdrop.timer_paused is True
