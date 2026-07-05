@@ -151,6 +151,57 @@ async def test_home_details_toggle_persists():
     assert sections.get("details_open") is True
 
 
+@pytest.mark.asyncio
+async def test_home_rail_rows_truncate_titles_and_keep_source_line():
+    app = _build_test_app()
+    long_title = "Approval: publish the quarterly research chatbook digest"
+    app._home_dashboard_test_input = _triage_input(
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="wf:approve-long",
+                title=long_title,
+                source="Workflows",
+                status="pending_approval",
+                detail_route="workflows",
+                console_available=True,
+                updated_at=(datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat(),
+            ),
+        ),
+    )
+    host = HomeHarness(app)
+    async with host.run_test(size=TRIAGE_TEST_SIZE) as pilot:
+        home = _active_home_screen(host)
+        await _wait_for_selector(home, pilot, "#home-rail")
+        row = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == "wf:approve-long"
+        )
+        title_line, source_line = str(row.label).split("\n")
+        assert title_line.endswith("...")
+        assert long_title not in title_line
+        assert len(title_line) <= 26  # marker + glyph + 20-char visible title
+        assert "Workflows" in source_line
+        assert "3m" in source_line  # age moves to the source line, never clipped
+        assert row.tooltip and long_title in str(row.tooltip)
+
+
+@pytest.mark.asyncio
+async def test_home_canvas_actions_render_in_horizontal_toolbar():
+    from textual.containers import Horizontal
+
+    app = _build_test_app()
+    app._home_dashboard_test_input = _triage_input()
+    host = HomeHarness(app)
+    async with host.run_test(size=TRIAGE_TEST_SIZE) as pilot:
+        home = _active_home_screen(host)
+        await _wait_for_selector(home, pilot, "#home-canvas-actions")
+        toolbar = home.query_one("#home-canvas-actions .ds-toolbar")
+        assert isinstance(toolbar, Horizontal)
+        approve = home.query_one("#home-approve")
+        assert toolbar in approve.ancestors
+        assert not approve.has_class("ds-toolbar")
+
+
 def test_generated_stylesheet_includes_home_triage_rules():
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
     component_css = (root / "components" / "_agentic_terminal.tcss").read_text()

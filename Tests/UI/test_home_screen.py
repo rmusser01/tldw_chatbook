@@ -405,6 +405,7 @@ async def test_home_screen_shows_lightweight_agent_and_schedule_controls():
         await pilot.pause(HOME_MOUNT_PAUSE)
         home = _active_home_screen(host)
 
+        toolbar = home.query_one("#home-canvas-actions .ds-toolbar")
         for selector in [
             "#home-approve",
             "#home-reject",
@@ -414,7 +415,9 @@ async def test_home_screen_shows_lightweight_agent_and_schedule_controls():
             "#home-open-details",
             "#home-open-in-console",
         ]:
-            assert home.query_one(selector).has_class("ds-toolbar")
+            button = home.query_one(selector)
+            assert button.has_class("home-canvas-action")
+            assert toolbar in button.ancestors
 
 
 @pytest.mark.asyncio

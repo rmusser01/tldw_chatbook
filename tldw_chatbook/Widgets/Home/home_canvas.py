@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Static
 
 from tldw_chatbook.Home.dashboard_state import HomeCanvasState
@@ -66,12 +66,15 @@ class HomeCanvas(Vertical):
         action_row = Vertical(id="home-canvas-actions")
         action_row.styles.height = "auto"
         with action_row:
-            for control in self.canvas.actions:
-                yield self.action_button_factory(control.label, control.control_id)
-            if self.canvas.next_action_is_canvas:
-                yield self.action_button_factory(
-                    self.canvas.next_action.label, "home-primary-action"
-                )
+            toolbar = Horizontal(classes="ds-toolbar")
+            toolbar.styles.height = "auto"
+            with toolbar:
+                for control in self.canvas.actions:
+                    yield self.action_button_factory(control.label, control.control_id)
+                if self.canvas.next_action_is_canvas:
+                    yield self.action_button_factory(
+                        self.canvas.next_action.label, "home-primary-action"
+                    )
         if not self.canvas.next_action_is_canvas:
             yield Static(
                 f"Next: {self.canvas.next_action.label} — {self.canvas.next_action.reason}",

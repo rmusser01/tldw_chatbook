@@ -479,10 +479,21 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     min-width: 0;
     height: 2;
     min-height: 2;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
 }
 
 .home-rail-row-selected {
-    background: $ds-surface-raised;
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .home-rail-section-body {
@@ -509,10 +520,21 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 }
 
 #home-canvas-actions .ds-toolbar {
-    height: $ds-home-control-button-height;
+    height: auto;
     min-height: $ds-home-control-button-height;
     padding: 0 1;
     margin: 0;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+.home-canvas-action {
+    height: $ds-home-control-button-height;
+    min-height: $ds-home-control-button-height;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
     border: none;
 }
 

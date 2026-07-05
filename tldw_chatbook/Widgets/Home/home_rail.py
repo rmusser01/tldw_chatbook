@@ -14,6 +14,16 @@ from tldw_chatbook.Widgets.Console.console_rail_section import ConsoleRailSectio
 
 HOME_RAIL_ROW_PREFIX = "home-row-"
 
+_MAX_HOME_ROW_TITLE = 20
+
+
+def _visible_row_title(title: str) -> str:
+    """Return a rail-safe visible title that does not clip in narrow panes."""
+    readable = str(title).strip()
+    if len(readable) <= _MAX_HOME_ROW_TITLE:
+        return readable
+    return f"{readable[: _MAX_HOME_ROW_TITLE - 3].rstrip()}..."
+
 
 class HomeRail(Vertical):
     """Render the Home triage sections as selectable rows.
@@ -87,14 +97,20 @@ class HomeRail(Vertical):
                     for row in section.rows:
                         selected = row.row_id == self.triage.selected_row_id
                         marker = "▸" if selected else " "
-                        age = f"  {row.age_label}" if row.age_label else ""
+                        source_line = (
+                            f"{row.source} - {row.age_label}"
+                            if row.age_label
+                            else row.source
+                        )
                         button = Button(
-                            f"{marker} {row.glyph} {row.title}{age}\n   {row.source}",
+                            f"{marker} {row.glyph} {_visible_row_title(row.title)}"
+                            f"\n    {source_line}",
                             id=f"{HOME_RAIL_ROW_PREFIX}{row_index}",
                             classes="home-rail-row",
                             compact=True,
                         )
                         button.row_id = row.row_id
+                        button.tooltip = row.title
                         button.set_class(selected, "home-rail-row-selected")
                         button.styles.height = 2
                         button.styles.min_height = 2

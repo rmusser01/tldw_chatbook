@@ -197,13 +197,13 @@ class HomeScreen(BaseAppScreen):
             return HomeActionButton(
                 label,
                 id="home-primary-action",
-                classes="ds-toolbar",
+                classes="home-canvas-action",
                 fallback_press=self._activate_home_primary_action,
             )
         return HomeActionButton(
             label,
             id=control_id,
-            classes="ds-toolbar",
+            classes="home-canvas-action",
             fallback_press=lambda control_id=control_id: (
                 self._activate_home_control(control_id)
             ),
