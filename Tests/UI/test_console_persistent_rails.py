@@ -8,6 +8,9 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_console_internals_decomposition import (
+    _configure_native_ready_console,
+)
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
@@ -338,8 +341,11 @@ async def test_console_first_start_does_not_create_rail_state_config_on_read():
 
 
 @pytest.mark.asyncio
-async def test_console_first_start_right_handle_is_focusable():
+async def test_console_ready_right_handle_is_focusable():
+    # A blocked first start traps focus in the setup modal by design, so
+    # handle focusability is asserted in the ready (unblocked) state.
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(180, 48)) as pilot:
