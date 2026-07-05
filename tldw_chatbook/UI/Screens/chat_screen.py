@@ -7,7 +7,7 @@ import inspect
 import os
 from pathlib import Path
 import re
-from typing import Any, ClassVar, Dict, Iterable, Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 import uuid
 
 import toml
@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
-from textual.events import Click, DescendantFocus, Key, MouseUp, Paste
+from textual.events import Click, Key, MouseUp, Paste
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
@@ -230,47 +230,6 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Enter", "send"),
     ("Ctrl+P", "palette"),
 )
-CONSOLE_FOOTER_SHORTCUTS_BY_PANE: dict[str, tuple[tuple[str, str], ...]] = {
-    "composer": (
-        ("Ctrl+K", "Switch"),
-        ("Alt+M", "Model"),
-        ("Ctrl+T", "New tab"),
-        ("F6", "Panes"),
-        ("Ctrl+P", "Palette"),
-    ),
-    "transcript": (
-        ("↑/↓", "Select"),
-        ("C", "Copy"),
-        ("E", "Edit"),
-        ("R", "Regen"),
-        ("Esc", "Composer"),
-    ),
-    "rail": (
-        ("Enter", "Open"),
-        ("Ctrl+K", "Switch"),
-        ("Esc", "Composer"),
-        ("F6", "Panes"),
-    ),
-    "blocked": (
-        ("Enter", "Configure"),
-        ("Ctrl+P", "Palette"),
-    ),
-}
-
-
-def build_console_footer_shortcuts(pane: str) -> tuple[tuple[str, str], ...]:
-    """Return contextual Console footer shortcut hints for a Workbench pane.
-
-    Args:
-        pane: One of ``"composer"``, ``"transcript"``, ``"rail"``, ``"blocked"``.
-            Unrecognized values fall back to the composer hint set.
-
-    Returns:
-        At most five ``(key, label)`` pairs for the app footer status bar.
-    """
-    return CONSOLE_FOOTER_SHORTCUTS_BY_PANE.get(pane, CONSOLE_FOOTER_SHORTCUTS_BY_PANE["composer"])
-
-
 def _is_empty_select_value(value: Any) -> bool:
     """Return True for Textual's blank/null select sentinels."""
     return value is None or value == Select.BLANK or str(value).startswith("Select.")
@@ -406,12 +365,12 @@ class ChatScreen(BaseAppScreen):
             show=False,
             priority=True,
         ),
-        Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=False),
-        Binding("alt+m", "open_console_model_popover", "Model", show=False),
+        Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
+        Binding("alt+m", "open_console_model_popover", "Model", show=True),
         # NOT priority: widget-level escapes (transcript clear-selection, modal
         # dismiss) must keep winning before this screen-level fallback runs.
         Binding("escape", "focus_console_composer_home", "Composer", show=False),
-        Binding("ctrl+t", "new_console_tab", "New tab", show=False),
+        Binding("ctrl+t", "new_console_tab", "New tab", show=True),
         Binding("alt+1", "jump_console_tab(1)", "Tab 1", show=False),
         Binding("alt+2", "jump_console_tab(2)", "Tab 2", show=False),
         Binding("alt+3", "jump_console_tab(3)", "Tab 3", show=False),
@@ -805,20 +764,15 @@ class ChatScreen(BaseAppScreen):
                 self._focus_console_workbench_target(widget_id)
                 return
 
-    def _register_console_footer_shortcuts(self, pane: str = "composer") -> None:
-        """Register contextual Console Workbench shortcuts with the app footer.
-
-        Args:
-            pane: Focused Workbench pane bucket (``"composer"``, ``"transcript"``,
-                ``"rail"``, or ``"blocked"``) used to pick the hint set.
-        """
+    def _register_console_footer_shortcuts(self) -> None:
+        """Register Console Workbench shortcuts with the app footer if mounted."""
         try:
             footer = self.app.query_one(AppFooterStatus)
         except QueryError:
             return
         set_shortcuts = getattr(footer, "set_workbench_shortcuts", None)
         if callable(set_shortcuts):
-            set_shortcuts(source="console", shortcuts=build_console_footer_shortcuts(pane))
+            set_shortcuts(source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS)
 
     def _clear_console_footer_shortcuts(self) -> None:
         """Clear Console Workbench shortcuts from the app footer if mounted."""
@@ -916,6 +870,18 @@ class ChatScreen(BaseAppScreen):
         if self._console_setup_modal_blocking():
             return
         self.run_worker(self._create_native_console_session_from_active_context(), exclusive=False)
+
+    def action_open_console_session_settings(self) -> None:
+        """Open the full Console session settings modal, guarded by the setup modal.
+
+        Routes the command-palette "Console: Session settings…" entry through
+        the same blocking check every other Console action honors, instead of
+        the palette calling ``_open_console_settings`` directly and bypassing
+        the first-run setup modal.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(self._open_console_settings(), exclusive=False)
 
     async def action_jump_console_tab(self, number: int) -> None:
         """Jump directly to the Nth native Console session tab (Alt+1..9)."""
@@ -6744,44 +6710,6 @@ class ChatScreen(BaseAppScreen):
             focused,
             composer,
         ) or self._is_legacy_chat_input_focus(focused)
-
-    _CONSOLE_FOOTER_PANE_WIDGET_IDS: ClassVar[dict[str, str]] = {
-        "console-setup-modal": "blocked",
-        "console-native-composer": "composer",
-        "console-native-transcript": "transcript",
-        "console-transcript-surface": "transcript",
-        "console-left-rail": "rail",
-        "console-right-rail": "rail",
-        "console-context-rail-collapse": "rail",
-        "console-inspector-rail-collapse": "rail",
-        "console-context-rail-handle": "rail",
-        "console-inspector-rail-handle": "rail",
-    }
-
-    def _console_footer_pane_for_widget(self, widget: object | None) -> str:
-        """Map a focused descendant to its Console footer shortcut pane bucket.
-
-        Walks up from ``widget`` looking for a known composer/transcript/rail
-        widget id; falls back to ``"composer"`` when nothing matches (and to
-        ``"blocked"`` while the first-run setup modal is trapping focus).
-        """
-        current = widget
-        while current is not None:
-            widget_id = getattr(current, "id", None)
-            pane = self._CONSOLE_FOOTER_PANE_WIDGET_IDS.get(widget_id or "")
-            if pane is not None:
-                return pane
-            current = getattr(current, "parent", None)
-        return "composer"
-
-    def on_descendant_focus(self, event: DescendantFocus) -> None:
-        """Re-register contextual Console footer shortcuts as focus moves between panes."""
-        if self._console_setup_modal_blocking():
-            self._register_console_footer_shortcuts("blocked")
-            return
-        self._register_console_footer_shortcuts(
-            self._console_footer_pane_for_widget(event.widget)
-        )
 
     def on_key(self, event: Key) -> None:
         """Treat the Console composer as the default printable text target."""

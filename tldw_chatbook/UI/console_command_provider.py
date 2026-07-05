@@ -29,7 +29,7 @@ class ConsoleCommandProvider(Provider):
             ("Console: Focus composer", screen.action_focus_console_composer_home,
              "Return focus to the composer (Esc)"),
             ("Console: Session settings…",
-             lambda: screen.run_worker(screen._open_console_settings(), exclusive=False),
+             screen.action_open_console_session_settings,
              "Open the full session settings modal"),
         )
 

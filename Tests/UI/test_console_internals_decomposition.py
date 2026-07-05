@@ -3567,15 +3567,32 @@ async def test_alt_m_opens_model_popover_and_apply_updates_session_settings():
         assert host.screen_stack[-1].__class__.__name__ != "ConsoleModelPopover"
 
 
-def test_build_console_footer_shortcuts_per_pane():
-    from tldw_chatbook.UI.Screens.chat_screen import build_console_footer_shortcuts
-    composer = build_console_footer_shortcuts("composer")
-    assert ("Ctrl+K", "Switch") in composer and len(composer) <= 5
-    transcript = build_console_footer_shortcuts("transcript")
-    assert ("C", "Copy") in transcript and ("Esc", "Composer") in transcript
-    assert build_console_footer_shortcuts("blocked") == (
-        ("Enter", "Configure"), ("Ctrl+P", "Palette"),
-    )
+def test_console_keyboard_hints_visible_in_native_footer():
+    """Ctrl+K/Alt+M/Ctrl+T must surface via Textual's native Footer — the
+    only Console footer channel a user actually sees (the app-level
+    AppFooterStatus widget these bindings used to target sits on the
+    default screen and is occluded whenever the Console screen is pushed).
+    Escape and Alt+1..9 stay hidden: Escape shown at screen level would
+    clash-confuse with the transcript's own "esc Clear selection" hint, and
+    nine Alt-digit entries would flood the footer.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    bindings_by_key = {binding.key: binding for binding in ChatScreen.BINDINGS}
+
+    visible = {
+        "ctrl+k": "Switch session",
+        "alt+m": "Model",
+        "ctrl+t": "New tab",
+    }
+    for key, description in visible.items():
+        binding = bindings_by_key[key]
+        assert binding.show is True
+        assert binding.description == description
+
+    hidden_keys = ["escape"] + [f"alt+{n}" for n in range(1, 10)]
+    for key in hidden_keys:
+        assert bindings_by_key[key].show is False
 
 
 @pytest.mark.asyncio
@@ -3642,3 +3659,42 @@ async def test_console_command_provider_lists_commands_only_on_console():
         other = ConsoleCommandProvider(screen=_FakeScreen(), match_style=None)
         other_hits = [hit async for hit in other.search("switch session")]
         assert other_hits == []
+
+
+@pytest.mark.asyncio
+async def test_console_command_provider_session_settings_targets_guarded_action():
+    # Fix 3: the palette command must route through the guarded action
+    # (which checks _console_setup_modal_blocking()) rather than calling
+    # screen._open_console_settings() directly.
+    from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        provider = ConsoleCommandProvider(screen=console, match_style=None)
+        hits = [hit async for hit in provider.search("session settings")]
+        assert hits, "expected the session settings command to be listed"
+        matching = [hit for hit in hits if "Session settings" in str(hit.text)]
+        assert matching, "expected a 'Console: Session settings…' hit"
+        assert matching[0].command == console.action_open_console_session_settings
+
+
+@pytest.mark.asyncio
+async def test_console_session_settings_action_noop_while_setup_modal_blocking():
+    # With the first-run setup modal blocking, invoking the guarded action
+    # (as the palette command now does) must not open the settings modal.
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        assert modal.is_blocking
+
+        before_depth = len(host.screen_stack)
+        console.action_open_console_session_settings()
+        await pilot.pause(0.2)
+        assert len(host.screen_stack) == before_depth
+        assert host.screen_stack[-1].__class__.__name__ != "ConsoleSettingsModal"
