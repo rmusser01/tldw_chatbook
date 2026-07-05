@@ -273,16 +273,16 @@ Browse/Study/Actions cut):
 
 1. Sequencing: do Home/Library proceed now and inherit Console Phases 3–4
    (keyboard layer, visual pass) later, or wait? (Ctrl+K fuzzy-find is an
-   obvious Library synergy once Phase 3 lands.)
+   obvious Library synergy once Phase 3 lands.) - inherit later (they should be merged/done soon)
 2. Home detail routes: does `Open in Console` remain the primary detail
-   route for active work items, or does Home grow inline detail views?
+   route for active work items, or does Home grow inline detail views? - yes, open in console remains the primary route for console-related items, depends on which thing is triggering the alert, otherwise it maybe possible to allow for limited preview
 3. Notes integration stance: does Library ABSORB the Notes workbench as a
    canvas, or list/create notes and ROUTE to the existing Notes screen for
    editing? (Routing avoids duplicating a 3,278-line surface; absorbing
-   makes Library the single landing page the user described.)
+   makes Library the single landing page the user described.) - Absorb
 4. Porting logistics: the main-branch packages (`Widgets/Media/`,
    `Widgets/NewIngest/`, `Views/RAGSearch/`) must be brought onto dev (or
-   confirmed present/divergence-checked) before L2/L3 planning.
+   confirmed present/divergence-checked) before L2/L3 planning. - They need to be rebuilt following the new design/UI focus
 
 ## Next step
 
