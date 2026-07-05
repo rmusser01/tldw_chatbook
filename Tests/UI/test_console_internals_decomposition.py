@@ -3549,3 +3549,19 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker():
         assert "RAG/source:" not in text
         assert "Unavailable: Library Search/RAG retrieval." in text
         assert "Owner: Library retrieval service." in text
+
+
+@pytest.mark.asyncio
+async def test_ctrl_m_opens_model_popover_and_apply_updates_session_settings():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.press("ctrl+m")
+        await pilot.pause(0.2)
+        assert host.screen_stack[-1].__class__.__name__ == "ConsoleModelPopover"
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        assert host.screen_stack[-1].__class__.__name__ != "ConsoleModelPopover"

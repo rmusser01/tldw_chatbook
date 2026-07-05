@@ -153,6 +153,10 @@ from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
+from ...Widgets.Console.console_model_popover import (
+    CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
+    ConsoleModelPopover,
+)
 from ...Widgets.Console.console_rail_section import (
     CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
     ConsoleRailSectionHeader,
@@ -364,6 +368,7 @@ class ChatScreen(BaseAppScreen):
             priority=True,
         ),
         Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=False),
+        Binding("ctrl+m", "open_console_model_popover", "Model", show=False),
     ]
 
     def action_focus_next(self) -> None:
@@ -811,6 +816,31 @@ class ChatScreen(BaseAppScreen):
             ConsoleSessionSwitcherModal(rows=tuple(rows)),
             callback=self._apply_console_switcher_choice,
         )
+
+    async def action_open_console_model_popover(self) -> None:
+        """Open the Ctrl+M quick provider/model/temperature/streaming popover."""
+        if self._console_setup_modal_blocking():
+            return
+        settings = self._ensure_active_console_session_settings()
+        providers_models = await self._providers_models_for_console_settings(
+            settings.provider,
+            current_model=settings.model,
+        )
+        self.app.push_screen(
+            ConsoleModelPopover(settings=settings, providers_models=providers_models),
+            callback=self._apply_console_model_popover_result,
+        )
+
+    def _apply_console_model_popover_result(
+        self, result: "ConsoleSessionSettings | str | None"
+    ) -> None:
+        """Apply the popover result: sentinel opens full settings, else replaces settings."""
+        if result is None:
+            return
+        if result == CONSOLE_POPOVER_OPEN_FULL_SETTINGS:
+            self.run_worker(self._open_console_settings(), exclusive=False)
+            return
+        self._replace_active_console_session_settings(result)
 
     async def _apply_console_switcher_choice(
         self, choice: ConsoleSwitcherChoice | None

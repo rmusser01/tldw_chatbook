@@ -14,6 +14,11 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     ConsoleSetupCardState,
     ConsoleSetupStep,
 )
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Widgets.Console.console_model_popover import (
+    CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
+    ConsoleModelPopover,
+)
 from tldw_chatbook.Widgets.Console.console_rail_section import (
     CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
     ConsoleRailSectionHeader,
@@ -540,3 +545,56 @@ async def test_switcher_rapid_refresh_does_not_duplicate_ids():
         first = app.screen.query_one("#console-switcher-result-0", Button)
         assert "API refactor plan" in str(first.label)
         assert not list(app.screen.query("#console-switcher-result-1"))
+
+
+_POPOVER_PROVIDERS = {"llama_cpp": ["model-a", "model-b"], "openai": ["gpt-4o"]}
+
+
+class _PopoverApp(App):
+    def __init__(self):
+        super().__init__()
+        self.result = "unset"
+
+    async def on_mount(self) -> None:
+        settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+
+        def _capture(result):
+            self.result = result
+
+        await self.push_screen(
+            ConsoleModelPopover(
+                settings=settings, providers_models=_POPOVER_PROVIDERS
+            ),
+            callback=_capture,
+        )
+
+
+@pytest.mark.asyncio
+async def test_popover_apply_returns_replaced_settings():
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        model_select = app.screen.query_one("#console-popover-model")
+        model_select.value = "model-b"
+        await pilot.click("#console-popover-streaming")
+        await pilot.pause()
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        assert isinstance(app.result, ConsoleSessionSettings)
+        assert app.result.model == "model-b"
+        assert app.result.provider == "llama_cpp"
+        # ConsoleSessionSettings defaults streaming True; one toggle flips it.
+        assert app.result.streaming is False
+
+
+@pytest.mark.asyncio
+async def test_popover_full_settings_returns_sentinel_and_escape_cancels():
+    app = _PopoverApp()
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.click("#console-popover-full-settings")
+        await pilot.pause()
+        assert app.result == CONSOLE_POPOVER_OPEN_FULL_SETTINGS
+    app2 = _PopoverApp()
+    async with app2.run_test(size=(90, 30)) as pilot:
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app2.result is None
