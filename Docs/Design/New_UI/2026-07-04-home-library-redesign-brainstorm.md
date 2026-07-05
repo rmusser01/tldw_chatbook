@@ -50,12 +50,37 @@ Pain points:
 
 ### Library (`UI/Screens/library_screen.py`, 4,112 lines)
 
-A mode-chip hub with **nine flat modes**: sources, conversations, search,
-import-export, workspaces, collections, study, flashcards, quizzes. The hub
-mode is a read-only summary table (counts per content type) plus readiness
-copy and next-action cards.
+**Correction (user, 2026-07-04): the dev-branch Library screen is a
+placeholder/WIP, not the original.** The functionality Library is meant to
+usurp/integrate lives on `main` as four mature surfaces — Media, Ingestion,
+RAG/Search, and Notes (inventoried below). The redesign treats main's
+surfaces as the capability source of truth and the dev placeholder as
+disposable scaffolding.
 
-Pain points:
+The placeholder is a mode-chip hub with **nine flat modes**: sources,
+conversations, search, import-export, workspaces, collections, study,
+flashcards, quizzes. The hub mode is a read-only summary table (counts per
+content type) plus readiness copy and next-action cards.
+
+#### Integration inventory — what `main` has that Library must absorb
+
+| main surface | Shape | Capabilities | → Library verb section |
+|---|---|---|---|
+| **Media** — `UI/MediaWindow_v2.py` (1,754 ln) + `Widgets/Media/` package | Already modular: navigation panel (dynamic media types incl. "All Media", collapsible), search/list/viewer panels, ingestion-source panel | Browse by media type, per-type search, item list, full media viewer | **Browse ▸ Media** — nav types become Browse sub-filters; list panel = canvas list; viewer panel = canvas preview |
+| **Ingestion** — `UI/MediaIngestWindowRebuilt.py` (1,864 ln) + `Widgets/NewIngest/` | `LocalIngestionPanel` (SmartFileDropZone, UnifiedProcessor, ProcessingDashboard w/ started·complete·error lifecycle), `RemoteIngestionPanel` (per-media-type forms → tldw API), `WebClipperPanel`, `IngestionResultsPanel` | Local drop-zone ingestion with progress dashboard, remote API ingestion, web clipping, results review | **Ingest** — canvas hosts these panels (local / remote / clipper sub-entries); ProcessingDashboard lifecycle should also feed Home's `Running` rail section |
+| **RAG/Search** — `UI/Views/RAGSearch/` package | Window + mixins: search input, mode/scope selects, top-k params, source-filter checkboxes (Media/Conversations/Notes…), saved-searches panel, history dropdown, index/embeddings actions, search handoff | Cross-content RAG search with advanced options, saved searches, history, chat handoff | **Rail-top search input** (quick path) + **Search canvas** (advanced options, saved searches, history); source-filter checkboxes map 1:1 to Browse's content types |
+| **Notes** — `UI/Screens/notes_screen.py` on main (3,278 ln) | The already-rebuilt Console-parity Notes workbench (PR #501/#504 lineage) | Notes CRUD, templates, file sync | **Create ▸ New note** + **Browse ▸ Notes** — list/create/route from Library; do NOT duplicate the editor (open question below: absorb vs route) |
+
+The encouraging part: three of the four are already decomposed into
+posting-style packages (`Widgets/Media/`, `Widgets/NewIngest/`,
+`Views/RAGSearch/`) that can slot into the Library canvas model largely
+as-is. The redesign is mostly **composition + rail wiring + porting those
+packages to dev**, not rebuilding capabilities. (Verify during spec: how far
+dev has diverged from main in these packages, and whether flashcards/quizzes
+exist on main at all or are dev-side additions — they appear to be the
+latter.)
+
+Pain points (of the dev placeholder):
 1. Nine sibling chips hide structure: study/flashcards/quizzes are one
    family; search and import-export are actions, not places; workspaces is
    plumbing.
@@ -251,6 +276,13 @@ Browse/Study/Actions cut):
    obvious Library synergy once Phase 3 lands.)
 2. Home detail routes: does `Open in Console` remain the primary detail
    route for active work items, or does Home grow inline detail views?
+3. Notes integration stance: does Library ABSORB the Notes workbench as a
+   canvas, or list/create notes and ROUTE to the existing Notes screen for
+   editing? (Routing avoids duplicating a 3,278-line surface; absorbing
+   makes Library the single landing page the user described.)
+4. Porting logistics: the main-branch packages (`Widgets/Media/`,
+   `Widgets/NewIngest/`, `Views/RAGSearch/`) must be brought onto dev (or
+   confirmed present/divergence-checked) before L2/L3 planning.
 
 ## Next step
 
