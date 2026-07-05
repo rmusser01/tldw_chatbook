@@ -3622,3 +3622,23 @@ async def test_alt_digit_jumps_to_tab():
         await pilot.press("alt+1")
         await pilot.pause(0.4)
         assert store.active_session_id == first.id
+
+
+@pytest.mark.asyncio
+async def test_console_command_provider_lists_commands_only_on_console():
+    from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        provider = ConsoleCommandProvider(screen=console, match_style=None)
+        hits = [hit async for hit in provider.search("switch session")]
+        assert hits, "expected Console commands on the Console screen"
+
+        class _FakeScreen:  # not a ChatScreen
+            pass
+        other = ConsoleCommandProvider(screen=_FakeScreen(), match_style=None)
+        other_hits = [hit async for hit in other.search("switch session")]
+        assert other_hits == []
