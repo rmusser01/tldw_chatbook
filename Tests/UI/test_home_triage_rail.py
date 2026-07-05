@@ -149,3 +149,21 @@ async def test_home_details_toggle_persists():
         assert home.query_one("#home-rail-section-body-details").styles.display != "none"
     sections = app.app_config.get("home", {}).get("rail_state", {}).get("sections", {})
     assert sections.get("details_open") is True
+
+
+def test_generated_stylesheet_includes_home_triage_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for selector in (
+        "#home-triage-grid",
+        ".home-rail-row",
+        ".home-rail-row-selected",
+        ".home-rail-empty-copy",
+        "#home-next-action-callout",
+    ):
+        assert selector in component_css, selector
+        assert selector in generated_css, selector
+    for stale in ("#home-dashboard-grid", ".home-pane-divider", "#home-followup-row"):
+        assert stale not in component_css, stale
+        assert stale not in generated_css, stale
