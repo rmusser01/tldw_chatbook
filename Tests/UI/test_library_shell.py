@@ -29,14 +29,15 @@ class LibraryHarness(App):
         / "tldw_cli_modular.tcss"
     )
 
-    def __init__(self, app_instance, seen_routes=None):
+    def __init__(self, app_instance, seen_routes=None, screen=None):
         super().__init__()
         self.app_instance = app_instance
         self.seen_routes = seen_routes if seen_routes is not None else []
         self.seen_contexts = []
+        self._screen = screen
 
     async def on_mount(self) -> None:
-        await self.push_screen(LibraryScreen(self.app_instance))
+        await self.push_screen(self._screen or LibraryScreen(self.app_instance))
 
     def on_navigate_to_screen(self, message) -> None:
         self.seen_routes.append(message.screen_name)
@@ -348,6 +349,49 @@ async def test_library_shell_collections_row_loads_seeded_records():
         # Entering Collections via the rail row must load the snapshot with no
         # prior create/rename action; the seeded record renders in the canvas.
         screen.query_one("#library-row-browse-collections").press()
+        select_button = await _wait_for_selector(
+            screen, pilot, "#library-collection-select-0"
+        )
+
+        canvas = screen.query_one("#library-canvas")
+        assert canvas in select_button.ancestors
+        assert "Launch Evidence" in str(select_button.label)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_collections_deeplink_loads_before_mount():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.library_collections_service = StaticLibraryCollectionsService(
+        [
+            {
+                "collection_id": "collection-1",
+                "name": "Launch Evidence",
+                "description": "Sources for release review.",
+                "item_count": 3,
+                "source_authority": "local",
+                "sync_status": "local-only",
+                "updated_at": "2026-06-09T12:00:00Z",
+            }
+        ]
+    )
+    screen = LibraryScreen(app)
+
+    # Mirrors the real app.py ordering: handle_screen_navigation calls
+    # apply_navigation_context BEFORE switch_screen mounts the destination
+    # screen, so the screen is never mounted at this point.
+    assert screen.is_mounted is False
+    screen.apply_navigation_context({"mode": "collections"})
+
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # Deep-linking straight into Collections (no prior rail-row press)
+        # must still load the snapshot; the seeded record renders in the
+        # canvas without requiring any additional user interaction.
         select_button = await _wait_for_selector(
             screen, pilot, "#library-collection-select-0"
         )

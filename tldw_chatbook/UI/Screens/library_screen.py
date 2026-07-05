@@ -491,6 +491,12 @@ class LibraryScreen(BaseAppScreen):
             self._apply_source_snapshot_timeout,
         )
         self._refresh_local_source_snapshot()
+        if self._active_mode == "collections" and not self._library_collections_loaded:
+            # Deep-links that preset mode=collections call apply_navigation_context
+            # BEFORE the screen is mounted (see app.py handle_screen_navigation),
+            # so the is_mounted-guarded load there never fires. Kick the same
+            # snapshot load here once the canvas has actually been composed.
+            self.run_worker(self._sync_collections_panel(refresh_snapshot=True))
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.
