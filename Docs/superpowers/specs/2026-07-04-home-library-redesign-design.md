@@ -128,12 +128,11 @@ canvas → actions) to Home and Library:
   search replace them). The canvas empty state carries the landing
   guidance: `Search, pick a content type, or ingest something new.`
 - **Integration source of truth:** `main`'s four surfaces per the
-  brainstorm's inventory table. Three are already modular packages
-  (`Widgets/Media/`, `Widgets/NewIngest/`, `Views/RAGSearch/`) — the work is
-  porting them to dev (divergence check first) and wiring them into the
-  canvas, not rebuilding. Notes: Library lists/creates and ROUTES to the
-  Notes workbench for editing (recommended; absorb-vs-route is an open
-  question below).
+  brainstorm's inventory table — as CAPABILITY REFERENCES: their feature
+  inventories are the requirements, but each surface is REBUILT in the new
+  design language rather than ported (user decision, §6.4). Notes is
+  ABSORBED: Browse ▸ Notes hosts list/preview/EDIT in-Library and
+  Create ▸ New note creates in-Library (user decision, §6.3).
 
 ## 3. Architecture
 
@@ -169,20 +168,33 @@ canvas → actions) to Home and Library:
 - **L1 — Library shell:** rail (sections, counts, prefs, search input),
   Browse ▸ Conversations canvas (dev already has the browser state), chips
   and hub retired.
-- **L2 — Browse ▸ Media + Notes + Collections:** port `Widgets/Media/`,
-  wire viewer preview; Notes listing + routing.
-- **L3 — Search + Ingest + Create:** port `Views/RAGSearch/` and
-  `Widgets/NewIngest/`; Create section with due-counts; Home `Running`
-  integration.
+- **L2 — Browse ▸ Media + Notes + Collections:** rebuild the media
+  browser/viewer to the new design (capability parity with
+  `Widgets/Media/`); absorb the Notes workbench as the Notes canvas
+  (list/preview/edit in-Library).
+- **L3 — Search + Ingest + Create:** rebuild RAG search and ingestion
+  surfaces to the new design (capability parity with `Views/RAGSearch/`
+  and `Widgets/NewIngest/`); Create section with due-counts; Home
+  `Running` integration.
 
-## 6. Open questions (answer before the corresponding plan)
+## 6. Resolved decisions (user, 2026-07-04)
 
-1. **Sequencing** vs Console Phases 3–4 (keyboard layer is in flight;
-   Ctrl+K fuzzy-find should extend to Library content once both exist).
-2. **Home detail routes:** `Open in Console` stays primary, or inline Home
-   detail views later?
-3. **Notes absorb vs route** (spec recommends route; absorb would make
-   Library the literal single landing page at the cost of duplicating a
-   3,278-line workbench).
-4. **Dev/main divergence** of the three portable packages — must be audited
-   in L2/L3 planning (they may already exist on dev in some form).
+1. **Sequencing:** proceed now; Home/Library inherit Console Phases 3–4
+   conventions (keyboard layer, visual pass) as those merge — do not wait.
+   Ctrl+K fuzzy-find extends to Library content once both exist.
+2. **Home detail routes:** `Open in Console` remains the primary route for
+   console-origin items; routing is per-alert-source (each rail row carries
+   its `detail_route`); limited inline preview in the Home canvas is
+   permitted where a full destination hop isn't warranted.
+3. **Notes: ABSORB.** The Notes workbench becomes a Library canvas
+   (Browse ▸ Notes for list/preview/edit; Create ▸ New note creates
+   in-Library). §2's "route to Notes screen" recommendation is superseded.
+   Consequence to confirm at L2 approval: the standalone Notes tab
+   deprecates once absorption ships (flagged, not yet decided).
+4. **Rebuild, not port.** The `main` packages (`Widgets/Media/`,
+   `Widgets/NewIngest/`, `Views/RAGSearch/`) serve as CAPABILITY
+   REFERENCES only — their feature inventories are requirements, but the
+   implementations are rebuilt in the new design language (pure-state
+   modules + posting-style widgets + rail/canvas model). This enlarges
+   L2/L3 relative to the earlier porting assumption; phase plans size
+   accordingly.
