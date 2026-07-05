@@ -146,7 +146,7 @@ def test_shell_sections_rows_and_targets_are_fixed():
     assert shell.sections[1].rows[0].target_id == TAB_NOTES
     ingest = shell.sections[2]
     assert ingest.rows[0].target_id == TAB_INGEST
-    assert ingest.rows[1] == ingest.rows[1]  # frozen dataclass equality sanity
+    assert (ingest.rows[1].target_kind, ingest.rows[1].target_id) == ("mode", "import-export")
     assert all(r.count is None for r in shell.sections[1].rows)
 
 
@@ -267,10 +267,7 @@ Rules: record id from first present of keys `("id", "conversation_id", "uuid")` 
   - `LibraryRail(Vertical)` — `__init__(self, shell: LibraryShellState, preferences: LibraryRailPreferences, **kwargs)`, `sync_state(shell, preferences)`. Composes: `Input(placeholder="Search conversations…", id="library-search-input")` at top; per section a `ConsoleRailSectionHeader(title, section_id=f"library-{section_id}", open=..., id=f"library-rail-section-header-{section_id}")` + body `Vertical(id=f"library-rail-section-body-{section_id}", classes="library-rail-section-body")` of row Buttons; then the Details header + body of `details_lines` Statics. Row buttons: id `f"library-row-{row.row_id}"`, classes `"library-rail-row"` (+ `"library-rail-row-selected"` when `row.row_id == shell.selected_row_id`), compact, height 2, label `f"{marker} {visible_title}{count_suffix}\n    {section_hint}"` — marker `▸`/space; count_suffix `f" ({row.count})"` known / `f" ({row.count}+)"` unknown / `""` when None; second line: `"open list"` for canvas/mode rows, `"opens {target screen title}"` for screen rows is over-specified — use exactly `row.target_kind == "screen" and "opens screen" or "in Library"`. Tooltip = full title. Button attrs: `button.row_id`, `button.target_kind`, `button.target_id` (screen dispatch reads these).
   - `LibraryConversationsCanvas(Vertical)` — `__init__(self, canvas: LibraryConversationsCanvasState, **kwargs)`, `sync_state(canvas)`. Composes: `Static(id="library-conversations-status")` (status/empty copy, hidden when blank); list `Vertical(id="library-conversations-list")` of row Buttons id `f"library-conversation-row-{index}"`, classes `"library-conversation-row"` (+ `-selected`), compact, height 2, label `f"{marker} {visible_title}\n    {row.secondary}"`, tooltip full title, attr `button.conversation_id`; preview `Vertical(id="library-conversation-preview")` with `Static(id="library-conversation-preview-lines")` joining preview_lines and an action row `Horizontal(classes="ds-toolbar")` containing `Button("Open in Console", id="library-conversation-open-console", classes="library-canvas-action", compact=True)`. Preview hidden when no selection.
 
-No dedicated widget-only test task — Task 5's pilot tests cover both widgets under the real stylesheet (H1 precedent: widgets and screen land together, tests at the pilot level).
-
-- [ ] **Step 1: Implement both widgets** per Interfaces (they cannot be tested before the screen hosts them; the RED step lives in Task 5).
-- [ ] **Step 2: Commit** `feat(library): rail and conversations canvas widgets` (widgets only; screen wiring next).
+No separate steps or commit for this task: it defines the widget interfaces only. Implementation happens inside Task 5 Step 3, driven RED→GREEN by Task 5's pilot tests, and lands in Task 5's commit (H1 precedent: widgets and screen land together, tests at the pilot level).
 
 ---
 
