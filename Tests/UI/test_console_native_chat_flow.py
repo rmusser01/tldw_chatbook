@@ -5698,3 +5698,61 @@ def test_native_console_state_restore_tolerates_legacy_payload_without_updated_a
     assert restored_session.updated_at
     restored_dt = datetime.fromisoformat(restored_session.updated_at)
     assert before <= restored_dt <= after
+
+
+@pytest.mark.asyncio
+async def test_ctrl_k_opens_session_switcher_and_activates_native_session():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        # Create a second native session so there is something to switch to.
+        await pilot.click("#console-new-chat-tab")
+        await pilot.pause(0.2)
+        store = console._console_chat_store
+        first_session = store.sessions()[0]
+        assert store.active_session_id != first_session.id
+
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.2)
+        assert host.screen_stack[-1].__class__.__name__ == "ConsoleSessionSwitcherModal"
+        query = host.screen_stack[-1].query_one("#console-switcher-query")
+        assert host.focused is query
+        # First entry is the ACTIVE session; pick the other one by typing its
+        # distinguishing token. Default session titles ("Chat 1", "Chat 2")
+        # share their first word, so the trailing number is what disambiguates.
+        await pilot.press(*first_session.title.split()[-1].lower())
+        await pilot.pause(0.2)
+        await pilot.press("enter")
+        await pilot.pause(0.3)
+        assert store.active_session_id == first_session.id
+
+
+@pytest.mark.asyncio
+async def test_ctrl_k_is_inert_while_setup_modal_blocks():
+    app = _build_test_app()  # blocked: no provider ready
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.2)
+        assert host.screen_stack[-1] is console
+
+
+@pytest.mark.asyncio
+async def test_switcher_rename_choice_chains_to_rename_modal():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await pilot.press("ctrl+k")
+        await pilot.pause(0.2)
+        await pilot.press("f2")
+        await pilot.pause(0.3)
+        assert host.screen_stack[-1].__class__.__name__ == "ConsoleRenameSessionModal"
+        await pilot.press("escape")

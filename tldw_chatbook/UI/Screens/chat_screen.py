@@ -157,6 +157,10 @@ from ...Widgets.Console.console_rail_section import (
     CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
     ConsoleRailSectionHeader,
 )
+from ...Widgets.Console.console_session_switcher_modal import (
+    ConsoleSessionSwitcherModal,
+    ConsoleSwitcherChoice,
+)
 from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
 from ...Widgets.Console.console_workbench_state import build_console_workbench_state
 from ...Workspaces.display_state import (
@@ -359,6 +363,7 @@ class ChatScreen(BaseAppScreen):
             show=False,
             priority=True,
         ),
+        Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=False),
     ]
 
     def action_focus_next(self) -> None:
@@ -791,6 +796,58 @@ class ChatScreen(BaseAppScreen):
             ConsoleRenameSessionModal(title=session.title),
             callback=_apply_rename,
         )
+
+    def action_open_console_session_switcher(self) -> None:
+        """Open the Ctrl+K fuzzy session switcher."""
+        if self._console_setup_modal_blocking():
+            return
+        rows = [
+            *self._native_console_browser_rows(),
+            *self._membership_console_browser_rows(),
+        ]
+        persisted_rows, _total, _error = self._sync_persisted_console_browser_rows()
+        rows.extend(persisted_rows)
+        self.app.push_screen(
+            ConsoleSessionSwitcherModal(rows=tuple(rows)),
+            callback=self._apply_console_switcher_choice,
+        )
+
+    async def _apply_console_switcher_choice(
+        self, choice: ConsoleSwitcherChoice | None
+    ) -> None:
+        """Apply a switcher selection through the existing activation seams.
+
+        Mirrors the session-tab click handler's activation sequence
+        (``chat_screen.py`` ``console-session-tab-`` branch): set the active
+        workspace, switch the native session, then await the UI sync and
+        force composer focus. That branch is itself a plain ``async`` method
+        awaited directly (no worker), so this callback follows suit instead
+        of the run_worker-wrapped sketch in the task brief — Textual awaits
+        ``push_screen`` result callbacks directly via its message pump, so no
+        worker is required here either.
+        """
+        if choice is None:
+            return
+        entry = choice.entry
+        if choice.kind == "rename" and entry.native_session_id:
+            self._open_console_session_rename_modal(entry.native_session_id)
+            return
+        if choice.kind != "activate":
+            return
+        if entry.native_session_id:
+            controller = self._ensure_console_chat_controller()
+            if controller.store.active_session_id != entry.native_session_id:
+                self._set_active_workspace_for_console_session(entry.native_session_id)
+                controller.switch_session(entry.native_session_id)
+                await self._sync_native_console_chat_ui()
+            self._focus_console_composer_if_needed(force=True)
+            return
+        if entry.conversation_id:
+            await self._resume_console_workspace_conversation(
+                entry.conversation_id,
+                target_scope_type=entry.scope_type or None,
+                target_workspace_id=entry.workspace_id,
+            )
 
     async def _create_native_console_session_from_active_context(self) -> None:
         """Create and focus a native Console session in the active workspace context."""
