@@ -463,20 +463,24 @@ async def _wait_for_wc_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
 
 
 async def _wait_for_library_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
+    """Wait for the Library rail shell to finish its async source-count load.
+
+    Mirrors ``Tests/UI/test_library_shell.py::_wait_for_library_shell`` for
+    suites (like this one) that mount Library through the generic
+    ``DestinationHarness`` instead of the dedicated ``LibraryHarness``. The
+    retired 3-pane hub's terminal selectors (``#library-source-error``,
+    ``#library-source-empty``, the per-source summary ids) never mount under
+    the rail + canvas shell, so readiness is keyed off ``_library_loaded``
+    and the rail itself.
+    """
     deadline = time.monotonic() + timeout
-    terminal_selectors = (
-        "#library-source-error",
-        "#library-source-empty",
-        "#library-notes-summary",
-        "#library-media-summary",
-        "#library-conversations-summary",
-    )
     while time.monotonic() < deadline:
-        if any(screen.query(selector) for selector in terminal_selectors):
+        if getattr(screen, "_library_loaded", False) and screen.query("#library-rail"):
+            await pilot.pause()
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for Library snapshot. Visible text: {_visible_text(screen)}")
+    raise AssertionError(f"Library shell never loaded. Visible text: {_visible_text(screen)}")
 
 
 async def _wait_for_skills_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -585,7 +589,12 @@ def _custom_policy_recovery_state(exc, *, unavailable_what, stable_selector, pol
 @pytest.mark.parametrize(
     ("route", "title_id", "purpose_text"),
     [
-        ("library", "#library-title", "source material"),
+        # Library's Console-rail redesign replaced the shared
+        # title+purpose destination header with its own header line
+        # (#library-header-line); the landing canvas still carries a
+        # `.destination-purpose` line, just with Library's own copy instead
+        # of the generic "source material" phrasing artifacts/personas use.
+        ("library", "#library-header-line", "content type"),
         ("artifacts", "#artifacts-title", "generated"),
         ("personas", "#personas-title", "behavior"),
     ],
@@ -601,7 +610,8 @@ async def test_primary_destination_wrappers_mount(route, title_id, purpose_text)
 
         title = screen.query_one(title_id)
         assert title
-        assert title.has_class("ds-destination-header")
+        if route != "library":
+            assert title.has_class("ds-destination-header")
         assert purpose_text in _static_text(screen.query_one(".destination-purpose", Static)).lower()
         assert screen.query_one(".ds-panel")
 
@@ -842,17 +852,31 @@ async def test_library_exposes_source_sections_and_import_export_boundary():
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
 
+        # The retired hub's per-source open buttons and mode-search chip are
+        # dead; the rail rows are the surviving reachable surface for the
+        # same source sections and Search/RAG mode.
         for selector in [
-            "#library-open-notes",
-            "#library-open-media",
-            "#library-open-conversations",
-            "#library-open-import-export",
-            "#library-mode-search",
+            "#library-row-browse-notes",
+            "#library-row-browse-media",
+            "#library-row-browse-conversations",
+            "#library-row-ingest-import-export",
+            "#library-row-browse-search",
         ]:
             assert screen.query_one(selector)
+
+        # The Import/Export ownership-boundary copy survives on the mode
+        # canvas reached from the Ingest ▸ Import/Export row.
+        screen.query_one("#library-row-ingest-import-export", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert (
+            "Library owns source acquisition framing; Ingest and Media own deeper file handling."
+            in _visible_text(screen)
+        )
 
 
 @pytest.mark.asyncio
@@ -885,19 +909,16 @@ async def test_library_destination_lists_local_source_snapshot_from_services():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await _wait_for_visible_text(screen, pilot, "Notes: 2")
+        await _wait_for_visible_text(screen, pilot, "Notes (2)")
         text = _visible_text(screen)
         button = screen.query_one("#library-use-in-console", Button)
 
-        assert "Library Content Hub" in text
-        assert "Source overview, retrieval readiness, movement paths, and next action." in text
-        assert "Notes: 2" in text
-        assert "Media: 1" in text
-        assert "Conversations: 1" in text
-        assert "Research Note" in text
-        assert "Transcript A" in text
-        assert "Planning Chat" in text
-        assert "Console handoff is secondary" in text
+        # The retired "Library snapshot" hub copy has no successor; the rail
+        # row counts are the surviving surface for "services feed real
+        # counts" and the linked-workspace items keep Console handoff live.
+        assert "Notes (2)" in text
+        assert "Media (1)" in text
+        assert "Conversations (1)" in text
         assert button.disabled is False
 
     assert app.notes_scope_service.calls[0] == {
@@ -931,8 +952,17 @@ async def test_library_destination_empty_state_disables_console_handoff():
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
         button = screen.query_one("#library-use-in-console", Button)
+        text = _visible_text(screen)
 
-        assert "No local Library content yet." in _visible_text(screen)
+        # The retired "No local Library content yet." hub copy has no
+        # successor as standalone canvas text; the landing canvas purpose
+        # line plus the zero-state rail row counts carry the same "there is
+        # nothing here yet" signal, and Console handoff stays disabled.
+        assert "Search, pick a content type, or ingest something new." in text
+        assert "Notes (0)" in text
+        assert "Media (0)" in text
+        assert "Conversations (0)" in text
+        assert screen.query_one("#library-canvas-landing")
         assert button.disabled is True
         assert "Stage Library source context" in str(button.tooltip)
 
@@ -958,14 +988,16 @@ async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await _wait_for_visible_text(screen, pilot, "Notes 5+")
+        await _wait_for_visible_text(screen, pilot, "Notes (5+)")
         text = _visible_text(screen)
 
-        assert "Notes 5+" in text
-        assert "Notes: 5+" in text
-        assert "Notes (showing up to 5): 5" not in text
-        assert "Research Note 1" in text
-        assert "Research Note 6" not in text
+        # The retired hub's "Notes: 5+" line has no successor as standalone
+        # canvas text; the rail row count suffix is the surviving surface
+        # that distinguishes a capped sample ("(5+)") from an exact count
+        # ("(n)"). The sample-vs-exact contract itself is asserted below via
+        # the Console handoff payload, which still carries the exact titles.
+        assert "Notes (5+)" in text
+        assert "Notes (5)" not in text
 
         screen.query_one("#library-use-in-console", Button).press()
         await pilot.pause(0.1)
@@ -1015,11 +1047,19 @@ async def test_library_policy_denial_uses_runtime_recovery_taxonomy():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        error = screen.query_one("#library-source-error", Static)
+        # The retired #library-source-error Static never mounts under the
+        # rail shell; the same lookup-error taxonomy copy now renders on the
+        # Details rail body instead (see test_library_status_row_preserves_
+        # policy_recovery_status in test_product_maturity_phase3_library_
+        # contract_layout.py for the sibling re-anchor of this surface).
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        details_body = screen.query_one("#library-details-body", Static)
         button = screen.query_one("#library-use-in-console", Button)
 
         _assert_policy_recovery_copy(
-            visible_text=_static_text(error),
+            visible_text=_static_text(details_body),
             button=button,
             status_label="Wrong source",
             unavailable_what="Use Library sources in Console",
@@ -1045,10 +1085,18 @@ async def test_library_policy_denial_uses_recovery_state_selector(monkeypatch):
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#custom-library-source-error")
+        await _wait_for_library_snapshot(screen, pilot)
+        # The retired #custom-library-source-error id (a stable_selector-
+        # derived dynamic id) never mounts under the rail shell; the custom
+        # recovery state's copy renders on the surviving Details rail body
+        # surface instead, and the disabled tooltip still reflects it.
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        details_body = screen.query_one("#library-details-body", Static)
         button = screen.query_one("#library-use-in-console", Button)
 
-        assert "Custom policy state" in _visible_text(screen)
+        assert "Custom policy state" in _static_text(details_body)
         assert button.tooltip == "Custom policy tooltip."
 
 
@@ -1076,8 +1124,16 @@ async def test_library_use_in_console_uses_source_snapshot_context():
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
-        await pilot.click("#library-use-in-console")
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        # #library-use-in-console now lives in the Workspaces body under the
+        # Details rail section, which starts collapsed and, once open, can
+        # scroll the button below the visible viewport; press it directly
+        # rather than simulating a pointer click at an on-screen offset.
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#library-use-in-console", Button).press()
         await pilot.pause(0.1)
 
     app.open_chat_with_handoff.assert_called_once()
@@ -1101,8 +1157,11 @@ async def test_library_use_in_console_uses_source_snapshot_context():
 @pytest.mark.parametrize(
     ("route", "selector", "target_route"),
     [
-        ("library", "#library-open-notes", "notes"),
-        ("library", "#library-open-media", "media"),
+        # The retired hub's #library-open-notes/#library-open-media buttons
+        # are dead; the rail rows are the surviving surface that still emit
+        # the same NavigateToScreen compatibility routes.
+        ("library", "#library-row-browse-notes", "notes"),
+        ("library", "#library-row-browse-media", "media"),
         ("artifacts", "#artifacts-open-chatbooks", "chatbooks"),
         # The Personas destination is now a native workbench and no longer
         # hands off to the legacy CCP route via #personas-open-profiles.
@@ -1136,12 +1195,16 @@ async def test_library_conversations_action_switches_to_native_mode_without_rout
     async with host.run_test(size=(160, 40)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#library-open-conversations")
-        await pilot.click("#library-open-conversations")
-        await _wait_for_selector(screen, pilot, "#library-conversations-browser-title")
+        # The retired #library-open-conversations button and its
+        # #library-conversations-browser-title / "Conversations mode" copy
+        # are dead; the Browse ▸ Conversations rail row is the surviving
+        # trigger, and the conversations canvas mounting is the successor
+        # signal that the native (non-route) mode switch happened.
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
 
         assert getattr(screen, "_active_mode") == "conversations"
-        assert "Conversations mode" in _visible_text(screen)
+        assert screen.query_one("#library-conversations-canvas")
 
     assert seen_routes == []
 
@@ -1158,8 +1221,10 @@ async def test_library_import_export_action_switches_to_native_mode_without_rout
     async with host.run_test(size=(160, 40)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#library-open-import-export")
-        screen.query_one("#library-open-import-export", Button).press()
+        # The retired #library-open-import-export button is dead; the
+        # Ingest ▸ Import/Export rail row is the surviving trigger for the
+        # same native mode switch.
+        screen.query_one("#library-row-ingest-import-export", Button).press()
         await _wait_for_selector(screen, pilot, "#library-import-export-workflow-title")
 
         assert getattr(screen, "_active_mode") == "import-export"
@@ -1180,9 +1245,12 @@ async def test_library_import_export_dedicated_import_action_emits_ingest_route(
     async with host.run_test(size=(160, 40)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        screen.query_one("#library-open-import-export", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-import-export-open-ingest")
-        screen.query_one("#library-import-export-open-ingest", Button).press()
+        # The in-canvas #library-import-export-open-ingest button lived only
+        # in the never-mounted #library-action-region and is dead; the
+        # always-reachable Ingest ▸ Import media rail row is the surviving
+        # trigger for the same Ingest route (no Import/Export mode entry
+        # required first -- the rail row is visible regardless of mode).
+        screen.query_one("#library-row-ingest-import-media", Button).press()
         await _wait_for_route(seen_routes, "ingest", pilot)
 
     assert seen_routes[-1] == "ingest"
@@ -1195,13 +1263,17 @@ async def test_library_search_action_switches_to_search_mode_without_route_hando
     host = DestinationHarness(app, "library", seen_routes)
 
     async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
-        await pilot.click("#library-mode-search")
-        await pilot.pause(0.1)
+        await _wait_for_library_snapshot(screen, pilot)
+        # The retired #library-mode-search chip and its "Library |
+        # Search/RAG |" title text are dead (no mode-chip strip is rendered
+        # at all); the Browse ▸ Search/RAG rail row is the surviving
+        # trigger, and the Search/RAG panel mounting in the canvas is the
+        # successor signal for the native (non-route) mode switch.
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
         assert getattr(screen, "_active_mode") == "search"
-        assert "Library | Search/RAG |" in _visible_text(screen)
 
     assert seen_routes == []
 
