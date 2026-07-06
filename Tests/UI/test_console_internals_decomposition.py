@@ -415,8 +415,10 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         assert "visible composer text" in _visible_text(composer)
         for action_button in (send_button, stop_button, attach_button, save_button):
             assert action_button.compact is True
-            assert action_button.region.height == 1
-            assert action_button.region.y + action_button.region.height <= composer.region.y + composer.region.height
+            # Stop button is hidden when not running, so it has no valid region
+            if action_button is not stop_button or composer._run_active:
+                assert action_button.region.height == 1
+                assert action_button.region.y + action_button.region.height <= composer.region.y + composer.region.height
         assert str(send_button.label) == "Send"
         assert str(stop_button.label) == "Stop"
         assert str(attach_button.label) == "Attach"
@@ -791,8 +793,12 @@ async def test_console_composer_actions_remain_visible_inside_composer_bounds():
         assert actions.region.x > visible_draft.region.x
         assert actions.region.x + actions.region.width <= composer_right
         for button in (send_button, stop_button, attach_button, save_button):
-            assert button.display is True
-            assert button.region.x + button.region.width <= composer_right
+            # Stop button is hidden when not running, others remain visible
+            if button is stop_button:
+                assert button.display is False
+            else:
+                assert button.display is True
+                assert button.region.x + button.region.width <= composer_right
 
         assert str(save_button.label) == "Save"
         assert save_button.tooltip == "No Chatbook artifact is available to save yet."
@@ -824,6 +830,25 @@ async def test_console_composer_save_chatbook_routes_available_artifact_action()
 
     assert len(handled_launches) == 1
     assert handled_launches[0].payload["target_id"] == "local:chatbook:77"
+
+
+@pytest.mark.asyncio
+async def test_console_stop_button_hidden_unless_streaming():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        stop = console.query_one("#console-stop-generation")
+        assert stop.styles.display == "none"
+        composer = console.query_one("#console-native-composer")
+        composer.sync_action_state(has_draft=True, run_active=True, can_save_chatbook=False)
+        await pilot.pause()
+        assert stop.styles.display != "none"
+        composer.sync_action_state(has_draft=False, run_active=False, can_save_chatbook=False)
+        await pilot.pause()
+        assert stop.styles.display == "none"
 
 
 @pytest.mark.asyncio

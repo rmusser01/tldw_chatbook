@@ -292,6 +292,7 @@ class ConsoleComposerBar(Horizontal):
         stop_button.set_class(run_active, "console-stop-active")
         stop_button.set_class(not run_active, "console-stop-idle")
         stop_button.set_class(not run_active, "console-action-disabled")
+        stop_button.styles.display = "block" if run_active else "none"
 
         attach_button.disabled = False
         attach_button.variant = "default"
