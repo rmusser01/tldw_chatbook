@@ -92,6 +92,7 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkSourceReadinessState,
     ConsoleLiveWorkStatusCardState,
 )
+from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSE_RIGHT
 from ...Chat.console_rail_state import (
     CONSOLE_RAIL_SECTION_IDS,
     ConsoleRailPreferences,
@@ -4828,7 +4829,7 @@ class ChatScreen(BaseAppScreen):
                         rail_label.styles.width = "1fr"
                         yield rail_label
                         collapse_button = Button(
-                            "<",
+                            GLYPH_COLLAPSE_LEFT,
                             id="console-context-rail-collapse",
                             classes="console-rail-collapse-button",
                             compact=True,
@@ -5031,7 +5032,7 @@ class ChatScreen(BaseAppScreen):
                         rail_label.styles.width = "1fr"
                         yield rail_label
                         collapse_button = Button(
-                            ">",
+                            GLYPH_COLLAPSE_RIGHT,
                             id="console-inspector-rail-collapse",
                             classes="console-rail-collapse-button",
                             compact=True,
@@ -5073,9 +5074,9 @@ class ChatScreen(BaseAppScreen):
                     side="right",
                     id="console-inspector-rail-handle",
                 )
-                right_handle.styles.width = 11
-                right_handle.styles.min_width = 11
-                right_handle.styles.max_width = 11
+                right_handle.styles.width = 12
+                right_handle.styles.min_width = 12
+                right_handle.styles.max_width = 12
                 if rail_state.right_open:
                     right_handle.styles.display = "none"
                 yield self._frame_console_region(right_handle, variant="quiet")

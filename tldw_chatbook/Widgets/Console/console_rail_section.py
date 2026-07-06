@@ -8,6 +8,8 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSED, GLYPH_EXPANDED
+
 CONSOLE_RAIL_SECTION_TOGGLE_PREFIX = "console-rail-section-toggle-"
 
 
@@ -73,7 +75,7 @@ class ConsoleRailSectionHeader(Horizontal):
         toggle.tooltip = self._toggle_tooltip()
 
     def _toggle_label(self) -> str:
-        return "-" if self.open else "+"
+        return GLYPH_EXPANDED if self.open else GLYPH_COLLAPSED
 
     def _toggle_tooltip(self) -> str:
         return f"Collapse {self.title}" if self.open else f"Expand {self.title}"

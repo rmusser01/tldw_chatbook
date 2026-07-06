@@ -275,11 +275,11 @@ def test_generated_console_stylesheet_includes_rail_rules():
 
         right_handle = _css_block(css, ".console-rail-handle-right")
         right_button = _css_block(css, ".console-rail-handle-button-right")
-        assert "width: 11;" in right_handle
-        assert "min-width: 11;" in right_handle
-        assert "max-width: 11;" in right_handle
-        assert "width: 11;" in right_button
-        assert "max-width: 11;" in right_button
+        assert "width: 12;" in right_handle
+        assert "min-width: 12;" in right_handle
+        assert "max-width: 12;" in right_handle
+        assert "width: 12;" in right_button
+        assert "max-width: 12;" in right_button
 
 
 def test_generated_console_stylesheet_includes_rail_section_rules():
@@ -319,7 +319,7 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
         assert _is_displayed(console.query_one("#console-inspector-rail-handle"))
         right_handle = console.query_one("#console-inspector-rail-handle")
         assert right_handle.has_class("console-rail-handle-right")
-        assert right_handle.region.width == 11
+        assert right_handle.region.width == 12
         _assert_right_handle_lightweight(console)
         open_button = console.query_one("#console-inspector-rail-open", Button)
         assert str(open_button.label) == "Inspector"
@@ -390,7 +390,7 @@ async def test_console_context_rail_collapse_hides_left_rail_and_expands_main_co
         assert left_handle.has_class("console-rail-handle-left")
         _assert_handle_button_contained(left_handle)
         open_button = console.query_one("#console-context-rail-open", Button)
-        assert str(open_button.label) == "Context >"
+        assert str(open_button.label) == "Context ▸"
         assert open_button.tooltip == "Open Context rail"
         assert (
             await _wait_for_main_column_width_change(
@@ -414,7 +414,7 @@ async def test_console_visible_rail_headers_are_left_aligned_and_collapse_button
         context_title = console.query_one("#console-context-rail-title", Static)
         context_collapse = console.query_one("#console-context-rail-collapse", Button)
         assert context_title.has_class("console-rail-title")
-        assert str(context_collapse.label) == "<"
+        assert str(context_collapse.label) == "◂"
         assert context_collapse.tooltip == "Collapse Context rail"
         assert context_collapse.region.width >= 3
         assert context_title.region.x < context_collapse.region.x
@@ -425,7 +425,7 @@ async def test_console_visible_rail_headers_are_left_aligned_and_collapse_button
         inspector_title = console.query_one("#console-inspector-rail-title", Static)
         inspector_collapse = console.query_one("#console-inspector-rail-collapse", Button)
         assert inspector_title.has_class("console-rail-title")
-        assert str(inspector_collapse.label) == ">"
+        assert str(inspector_collapse.label) == "▸"
         assert inspector_collapse.tooltip == "Collapse Inspector rail"
         assert inspector_collapse.region.width >= 3
         assert inspector_title.region.x < inspector_collapse.region.x
@@ -1058,7 +1058,7 @@ async def test_console_compact_width_preserves_main_column_and_forces_right_coll
         assert composer.region.width >= workspace_grid.region.width - 2
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
         assert _is_displayed(right_handle)
-        assert right_handle.region.width == 11
+        assert right_handle.region.width == 12
         _assert_right_handle_lightweight(console)
         _assert_handle_visible_text_fits(right_handle)
 
@@ -1202,8 +1202,8 @@ async def test_console_rail_section_sync_applies_stored_scope_preferences():
             "#console-rail-section-toggle-details", Button
         )
         model_toggle = console.query_one("#console-rail-section-toggle-model", Button)
-        assert _button_text(details_toggle) == "-"
-        assert _button_text(model_toggle) == "+"
+        assert _button_text(details_toggle) == "▾"
+        assert _button_text(model_toggle) == "▸"
 
 
 def test_generated_console_stylesheet_includes_setup_card_rules():

@@ -923,9 +923,9 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 }
 
 .console-rail-handle-right {
-    width: 11;
-    min-width: 11;
-    max-width: 11;
+    width: 12;
+    min-width: 12;
+    max-width: 12;
     height: auto;
     min-height: 3;
     max-height: 6;
@@ -934,9 +934,9 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 }
 
 .console-rail-handle-button {
-    width: 11;
+    width: 12;
     min-width: 0;
-    max-width: 11;
+    max-width: 12;
     height: 100%;
     min-height: 100%;
     max-height: 100%;
@@ -945,8 +945,8 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 }
 
 .console-rail-handle-button-right {
-    width: 11;
-    max-width: 11;
+    width: 12;
+    max-width: 12;
     height: 3;
     min-height: 3;
     max-height: 3;
@@ -1770,6 +1770,7 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 }
 
 Button.library-mode-chip,
+Button.library-mode-chip,
 Button.notes-mode-chip {
     width: auto;
     min-width: $ds-library-mode-chip-min-width;
@@ -1779,6 +1780,7 @@ Button.notes-mode-chip {
     border: none;
 }
 
+.library-mode-chip:focus,
 .library-mode-chip:focus,
 .notes-mode-chip:focus {
     outline: none;
