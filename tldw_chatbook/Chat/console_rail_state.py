@@ -164,6 +164,48 @@ def build_console_rail_preference_key(
     )
 
 
+def collect_prunable_console_rail_keys(
+    stored_keys: Any,
+    *,
+    live_scope_ids: Any,
+) -> list[str]:
+    """Return stored rail-preference keys whose scope is no longer live.
+
+    A key is prunable only when it matches the canonical
+    ``console_rail_state:<workspace>:<scope>`` shape and its scope id is
+    neither the reserved ``global`` scope nor present in ``live_scope_ids``.
+    Unrecognized key shapes are always kept.
+
+    Args:
+        stored_keys: Iterable of stored config key strings (non-string
+            entries are ignored). ``None`` is treated as empty.
+        live_scope_ids: Iterable of live scope ids (conversation ids plus
+            open session ids), matched after the module's key sanitization.
+            ``None`` is treated as empty.
+
+    Returns:
+        The subset of ``stored_keys`` safe to delete, order-preserved.
+    """
+    live_sanitized = {
+        sanitized
+        for raw in (live_scope_ids or ())
+        for sanitized in (_sanitize_optional_key_part(raw),)
+        if sanitized
+    }
+    prunable: list[str] = []
+    for key in (stored_keys or ()):
+        if not isinstance(key, str):
+            continue
+        parts = key.split(":")
+        if len(parts) != 3 or parts[0] != _PERSISTENCE_PREFIX:
+            continue
+        scope_id = parts[2]
+        if scope_id == "global" or scope_id in live_sanitized:
+            continue
+        prunable.append(key)
+    return prunable
+
+
 def _coerce_bool(value: Any, fallback: bool) -> bool:
     if isinstance(value, bool):
         return value

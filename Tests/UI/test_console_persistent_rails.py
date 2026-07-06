@@ -682,6 +682,13 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
         lambda section, key, value: True,
         raising=False,
     )
+    deleted_keys: list[str] = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "delete_settings_from_cli_config",
+        lambda section, keys: deleted_keys.extend(keys) or True,
+        raising=False,
+    )
     monkeypatch.setattr(
         console_chat_store_module,
         "uuid4",
@@ -698,12 +705,12 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
 
     rail_state = app.app_config["console"]["rail_state"]
-    # The seeded session fallback entry is left untouched (raw two-key shape);
-    # the durable conversation copy is written through the full serialized shape.
-    assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-1"] == {
-        "left_open": False,
-        "right_open": True,
-    }
+    # The durable conversation copy is written through the full serialized
+    # shape, and the superseded session fallback entry is deleted so it can
+    # no longer accumulate as a permanent orphan section.
+    session_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-1"
+    assert session_key not in rail_state
+    assert session_key in deleted_keys
     assert rail_state[
         f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-1"
     ] == _rail_prefs(left_open=False, right_open=True)
@@ -1289,3 +1296,129 @@ def test_generated_console_stylesheet_includes_tab_strip_spacing_rule():
     for css in (component_css, generated_css):
         tab_strip_block = _css_block(css, "#console-native-tab-strip")
         assert "margin-bottom: 1;" in tab_strip_block
+
+
+async def _wait_for_recorded_calls(pilot, recorded, expected_count: int) -> None:
+    for _ in range(40):
+        if len(recorded) >= expected_count:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"expected at least {expected_count} recorded calls, saw {len(recorded)}"
+    )
+
+
+class _StubConversationsDB:
+    """Minimal chachanotes_db exposing only list_all_active_conversations."""
+
+    def __init__(self, conversation_ids: list[str]) -> None:
+        self._rows = [{"id": cid} for cid in conversation_ids]
+
+    def list_all_active_conversations(self, limit: int = 1000, offset: int = 0):
+        return self._rows[offset : offset + limit]
+
+
+@pytest.mark.asyncio
+async def test_console_rail_preference_skips_persist_when_unchanged(monkeypatch):
+    app = _build_test_app()
+    app.app_config = {"console": {"rail_state": {}}}
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: True,
+        raising=False,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_native_console_session(console, pilot)
+
+        persisted: list[str] = []
+        original_persist = console._persist_console_rail_preferences
+
+        def _spy_persist(key, preferences, **kwargs):
+            persisted.append(key)
+            return original_persist(key, preferences, **kwargs)
+
+        monkeypatch.setattr(
+            console, "_persist_console_rail_preferences", _spy_persist
+        )
+
+        # Details defaults to collapsed; opening it is a real change → one write.
+        console._set_console_rail_preference(section_updates={"details": True})
+        assert len(persisted) == 1
+
+        # Re-applying the identical value must not persist again (dirty-check).
+        console._set_console_rail_preference(section_updates={"details": True})
+        assert len(persisted) == 1
+
+        # A genuine change persists once more.
+        console._set_console_rail_preference(section_updates={"details": False})
+        assert len(persisted) == 2
+
+
+@pytest.mark.asyncio
+async def test_console_rail_prune_removes_orphans_and_is_one_shot(monkeypatch):
+    app = _build_test_app()
+    app.app_config = {"console": {"rail_state": {}}}
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: True,
+        raising=False,
+    )
+    deleted_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "delete_settings_from_cli_config",
+        lambda section, keys: deleted_calls.append(list(keys)) or True,
+        raising=False,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_native_console_session(console, pilot)
+
+        # Seed a mixed rail_state and stub conversation liveness. Reset the
+        # one-shot latch so the manual dispatch runs against this exact state
+        # rather than racing the natural mount-time dispatch.
+        live_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-live"
+        global_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:global"
+        orphan_a = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-dead-a"
+        orphan_b = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-dead-b"
+        app.app_config["console"]["rail_state"] = {
+            live_key: _rail_prefs(left_open=True, right_open=False),
+            global_key: _rail_prefs(left_open=True, right_open=False),
+            orphan_a: _rail_prefs(left_open=False, right_open=True),
+            orphan_b: _rail_prefs(left_open=False, right_open=False),
+        }
+        console.app_instance.chachanotes_db = _StubConversationsDB(["conv-live"])
+        deleted_calls.clear()
+        console._console_rail_prune_dispatched = False
+
+        console._dispatch_console_rail_preference_prune()
+        await _wait_for_recorded_calls(pilot, deleted_calls, 1)
+
+        # The disk delete is recorded on the worker; the in-memory removal is
+        # scheduled back onto the UI thread, so wait for it to land.
+        rail_state = app.app_config["console"]["rail_state"]
+        for _ in range(40):
+            if orphan_a not in rail_state and orphan_b not in rail_state:
+                break
+            await pilot.pause(0.05)
+        assert live_key in rail_state
+        assert global_key in rail_state
+        assert orphan_a not in rail_state
+        assert orphan_b not in rail_state
+        assert deleted_calls[-1] == [orphan_a, orphan_b]
+
+        # One-shot: a second dispatch does no further work.
+        assert console._console_rail_prune_dispatched is True
+        deleted_calls.clear()
+        console._dispatch_console_rail_preference_prune()
+        await pilot.pause(0.2)
+        assert deleted_calls == []
