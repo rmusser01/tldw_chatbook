@@ -195,7 +195,7 @@ def build_library_media_state(
 
     # Build status_copy and empty_copy
     if active_type != "All":
-        # When filtering by type, show count of all matches (pre-limit) of {total_count} · type: {active_type}"
+        # When filtering by type, report the count of all matches (pre-limit).
         status_copy = f"{len(filtered_entries)} of {total_count} · type: {active_type}"
         if not rows:
             empty_copy = f"No media of type '{active_type}'."
