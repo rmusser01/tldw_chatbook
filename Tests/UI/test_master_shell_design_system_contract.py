@@ -163,19 +163,23 @@ def test_status_contract_requires_readable_labels():
 
 
 def test_library_mode_chip_focus_keeps_active_label_readable():
+    """``.library-mode-chip`` (the retired mode-strip's own selector + focus
+    rule) was removed once the Library screen stopped rendering any widget
+    with that class (see Task 7's rail/canvas rework). ``.notes-mode-chip``
+    still shares the base rule + focus rule (dropped from these two
+    selectors), and ``.library-mode-chip.is-active``/``:focus`` variants are
+    untouched (still shared with ``.notes-mode-chip``/``.personas-mode-chip``
+    and out of this retirement's scope) -- both keep asserting here."""
     text = DESIGN_SYSTEM_TCSS.read_text(encoding="utf-8")
     variables = CORE_VARIABLES_TCSS.read_text(encoding="utf-8")
     library_screen = LIBRARY_SCREEN_PY.read_text(encoding="utf-8")
 
-    assert ".library-mode-chip:focus" in text
+    assert ".library-mode-chip:focus" not in text
     assert ".library-mode-chip.is-active" in text
     assert ".library-mode-chip.is-active:focus" in text
-    focus_block = text.split(".library-mode-chip:focus", 1)[1].split("}", 1)[0]
     active_block = text.split(".library-mode-chip.is-active", 1)[1].split("}", 1)[0]
     active_focus_block = text.split(".library-mode-chip.is-active:focus", 1)[1].split("}", 1)[0]
 
-    assert "color: $ds-focus-fg;" in focus_block
-    assert "text-style: bold underline;" in focus_block
     assert "background: $ds-focus-bg;" in active_block
     # Chips are one row tall; the active state must not rely on a border that
     # would consume the single content row.
