@@ -367,3 +367,22 @@ def test_status_copy_uses_pre_limit_count():
     assert len(state.rows) == 75
     # But status_copy shows all 100 video records (pre-limit)
     assert state.status_copy == "100 of 110 · type: video"
+
+
+def test_active_type_absent_from_records_stays_in_type_options():
+    """When active_type is not in records, it is still included in type_options."""
+    records = [
+        {"id": "1", "title": "PDF One", "type": "pdf", "ingestion_date": "2026-07-06T11:00:00+00:00"},
+    ]
+
+    # Request active_type="video" even though no records have type="video"
+    state = build_library_media_state(records, active_type="video", now=NOW)
+
+    # "video" must be in type_options to avoid InvalidSelectValueError
+    assert "video" in state.type_options
+    # "video" should come after "All" in sorted order
+    assert state.type_options == ("All", "pdf", "video")
+    # No rows match the filter
+    assert state.rows == ()
+    # Empty copy reflects the filtered type
+    assert state.empty_copy == "No media of type 'video'."

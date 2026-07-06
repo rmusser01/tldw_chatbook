@@ -191,6 +191,8 @@ def build_library_media_state(
 
     # Build type_options: ("All",) + sorted distinct non-empty types
     distinct_types = {entry.media_type for entry in entries if entry.media_type}
+    if active_type != "All":
+        distinct_types.add(active_type)
     type_options = ("All",) + tuple(sorted(distinct_types))
 
     # Build status_copy and empty_copy
