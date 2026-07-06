@@ -71,10 +71,12 @@ def _assert_strip_compact(screen, selector: str, *, max_height: int = 2) -> None
     assert strip.region.height <= max_height, f"{selector} is too tall: {strip.region}"
 
 
-def _assert_horizontal_panes(screen, selectors: tuple[str, str, str]) -> None:
+def _assert_horizontal_panes(screen, selectors: tuple[str, ...]) -> None:
     panes = [screen.query_one(selector) for selector in selectors]
-    assert panes[0].region.x < panes[1].region.x < panes[2].region.x
-    assert panes[0].region.y == panes[1].region.y == panes[2].region.y
+    assert len(panes) >= 2
+    for left, right in zip(panes, panes[1:]):
+        assert left.region.x < right.region.x
+    assert len({pane.region.y for pane in panes}) == 1
     for selector, pane in zip(selectors, panes):
         assert pane.region.width > 0, f"{selector} has no width"
         assert pane.region.height > 0, f"{selector} has no height"
@@ -180,6 +182,13 @@ def _visible_button_labels(screen) -> set[str]:
     return {str(button.label) for button in screen.query(Button) if button.display}
 
 
+def _mark_console_onboarding_complete(app) -> None:
+    app.app_config = getattr(app, "app_config", {}) or {}
+    console_config = app.app_config.setdefault("console", {})
+    onboarding = console_config.setdefault("onboarding", {})
+    onboarding["first_send_completed"] = True
+
+
 def _is_effectively_displayed(widget) -> bool:
     current = widget
     while current is not None:
@@ -203,7 +212,7 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
     host = HomeHarness(app)
     async with host.run_test(size=(140, 42)) as pilot:
         home = _active_home_screen(host)
-        await _wait_for_selector(home, pilot, "#home-dashboard")
+        await _wait_for_selector(home, pilot, "#home-triage-grid")
         nav = home.query_one(MainNavigationBar)
         settings = nav.query_one("#nav-settings", Button)
         more = nav.query_one("#nav-overflow-hint")
@@ -216,9 +225,9 @@ async def test_destination_content_starts_immediately_below_nav():
     host = HomeHarness(app)
     async with host.run_test(size=(140, 42)) as pilot:
         home = _active_home_screen(host)
-        await _wait_for_selector(home, pilot, "#home-dashboard")
+        await _wait_for_selector(home, pilot, "#home-triage-grid")
         content = home.query_one("#screen-content")
-        dashboard = home.query_one("#home-dashboard")
+        dashboard = home.query_one("#home-triage-grid")
         assert content.region.y == 3
         assert dashboard.region.y <= 4
 
@@ -251,16 +260,17 @@ async def test_home_dashboard_regions_fit_default_viewport():
     host = HomeHarness(app)
     async with host.run_test(size=(140, 42)) as pilot:
         home = _active_home_screen(host)
-        await _wait_for_selector(home, pilot, "#home-dashboard-grid")
-        assert home.query_one("#home-dashboard-grid").region.y <= 12
+        await _wait_for_selector(home, pilot, "#home-triage-grid")
+        assert home.query_one("#home-triage-grid").region.y <= 12
         _assert_horizontal_panes(
             home,
-            ("#home-attention-queue", "#home-active-work-region", "#home-inspector"),
+            ("#home-rail", "#home-canvas"),
         )
         for selector in (
-            "#home-dashboard-grid",
-            "#home-next-actions-region",
-            "#home-recent-work-region",
+            "#home-triage-grid",
+            "#home-rail",
+            "#home-canvas",
+            "#home-details-body",
         ):
             _assert_visible_in_viewport(home.query_one(selector), height=42, context=selector)
         _assert_any_action_visible(
@@ -280,6 +290,7 @@ async def test_home_dashboard_regions_fit_default_viewport():
 @pytest.mark.asyncio
 async def test_console_first_start_shows_left_rail_main_and_right_handle():
     app = _build_test_app()
+    _mark_console_onboarding_complete(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=(140, 42)) as pilot:
         console = host.screen_stack[-1]
@@ -617,6 +628,8 @@ async def test_core_default_empty_or_blocked_states_keep_workbench_geometry(
     route, host_factory, workbench, panes, actions, markers, marker_container
 ):
     app = _build_test_app()
+    if route == "chat":
+        _mark_console_onboarding_complete(app)
     host = host_factory(app)
     # 160 wide: the Console force-collapses its inspector rail below 150
     # columns (CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS), and this
@@ -1532,10 +1545,10 @@ async def test_acp_runtime_blocked_state_uses_setup_and_compatibility_columns():
 
 COMPACT_DESTINATION_CONTRACTS = {
     "home": {
-        "identity": "#home-title",
-        "workbench": "#home-dashboard-grid",
-        "object": "#home-attention-queue",
-        "detail": "#home-active-work-region",
+        "identity": "#home-header-line",
+        "workbench": "#home-triage-grid",
+        "object": "#home-rail",
+        "detail": "#home-canvas",
         "actions": ("#home-primary-action", "#home-open-details", "#home-open-chatbook-details"),
     },
     "chat": {
@@ -1698,6 +1711,7 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
     if route == "home":
         host = HomeHarness(app)
     elif route == "chat":
+        _mark_console_onboarding_complete(app)
         host = ConsoleHarness(app)
     else:
         host = DestinationHarness(app, route)

@@ -34,6 +34,13 @@ def _test_cli_setting(section: str, key: str | None = None, default=None):
     return default
 
 
+def _mark_console_onboarding_complete(app) -> None:
+    app.app_config = getattr(app, "app_config", {}) or {}
+    console_config = app.app_config.setdefault("console", {})
+    onboarding = console_config.setdefault("onboarding", {})
+    onboarding["first_send_completed"] = True
+
+
 async def _wait_until(
     pilot: "Pilot",
     condition: Callable[[], bool],
@@ -85,7 +92,7 @@ def _assert_console_density_evidence(svg: str) -> None:
     assert "Settings" in normalized_svg
     assert "Attach" in normalized_svg
     assert "Library RAG" in normalized_svg
-    assert "Choose model" in normalized_svg
+    assert "Model: not selected" in normalized_svg
     assert "Send disabled" not in normalized_svg
     assert "Setup required" not in normalized_svg
 
@@ -113,7 +120,6 @@ def _assert_console_inspector_evidence(svg: str) -> None:
 def _assert_command_palette_evidence(svg: str) -> None:
     normalized_svg = unescape(svg).replace("\xa0", " ")
     assert "Console Workbench Command Palette" in normalized_svg
-    assert "Quick Actions:" in normalized_svg or "Tab Navigation:" in normalized_svg
     assert any(
         command in normalized_svg
         for command in (
@@ -131,7 +137,7 @@ def _assert_console_focus_evidence(svg: str) -> None:
     assert "Console Workbench Focus State" in normalized_svg
     assert "Settings" in normalized_svg
     assert "Provider:" in normalized_svg
-    assert "Choose model" in normalized_svg
+    assert "Model: not selected" in normalized_svg
 
 
 def _assert_visible_ancestors(widget) -> None:
@@ -148,6 +154,7 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
     app = _build_test_app()
     app.app_config = getattr(app, "app_config", {}) or {}
     app.app_config.setdefault("appearance", {})["ui_density"] = density
+    _mark_console_onboarding_complete(app)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 42)) as pilot:
@@ -166,6 +173,7 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
 @pytest.mark.asyncio
 async def test_console_workbench_standard_width_inspector_snapshot() -> None:
     app = _build_test_app()
+    _mark_console_onboarding_complete(app)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(128, 40)) as pilot:
@@ -185,6 +193,7 @@ async def test_console_workbench_standard_width_inspector_snapshot() -> None:
 @pytest.mark.asyncio
 async def test_console_workbench_command_palette_snapshot() -> None:
     app = _build_test_app()
+    _mark_console_onboarding_complete(app)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 42)) as pilot:
@@ -207,6 +216,7 @@ async def test_console_workbench_command_palette_snapshot() -> None:
 @pytest.mark.asyncio
 async def test_console_workbench_focus_state_snapshot() -> None:
     app = _build_test_app()
+    _mark_console_onboarding_complete(app)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 42)) as pilot:

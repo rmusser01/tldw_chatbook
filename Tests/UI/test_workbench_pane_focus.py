@@ -87,6 +87,13 @@ class _FocusFallbackHarness(App[None]):
         await self.push_screen(_FocusFallbackScreen())
 
 
+def _mark_console_onboarding_complete(app) -> None:
+    app.app_config = getattr(app, "app_config", {}) or {}
+    console_config = app.app_config.setdefault("console", {})
+    onboarding = console_config.setdefault("onboarding", {})
+    onboarding["first_send_completed"] = True
+
+
 async def _wait_for_focused_id(app: App[None], pilot, widget_id: str) -> None:
     for _ in range(40):
         if getattr(app.focused, "id", None) == widget_id:
@@ -100,6 +107,7 @@ async def _wait_for_focused_id(app: App[None], pilot, widget_id: str) -> None:
 @pytest.mark.asyncio
 async def test_console_f6_cycles_between_workbench_panes_and_wraps_backward():
     app_instance = _build_test_app()
+    _mark_console_onboarding_complete(app_instance)
     host = _ConsoleHarness(app_instance)
 
     async with host.run_test(size=(160, 48)) as pilot:

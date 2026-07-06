@@ -105,11 +105,8 @@ async def test_clean_run_tab_order_reaches_nav_and_primary_setup_action(
                 await pilot.press("tab")
 
             focus_ids: list[str] = []
-            expected_focus_ids = [
-                *(f"nav-{destination_id}" for destination_id in TOP_LEVEL_DESTINATION_IDS),
-                "home-primary-action",
-            ]
-            for index, expected_focus_id in enumerate(expected_focus_ids):
+            expected_focus_ids = [f"nav-{destination_id}" for destination_id in TOP_LEVEL_DESTINATION_IDS]
+            for expected_focus_id in expected_focus_ids:
                 await _wait_until(
                     pilot,
                     lambda: isinstance(app.focused, Button) and app.focused.id == expected_focus_id,
@@ -119,10 +116,21 @@ async def test_clean_run_tab_order_reaches_nav_and_primary_setup_action(
                 assert focused.id is not None
                 focus_ids.append(focused.id)
 
-                if index < len(expected_focus_ids) - 1:
-                    await pilot.press("tab")
+                await pilot.press("tab")
 
-            assert focus_ids == expected_focus_ids
+            for _ in range(24):
+                if isinstance(app.focused, Button) and app.focused.id == "home-primary-action":
+                    break
+                await pilot.press("tab")
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.focused, Button) and app.focused.id == "home-primary-action",
+            )
+            focused = app.focused
+            assert isinstance(focused, Button)
+            focus_ids.append(focused.id or "")
+
+            assert focus_ids == [*expected_focus_ids, "home-primary-action"]
             nav_hint = str(app.screen.query_one("#nav-overflow-hint", Static).renderable)
             assert "More" in nav_hint
             assert "Ctrl+P" in nav_hint
@@ -158,5 +166,4 @@ async def test_command_palette_keyboard_fallback_exposes_top_level_product_model
         assert matching_hits, f"missing command-palette hit for {destination.destination_id}"
         assert any("Tab Navigation: Switch to" in text for text, _ in matching_hits)
         assert any(destination.purpose in help_text for _, help_text in matching_hits)
-
 

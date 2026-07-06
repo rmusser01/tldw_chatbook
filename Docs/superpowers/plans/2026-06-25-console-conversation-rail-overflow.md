@@ -83,7 +83,7 @@ Reason: this changes Console presentation and UI preference state only. It does 
 Run:
 
 ```bash
-backlog task edit 134 -s "In Progress" --plan "1. Add Console workspace conversation-section display state and pure tests.
+backlog task edit 138 -s "In Progress" --plan "1. Add Console workspace conversation-section display state and pure tests.
 2. Render bounded/collapsible/searchable Conversations UI in ConsoleWorkspaceContextTray.
 3. Add ChatScreen-owned query, collapse preference, search, stale-result, and row-selection wiring.
 4. Add TCSS rules for bounded list, summary, search, and collapse controls.
@@ -102,7 +102,7 @@ Expected: `TASK-138` status becomes `In Progress` and contains the ADR check in 
 Run:
 
 ```bash
-backlog task 134 --plain
+backlog task 138 --plain
 ```
 
 Expected: output includes `ADR required: no` and the six implementation steps.
@@ -1889,7 +1889,7 @@ Edit `backlog/tasks/task-138 - Fix-Console-conversation-rail-overflow.md`:
 Run:
 
 ```bash
-backlog task edit 134 -s Done
+backlog task edit 138 -s Done
 ```
 
 Expected: `TASK-138` status becomes `Done`.

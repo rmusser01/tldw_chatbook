@@ -140,7 +140,8 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                 assert expected_nav in nav
 
             home_text = _screen_text(app)
-            assert "Dashboard, notifications, status, active work, and next actions." in home_text
+            assert "Console needs a working model before live AI tasks." in home_text
+            assert "Needs Attention" in home_text
             assert "Set up Console model" in home_text
             assert "Ctrl+P" in home_text
 
@@ -182,5 +183,4 @@ async def test_release_first_time_replay_exposes_home_console_library_and_setup(
                 screen_text = _screen_text(app)
                 for copy in required_copy:
                     assert copy in screen_text
-
 
