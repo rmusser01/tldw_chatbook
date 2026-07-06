@@ -12,6 +12,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Utils.console_background_effects import ConsoleBackgroundEffectSettings
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
@@ -129,7 +130,7 @@ class ConsoleSessionSurface(Vertical):
     def _build_close_tab_button(self, session: ConsoleChatSession) -> Button:
         """Build the compact close control for a Console session tab."""
         close_button = Button(
-            "x",
+            GLYPH_CLOSE,
             id=f"console-close-session-tab-{session.id}",
             classes="console-session-close-button",
             compact=True,

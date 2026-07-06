@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_display_state import (
     build_console_evidence_display_state,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -414,8 +415,10 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         assert "visible composer text" in _visible_text(composer)
         for action_button in (send_button, stop_button, attach_button, save_button):
             assert action_button.compact is True
-            assert action_button.region.height == 1
-            assert action_button.region.y + action_button.region.height <= composer.region.y + composer.region.height
+            # Stop button is hidden when not running, so it has no valid region
+            if action_button is not stop_button:
+                assert action_button.region.height == 1
+                assert action_button.region.y + action_button.region.height <= composer.region.y + composer.region.height
         assert str(send_button.label) == "Send"
         assert str(stop_button.label) == "Stop"
         assert str(attach_button.label) == "Attach"
@@ -790,8 +793,12 @@ async def test_console_composer_actions_remain_visible_inside_composer_bounds():
         assert actions.region.x > visible_draft.region.x
         assert actions.region.x + actions.region.width <= composer_right
         for button in (send_button, stop_button, attach_button, save_button):
-            assert button.display is True
-            assert button.region.x + button.region.width <= composer_right
+            # Stop button is hidden when not running, others remain visible
+            if button is stop_button:
+                assert button.display is False
+            else:
+                assert button.display is True
+                assert button.region.x + button.region.width <= composer_right
 
         assert str(save_button.label) == "Save"
         assert save_button.tooltip == "No Chatbook artifact is available to save yet."
@@ -823,6 +830,25 @@ async def test_console_composer_save_chatbook_routes_available_artifact_action()
 
     assert len(handled_launches) == 1
     assert handled_launches[0].payload["target_id"] == "local:chatbook:77"
+
+
+@pytest.mark.asyncio
+async def test_console_stop_button_hidden_unless_streaming():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        stop = console.query_one("#console-stop-generation")
+        assert stop.styles.display == "none"
+        composer = console.query_one("#console-native-composer")
+        composer.sync_action_state(has_draft=True, run_active=True, can_save_chatbook=False)
+        await pilot.pause()
+        assert stop.styles.display != "none"
+        composer.sync_action_state(has_draft=False, run_active=False, can_save_chatbook=False)
+        await pilot.pause()
+        assert stop.styles.display == "none"
 
 
 @pytest.mark.asyncio
@@ -2082,7 +2108,7 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-transcript-empty-state")
-        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
 
         assert not list(console.query("#console-provider-recovery-strip"))
         assert not list(console.query("#console-provider-blocker"))
@@ -2093,7 +2119,7 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         # (Phase 2 spec, section 2).
         recovery = console.query_one("#workbench-recovery-callout")
         button = console.query_one("#workbench-recovery-action", Button)
-        card_button = console.query_one("#console-empty-choose-model", Button)
+        card_button = console.query_one("#console-setup-modal-action", Button)
         assert recovery.display is False
         assert button.display is False
         assert card_button.display is True
@@ -2152,9 +2178,7 @@ async def test_console_provider_settings_action_hidden_when_provider_ready(monke
         await pilot.pause(0.1)
 
         assert not list(console.query("#console-open-provider-settings"))
-        action_row = console.query_one("#console-empty-action-row")
-        assert action_row.styles.display == "none"
-        assert action_row.display is False
+        assert not list(console.query("#console-empty-action-row"))
 
 
 @pytest.mark.asyncio
@@ -2169,7 +2193,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         # The shared Workbench recovery banner must stay hidden — the setup
         # card's action button and the composer's Send tooltip carry this
@@ -2206,8 +2230,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
 
         assert not list(console.query("#console-provider-blocker"))
         assert not list(console.query("#console-provider-recovery-strip"))
-        action_row = console.query_one("#console-empty-action-row")
-        assert action_row.styles.display == "none"
+        assert not list(console.query("#console-empty-action-row"))
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
         assert "Setup required: Choose model before sending." not in _visible_text(console)
 
@@ -2430,14 +2453,13 @@ async def test_console_empty_transcript_uses_compact_ready_state():
 
         assert len(empty_rows) == 1
         empty_panel = empty_rows[0]
-        # Ready state is compact: one displayed ready line, no visible action row.
+        # Ready state is compact: one displayed ready line, no action row at all.
         body = empty_panel.query_one("#console-empty-body", Static)
-        action_row = empty_panel.query_one("#console-empty-action-row")
         assert getattr(body.render(), "plain", str(body.render())) == (
             "Ready — type a message to begin."
         )
         assert body.display is True
-        assert action_row.styles.display == "none"
+        assert not list(empty_panel.query("#console-empty-action-row"))
         assert "No messages yet. Send a prompt or attach context." not in _visible_text(
             empty_panel
         )
@@ -2462,7 +2484,7 @@ async def test_console_session_tab_strip_uses_readable_new_tab_control_with_tool
         assert new_tab.region.width >= 12
         assert close_buttons
         for close_button in close_buttons:
-            assert str(close_button.label) == "x"
+            assert str(close_button.label) == GLYPH_CLOSE
             assert close_button.tooltip == "Close Console tab"
             assert close_button.region.width >= 3
 
@@ -2754,6 +2776,39 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
         assert composer_border.right[0] == "solid"
         assert composer_border.bottom[0] == "solid"
         assert composer_border.left[0] == "solid"
+
+
+@pytest.mark.asyncio
+async def test_console_staged_context_tray_stays_quiet_when_populated():
+    app = _build_test_app()
+    app.pending_console_launch = {
+        "source": "Library Search/RAG",
+        "title": "Incident Review",
+        "status": "ready",
+        "recovery": "Review citations before sending.",
+        "payload": {
+            "source_id": "note-42",
+            "chunk_id": "chunk-7",
+            "runtime_backend": "local-fts",
+        },
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
+
+        # Confirm the tray genuinely has content, so the quiet-border
+        # assertion below is meaningful for the non-empty state (and not
+        # accidentally re-checking the empty case).
+        staged_context = console.query_one("#console-staged-context-tray")
+        assert "source_id: note-42" in _visible_text(staged_context)
+
+        staged_context_border = staged_context.styles.border
+        assert staged_context_border.top[0] in {"", "none"}
+        assert staged_context_border.right[0] in {"", "none"}
+        assert staged_context_border.bottom[0] in {"", "none"}
+        assert staged_context_border.left[0] in {"", "none"}
 
 
 @pytest.mark.asyncio

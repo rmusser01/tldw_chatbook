@@ -553,7 +553,17 @@ async def test_console_mounts_native_transcript_region():
 
 @pytest.mark.asyncio
 async def test_console_tab_reaches_major_console_screen_regions():
+    """Tab traversal reaches the major Console regions in the post-onboarding state.
+
+    First-run focus is intentionally owned by the blocking setup modal (see
+    ``ConsoleSetupModal.is_blocking``), which traps Tab until setup completes.
+    That is by design and covered separately. This test marks onboarding
+    complete (the same ``first_send_completed`` flag the app persists after a
+    real first send) so the modal renders in its non-blocking "quiet" mode
+    and Tab is free to reach the workbench regions during normal use.
+    """
     app = _build_test_app()
+    app.app_config.setdefault("console", {})["onboarding"] = {"first_send_completed": True}
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:

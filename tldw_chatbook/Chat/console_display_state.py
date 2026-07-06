@@ -255,6 +255,9 @@ class ConsoleControlState:
     sources_label: str
     tools_label: str
     approvals_label: str
+    sources_active: bool = False
+    tools_active: bool = False
+    approvals_active: bool = False
 
     @classmethod
     def from_values(
@@ -280,6 +283,9 @@ class ConsoleControlState:
             sources_label=f"Sources: {staged_source_count} staged",
             tools_label=f"Tools: {tool_count} ready",
             approvals_label=f"Approvals: {approval_count} pending",
+            sources_active=staged_source_count > 0,
+            tools_active=tool_count > 0,
+            approvals_active=approval_count > 0,
         )
 
 

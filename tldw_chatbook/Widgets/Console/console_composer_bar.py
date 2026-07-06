@@ -292,6 +292,7 @@ class ConsoleComposerBar(Horizontal):
         stop_button.set_class(run_active, "console-stop-active")
         stop_button.set_class(not run_active, "console-stop-idle")
         stop_button.set_class(not run_active, "console-action-disabled")
+        stop_button.styles.display = "block" if run_active else "none"
 
         attach_button.disabled = False
         attach_button.variant = "default"
@@ -1186,13 +1187,15 @@ class ConsoleComposerBar(Horizontal):
                 variant="primary",
                 tooltip="Send the active Console session draft.",
             )
-            yield self._bounded_button(
+            stop_button = self._bounded_button(
                 "Stop",
                 width=8,
                 id="console-stop-generation",
                 classes="destination-action-button console-stop-button",
                 tooltip="Stop generation in the active Console session.",
             )
+            stop_button.styles.display = "none"
+            yield stop_button
             yield self._bounded_button(
                 "Attach",
                 width=10,

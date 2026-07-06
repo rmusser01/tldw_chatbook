@@ -56,7 +56,7 @@ async def test_rail_section_header_renders_title_and_toggle():
         title = app.query_one("#console-rail-section-title-details", Static)
         assert str(getattr(title.renderable, "plain", title.renderable)) == "Details"
         toggle = app.query_one(f"#{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}details", Button)
-        assert str(toggle.label) == "+"
+        assert str(toggle.label) == "▸"
         assert toggle.tooltip == "Expand Details"
 
 
@@ -67,8 +67,26 @@ async def test_rail_section_header_sync_open_flips_toggle():
         header = app.query_one("#header-under-test", ConsoleRailSectionHeader)
         header.sync_open(True)
         toggle = app.query_one(f"#{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}details", Button)
-        assert str(toggle.label) == "-"
+        assert str(toggle.label) == "▾"
         assert toggle.tooltip == "Collapse Details"
+
+
+def test_console_glyph_constants():
+    from tldw_chatbook.Chat.console_glyphs import (
+        GLYPH_ACTIVE, GLYPH_CLOSE, GLYPH_COLLAPSED, GLYPH_COLLAPSE_LEFT,
+        GLYPH_DONE, GLYPH_EXPANDED, GLYPH_IN_PROGRESS,
+    )
+    assert (GLYPH_EXPANDED, GLYPH_COLLAPSED) == ("▾", "▸")
+    assert (GLYPH_ACTIVE, GLYPH_IN_PROGRESS, GLYPH_DONE) == ("▸", "●", "✓")
+    assert (GLYPH_CLOSE, GLYPH_COLLAPSE_LEFT) == ("✕", "◂")
+
+
+def test_console_active_row_marker_and_close_glyphs():
+    from tldw_chatbook.Chat.console_glyphs import GLYPH_ACTIVE, GLYPH_CLOSE
+    from tldw_chatbook.Widgets.Console import console_workspace_context, console_session_surface
+    import inspect
+    assert '"> "' not in inspect.getsource(console_workspace_context)
+    assert '"x"' not in inspect.getsource(console_session_surface)
 
 
 def _workspace_state() -> ConsoleWorkspaceContextState:
@@ -164,8 +182,20 @@ async def test_setup_panel_card_mode_shows_quiet_line_without_steps_or_actions()
             getattr(body.renderable, "plain", body.renderable)
         )
         assert not list(app.query("#console-setup-step-1"))
-        assert app.query_one("#console-empty-title").styles.display == "none"
-        assert app.query_one("#console-empty-action-row").styles.display == "none"
+        assert not list(app.query("#console-empty-title"))
+        assert not list(app.query("#console-empty-action-row"))
+
+
+@pytest.mark.asyncio
+async def test_empty_panel_has_no_legacy_shim_widgets():
+    app = _SetupPanelApp(
+        ConsoleSetupCardState(mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY)
+    )
+    async with app.run_test(size=(100, 30)):
+        assert not list(app.query("#console-empty-title"))
+        assert not list(app.query("#console-empty-action-row"))
+        assert not list(app.query("#console-empty-choose-model"))
+        assert list(app.query("#console-empty-body"))
 
 
 class _SetupModalApp(App):
@@ -249,8 +279,8 @@ async def test_setup_panel_ready_line_hides_steps_and_actions():
         body = app.query_one("#console-empty-body", Static)
         assert CONSOLE_READY_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
         assert not list(app.query("#console-setup-step-1"))
-        assert app.query_one("#console-empty-action-row").styles.display == "none"
-        assert app.query_one("#console-empty-title").styles.display == "none"
+        assert not list(app.query("#console-empty-action-row"))
+        assert not list(app.query("#console-empty-title"))
 
 
 @pytest.mark.asyncio
@@ -262,7 +292,7 @@ async def test_setup_panel_quiet_mode_shows_only_quiet_copy():
         body = app.query_one("#console-empty-body", Static)
         assert CONSOLE_QUIET_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
         assert not list(app.query("#console-setup-step-1"))
-        assert app.query_one("#console-empty-action-row").styles.display == "none"
+        assert not list(app.query("#console-empty-action-row"))
 
 
 @pytest.mark.asyncio
@@ -291,7 +321,7 @@ async def test_setup_panel_coerces_non_card_state_to_quiet_copy():
         body = app.query_one("#console-empty-body", Static)
         assert CONSOLE_QUIET_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
         assert not list(app.query("#console-setup-step-1"))
-        assert app.query_one("#console-empty-action-row").styles.display == "none"
+        assert not list(app.query("#console-empty-action-row"))
 
 
 # ---------------------------------------------------------------------------

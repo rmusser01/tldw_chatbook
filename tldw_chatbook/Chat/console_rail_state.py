@@ -7,12 +7,14 @@ from dataclasses import dataclass
 import re
 from typing import Any
 
+from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSED
+
 CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
 CONSOLE_RAIL_SECTION_IDS = ("session", "context", "model", "details")
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
-CONSOLE_RAIL_CONTEXT_LABEL = "Context >"
-CONSOLE_RAIL_INSPECTOR_LABEL = "< Inspector"
+CONSOLE_RAIL_CONTEXT_LABEL = f"Context {GLYPH_COLLAPSED}"
+CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
 
 _PERSISTENCE_PREFIX = "console_rail_state"
 _INVALID_KEY_RUN_RE = re.compile(r"[^A-Za-z0-9_.-]+")
