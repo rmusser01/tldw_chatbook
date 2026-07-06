@@ -523,6 +523,41 @@ async def test_library_shell_media_back_returns_to_list():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_media_rail_reentry_resets_to_list():
+    """Re-entering Browse Media from the rail must show the list, not a stale viewer.
+
+    A rail-row press is always a fresh entry into a content type. If the
+    media viewer was left open on a previous visit, navigating away via
+    another rail row and then pressing "Browse Media" again must land on
+    the media list -- not resume the previously opened item's viewer.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+
+        screen.query_one("#library-row-browse-conversations").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        screen.query_one("#library-row-browse-media").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.query_one("#library-media-list")
+        assert not screen.query("#library-media-viewer-title")
+
+
+@pytest.mark.asyncio
 async def test_library_shell_media_viewer_shows_loading_before_detail_loads(monkeypatch):
     """The viewer shows a loading line until ``_library_media_detail`` arrives."""
     app = _build_test_app()

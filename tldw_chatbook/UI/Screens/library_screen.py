@@ -500,7 +500,6 @@ class LibraryScreen(BaseAppScreen):
         self._selected_media_id: str = ""
         self._library_media_view: str = "list"
         self._library_media_detail: Mapping[str, Any] | None = None
-        self._library_media_detail_loading: bool = False
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2660,12 +2659,10 @@ class LibraryScreen(BaseAppScreen):
         Args:
             media_id: The Library media item id to fetch full detail for.
         """
-        self._library_media_detail_loading = True
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         get_media_item = getattr(service, "get_media_item", None)
         if not callable(get_media_item):
             self._library_media_detail = None
-            self._library_media_detail_loading = False
             if self.is_mounted:
                 self.refresh(recompose=True)
             return
@@ -2682,7 +2679,6 @@ class LibraryScreen(BaseAppScreen):
             logger.warning(f"Failed to load Library media detail for {media_id!r}.", exc_info=True)
             detail = None
         self._library_media_detail = detail if isinstance(detail, Mapping) else None
-        self._library_media_detail_loading = False
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -2814,6 +2810,12 @@ class LibraryScreen(BaseAppScreen):
         """
         self._library_selected_row_id = row_id
         self._active_mode = active_mode
+        # A rail-row press is always a fresh entry into a content type, so
+        # the media canvas must never resume a previously opened viewer
+        # (e.g. Browse Media -> open item -> Browse Conversations -> Browse
+        # Media again must show the list, not the stale viewer).
+        self._library_media_view = "list"
+        self._library_media_detail = None
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -2902,7 +2904,6 @@ class LibraryScreen(BaseAppScreen):
         self._active_mode = "media"
         self._library_media_view = "viewer"
         self._library_media_detail = None
-        self._library_media_detail_loading = True
         if media_id:
             self.run_worker(self._refresh_library_media_detail(media_id))
         self.refresh(recompose=True)
