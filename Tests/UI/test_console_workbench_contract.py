@@ -406,7 +406,7 @@ async def test_console_composer_keeps_primary_actions_and_setup_card_recovery_vi
         assert _is_displayed(composer)
         assert _is_displayed(console.query_one("#console-attach-context"))
         assert _is_displayed(console.query_one("#console-send-message"))
-        assert _is_displayed(console.query_one("#console-stop-generation"))
+        assert not _is_displayed(console.query_one("#console-stop-generation"))
         assert _is_displayed(console.query_one("#console-save-chatbook"))
         assert not _is_displayed(console.query_one("#console-composer-recovery"))
         # The shared Workbench recovery banner must stay hidden — the blocking
