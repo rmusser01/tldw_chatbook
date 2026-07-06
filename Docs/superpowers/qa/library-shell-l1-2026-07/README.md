@@ -29,19 +29,21 @@ no fixtures or `_test_input` overrides.
   source-context list carrying the five conversations, WIP callout, and the
   live `Flashcards` handoff button) — proves legacy-surface reachability
   survives the chip retirement.
-- library-shell-details-expanded-2026-07-05.png — Details toggled open:
-  runtime/count summary + workspace rules relocated from the retired
-  System/hub panes, wrapping cleanly within the rail pane (no clip past the
-  border).
-- library-shell-details-actions-2026-07-05.png — rail scrolled to the bottom
-  of Details: the trimmed workspace summary (rules, `Console/RAG handoff:
-  0 eligible, 5 blocked`, collections/import-export notes) ending in
-  `Workspace actions → Create local workspace`, the WIP/blocked callouts, and
-  the `Use in Console` action — proves the rail now scrolls and every Details
-  row is reachable (the `overflow: hidden` reachability concern is resolved by
-  `92c31597`). Per-source assignment table removed (`9c0c40b5`, user request):
-  it re-listed every conversation in the rail, duplicating Browse ▸
-  Conversations; Details now carries the workspace summary + actions only.
+- library-shell-details-expanded-2026-07-05.png — Details toggled open, after
+  the readability pass (`4b76e4dd`): three bold group headers (`Status` /
+  `Workspace` / `Actions`) with blank lines between them, dimmed labels
+  (`Runtime`, `Active`, `Handoff`) vs bright values, counts with `·`
+  separators, and a `●` glyph on the blocked state — a scannable card, not the
+  prior paragraph-of-gray-text.
+- library-shell-details-actions-2026-07-05.png — full Details scrolled into
+  view: `Status` (runtime + counts) → `Workspace` (`Active · Local Default`,
+  `Handoff · 0 eligible, ● 5 blocked`) → `Actions` (`Create local workspace`,
+  `Use in Console` [disabled while handoff blocked], one dim `Server sync WIP ·
+  local only` line). Evolution: the per-source assignment table that
+  duplicated Browse ▸ Conversations was removed (`9c0c40b5`, user request);
+  the remaining prose/callout wall was then restyled into groups + label:value
+  pairs (`4b76e4dd`). Both workspace buttons + their handlers are unchanged —
+  readability only.
 
 ## Verification
 
