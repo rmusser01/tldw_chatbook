@@ -16,6 +16,27 @@ _EMPTY_EDIT_FIELDS: dict[str, str] = {"title": "", "author": "", "url": "", "key
 
 
 @dataclass(frozen=True)
+class LibraryMediaHighlightRow:
+    """One reading highlight row in the Library media viewer's highlights section.
+
+    Attributes:
+        highlight_id: Stable id of the highlight, as returned by
+            ``media_reading_scope_service.list_highlights``/``create_highlight``.
+        quote: The highlighted quote text.
+        note: Optional note attached to the highlight, or "" when absent.
+        color: Optional highlight color, or "" when absent.
+        display_text: Ready-to-render text for the row (quote, plus a
+            "Color: .../Note: ..." line when either is present).
+    """
+
+    highlight_id: str
+    quote: str
+    note: str
+    color: str
+    display_text: str
+
+
+@dataclass(frozen=True)
 class LibraryMediaViewerState:
     """Pure display state for the Library media viewer canvas.
 
@@ -161,3 +182,54 @@ def build_library_media_viewer_state(
             "keywords": keywords_text,
         },
     )
+
+
+def _highlight_id_text(highlight: Mapping[str, Any]) -> str:
+    value = highlight.get("id")
+    if value is None:
+        return ""
+    return str(value)
+
+
+def build_library_media_highlight_rows(
+    highlights: Sequence[Mapping[str, Any]] | None,
+) -> tuple[LibraryMediaHighlightRow, ...]:
+    """Build the Library media viewer's highlight rows from raw highlight dicts.
+
+    Args:
+        highlights: Highlight mappings as returned by
+            ``media_reading_scope_service.list_highlights`` (each with at
+            least ``id``/``quote``, optionally ``note``/``color``). Tolerated
+            to be None, or to contain non-mapping/blank-quote entries, which
+            are skipped.
+
+    Returns:
+        Immutable, ready-to-render highlight rows in the given order.
+    """
+    rows: list[LibraryMediaHighlightRow] = []
+    for highlight in highlights or ():
+        if not isinstance(highlight, Mapping):
+            continue
+        quote = _text(highlight.get("quote"))
+        if not quote:
+            continue
+        note = _text(highlight.get("note"))
+        color = _text(highlight.get("color"))
+        lines = [f"“{quote}”"]
+        extras = []
+        if color:
+            extras.append(f"Color: {color}")
+        if note:
+            extras.append(f"Note: {note}")
+        if extras:
+            lines.append(" · ".join(extras))
+        rows.append(
+            LibraryMediaHighlightRow(
+                highlight_id=_highlight_id_text(highlight),
+                quote=quote,
+                note=note,
+                color=color,
+                display_text="\n".join(lines),
+            )
+        )
+    return tuple(rows)

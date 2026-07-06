@@ -8,6 +8,7 @@ import zipfile
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
+from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 
 
 _MODULE_PATH = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "Media" / "local_media_reading_service.py"
@@ -506,6 +507,58 @@ def test_local_service_persists_reading_highlights(memory_db_factory):
     assert updated["state"] == "stale"
     assert deleted == {"success": True}
     assert service.list_highlights(media_id) == []
+
+
+def test_scope_service_local_highlight_seam_persists_against_real_db(memory_db_factory):
+    """Real-backend regression for the Library media viewer's highlights seam.
+
+    The Library viewer (``LibraryScreen._add_library_media_highlight`` /
+    ``_fetch_library_media_highlights`` / ``_delete_library_media_highlight``)
+    calls ``media_reading_scope_service.create_highlight``/``list_highlights``/
+    ``delete_highlight`` with ``mode="local"`` -- NOT the ``reading_``-prefixed
+    ``create_reading_highlight``/``list_reading_highlights``/
+    ``delete_reading_highlight`` methods, which ``MediaReadingScopeService``
+    only ever forwards to ``ServerMediaReadingService`` (see
+    ``Tests/Media/test_media_reading_scope_service.py``'s
+    ``test_scope_service_routes_reading_highlights_and_enforces_actions``,
+    which only exercises ``mode="server"``); calling those against a local
+    service raises ``AttributeError`` because ``LocalMediaReadingService``
+    only implements the non-prefixed names. This test drives the actual
+    working seam through ``MediaReadingScopeService`` against a real
+    ``LocalMediaReadingService`` backed by a real in-memory ``MediaDatabase``,
+    proving the UI's create/list/delete round-trip persists for real (a fake
+    scope service could hide a signature/field-name mismatch that this test
+    would catch).
+    """
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Scoped Highlight",
+        content="Reviewed local content",
+        media_type="article",
+        keywords=[],
+    )
+    local_service = LocalMediaReadingService(db)
+    scope = MediaReadingScopeService(local_service=local_service, server_service=None)
+
+    created = asyncio.run(
+        scope.create_highlight(
+            mode="local",
+            item_id=media_id,
+            quote="Reviewed",
+            color="yellow",
+            note="worth citing",
+        )
+    )
+    listed = asyncio.run(scope.list_highlights(mode="local", item_id=media_id))
+    deleted = asyncio.run(scope.delete_highlight(mode="local", highlight_id=created["id"]))
+
+    assert created["item_id"] == media_id
+    assert created["quote"] == "Reviewed"
+    assert created["color"] == "yellow"
+    assert created["note"] == "worth citing"
+    assert listed == [created]
+    assert deleted == {"success": True}
+    assert asyncio.run(scope.list_highlights(mode="local", item_id=media_id)) == []
 
 
 def test_local_service_persists_document_annotations(memory_db_factory):

@@ -150,12 +150,67 @@ class StaticLibraryMediaScopeService:
     # caller sends an unsupported field (e.g. ``version``).
     _SUPPORTED_METADATA_FIELDS = {"title", "media_type", "author", "url", "keywords"}
 
-    def __init__(self, media_items):
+    def __init__(self, media_items, highlights=None):
         self.media_items = tuple(media_items)
         self.calls = []
         self.detail_calls = []
         self.update_calls = []
         self.delete_calls = []
+        # item_id (str) -> list of highlight dicts, mirroring the field
+        # names LocalMediaReadingService._highlight_row_to_dict returns
+        # ("id"/"item_id"/"quote"/"note"/"color"/...), keyed the same way
+        # ``media_id``/``item_id`` is normalized elsewhere in this fake.
+        self.highlights_by_item_id: dict = {}
+        self._next_highlight_id = 1
+        self.list_highlights_calls = []
+        self.create_highlight_calls = []
+        self.delete_highlight_calls = []
+        for item_id, quote, note, color in highlights or ():
+            self._seed_highlight(item_id, quote=quote, note=note, color=color)
+
+    def _seed_highlight(self, item_id, *, quote, note=None, color=None):
+        highlight = {
+            "id": self._next_highlight_id,
+            "item_id": str(item_id),
+            "quote": quote,
+            "note": note,
+            "color": color,
+        }
+        self._next_highlight_id += 1
+        self.highlights_by_item_id.setdefault(str(item_id), []).append(highlight)
+        return highlight
+
+    async def list_highlights(self, *, item_id, mode=None):
+        """Return the stored highlights for ``item_id``, matching the real
+        ``media_reading_scope_service.list_highlights`` -> ``LocalMediaReadingService.list_highlights``
+        chain (``mode`` accepted and discarded).
+        """
+        self.list_highlights_calls.append({"item_id": item_id})
+        return [dict(highlight) for highlight in self.highlights_by_item_id.get(str(item_id), [])]
+
+    async def create_highlight(self, *, item_id, quote, mode=None, note=None, color=None, **kwargs):
+        """Record and store a new highlight, matching the real
+        ``media_reading_scope_service.create_highlight`` -> ``LocalMediaReadingService.create_highlight``
+        chain (``mode`` accepted and discarded).
+        """
+        self.create_highlight_calls.append(
+            {"item_id": item_id, "quote": quote, "note": note, "color": color}
+        )
+        return self._seed_highlight(item_id, quote=quote, note=note, color=color)
+
+    async def delete_highlight(self, *, highlight_id, mode=None):
+        """Remove a highlight by id, matching the real
+        ``media_reading_scope_service.delete_highlight`` -> ``LocalMediaReadingService.delete_highlight``
+        chain (``mode`` accepted and discarded).
+        """
+        self.delete_highlight_calls.append({"highlight_id": highlight_id})
+        removed = False
+        for item_id, highlights in list(self.highlights_by_item_id.items()):
+            remaining = [h for h in highlights if str(h["id"]) != str(highlight_id)]
+            if len(remaining) != len(highlights):
+                removed = True
+            self.highlights_by_item_id[item_id] = remaining
+        return {"success": removed}
 
     async def list_media_items(self, **kwargs):
         self.calls.append(kwargs)

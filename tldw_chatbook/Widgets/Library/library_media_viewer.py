@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Library.library_media_viewer_state import LibraryMediaViewerState
+from tldw_chatbook.Library.library_media_viewer_state import (
+    LibraryMediaHighlightRow,
+    LibraryMediaViewerState,
+)
 
 
 class LibraryMediaViewer(Vertical):
@@ -20,6 +23,7 @@ class LibraryMediaViewer(Vertical):
             the read-only metadata block and action row.
         confirming_delete: Whether the inline delete-confirmation affordance
             should render in place of the normal action row.
+        highlights: Reading highlights for this media item, in display order.
     """
 
     def __init__(
@@ -28,12 +32,14 @@ class LibraryMediaViewer(Vertical):
         *,
         editing: bool = False,
         confirming_delete: bool = False,
+        highlights: Sequence[LibraryMediaHighlightRow] = (),
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.viewer = viewer
         self.editing = editing
         self.confirming_delete = confirming_delete
+        self.highlights = tuple(highlights)
         self.styles.width = "13fr"
         self.styles.min_width = 40
 
@@ -91,6 +97,8 @@ class LibraryMediaViewer(Vertical):
                 id="library-media-viewer-analysis-text",
                 markup=False,
             )
+
+        yield from self._compose_highlights()
 
         if self.confirming_delete and not self.editing:
             # A single full-width Static above the toolbar, not inside it --
@@ -193,4 +201,64 @@ class LibraryMediaViewer(Vertical):
                 value=self.viewer.edit_fields.get("keywords", ""),
                 placeholder="Keywords (comma-separated)",
                 id="library-media-edit-keywords",
+            )
+
+    def _compose_highlights(self) -> ComposeResult:
+        """Render the highlights section: existing rows, then the add form.
+
+        Each highlight is a full-width ``Static`` (quote, plus a
+        ``Color: .../Note: ...`` line when present) immediately followed by
+        its own full-width delete ``Button`` -- stacked, not paired inside a
+        ``Horizontal``, matching the render-safety rule on ``compose`` above.
+        The delete button carries the highlight's id as a plain attribute
+        (mirroring ``LibraryMediaCanvas`` setting ``button.media_id``) so the
+        screen's class-selector handler can read it back.
+
+        Returns:
+            ComposeResult for the highlights section.
+        """
+        yield Static(
+            "Highlights",
+            id="library-media-viewer-highlights-title",
+            classes="destination-section",
+        )
+        if not self.highlights:
+            yield Static(
+                "No highlights yet.",
+                id="library-media-viewer-highlights-empty",
+                markup=False,
+            )
+        else:
+            for index, highlight in enumerate(self.highlights):
+                yield Static(
+                    highlight.display_text,
+                    id=f"library-media-highlight-{index}",
+                    markup=False,
+                )
+                delete_button = Button(
+                    "Delete highlight",
+                    id=f"library-media-highlight-delete-{index}",
+                    classes="library-canvas-action library-media-highlight-delete",
+                    compact=True,
+                )
+                delete_button.highlight_id = highlight.highlight_id
+                yield delete_button
+        with Vertical(id="library-media-highlight-form"):
+            yield Input(
+                placeholder="Quote",
+                id="library-media-highlight-quote",
+            )
+            yield Input(
+                placeholder="Note (optional)",
+                id="library-media-highlight-note",
+            )
+            yield Input(
+                placeholder="Color (optional)",
+                id="library-media-highlight-color",
+            )
+            yield Button(
+                "Add highlight",
+                id="library-media-highlight-add",
+                classes="library-canvas-action",
+                compact=True,
             )

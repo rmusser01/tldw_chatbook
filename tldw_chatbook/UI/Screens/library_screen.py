@@ -31,7 +31,10 @@ from ...Library.library_media_state import (
     LibraryMediaCanvasState,
     build_library_media_state,
 )
-from ...Library.library_media_viewer_state import build_library_media_viewer_state
+from ...Library.library_media_viewer_state import (
+    build_library_media_highlight_rows,
+    build_library_media_viewer_state,
+)
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -502,6 +505,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_detail: Mapping[str, Any] | None = None
         self._library_media_editing: bool = False
         self._library_media_confirming_delete: bool = False
+        self._library_media_highlights: list[dict[str, Any]] = []
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2542,6 +2546,9 @@ class LibraryScreen(BaseAppScreen):
                             build_library_media_viewer_state(self._library_media_detail),
                             editing=self._library_media_editing,
                             confirming_delete=self._library_media_confirming_delete,
+                            highlights=build_library_media_highlight_rows(
+                                self._library_media_highlights
+                            ),
                             id="library-media-viewer",
                         )
                 elif shell.canvas_kind == "media":
@@ -2656,6 +2663,11 @@ class LibraryScreen(BaseAppScreen):
         call via ``_run_library_service_call``, and recomposes once the
         fetched detail (or a cleared/failed state) has been stored.
 
+        Also fetches the item's reading highlights (see
+        ``_fetch_library_media_highlights``) so both the detail and the
+        highlights section are ready by the single recompose at the end,
+        rather than the highlights section popping in on a second refresh.
+
         Triggered by ``handle_library_media_row`` on media-row selection;
         ``compose_content`` renders the stored ``_library_media_detail`` via
         ``build_library_media_viewer_state`` once this worker completes.
@@ -2667,6 +2679,7 @@ class LibraryScreen(BaseAppScreen):
         get_media_item = getattr(service, "get_media_item", None)
         if not callable(get_media_item):
             self._library_media_detail = None
+            self._library_media_highlights = []
             if self.is_mounted:
                 self.refresh(recompose=True)
             return
@@ -2683,6 +2696,50 @@ class LibraryScreen(BaseAppScreen):
             logger.warning(f"Failed to load Library media detail for {media_id!r}.", exc_info=True)
             detail = None
         self._library_media_detail = detail if isinstance(detail, Mapping) else None
+        self._library_media_highlights = await self._fetch_library_media_highlights(media_id)
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    async def _fetch_library_media_highlights(self, media_id: str) -> list[dict[str, Any]]:
+        """Fetch reading highlights for a Library media item from the local scope service.
+
+        Guards against an unavailable ``list_highlights`` service or a failed
+        call the same way ``_refresh_library_media_detail`` guards the detail
+        fetch: any failure yields an empty list rather than raising, so a
+        highlights outage never blocks the rest of the viewer from loading.
+
+        Args:
+            media_id: The Library media item id to fetch highlights for.
+
+        Returns:
+            The fetched highlights list, or an empty list when the service
+            is unavailable or the fetch fails.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        list_highlights = getattr(service, "list_highlights", None)
+        if not callable(list_highlights):
+            return []
+        try:
+            highlights = await self._run_library_service_call(
+                list_highlights,
+                mode="local",
+                item_id=media_id,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.warning(
+                f"Failed to load Library media highlights for {media_id!r}.", exc_info=True
+            )
+            return []
+        return list(highlights) if isinstance(highlights, list) else []
+
+    async def _reload_library_media_highlights(self, media_id: str) -> None:
+        """Re-fetch and store highlights after a highlight mutation, then recompose.
+
+        Args:
+            media_id: The Library media item id whose highlights changed.
+        """
+        self._library_media_highlights = await self._fetch_library_media_highlights(media_id)
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -2822,6 +2879,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_detail = None
         self._library_media_editing = False
         self._library_media_confirming_delete = False
+        self._library_media_highlights = []
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -2912,6 +2970,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_detail = None
         self._library_media_editing = False
         self._library_media_confirming_delete = False
+        self._library_media_highlights = []
         if media_id:
             self.run_worker(self._refresh_library_media_detail(media_id))
         self.refresh(recompose=True)
@@ -3157,12 +3216,147 @@ class LibraryScreen(BaseAppScreen):
             )
             self._library_media_view = "list"
             self._library_media_detail = None
+            self._library_media_highlights = []
             self._selected_media_id = ""
         if self.is_mounted:
             self.refresh(recompose=True)
 
     def _notify_library_media_delete_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed media-delete attempt.
+
+        Args:
+            message: Human-readable warning text to notify with.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-media-highlight-add")
+    def handle_library_media_highlight_add(self, event: Button.Pressed) -> None:
+        """Read the add-highlight form and hand the write off to a worker.
+
+        Reads the three highlight inputs directly (before any recompose
+        removes them) and silently ignores the press when the quote is
+        blank -- mirroring how ``handle_library_media_edit_save`` reads its
+        form inputs synchronously before deferring to a worker.
+
+        Args:
+            event: Button press event emitted by the highlights form's "Add
+                highlight" action.
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        if not media_id:
+            return
+        try:
+            quote = self.query_one("#library-media-highlight-quote", Input).value
+            note = self.query_one("#library-media-highlight-note", Input).value
+            color = self.query_one("#library-media-highlight-color", Input).value
+        except (NoMatches, QueryError):
+            return
+        quote = quote.strip()
+        if not quote:
+            return
+        self.run_worker(
+            self._add_library_media_highlight(
+                media_id,
+                quote=quote,
+                note=note.strip() or None,
+                color=color.strip() or None,
+            )
+        )
+
+    async def _add_library_media_highlight(
+        self,
+        media_id: str,
+        *,
+        quote: str,
+        note: str | None,
+        color: str | None,
+    ) -> None:
+        """Create a new reading highlight, then re-fetch the highlights list.
+
+        Guards against a missing ``create_highlight`` service or a failed
+        write by logging the failure and surfacing a quiet notice, but
+        always re-fetches highlights afterwards so the section never shows a
+        stale list.
+
+        Args:
+            media_id: The Library media item id to attach the highlight to.
+            quote: The highlighted quote text.
+            note: Optional note text, or None.
+            color: Optional highlight color, or None.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        create_highlight = getattr(service, "create_highlight", None)
+        if callable(create_highlight):
+            try:
+                await self._run_library_service_call(
+                    create_highlight,
+                    mode="local",
+                    item_id=media_id,
+                    quote=quote,
+                    note=note,
+                    color=color,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to add Library media highlight for {media_id!r}.", exc_info=True
+                )
+                self._notify_library_media_highlight_warning("Could not add this highlight.")
+        else:
+            self._notify_library_media_highlight_warning("Highlights are unavailable.")
+        await self._reload_library_media_highlights(media_id)
+
+    @on(Button.Pressed, ".library-media-highlight-delete")
+    def handle_library_media_highlight_delete(self, event: Button.Pressed) -> None:
+        """Read the pressed row's highlight id and hand the delete off to a worker.
+
+        Args:
+            event: Button press event emitted by a highlight row's delete
+                action.
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        highlight_id = getattr(event.button, "highlight_id", "")
+        if not media_id or not highlight_id:
+            return
+        self.run_worker(self._delete_library_media_highlight(media_id, highlight_id))
+
+    async def _delete_library_media_highlight(self, media_id: str, highlight_id: Any) -> None:
+        """Delete a reading highlight, then re-fetch the highlights list.
+
+        Guards against a missing ``delete_highlight`` service or a failed
+        write by logging the failure and surfacing a quiet notice, but
+        always re-fetches highlights afterwards so the section never shows a
+        stale list.
+
+        Args:
+            media_id: The Library media item id the highlight belongs to.
+            highlight_id: The highlight id to delete.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        delete_highlight = getattr(service, "delete_highlight", None)
+        if callable(delete_highlight):
+            try:
+                await self._run_library_service_call(
+                    delete_highlight,
+                    mode="local",
+                    highlight_id=highlight_id,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to delete Library media highlight {highlight_id!r}.", exc_info=True
+                )
+                self._notify_library_media_highlight_warning("Could not delete this highlight.")
+        else:
+            self._notify_library_media_highlight_warning("Highlights are unavailable.")
+        await self._reload_library_media_highlights(media_id)
+
+    def _notify_library_media_highlight_warning(self, message: str) -> None:
+        """Surface a quiet warning notice for a failed highlight mutation.
 
         Args:
             message: Human-readable warning text to notify with.

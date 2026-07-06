@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from tldw_chatbook.Library.library_media_viewer_state import (
+    LibraryMediaHighlightRow,
     LibraryMediaViewerState,
+    build_library_media_highlight_rows,
     build_library_media_viewer_state,
 )
 
@@ -232,6 +234,76 @@ def test_non_mapping_detail_tolerated_like_none():
     assert state.media_id == ""
     assert state.metadata_lines == ()
     assert state.edit_fields == {"title": "", "author": "", "url": "", "keywords": ""}
+
+
+def test_highlight_rows_include_quote_note_and_color():
+    """A highlight with quote/note/color renders all three on its display text."""
+    rows = build_library_media_highlight_rows(
+        [{"id": 5, "quote": "Important sentence", "note": "Check this", "color": "yellow"}]
+    )
+
+    assert rows == (
+        LibraryMediaHighlightRow(
+            highlight_id="5",
+            quote="Important sentence",
+            note="Check this",
+            color="yellow",
+            display_text="“Important sentence”\nColor: yellow · Note: Check this",
+        ),
+    )
+
+
+def test_highlight_row_quote_only_omits_extras_line():
+    """A highlight with only a quote renders a single-line display text."""
+    rows = build_library_media_highlight_rows([{"id": 1, "quote": "Just the quote"}])
+
+    assert rows == (
+        LibraryMediaHighlightRow(
+            highlight_id="1",
+            quote="Just the quote",
+            note="",
+            color="",
+            display_text="“Just the quote”",
+        ),
+    )
+
+
+def test_highlight_rows_preserve_order():
+    """Multiple highlights render in the given order."""
+    rows = build_library_media_highlight_rows(
+        [
+            {"id": 1, "quote": "First"},
+            {"id": 2, "quote": "Second"},
+        ]
+    )
+
+    assert [row.quote for row in rows] == ["First", "Second"]
+
+
+def test_highlight_rows_skip_blank_quote_and_non_mapping_entries():
+    """Entries with a blank/missing quote, or non-mapping entries, are skipped."""
+    rows = build_library_media_highlight_rows(
+        [
+            {"id": 1, "quote": "   "},
+            {"id": 2},
+            "not-a-mapping",
+            {"id": 3, "quote": "Kept"},
+        ]
+    )
+
+    assert [row.quote for row in rows] == ["Kept"]
+
+
+def test_highlight_rows_none_input_yields_empty_tuple():
+    """None input yields an empty tuple of rows."""
+    assert build_library_media_highlight_rows(None) == ()
+
+
+def test_highlight_row_missing_id_yields_empty_highlight_id():
+    """A highlight missing its id yields an empty highlight_id string."""
+    rows = build_library_media_highlight_rows([{"quote": "No id here"}])
+
+    assert rows[0].highlight_id == ""
 
 
 def test_default_now_uses_current_time_when_not_supplied():

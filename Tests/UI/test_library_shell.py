@@ -61,9 +61,11 @@ def _visible_text(screen) -> str:
     return " ".join(chunks)
 
 
-def _seed_conversations(app, conversations, *, notes=None, media=None):
+def _seed_conversations(app, conversations, *, notes=None, media=None, highlights=None):
     app.notes_scope_service = StaticLibraryNotesScopeService(notes or [])
-    app.media_reading_scope_service = StaticLibraryMediaScopeService(media or [])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService(
+        media or [], highlights=highlights
+    )
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
         conversations
     )
@@ -861,6 +863,113 @@ async def test_library_shell_media_delete_cancel_leaves_item_intact():
 
         service = app.media_reading_scope_service
         assert service.delete_calls == []
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_renders_seeded_highlight():
+    """A seeded highlight's quote renders in the viewer's highlights section."""
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        media=_two_media_items(),
+        highlights=[("media-1", "Important sentence", "Check this", "yellow")],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-highlight-0")
+
+        visible = _visible_text(screen)
+        assert "Important sentence" in visible
+        assert "Check this" in visible
+        assert "yellow" in visible
+        assert screen.query_one("#library-media-highlight-delete-0")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_highlight_add_creates_and_renders_new_highlight():
+    """Filling the quote input and pressing Add calls ``create_highlight`` and renders it."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-highlight-quote")
+
+        assert not screen.query(".library-media-highlight-delete")
+
+        screen.query_one("#library-media-highlight-quote", Input).value = "New highlight quote"
+        screen.query_one("#library-media-highlight-add").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.create_highlight_calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Add never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert service.create_highlight_calls[-1]["item_id"] == "media-1"
+        assert service.create_highlight_calls[-1]["quote"] == "New highlight quote"
+        await _wait_for_selector(screen, pilot, "#library-media-highlight-0")
+        assert "New highlight quote" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_highlight_delete_removes_it():
+    """Pressing a highlight's delete button calls ``delete_highlight`` and removes the row."""
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        media=_two_media_items(),
+        highlights=[("media-1", "Doomed highlight", None, None)],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-highlight-delete-0")
+
+        screen.query_one("#library-media-highlight-delete-0").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.delete_highlight_calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Delete never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert service.delete_highlight_calls[-1]["highlight_id"] == "1"
+        assert "Doomed highlight" not in _visible_text(screen)
+        assert not screen.query(".library-media-highlight-delete")
 
 
 @pytest.mark.asyncio
