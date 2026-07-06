@@ -236,14 +236,26 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         screen = _active_destination_screen(host)
         await _wait_for_library_shell_ready(screen, pilot)
 
-        # Collapse the other rail sections first: the rail does not scroll
-        # (Vertical default overflow: hidden), so at this terminal height the
-        # Details body's action buttons would otherwise render off-screen.
+        # Collapse the other rail sections first so the Details body has the
+        # most headroom at this terminal height.
         for section in ("browse", "create", "ingest"):
             screen.query_one(f"#console-rail-section-toggle-library-{section}", Button).press()
             await pilot.pause()
         await _open_library_details(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
+
+        # DestinationHarness does not load the real app stylesheet, so the
+        # `#library-rail { overflow-y: auto; }` rule that makes the rail
+        # scrollable never applies here. Set it directly to exercise the same
+        # scroll-into-view behavior the real app gets from CSS, then scroll
+        # the action button into view before clicking by screen coordinate.
+        rail = screen.query_one("#library-rail")
+        rail.styles.overflow_y = "auto"
+        await pilot.pause()
+        create_button = screen.query_one("#library-create-local-workspace", Button)
+        create_button.scroll_visible(animate=False)
+        await pilot.pause()
+        await pilot.pause()
 
         await pilot.click("#library-create-local-workspace")
         await _wait_for_selector(screen, pilot, "#library-workspaces-active-workspace")

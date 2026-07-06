@@ -2219,6 +2219,13 @@ class LibraryScreen(BaseAppScreen):
             *self._workspaces_detail_rows(state),
             id="library-workspaces-depth-panel",
         )
+        # Vertical defaults to `height: 1fr`, which inside the Details body's
+        # auto-height flow starves this panel of space for its own rows. The
+        # panel then clips mid-row and the next widget (the "Workspace
+        # actions" header) renders immediately after the truncated content,
+        # reading as a visual collision. Hug the panel's real content height
+        # instead so nothing below it is squeezed or overlapped.
+        depth_panel.styles.height = "auto"
         widgets: list[Any] = [depth_panel]
         widgets.extend(
             self._workspace_action_widgets(

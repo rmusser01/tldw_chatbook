@@ -2081,7 +2081,18 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     border: none;
 }
 
-#library-rail,
+#library-rail {
+    border: solid $ds-column-line;
+    background: $ds-surface-panel;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 #library-canvas {
     border: solid $ds-column-line;
     background: $ds-surface-panel;

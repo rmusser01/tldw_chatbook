@@ -1,10 +1,12 @@
 """Library shell (L1) rail + conversations canvas pilot contracts."""
 
+import re
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 from textual.app import App
+from textual.widgets import Button
 
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_destination_shells import (
@@ -503,4 +505,109 @@ def test_generated_stylesheet_includes_library_shell_rules():
         assert selector in generated_css, selector
     for stale in ("#library-mode-bar", "#library-contract-grid"):
         assert stale not in component_css, stale
-        assert stale not in generated_css, stale
+
+
+def _css_rule_body(css_text: str, selector: str) -> str:
+    """Return the declaration body of the first ``selector { ... }`` rule.
+
+    Args:
+        css_text: Full stylesheet text to search.
+        selector: A literal selector (e.g. ``"#library-rail"``) that opens a
+            rule, possibly as part of a comma-separated selector list.
+
+    Returns:
+        The text between the rule's opening ``{`` and its matching ``}``.
+
+    Raises:
+        AssertionError: If the selector never opens a rule block.
+    """
+    pattern = re.compile(re.escape(selector) + r"\s*[,{]")
+    match = pattern.search(css_text)
+    assert match, f"{selector} does not open a CSS rule"
+    brace_start = css_text.index("{", match.start())
+    brace_end = css_text.index("}", brace_start)
+    return css_text[brace_start + 1 : brace_end]
+
+
+def test_library_rail_css_scrolls_vertically_with_scrollbar_styling():
+    """The rail must scroll so Details content past the viewport stays reachable.
+
+    Regression for the live-QA overflow: the rail is a plain ``Vertical``
+    (Textual default ``overflow: hidden hidden``), so once every section is
+    open the Details body and its workspace action buttons render past the
+    pane's bottom and are neither visible nor reachable. Scoping to the
+    literal ``#library-rail`` rule (not just "selector appears somewhere in
+    the file") keeps this from passing on an unrelated rule that happens to
+    mention the same properties elsewhere.
+    """
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    for css_path in (
+        root / "components" / "_agentic_terminal.tcss",
+        root / "tldw_cli_modular.tcss",
+    ):
+        body = _css_rule_body(css_path.read_text(), "#library-rail")
+        assert "overflow-y: auto" in body, css_path
+        assert "scrollbar-background: $ds-surface-panel" in body, css_path
+        assert "scrollbar-color: $ds-grid-line" in body, css_path
+
+
+@pytest.mark.asyncio
+async def test_library_shell_rail_scrolls_to_reveal_workspace_actions():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        for section in ("browse", "create", "ingest", "details"):
+            body = screen.query_one(f"#library-rail-section-body-{section}")
+            if body.styles.display == "none":
+                screen.query_one(f"#console-rail-section-toggle-library-{section}").press()
+                await pilot.pause()
+                await pilot.pause()
+
+        rail = screen.query_one("#library-rail")
+        assert str(rail.styles.overflow_y) == "auto"
+
+        rail.scroll_end(animate=False)
+        await pilot.pause()
+        await pilot.pause()
+
+        for selector in ("#library-create-local-workspace", "#library-use-in-console"):
+            button = screen.query_one(selector)
+            assert rail.region.y <= button.region.y < rail.region.y + rail.region.height, (
+                f"{selector} region {button.region} is not within the scrolled rail "
+                f"viewport {rail.region}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_details_body_has_no_duplicate_collapse_control():
+    """The moved Workspaces body must not carry its own collapse affordance.
+
+    The Details section already owns exactly one collapse/expand toggle (the
+    rail's ``ConsoleRailSectionHeader``, a sibling of the body, tooltipped
+    "Collapse Details"/"Expand Details"). Nothing inside the body itself
+    should duplicate that affordance.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        toggle = screen.query_one("#console-rail-section-toggle-library-details")
+        toggle.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        details_body = screen.query_one("#library-rail-section-body-details")
+        for button in details_body.query(Button):
+            label = str(button.label)
+            tooltip = button.tooltip or ""
+            assert "Collapse Details" not in label
+            assert "Collapse Details" not in tooltip
