@@ -797,3 +797,46 @@ async def test_outputs_panel_routes_server_template_and_artifact_operations():
         )
         rendered_status = str(panel.query_one("#outputs-status", Static).render())
         assert "server:output:11" in rendered_status or "output_delete" in rendered_status
+
+
+@pytest.mark.asyncio
+async def test_chat_api_key_field_prefilled_for_config_key(monkeypatch, temp_config_path, mock_app_instance):
+    create_dummy_config(temp_config_path, {
+        "providers": {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
+        "api_settings": {"openai": {"api_key": "sk-configured"}},
+    })
+    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
+    window = ToolsSettingsWindow(app_instance=mock_app_instance)
+
+    if AppTest is None:
+        pytest.skip("AppTest not available in this version of Textual")
+
+    async with AppTest(app=mock_app_instance, driver_class=None) as pilot:
+        mock_app_instance.mount(window)
+        await pilot.pause()
+        field = window.query_one("#general-chat-api-key", Input)
+        assert field.password is True
+        assert field.value == "sk-configured"
+        assert field.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_chat_api_key_field_disabled_for_keyless_provider(monkeypatch, temp_config_path, mock_app_instance):
+    create_dummy_config(temp_config_path, {
+        "providers": {"Ollama": ["llama3"], "OpenAI": ["gpt-4o"]},
+        "chat_defaults": {"provider": "Ollama", "model": "llama3"},
+        "api_settings": {},
+    })
+    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
+    window = ToolsSettingsWindow(app_instance=mock_app_instance)
+
+    if AppTest is None:
+        pytest.skip("AppTest not available in this version of Textual")
+
+    async with AppTest(app=mock_app_instance, driver_class=None) as pilot:
+        mock_app_instance.mount(window)
+        await pilot.pause()
+        field = window.query_one("#general-chat-api-key", Input)
+        assert field.disabled is True
+        assert "No API key needed" in field.placeholder

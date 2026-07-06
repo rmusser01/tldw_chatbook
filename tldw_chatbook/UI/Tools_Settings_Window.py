@@ -23,10 +23,10 @@ from textual.widgets import Markdown
 from textual import on
 # Local Imports
 from tldw_chatbook.config import (
-    load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config, 
+    load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config,
     API_MODELS_BY_PROVIDER, check_encryption_needed, get_detected_api_providers,
     enable_config_encryption, disable_config_encryption, change_encryption_password,
-    get_encryption_password, get_cli_setting, get_prompts_db_path
+    get_encryption_password, get_cli_setting, get_prompts_db_path, load_settings
 )
 from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
@@ -38,6 +38,11 @@ from .Sharing_Panel import SharingPanel
 from ..Utils.path_validation import validate_path
 from .Theme_Editor_Window import ThemeEditorView
 from .Widgets import ConfigSearchResult, UIElementSearchEngine
+from ..Chat.provider_readiness import (
+    get_provider_readiness,
+    provider_config_key,
+    chat_api_key_field_state,
+)
 #
 # Local Imports
 #
@@ -689,6 +694,13 @@ class ToolsSettingsWindow(Container):
                     tooltip="Reset all general settings to default values"
                 )
     
+    def _config_is_locked(self) -> bool:
+        """True when encryption is on but no session password is available."""
+        encryption_config = self.config_data.get("encryption", {})
+        if not encryption_config.get("enabled", False):
+            return False
+        return not get_encryption_password()
+
     def _compose_chat_defaults_settings(self) -> ComposeResult:
         """Compose chat default settings."""
         with VerticalScroll(classes="settings-tab-content"):
@@ -716,7 +728,21 @@ class ToolsSettingsWindow(Container):
                         classes="settings-select",
                         tooltip="Default AI provider for chat conversations"
                     )
-                    
+
+                    # Inline API key for the selected provider (new-user quick start)
+                    _readiness = get_provider_readiness(current_chat_provider, self.config_data)
+                    _key_state = chat_api_key_field_state(_readiness, locked=self._config_is_locked())
+                    yield Label("API Key:", classes="settings-label")
+                    yield Input(
+                        value=_key_state.value,
+                        password=True,
+                        disabled=_key_state.disabled,
+                        id="general-chat-api-key",
+                        classes="settings-input",
+                        placeholder=_key_state.placeholder,
+                        tooltip="API key for the selected provider. Saved to [api_settings.<provider>]."
+                    )
+
                     yield Label("Model:", classes="settings-label")
                     yield Input(
                         value=chat_config.get("model", "gpt-4o"),
