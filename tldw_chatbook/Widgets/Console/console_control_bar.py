@@ -162,10 +162,27 @@ class ConsoleControlBar(Vertical):
                 self.query_one(selector, Static).update(label)
             except NoMatches:
                 continue
+        chip_emphasis = {
+            "#console-sources-chip": state.sources_active,
+            "#console-tools-chip": state.tools_active,
+            "#console-approvals-chip": state.approvals_active,
+        }
+        for selector, active in chip_emphasis.items():
+            try:
+                chip = self.query_one(selector, Static)
+            except NoMatches:
+                continue
+            chip.set_class(not active, "console-chip-dim")
+            chip.set_class(active, "console-chip-alert")
 
     @staticmethod
-    def _chip(label: str, *, id: str) -> Static:
-        return Static(label, id=id, classes="console-control-chip")
+    def _chip(label: str, *, id: str, emphasis: bool | None = None) -> Static:
+        classes = "console-control-chip"
+        if emphasis is False:
+            classes += " console-chip-dim"
+        elif emphasis is True:
+            classes += " console-chip-alert"
+        return Static(label, id=id, classes=classes)
 
     @staticmethod
     def _action_widget_id(action: WorkbenchAction) -> str:
@@ -242,9 +259,21 @@ class ConsoleControlBar(Vertical):
             yield self._chip(self.state.model_label, id="console-model-chip")
             yield self._chip(self.state.persona_label, id="console-persona-chip")
             yield self._chip(self.state.rag_label, id="console-rag-chip")
-            yield self._chip(self.state.sources_label, id="console-sources-chip")
-            yield self._chip(self.state.tools_label, id="console-tools-chip")
-            yield self._chip(self.state.approvals_label, id="console-approvals-chip")
+            yield self._chip(
+                self.state.sources_label,
+                id="console-sources-chip",
+                emphasis=self.state.sources_active,
+            )
+            yield self._chip(
+                self.state.tools_label,
+                id="console-tools-chip",
+                emphasis=self.state.tools_active,
+            )
+            yield self._chip(
+                self.state.approvals_label,
+                id="console-approvals-chip",
+                emphasis=self.state.approvals_active,
+            )
         with Horizontal(id="console-control-action-row", classes="console-control-action-row"):
             for action in self._visible_actions():
                 yield self._action(action)

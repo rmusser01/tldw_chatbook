@@ -44,6 +44,13 @@ def test_console_control_state_preserves_falsy_labels_and_general_assistant_fall
     assert state.persona_label == "Assistant: General"
 
 
+def test_console_control_state_counter_activity_flags():
+    idle = ConsoleControlState.from_values()
+    assert (idle.sources_active, idle.tools_active, idle.approvals_active) == (False, False, False)
+    busy = ConsoleControlState.from_values(staged_source_count=2, tool_count=1, approval_count=3)
+    assert (busy.sources_active, busy.tools_active, busy.approvals_active) == (True, True, True)
+
+
 def test_console_staged_context_state_preserves_live_work_payload_provenance():
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",

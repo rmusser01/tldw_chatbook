@@ -1234,6 +1234,18 @@ def test_generated_console_stylesheet_includes_setup_card_rules():
         assert stale not in generated_css, stale
 
 
+def test_generated_console_stylesheet_includes_counter_chip_emphasis_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for selector in (
+        ".console-chip-dim",
+        ".console-chip-alert",
+    ):
+        assert selector in component_css, selector
+        assert selector in generated_css, selector
+
+
 def test_generated_console_stylesheet_includes_setup_modal_rules():
     root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
     component_css = (root / "components" / "_agentic_terminal.tcss").read_text()

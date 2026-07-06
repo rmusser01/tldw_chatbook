@@ -246,6 +246,20 @@ async def test_console_control_bar_renders_visible_state_chips():
 
 
 @pytest.mark.asyncio
+async def test_console_counter_chips_dim_when_zero():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-sources-chip")
+        for chip_id in ("#console-sources-chip", "#console-tools-chip", "#console-approvals-chip"):
+            chip = console.query_one(chip_id)
+            assert chip.has_class("console-chip-dim"), chip_id
+            assert not chip.has_class("console-chip-alert"), chip_id
+        assert not console.query_one("#console-provider-chip").has_class("console-chip-dim")
+
+
+@pytest.mark.asyncio
 async def test_console_control_bar_exposes_compact_visible_actions():
     app = _build_test_app()
     _configure_native_ready_console(app)
