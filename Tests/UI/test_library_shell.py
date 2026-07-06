@@ -326,6 +326,35 @@ async def test_library_shell_search_filters_conversations_canvas():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_search_retains_value_after_submit():
+    """Submitting a search recomposes the shell; the box must keep the query.
+
+    The submit handler rebuilds the whole screen (``refresh(recompose=True)``),
+    which remounts a brand-new ``#library-search-input``. Regression guard:
+    that new input must be seeded with the active query instead of showing
+    empty text while the filter is silently active.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search_input = screen.query_one("#library-search-input")
+        search_input.value = "quarterly"
+        search_input.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-conversations-status")
+
+        recomposed_input = screen.query_one("#library-search-input")
+        assert recomposed_input.value == "quarterly"
+        assert recomposed_input.has_focus
+
+
+@pytest.mark.asyncio
 async def test_library_shell_details_toggle_persists():
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -460,6 +489,9 @@ def test_generated_stylesheet_includes_library_shell_rules():
     for selector in (
         "#library-shell-grid",
         "#library-header-line",
+        "#library-rail",
+        "#library-canvas",
+        ".library-rail-empty-copy",
         ".library-rail-row",
         ".library-rail-row-selected",
         ".library-conversation-row",

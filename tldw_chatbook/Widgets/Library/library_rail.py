@@ -43,6 +43,8 @@ class LibraryRail(Vertical):
     Attributes:
         shell: Current Library shell display state.
         preferences: Section open/collapsed preferences.
+        query: Active search box text, re-seeded into the ``Input`` so a
+            recompose does not silently clear a submitted query.
         workspaces_body_factory: Callable building the Workspaces body widgets
             (depth panel + actions) so the screen keeps its service/callback
             wiring; rendered inside the collapsed Details section.
@@ -53,12 +55,14 @@ class LibraryRail(Vertical):
         shell: LibraryShellState,
         preferences: LibraryRailPreferences,
         *,
+        query: str = "",
         workspaces_body_factory: Callable[[], Iterable[Widget]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.shell = shell
         self.preferences = preferences
+        self.query = query
         self.workspaces_body_factory = workspaces_body_factory
         self.styles.width = "3fr"
         self.styles.min_width = 24
@@ -67,18 +71,22 @@ class LibraryRail(Vertical):
         self,
         shell: LibraryShellState,
         preferences: LibraryRailPreferences,
+        *,
+        query: str = "",
     ) -> None:
         """Refresh the rail from new state.
 
         Args:
             shell: Latest Library shell display state.
             preferences: Latest section preferences.
+            query: Latest search box text.
 
         Returns:
             None.
         """
         self.shell = shell
         self.preferences = preferences
+        self.query = query
         self.refresh(recompose=True)
 
     def _section_open(self, section_id: str) -> bool:
@@ -100,6 +108,7 @@ class LibraryRail(Vertical):
             and the Details header + body.
         """
         yield Input(
+            value=self.query,
             placeholder="Search conversations…",
             id="library-search-input",
         )

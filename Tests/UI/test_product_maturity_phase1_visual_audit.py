@@ -34,7 +34,7 @@ DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     # the legacy #chat-window surface is no longer composed; pin the
     # always-present control bar + native session surface instead.
     "console": ("#console-control-bar", "#console-session-surface"),
-    "library": ("#library-shell",),
+    "library": ("#library-shell-grid",),
     "artifacts": ("#artifacts-shell",),
     "personas": ("#personas-shell",),
     "watchlists_collections": ("#watchlists-collections-shell",),

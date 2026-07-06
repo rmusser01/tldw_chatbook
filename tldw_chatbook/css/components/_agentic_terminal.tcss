@@ -553,6 +553,17 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     border: none;
 }
 
+#library-rail,
+#library-canvas {
+    border: solid $ds-column-line;
+    background: $ds-surface-panel;
+}
+
+.library-rail-empty-copy {
+    color: $ds-text-muted;
+    padding: 0 1;
+}
+
 .library-rail-row {
     width: 100%;
     min-width: 0;

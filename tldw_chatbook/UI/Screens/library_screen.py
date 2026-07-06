@@ -13,6 +13,7 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Input, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
@@ -2552,6 +2553,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
+                query=self._library_conversation_query,
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 id="library-rail",
                 classes="destination-workbench-pane",
@@ -2813,6 +2815,19 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = "browse-conversations"
         self._active_mode = "conversations"
         self.refresh(recompose=True)
+        self.call_after_refresh(self._focus_library_search_input)
+
+    def _focus_library_search_input(self) -> None:
+        """Re-focus the search box after a submit-triggered recompose.
+
+        ``handle_library_search_submitted`` rebuilds the whole screen, which
+        remounts a brand-new ``#library-search-input``; without this, focus
+        silently falls back to the screen after every search.
+        """
+        try:
+            self.query_one("#library-search-input", Input).focus()
+        except (NoMatches, QueryError):
+            pass
 
     @on(Button.Pressed, ".library-mode-chip")
     async def switch_library_mode(self, event: Button.Pressed) -> None:
