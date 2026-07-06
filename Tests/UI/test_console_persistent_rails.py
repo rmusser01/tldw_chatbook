@@ -275,11 +275,11 @@ def test_generated_console_stylesheet_includes_rail_rules():
 
         right_handle = _css_block(css, ".console-rail-handle-right")
         right_button = _css_block(css, ".console-rail-handle-button-right")
-        assert "width: 12;" in right_handle
-        assert "min-width: 12;" in right_handle
-        assert "max-width: 12;" in right_handle
-        assert "width: 12;" in right_button
-        assert "max-width: 12;" in right_button
+        assert "width: 11;" in right_handle
+        assert "min-width: 11;" in right_handle
+        assert "max-width: 11;" in right_handle
+        assert "width: 11;" in right_button
+        assert "max-width: 11;" in right_button
 
 
 def test_generated_console_stylesheet_includes_rail_section_rules():
@@ -319,7 +319,7 @@ async def test_console_first_start_renders_left_rail_and_right_handle():
         assert _is_displayed(console.query_one("#console-inspector-rail-handle"))
         right_handle = console.query_one("#console-inspector-rail-handle")
         assert right_handle.has_class("console-rail-handle-right")
-        assert right_handle.region.width == 12
+        assert right_handle.region.width == 11
         _assert_right_handle_lightweight(console)
         open_button = console.query_one("#console-inspector-rail-open", Button)
         assert str(open_button.label) == "Inspector"
@@ -1058,7 +1058,7 @@ async def test_console_compact_width_preserves_main_column_and_forces_right_coll
         assert composer.region.width >= workspace_grid.region.width - 2
         _assert_selector_hidden_or_absent(console, "#console-right-rail")
         assert _is_displayed(right_handle)
-        assert right_handle.region.width == 12
+        assert right_handle.region.width == 11
         _assert_right_handle_lightweight(console)
         _assert_handle_visible_text_fits(right_handle)
 
