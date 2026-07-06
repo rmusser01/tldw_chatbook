@@ -2758,6 +2758,39 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
 
 
 @pytest.mark.asyncio
+async def test_console_staged_context_tray_stays_quiet_when_populated():
+    app = _build_test_app()
+    app.pending_console_launch = {
+        "source": "Library Search/RAG",
+        "title": "Incident Review",
+        "status": "ready",
+        "recovery": "Review citations before sending.",
+        "payload": {
+            "source_id": "note-42",
+            "chunk_id": "chunk-7",
+            "runtime_backend": "local-fts",
+        },
+    }
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(212, 64)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
+
+        # Confirm the tray genuinely has content, so the quiet-border
+        # assertion below is meaningful for the non-empty state (and not
+        # accidentally re-checking the empty case).
+        staged_context = console.query_one("#console-staged-context-tray")
+        assert "source_id: note-42" in _visible_text(staged_context)
+
+        staged_context_border = staged_context.styles.border
+        assert staged_context_border.top[0] in {"", "none"}
+        assert staged_context_border.right[0] in {"", "none"}
+        assert staged_context_border.bottom[0] in {"", "none"}
+        assert staged_context_border.left[0] in {"", "none"}
+
+
+@pytest.mark.asyncio
 async def test_console_workbench_panes_have_visible_terminal_frames():
     app = _build_test_app()
     host = ConsoleHarness(app)
