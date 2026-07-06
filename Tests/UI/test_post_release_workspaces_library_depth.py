@@ -122,36 +122,13 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         assert "Stage only active-workspace sources into Console, RAG, or agents." in visible
         assert "Workspace: Workspace A" in visible
         assert "Browse/search: all Library and Notes items remain visible" in visible
-        assert "Workspace B research note" in visible
-        assert "Workspace A transcript" in visible
-        table_header = str(
-            screen.query_one("#library-workspaces-eligibility-heading", Static).renderable
-        )
-        assert "|" not in table_header
-        assert "Source" in table_header
-        assert "Workspace" in table_header
-        assert "Visible" in table_header
-        assert "Console/RAG" in table_header
-        source_rows = [
-            str(widget.renderable)
-            for widget in screen.query(Static)
-            if (widget.id or "").startswith("library-workspaces-source-row-")
-        ]
-        blocked_source_row = next(
-            row for row in source_rows if "Workspace B research note" in row
-        )
-        eligible_source_row = next(
-            row for row in source_rows if "Workspace A transcript" in row
-        )
-        assert "|" not in blocked_source_row
-        assert "Workspace B research note" in blocked_source_row
-        assert "Workspace B" in blocked_source_row
-        assert "Blocked" in blocked_source_row
-        assert "Copy/link to Workspace A" in blocked_source_row
-        assert "Workspace A transcript" in eligible_source_row
-        assert "Workspace A" in eligible_source_row
-        assert "Eligible" in eligible_source_row
-        assert "Ready" in eligible_source_row
+        # The Details body intentionally no longer renders a per-source
+        # visibility/assignment table (it duplicated Browse ▸ Conversations).
+        # Only the workspace summary + handoff count remain here.
+        assert not screen.query("#library-workspaces-eligibility-heading")
+        assert not screen.query("#library-workspaces-source-row-0")
+        assert not screen.query("#library-workspaces-source-row-1")
+        assert "Console/RAG handoff: 2 eligible, 2 blocked" in visible
         assert "Collections: browse and organize; staging is read-only" in visible
         assert "Import/Export: copy or reference sources" in visible
         assert "Workspace selection changes staging, not what you can browse or search" in visible
@@ -159,6 +136,7 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         assert "Fix: Copy/link blocked sources to Workspace A" in visible
         assert "Study Dashboard actions" not in visible
         assert screen.query_one("#library-use-in-console", Button).disabled is True
+        assert screen.query_one("#library-create-local-workspace", Button)
 
         screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
@@ -306,24 +284,20 @@ async def test_library_workspaces_create_skips_archived_local_workspace_identity
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_rows_escape_markup_text() -> None:
+async def test_library_workspaces_active_workspace_label_escapes_markup_text() -> None:
+    """The workspace summary label still escapes user-provided markup.
+
+    Formerly this also covered per-source title escaping in the now-removed
+    assignment table (``library-workspaces-source-row-*``); that surface is
+    gone, so only the surviving ``library-workspaces-active-workspace``
+    summary widget is exercised here.
+    """
     app = _build_test_app()
-    app.notes_scope_service = StaticLibraryNotesScopeService(
-        [{"title": "[red]Injected[/red]", "id": "note-markup"}]
-    )
-    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     app.workspace_registry_service.create_workspace(
         workspace_id="workspace-a",
         name="[bold]Workspace A[/bold]",
     )
     app.workspace_registry_service.set_active_workspace("workspace-a")
-    app.workspace_registry_service.link_membership(
-        "workspace-a",
-        item_type="note",
-        item_id="note-markup",
-        title="[red]Injected[/red]",
-    )
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(140, 40)) as pilot:
@@ -333,11 +307,12 @@ async def test_library_workspaces_rows_escape_markup_text() -> None:
         await _open_library_details(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-workspaces-depth-panel")
 
-        row = screen.query_one("#library-workspaces-source-row-0", Static)
+        row = screen.query_one("#library-workspaces-active-workspace", Static)
         rendered = str(row.renderable)
-        assert "\\[red]Injected\\[/red]" in rendered
-        assert "\\[bold]Workspace" in rendered
-        assert "[red]Injected[/red]" not in rendered
+        assert "[bold]Workspace A[/bold]" in rendered
+        # Renders as literal text, not interpreted Rich markup: no style
+        # spans (e.g. bold) were produced from the injected name.
+        assert not row.renderable.spans
 
 
 @pytest.mark.asyncio

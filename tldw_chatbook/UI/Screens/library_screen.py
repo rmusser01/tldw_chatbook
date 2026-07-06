@@ -1885,20 +1885,6 @@ class LibraryScreen(BaseAppScreen):
                 )
             )
             return tuple(rows)
-        rows.append(
-            Static(
-                self._workspace_eligibility_header(),
-                id="library-workspaces-eligibility-heading",
-                classes="destination-section",
-            )
-        )
-        for index, row in enumerate(state.source_rows):
-            rows.append(
-                Static(
-                    self._workspace_eligibility_row(state, row),
-                    id=f"library-workspaces-source-row-{index}",
-                )
-            )
         rows.extend(
             (
                 Static(state.handoff_label, id="library-workspaces-handoff"),
@@ -1939,57 +1925,6 @@ class LibraryScreen(BaseAppScreen):
                 id="library-workspaces-inspector-rule",
             ),
         )
-
-    def _workspace_eligibility_header(self) -> str:
-        return (
-            f"{'Source':<{LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH}} "
-            f"{'Workspace':<{LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH}} "
-            f"{'Visible':<{LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH}} "
-            f"{'Console/RAG':<{LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH}} "
-            "Recovery"
-        )
-
-    def _workspace_eligibility_row(
-        self,
-        state: LibraryWorkspaceDepthState,
-        row: Any,
-    ) -> str:
-        return (
-            f"{self._workspace_table_cell(row.title, LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH, escape=True):<{LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH}} "
-            f"{self._workspace_table_cell(row.workspace_label, LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH, escape=True):<{LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH}} "
-            f"{self._workspace_visible_label(row.visible):<{LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH}} "
-            f"{self._workspace_context_status(row):<{LIBRARY_WORKSPACE_CONTEXT_COLUMN_WIDTH}} "
-            f"{escape_markup(self._workspace_recovery_label(state, row))}"
-        )
-
-    @staticmethod
-    def _workspace_table_cell(value: Any, width: int, *, escape: bool = False) -> str:
-        text = str(value or "").strip()
-        if len(text) <= width:
-            return escape_markup(text) if escape else text
-        if width <= 3:
-            truncated = text[:width]
-            return escape_markup(truncated) if escape else truncated
-        truncated = f"{text[: width - 3]}..."
-        return escape_markup(truncated) if escape else truncated
-
-    def _workspace_visible_label(self, visible: bool) -> str:
-        return "Yes" if visible else "No"
-
-    def _workspace_context_status(self, row: Any) -> str:
-        return "Eligible" if row.active_context_eligible else "Blocked"
-
-    def _workspace_recovery_label(
-        self,
-        state: LibraryWorkspaceDepthState,
-        row: Any,
-    ) -> str:
-        if row.active_context_eligible:
-            return "Ready"
-        workspace_name = state.workspace_name.strip()
-        if workspace_name and workspace_name not in {"Local Default", "unavailable"}:
-            return f"Copy/link to {workspace_name}"
-        return "Assign to active workspace"
 
     def _workspace_handoff_recovery_label(self, state: LibraryWorkspaceDepthState) -> str:
         if not state.source_rows:
