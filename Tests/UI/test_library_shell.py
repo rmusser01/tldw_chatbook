@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Select
+from textual.widgets import Button
 
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_destination_shells import (
@@ -344,7 +344,8 @@ async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview()
         title = str(screen.query_one("#library-media-title").renderable)
         assert title == "Media (2)"
 
-        assert screen.query_one("#library-media-type-filter", Select)
+        filter_button = screen.query_one("#library-media-type-filter", Button)
+        assert str(filter_button.label) == "type: All ▸"
 
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 2
@@ -361,6 +362,13 @@ async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview()
 
 @pytest.mark.asyncio
 async def test_library_shell_media_type_filter_narrows_list():
+    """Pressing the cycling filter button advances through type_options.
+
+    The media fixture seeds two types ("audio", "video"), so
+    ``type_options`` resolves to ``("All", "audio", "video")``. One press
+    from the "All" default advances to "audio"; a second press advances to
+    "video"; a third press wraps back around to "All".
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
@@ -372,18 +380,42 @@ async def test_library_shell_media_type_filter_narrows_list():
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-canvas")
 
-        select = screen.query_one("#library-media-type-filter", Select)
-        select.value = "audio"
+        filter_button = screen.query_one("#library-media-type-filter", Button)
+
+        filter_button.press()
         await pilot.pause()
         await pilot.pause()
 
         assert screen._library_media_type_filter == "audio"
+        filter_button = screen.query_one("#library-media-type-filter", Button)
+        assert str(filter_button.label) == "type: audio ▸"
         rows = list(screen.query(".library-media-row"))
         assert len(rows) == 1
         assert "Interview Recording" in str(rows[0].label)
 
         status = str(screen.query_one("#library-media-status").renderable)
         assert "type: audio" in status
+
+        filter_button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_type_filter == "video"
+        filter_button = screen.query_one("#library-media-type-filter", Button)
+        assert str(filter_button.label) == "type: video ▸"
+        rows = list(screen.query(".library-media-row"))
+        assert len(rows) == 1
+        assert "Product Demo Video" in str(rows[0].label)
+
+        filter_button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_type_filter == "All"
+        filter_button = screen.query_one("#library-media-type-filter", Button)
+        assert str(filter_button.label) == "type: All ▸"
+        rows = list(screen.query(".library-media-row"))
+        assert len(rows) == 2
 
 
 @pytest.mark.asyncio
@@ -730,7 +762,6 @@ def test_generated_stylesheet_includes_library_media_rules():
     component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
     generated_css = (root / "tldw_cli_modular.tcss").read_text()
     for selector in (
-        "#library-media-header",
         "#library-media-title",
         ".library-media-row",
         ".library-media-row-selected",
@@ -738,6 +769,7 @@ def test_generated_stylesheet_includes_library_media_rules():
     ):
         assert selector in component_css, selector
         assert selector in generated_css, selector
+    assert "#library-media-header" not in component_css
 
 
 def _css_rule_body(css_text: str, selector: str) -> str:

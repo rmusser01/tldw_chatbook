@@ -15,7 +15,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches, QueryError
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Input, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...config import save_setting_to_cli_config
@@ -2797,25 +2797,30 @@ class LibraryScreen(BaseAppScreen):
         self._active_mode = "conversations"
         self.refresh(recompose=True)
 
-    @on(Select.Changed, "#library-media-type-filter")
-    def handle_library_media_type_filter_changed(self, event: Select.Changed) -> None:
-        """Filter the Library media canvas by the selected media type.
+    @on(Button.Pressed, "#library-media-type-filter")
+    def handle_library_media_type_filter_pressed(self, event: Button.Pressed) -> None:
+        """Cycle the Library media canvas filter to the next available type.
 
-        A ``Select`` with ``allow_blank=False`` fires ``Changed`` for the
-        value it auto-selects at mount time, not only on real user
-        interaction (see ``notes_screen.handle_sort_changed`` for the same
-        guard). Without the no-op check below, that mount-time event would
-        trigger a recompose that remounts a fresh ``Select``, which fires
-        its own mount-time ``Changed``, looping forever.
+        Advances through the authoritative ``type_options`` tuple built by
+        ``_build_library_media_state`` (e.g. ``("All", "audio", "video")``),
+        wrapping back to the first option after the last. Replaces the
+        previous ``Select``-based filter, which did not render reliably in
+        the deployed TUI; a ``Button.Pressed`` handler only fires on real
+        user presses, so no mount-time-loop guard is needed here.
 
         Args:
-            event: Select change event emitted by the media type filter.
+            event: Button press event emitted by the media type filter.
         """
         event.stop()
-        new_value = str(event.value)
-        if new_value == self._library_media_type_filter:
+        type_options = self._build_library_media_state().type_options
+        if not type_options:
             return
-        self._library_media_type_filter = new_value
+        try:
+            current_index = type_options.index(self._library_media_type_filter)
+        except ValueError:
+            current_index = 0
+        next_index = (current_index + 1) % len(type_options)
+        self._library_media_type_filter = type_options[next_index]
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-media-row")

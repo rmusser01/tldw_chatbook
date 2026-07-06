@@ -6,7 +6,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Select, Static
+from textual.widgets import Button, Static
 
 from tldw_chatbook.Library.library_media_state import LibraryMediaCanvasState
 from tldw_chatbook.Widgets.Library.library_rail import _visible_row_title
@@ -47,18 +47,16 @@ class LibraryMediaCanvas(Vertical):
         Returns:
             ComposeResult for the media canvas.
         """
-        header = Horizontal(id="library-media-header")
-        with header:
-            yield Static(
-                f"Media ({self.canvas.count})",
-                id="library-media-title",
-            )
-            yield Select(
-                options=[(option, option) for option in self.canvas.type_options],
-                value=self.canvas.active_type,
-                allow_blank=False,
-                id="library-media-type-filter",
-            )
+        yield Static(
+            f"Media ({self.canvas.count})",
+            id="library-media-title",
+        )
+        yield Button(
+            f"type: {self.canvas.active_type} ▸",
+            id="library-media-type-filter",
+            classes="library-canvas-action",
+            compact=True,
+        )
 
         status_text = self.canvas.status_copy or self.canvas.empty_copy
         status = Static(
