@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from textual import on
 from textual.app import App
+from textual.content import Content
 from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -2029,6 +2030,42 @@ async def test_console_selected_message_copy_action_uses_app_clipboard():
 
     app.copy_to_clipboard.assert_called_once_with("answer")
     assert console._last_console_action.action_id == "copy"
+
+
+@pytest.mark.asyncio
+async def test_transcript_role_label_renders_dim_body_full_contrast():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        session = store.ensure_session()
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+        )
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
+
+        row = console.query_one(f"#console-message-{message.id}", Static)
+        rendered = row.renderable
+
+    assert isinstance(rendered, Content)
+    # Content with spans: the role prefix span carries "dim"; the body stays
+    # unstyled (full contrast) even though the combined plain text is unchanged.
+    assert rendered.plain.startswith("Assistant")
+    assert "answer" in rendered.plain
+    assert any("dim" in str(span.style) for span in rendered.spans), rendered.spans
+    body_start = rendered.plain.index("answer")
+    body_styles = [
+        str(span.style)
+        for span in rendered.spans
+        if span.start <= body_start < span.end
+    ]
+    assert not any("dim" in style for style in body_styles), body_styles
 
 
 @pytest.mark.asyncio

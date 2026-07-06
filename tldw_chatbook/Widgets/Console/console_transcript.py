@@ -8,6 +8,7 @@ from typing import Iterable, Literal
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.events import Click, Key
 from textual.widget import Widget
@@ -74,13 +75,27 @@ def _message_body(message: ConsoleChatMessage) -> str:
     return content
 
 
-def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> str:
-    """Return compact transcript copy for the visible message row."""
+def _message_render_text(message: ConsoleChatMessage, *, selected: bool) -> Content:
+    """Return the compact transcript row renderable for a message.
+
+    The role label is styled ``"dim"`` while the body keeps full contrast
+    (no style). ``Content.plain`` matches the pre-existing plain-string
+    rendering exactly (``"{role_label}  {body}"`` or ``"{role_label}\\n{body}"``)
+    so plain-text assertions and exports are unaffected.
+
+    Uses Textual's native ``Content`` visual (rather than ``rich.text.Text``)
+    because ``Static.update()`` eagerly visualizes its argument: a Rich
+    ``Text`` renderable requires an active app (``widget.app.console``) to
+    convert, which raises ``NoActiveAppError`` for rows built/updated outside
+    a mounted app (as several unit tests do). ``Content`` already satisfies
+    Textual's ``Visual`` protocol, so it is used as-is without touching
+    ``self.app``.
+    """
     role_label = _message_role_label(message)
     body = _message_body(message)
     if not selected and "\n" not in body and len(body) <= 120:
-        return f"{role_label}  {body}"
-    return f"{role_label}\n{body}"
+        return Content.assemble((role_label, "dim"), "  ", body)
+    return Content.assemble((role_label, "dim"), "\n", body)
 
 
 @dataclass(frozen=True)

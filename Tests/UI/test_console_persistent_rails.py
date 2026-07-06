@@ -1264,3 +1264,20 @@ def test_generated_console_stylesheet_includes_setup_modal_rules():
     ):
         assert selector in component_css, selector
         assert selector in generated_css, selector
+
+
+def test_generated_console_stylesheet_includes_tab_strip_spacing_rule():
+    # NOTE: a companion "selection gets a thick accent border-left" rule was
+    # scoped for this same change but is intentionally NOT implemented here:
+    # `Tests/UI/test_non_obscuring_focus_contract.py::
+    # test_console_transcript_selected_message_uses_selected_contract_without_geometry`
+    # asserts `.console-transcript-message-selected` carries no `border:` at
+    # all (part of the repo-wide non-obscuring-focus contract). Adding a
+    # border-left there regresses that guard, so selection styling keeps its
+    # existing background/color/bold-underline treatment.
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for css in (component_css, generated_css):
+        tab_strip_block = _css_block(css, "#console-native-tab-strip")
+        assert "margin-bottom: 1;" in tab_strip_block
