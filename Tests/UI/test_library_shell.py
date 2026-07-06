@@ -725,6 +725,21 @@ def test_generated_stylesheet_includes_library_shell_rules():
         assert stale not in component_css, stale
 
 
+def test_generated_stylesheet_includes_library_media_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for selector in (
+        "#library-media-header",
+        "#library-media-title",
+        ".library-media-row",
+        ".library-media-row-selected",
+        "#library-media-type-filter",
+    ):
+        assert selector in component_css, selector
+        assert selector in generated_css, selector
+
+
 def _css_rule_body(css_text: str, selector: str) -> str:
     """Return the declaration body of the first ``selector { ... }`` rule.
 
