@@ -8,7 +8,7 @@ from typing import Any, Mapping, Sequence
 
 from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
 
-_ID_KEYS = ("media_id", "id", "uuid")
+_ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")
 _INGESTED_KEYS = ("ingestion_date", "last_modified")
 

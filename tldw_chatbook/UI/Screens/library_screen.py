@@ -2661,6 +2661,7 @@ class LibraryScreen(BaseAppScreen):
                 media_id=media_id,
                 include_content=True,
                 include_versions=True,
+                isolate_in_worker=True,
             )
         except Exception:
             logger.warning(f"Failed to load Library media detail for {media_id!r}.", exc_info=True)
