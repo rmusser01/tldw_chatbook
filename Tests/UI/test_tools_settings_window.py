@@ -875,3 +875,40 @@ async def test_chat_api_key_field_reloads_on_provider_change(monkeypatch, temp_c
         await pilot.pause()
         assert field.disabled is True
         assert field.value == ""
+
+
+@pytest.mark.asyncio
+async def test_chat_api_key_save_writes_config_and_updates_live_config(monkeypatch, temp_config_path):
+    config = {
+        "providers": {"OpenAI": ["gpt-4o"]},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
+        "api_settings": {},
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+        window.app_instance.app_config = {"api_settings": {}}
+        window.query_one("#general-chat-api-key", Input).value = "sk-brand-new"
+
+        saved = window._save_chat_api_key()
+        assert saved is True
+
+        # Written to the on-disk config under the normalized provider key
+        written = toml.load(temp_config_path)
+        assert written["api_settings"]["openai"]["api_key"] == "sk-brand-new"
+
+        # Live app config updated in place (no restart needed)
+        assert window.app_instance.app_config["api_settings"]["openai"]["api_key"] == "sk-brand-new"
+
+
+@pytest.mark.asyncio
+async def test_chat_api_key_save_skips_blank(monkeypatch, temp_config_path):
+    config = {
+        "providers": {"OpenAI": ["gpt-4o"]},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
+        "api_settings": {},
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+        window.app_instance.app_config = {"api_settings": {}}
+        window.query_one("#general-chat-api-key", Input).value = "   "
+        assert window._save_chat_api_key() is False
+        written = toml.load(temp_config_path)
+        assert written.get("api_settings", {}).get("openai", {}).get("api_key") is None

@@ -42,6 +42,7 @@ from ..Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
     chat_api_key_field_state,
+    chat_api_key_value_to_persist,
 )
 #
 # Local Imports
@@ -845,6 +846,47 @@ class ToolsSettingsWindow(Container):
         api_key_input.value = state.value
         api_key_input.disabled = state.disabled
         api_key_input.placeholder = state.placeholder
+
+    def _refresh_live_api_settings(self) -> None:
+        """Push freshly-saved api_settings into the live app config (no restart).
+
+        Mutates the existing ``app_config`` dict in place so components that hold
+        a reference to it — including the Chat send path — observe the new key.
+        """
+        try:
+            reloaded = load_settings(force_reload=True)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"Could not refresh live api_settings after save: {exc}")
+            return
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            app_config["api_settings"] = reloaded.get("api_settings", {})
+        # Keep this window's own snapshot consistent.
+        self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
+
+    def _save_chat_api_key(self) -> bool:
+        """Persist the inline Chat-Defaults API key for the selected provider.
+
+        Returns:
+            True if a key was written (and the live config refreshed), else False.
+        """
+        try:
+            provider_value = self.query_one("#general-chat-provider", Select).value
+            api_key_widget = self.query_one("#general-chat-api-key", Input)
+        except QueryError:
+            return False
+        if not provider_value or provider_value is Select.BLANK:
+            return False
+        readiness = get_provider_readiness(str(provider_value), self.config_data)
+        field_state = chat_api_key_field_state(readiness, locked=self._config_is_locked())
+        key_to_persist = chat_api_key_value_to_persist(api_key_widget.value, field_state)
+        if key_to_persist is None:
+            return False
+        provider_key = provider_config_key(str(provider_value))
+        if not save_setting_to_cli_config(f"api_settings.{provider_key}", "api_key", key_to_persist):
+            return False
+        self._refresh_live_api_settings()
+        return True
 
     def _compose_character_defaults_settings(self) -> ComposeResult:
         """Compose character default settings."""
@@ -3115,6 +3157,9 @@ Thank you for using tldw-chatbook! 🎉
             
             # Chat Defaults
             if save_setting_to_cli_config("chat_defaults", "provider", self.query_one("#general-chat-provider", Select).value):
+                saved_count += 1
+            # Inline API key for the selected provider (contextual quick-start field)
+            if self._save_chat_api_key():
                 saved_count += 1
             if save_setting_to_cli_config("chat_defaults", "model", self.query_one("#general-chat-model", Input).value):
                 saved_count += 1
