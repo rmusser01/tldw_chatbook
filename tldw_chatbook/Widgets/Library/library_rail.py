@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widget import Widget
@@ -20,6 +21,30 @@ from tldw_chatbook.Widgets.Console.console_rail_section import ConsoleRailSectio
 LIBRARY_RAIL_ROW_PREFIX = "library-row-"
 
 _MAX_LIBRARY_ROW_TITLE = 20
+
+
+def library_dim_label_text(label: str, value: str) -> Text:
+    """Build a "label · value" line with a dimmed label and a literal value.
+
+    Used for the Details rail's scannable rows (e.g. "Runtime · Local",
+    "Active · Local Default") so the label reads as secondary context while
+    the value stays at normal emphasis.
+
+    Args:
+        label: Short constant label rendered with a dim style.
+        value: Value text appended literally. Rich markup embedded in
+            ``value`` (e.g. a user-supplied workspace name) is never
+            interpreted, only displayed, so untrusted content cannot inject
+            styling.
+
+    Returns:
+        A Rich ``Text`` combining the dimmed label separator and the plain
+        value, with a single "dim" style span over the label only.
+    """
+    text = Text()
+    text.append(f"{label} · ", style="dim")
+    text.append(str(value))
+    return text
 
 
 def _visible_row_title(title: str) -> str:
@@ -131,9 +156,22 @@ class LibraryRail(Vertical):
             details_body.styles.display = "none"
         with details_body:
             yield Static(
-                "\n".join(self.shell.details_lines),
+                "Status",
+                id="library-details-group-status",
+                classes="library-details-group library-details-group-first",
+            )
+            details_lines = self.shell.details_lines
+            runtime_value = details_lines[0] if details_lines else ""
+            yield Static(
+                library_dim_label_text("Runtime", runtime_value),
+                id="library-details-runtime",
+                classes="library-details-row",
+            )
+            counts_or_error = details_lines[1] if len(details_lines) > 1 else ""
+            yield Static(
+                counts_or_error,
                 id="library-details-body",
-                classes="library-rail-empty-copy",
+                classes="library-details-row",
                 markup=False,
             )
             if self.workspaces_body_factory is not None:

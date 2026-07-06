@@ -575,6 +575,21 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     padding: 0 1;
 }
 
+.library-details-group {
+    text-style: bold;
+    color: $ds-text-primary;
+    margin: 1 0 0 0;
+    padding: 0 1;
+}
+
+.library-details-group-first {
+    margin: 0;
+}
+
+.library-details-row {
+    padding: 0 1;
+}
+
 .library-rail-row {
     width: 100%;
     min-width: 0;

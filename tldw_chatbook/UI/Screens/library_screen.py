@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -57,6 +58,7 @@ from ...Widgets.Library import (
     LibraryRail,
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
+    library_dim_label_text,
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -84,6 +86,7 @@ LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
 )
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
+LIBRARY_HANDOFF_LABEL_PREFIX = "Console/RAG handoff: "
 LIBRARY_LOCAL_SNAPSHOT_MODES = frozenset({"sources", "conversations", "import-export"})
 LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH = 30
 LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
@@ -1840,62 +1843,56 @@ class LibraryScreen(BaseAppScreen):
             Static(selected.sync_status_detail, id="library-collection-inspector-sync-detail"),
         )
 
+    def _workspace_handoff_summary_label(self, state: LibraryWorkspaceDepthState) -> str:
+        """Shorten ``state.handoff_label`` for the Workspace group's Handoff row.
+
+        Drops the redundant "Console/RAG handoff: " prefix (the "Handoff"
+        row label already says as much) and prefixes a "●" glyph directly
+        before a nonzero blocked count, so this single line carries the
+        signal the retired blocked-state callouts used to repeat three
+        times.
+        """
+        label = state.handoff_label
+        if label.startswith(LIBRARY_HANDOFF_LABEL_PREFIX):
+            label = label[len(LIBRARY_HANDOFF_LABEL_PREFIX) :]
+        match = re.search(r"(\d+) blocked", label)
+        if match and int(match.group(1)) > 0:
+            label = f"{label[: match.start()]}● {match.group(0)}{label[match.end() :]}"
+        return label
+
     def _workspaces_detail_rows(
         self,
         state: LibraryWorkspaceDepthState,
     ) -> tuple[Static, ...]:
-        rows: list[Static] = [
-            Static("Workspace Rules", classes="destination-section"),
+        """Build the Workspace group's Details rail rows.
+
+        Only the two facts that change staging eligibility survive here: the
+        active workspace and the Console/RAG handoff eligible/blocked
+        counts. The former policy-prose lines (global browse/search rule,
+        staging-scope rule, per-source visibility label, collections and
+        import/export capability notes) restated the same "browse stays
+        global, staging is workspace-scoped" rule several different ways;
+        the Handoff row below now carries that state on its own.
+        """
+        return (
             Static(
-                Text.from_markup(escape_markup(state.workspace_label)),
+                "Workspace",
+                id="library-details-group-workspace",
+                classes="library-details-group",
+            ),
+            Static(
+                library_dim_label_text("Active", state.workspace_name),
                 id="library-workspaces-active-workspace",
-            ),
-            Static(state.visibility_label, id="library-workspaces-visibility"),
-            Static(
-                "Workspace selection changes staging, not what you can browse or search.",
-                id="library-workspaces-global-access-rule",
+                classes="library-details-row",
             ),
             Static(
-                "Stage only active-workspace sources into Console, RAG, or agents.",
-                id="library-workspaces-context-rule",
-            ),
-        ]
-        if not state.source_rows:
-            rows.extend(
-                (
-                    Static(
-                        "No workspace sources yet.",
-                        id="library-workspaces-empty-title",
-                        classes="destination-section",
-                    ),
-                    Static(
-                        "Browse/search still shows every Library and Notes item.",
-                        id="library-workspaces-empty-browse",
-                    ),
-                    Static(
-                        "Handoff unavailable until sources exist or are assigned here.",
-                        id="library-workspaces-empty-handoff",
-                    ),
-                    Static(state.handoff_label, id="library-workspaces-handoff"),
-                    Static(
-                        state.collections_membership_label,
-                        id="library-workspaces-collections-membership",
-                    ),
-                    Static(state.import_export_label, id="library-workspaces-import-export"),
-                )
-            )
-            return tuple(rows)
-        rows.extend(
-            (
-                Static(state.handoff_label, id="library-workspaces-handoff"),
-                Static(
-                    state.collections_membership_label,
-                    id="library-workspaces-collections-membership",
+                library_dim_label_text(
+                    "Handoff", self._workspace_handoff_summary_label(state)
                 ),
-                Static(state.import_export_label, id="library-workspaces-import-export"),
-            )
+                id="library-workspaces-handoff",
+                classes="library-details-row",
+            ),
         )
-        return tuple(rows)
 
     def _workspaces_inspector_rows(
         self,
@@ -2060,9 +2057,19 @@ class LibraryScreen(BaseAppScreen):
         handoff_disabled: bool,
         handoff_tooltip: str,
     ) -> tuple[Any, ...]:
-        """Build the Workspaces action controls (create/import/use-in-console)."""
+        """Build the Actions group's Details rail rows.
+
+        Only the two action buttons plus one dim WIP note survive here; the
+        Workspace group's Handoff row now carries the eligible/blocked
+        status, so the retired ready/blocked/next-step callouts that used to
+        repeat it are gone.
+        """
         widgets: list[Any] = [
-            Static("Workspace actions", classes="destination-section"),
+            Static(
+                "Actions",
+                id="library-details-group-actions",
+                classes="library-details-group",
+            ),
             Button(
                 "Create local workspace",
                 id="library-create-local-workspace",
@@ -2072,59 +2079,14 @@ class LibraryScreen(BaseAppScreen):
                     "Server sync and ACP handoff remain WIP."
                 ),
             ),
-            Static(
-                "Server sync: WIP/unavailable. Local workspace selection is active.",
-                id="library-workspace-create-local-copy",
-                classes="ds-recovery-callout",
-            ),
         ]
-        if workspace_depth_state.context_handoff_enabled:
+        if not workspace_depth_state.source_rows:
             widgets.append(
-                Static(
-                    "Ready: eligible sources can be staged in Console.",
-                    id="library-workspace-action-ready",
-                    classes="ds-recovery-callout",
-                )
-            )
-        elif not workspace_depth_state.source_rows:
-            widgets.extend(
-                (
-                    Button(
-                        "Import sources",
-                        id="library-workspace-import-sources",
-                        classes="library-source-action",
-                        tooltip="Open Library Import/Export to add workspace-eligible sources.",
-                    ),
-                    Static(
-                        (
-                            f"{self._workspace_handoff_blocked_label(workspace_depth_state)}\n"
-                            f"{self._workspace_handoff_fix_label(workspace_depth_state)}"
-                        ),
-                        id="library-workspace-action-blocked",
-                        classes="ds-recovery-callout is-blocked",
-                    ),
-                )
-            )
-        else:
-            widgets.append(
-                Static(
-                    (
-                        f"{self._workspace_handoff_blocked_label(workspace_depth_state)}\n"
-                        f"{self._workspace_handoff_fix_label(workspace_depth_state)}"
-                    ),
-                    id="library-workspace-action-blocked",
-                    classes="ds-recovery-callout is-blocked",
-                )
-            )
-        if workspace_depth_state.source_rows:
-            widgets.append(
-                Static(
-                    (
-                        "Next: stage eligible sources in Console."
-                        if workspace_depth_state.context_handoff_enabled
-                        else f"Next: {self._workspace_handoff_recovery_label(workspace_depth_state)}."
-                    ),
-                    id="library-workspace-action-next-step",
+                Button(
+                    "Import sources",
+                    id="library-workspace-import-sources",
+                    classes="library-source-action",
+                    tooltip="Open Library Import/Export to add workspace-eligible sources.",
                 )
             )
         widgets.append(
@@ -2134,6 +2096,13 @@ class LibraryScreen(BaseAppScreen):
                 classes="library-source-action",
                 disabled=handoff_disabled,
                 tooltip=handoff_tooltip,
+            )
+        )
+        widgets.append(
+            Static(
+                "Server sync WIP · local only",
+                id="library-workspace-create-local-copy",
+                classes="library-rail-empty-copy",
             )
         )
         return tuple(widgets)
@@ -2156,10 +2125,10 @@ class LibraryScreen(BaseAppScreen):
         )
         # Vertical defaults to `height: 1fr`, which inside the Details body's
         # auto-height flow starves this panel of space for its own rows. The
-        # panel then clips mid-row and the next widget (the "Workspace
-        # actions" header) renders immediately after the truncated content,
-        # reading as a visual collision. Hug the panel's real content height
-        # instead so nothing below it is squeezed or overlapped.
+        # panel then clips mid-row and the next widget (the "Actions" group
+        # header) renders immediately after the truncated content, reading
+        # as a visual collision. Hug the panel's real content height instead
+        # so nothing below it is squeezed or overlapped.
         depth_panel.styles.height = "auto"
         widgets: list[Any] = [depth_panel]
         widgets.extend(
@@ -2562,24 +2531,28 @@ class LibraryScreen(BaseAppScreen):
     def _library_details_lines(
         self, active_source: str, server_label: Any
     ) -> tuple[str, ...]:
-        """Build the Details disclosure lines for the Library shell rail."""
-        runtime_label = (
+        """Build the Status group's Details disclosure lines for the rail.
+
+        Returns exactly two plain-text values: the runtime value (rendered
+        by the rail with a dimmed "Runtime" label) and the local source
+        counts, or a lookup-error/recovery block in place of the counts when
+        the local source snapshot failed to load.
+        """
+        runtime_value = (
             "Local"
             if active_source != "server"
             else f"Server: {server_label or 'unknown'}"
         )
         counts = self._local_source_counts
-        lines = [f"Runtime: {runtime_label}"]
         if self._library_lookup_error:
-            lines.append(self._library_lookup_error)
+            counts_or_error = self._library_lookup_error
         else:
-            lines.append(
-                f"Notes {counts.get('notes', 0)} | "
-                f"Media {counts.get('media', 0)} | "
+            counts_or_error = (
+                f"Notes {counts.get('notes', 0)} · "
+                f"Media {counts.get('media', 0)} · "
                 f"Conversations {counts.get('conversations', 0)}"
             )
-        lines.append("Browse spans all workspaces; staging follows the active workspace.")
-        return tuple(lines)
+        return (runtime_value, counts_or_error)
 
     def _build_library_conversations_state(self):
         """Build the conversations canvas display state from local records."""
