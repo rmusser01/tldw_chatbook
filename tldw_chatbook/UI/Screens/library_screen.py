@@ -27,6 +27,10 @@ from ...Constants import (
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_conversations_state import build_library_conversations_state
+from ...Library.library_media_state import (
+    LibraryMediaCanvasState,
+    build_library_media_state,
+)
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -488,6 +492,8 @@ class LibraryScreen(BaseAppScreen):
         self._selected_conversation_id = ""
         self._library_selected_row_id: str = ""
         self._library_conversation_query: str = ""
+        self._library_media_type_filter: str = "All"
+        self._selected_media_id: str = ""
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2598,6 +2604,14 @@ class LibraryScreen(BaseAppScreen):
             self._conversation_records(),
             query=self._library_conversation_query,
             selected_id=self._selected_conversation_id,
+        )
+
+    def _build_library_media_state(self) -> LibraryMediaCanvasState:
+        """Build the media canvas display state from local records."""
+        return build_library_media_state(
+            self._local_source_records.get("media", ()),
+            active_type=self._library_media_type_filter,
+            selected_id=self._selected_media_id,
         )
 
     def _compose_mode_canvas(self, mode: str) -> ComposeResult:
