@@ -81,6 +81,14 @@ def test_console_glyph_constants():
     assert (GLYPH_CLOSE, GLYPH_COLLAPSE_LEFT) == ("✕", "◂")
 
 
+def test_console_active_row_marker_and_close_glyphs():
+    from tldw_chatbook.Chat.console_glyphs import GLYPH_ACTIVE, GLYPH_CLOSE
+    from tldw_chatbook.Widgets.Console import console_workspace_context, console_session_surface
+    import inspect
+    assert '"> "' not in inspect.getsource(console_workspace_context)
+    assert '"x"' not in inspect.getsource(console_session_surface)
+
+
 def _workspace_state() -> ConsoleWorkspaceContextState:
     return ConsoleWorkspaceContextState(
         heading="Convos & Workspaces",

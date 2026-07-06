@@ -9,7 +9,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSED, GLYPH_EXPANDED
+from tldw_chatbook.Chat.console_glyphs import GLYPH_ACTIVE, GLYPH_COLLAPSED, GLYPH_EXPANDED
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     ConsoleConversationBrowserGroup,
     ConsoleConversationBrowserRow,
@@ -549,7 +549,7 @@ class ConsoleWorkspaceContextTray(Vertical):
             with conversation_list:
                 if section.rows:
                     for index, row in enumerate(section.rows):
-                        marker = "> " if row.selected else "  "
+                        marker = f"{GLYPH_ACTIVE} " if row.selected else "  "
                         title = self._conversation_title(row.title)
                         visible_title = self._conversation_visible_title(title)
                         status = self._conversation_status(row.status)
@@ -788,7 +788,7 @@ class ConsoleWorkspaceContextTray(Vertical):
                 if str(part or "").strip()
             ]
             secondary = " - ".join(secondary_parts) or "conversation"
-            marker = "> " if row.selected else "  "
+            marker = f"{GLYPH_ACTIVE} " if row.selected else "  "
             status_suffix = f" [{status}]" if status else ""
             row_button = Button(
                 Text(f"{marker}{visible_title}\n  {secondary}"),
