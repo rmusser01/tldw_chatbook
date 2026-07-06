@@ -992,7 +992,7 @@ perl -pi -e 's/[ \t]+$//' Docs/superpowers/qa/chatbook-workbench-ui-foundation-c
 Run with escalation if Chromium is blocked by sandbox:
 
 ```bash
-node -e "import('playwright').then(async ({ chromium }) => { const path = await import('node:path'); const { pathToFileURL } = await import('node:url'); const base = '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual'; const names = ['console-workbench-normal','console-workbench-focus-state','console-workbench-compact','console-workbench-command-palette']; const browser = await chromium.launch({ headless: true }); for (const name of names) { const page = await browser.newPage({ viewport: { width: 1800, height: 1150 }, deviceScaleFactor: 1 }); page.setDefaultTimeout(120000); const svg = path.join(base, name + '.svg'); await page.goto(pathToFileURL(svg).href, { waitUntil: 'load', timeout: 120000 }); await page.waitForTimeout(250); await page.screenshot({ path: path.join(base, name + '.png'), fullPage: false, timeout: 120000, animations: 'disabled' }); await page.close(); } await browser.close(); }).catch((err) => { console.error(err); process.exit(1); })"
+node -e "import('playwright').then(async ({ chromium }) => { const path = await import('node:path'); const { pathToFileURL } = await import('node:url'); const base = path.resolve('Docs/superpowers/qa/chatbook-workbench-ui-foundation-console/artifacts/visual'); const names = ['console-workbench-normal','console-workbench-focus-state','console-workbench-compact','console-workbench-command-palette']; const browser = await chromium.launch({ headless: true }); for (const name of names) { const page = await browser.newPage({ viewport: { width: 1800, height: 1150 }, deviceScaleFactor: 1 }); page.setDefaultTimeout(120000); const svg = path.join(base, name + '.svg'); await page.goto(pathToFileURL(svg).href, { waitUntil: 'load', timeout: 120000 }); await page.waitForTimeout(250); await page.screenshot({ path: path.join(base, name + '.png'), fullPage: false, timeout: 120000, animations: 'disabled' }); await page.close(); } await browser.close(); }).catch((err) => { console.error(err); process.exit(1); })"
 ```
 
 - [ ] **Step 6: Update QA notes**
@@ -1122,7 +1122,7 @@ Update acceptance criteria to `[x]` and add implementation notes summarizing:
 Then run:
 
 ```bash
-backlog task edit 142 -s Done
+backlog task edit 144 -s Done
 ```
 
 - [ ] **Step 7: Commit closeout**

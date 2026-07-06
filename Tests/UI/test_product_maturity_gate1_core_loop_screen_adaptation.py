@@ -115,24 +115,19 @@ async def test_home_core_loop_uses_dashboard_regions_and_selected_item_inspector
 
     async with host.run_test(size=(140, 42)) as pilot:
         home = _active_home_screen(host)
-        await _wait_for_selector(home, pilot, "#home-dashboard-grid")
+        await _wait_for_selector(home, pilot, "#home-triage-grid")
 
         for selector in (
-            "#home-status-row",
-            "#home-scope-filter-row",
-            "#home-dashboard-grid",
-            "#home-attention-queue",
-            "#home-active-work-region",
-            "#home-inspector",
-            "#home-next-actions-region",
-            "#home-recent-work-region",
+            "#home-header-line",
+            "#home-triage-grid",
+            "#home-rail",
+            "#home-canvas",
         ):
             assert home.query_one(selector)
 
         text = _visible_text(home)
         assert "Daily papers" in text
         assert "RAG Summary Chatbook" in text
-        assert "Selected item" in text
         assert "Open in Console" in text
         assert "Open Chatbook in Console" in text
 
@@ -167,11 +162,11 @@ async def test_home_selected_item_matches_prioritized_details_control():
 
     async with host.run_test(size=(140, 42)) as pilot:
         home = _active_home_screen(host)
-        await _wait_for_selector(home, pilot, "#home-dashboard-grid")
+        await _wait_for_selector(home, pilot, "#home-triage-grid")
 
-        selected_body = str(home.query_one("#home-selected-item-body", Static).renderable)
-        assert "Daily papers" in selected_body
-        assert "RAG Summary Chatbook" not in selected_body
+        selected_title = str(home.query_one("#home-canvas-title", Static).renderable)
+        assert "Daily papers" in selected_title
+        assert "RAG Summary Chatbook" not in selected_title
 
         await pilot.click("#home-open-details")
         await _wait_for_selector(home, pilot, "#home-open-details")

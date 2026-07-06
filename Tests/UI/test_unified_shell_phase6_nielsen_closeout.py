@@ -76,10 +76,10 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
             assert [(button.id, str(button.label).strip()) for button in nav_buttons] == EXPECTED_NAV
 
             home_text = _screen_text(app)
-            assert "Status" in home_text
+            assert "Details" in home_text
             assert "Model: Blocked" in home_text
-            assert "Attention" in home_text
-            assert "Next Best Action" in home_text
+            assert "Needs Attention" in home_text
+            assert "Set up Console model" in home_text
             assert "More: Ctrl+P" in home_text
 
             app.screen.query_one("#nav-console", Button).press()
@@ -119,8 +119,9 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
                 pilot,
                 lambda: app.current_tab == "settings" and app.screen.__class__.__name__ == "SettingsScreen",
             )
+            await _wait_until(
+                pilot,
+                lambda: "Global preferences, appearance, accounts, storage" in _screen_text(app),
+            )
             settings_text = _screen_text(app)
-            assert "Global preferences, appearance, accounts, storage" in settings_text
-            assert "Runtime controls stay in MCP and ACP" in settings_text
-
-
+            assert "Settings | Global preferences, appearance, accounts, storage | Local" in settings_text

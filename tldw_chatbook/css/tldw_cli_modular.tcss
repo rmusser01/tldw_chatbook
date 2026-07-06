@@ -1981,20 +1981,14 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     scrollbar-color-active: $ds-action-focus;
 }
 
-#home-dashboard-grid {
-    height: $ds-home-dashboard-grid-height;
-    min-height: $ds-home-dashboard-grid-height;
+#home-triage-grid {
     padding: 0 1;
     margin: 0;
     border: solid $ds-column-line;
     background: $ds-surface-panel;
 }
 
-#home-status-row,
-#home-status,
-#home-status-body,
-#home-scope-filter-row,
-#home-action-hints {
+#home-header-line {
     height: $ds-home-compact-row-height;
     min-height: $ds-home-compact-row-height;
     padding: 0 1;
@@ -2002,33 +1996,47 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     border: none;
 }
 
-.home-dashboard-region {
-    min-height: 0;
-}
-
-#home-attention-queue,
-#home-active-work-region,
-#home-inspector,
-#home-next-actions-region,
-#home-recent-work-region {
+#home-rail,
+#home-canvas {
     border: solid $ds-column-line;
     background: $ds-surface-panel;
 }
 
-.home-narrow-pane {
-    width: 1fr;
+.home-rail-row {
+    width: 100%;
+    min-width: 0;
+    height: 2;
+    min-height: 2;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
 }
 
-.home-wide-pane {
-    width: 2fr;
+.home-rail-row-selected {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
-.home-pane-divider {
-    width: 1;
-    min-width: 1;
-    height: 100%;
+.home-rail-section-body {
+    height: auto;
     min-height: 0;
-    background: $ds-column-line;
+}
+
+.home-rail-empty-copy {
+    color: $ds-text-muted;
+    padding: 0 1;
+}
+
+#home-next-action-callout {
+    color: $ds-text-muted;
+    padding: 0 1;
 }
 
 .destination-pane-divider {
@@ -2039,36 +2047,22 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     background: $ds-grid-line;
 }
 
-#home-attention,
-#home-system-status,
-#home-next-best-action,
-#home-recent-work {
-    height: $ds-home-compact-row-height;
-    min-height: $ds-home-compact-row-height;
-    padding: 0 1;
-    margin: 0;
-    border: none;
-}
-
-#home-followup-row {
-    height: $ds-home-followup-row-height;
-    min-height: 0;
-    margin: 1 0 0 0;
-}
-
-.home-followup-region {
-    width: 1fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
-    margin: 0;
-}
-
-#home-active-work-region .ds-toolbar {
-    height: $ds-home-control-button-height;
+#home-canvas-actions .ds-toolbar {
+    height: auto;
     min-height: $ds-home-control-button-height;
     padding: 0 1;
     margin: 0;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+.home-canvas-action {
+    height: $ds-home-control-button-height;
+    min-height: $ds-home-control-button-height;
+    margin: 0 1 0 0;
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
     border: none;
 }
 

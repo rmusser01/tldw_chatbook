@@ -724,8 +724,8 @@ if __name__ == "__main__":
 
 Run:
 ```bash
-PYTHONPATH=/Users/macbook-dev/Documents/GitHub/tldw_chatbook \
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python /tmp/syncqa-v2/p1_check.py
+PYTHONPATH=. \
+  .venv/bin/python /tmp/syncqa-v2/p1_check.py
 ```
 Expected: prints capabilities + bootstrap details and `P1_EXIT_OK: True`.
 
@@ -741,7 +741,7 @@ Append the script output to the QA notes and update backlog task #24 with "P1 gr
 client parses M1 capabilities + bootstraps a profile live against :8076".
 
 ```bash
-cd /Users/macbook-dev/Documents/GitHub/tldw_chatbook
+cd "$(git rev-parse --show-toplevel)"
 backlog task edit 24 --notes "P1 complete: client parses M1 capabilities and bootstraps a profile live vs :8076 (codex/sync-v2-m1-next @ 992e89a03)."
 ```
 

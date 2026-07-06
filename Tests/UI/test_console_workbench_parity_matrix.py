@@ -60,7 +60,7 @@ CONSOLE_PARITY_MATRIX: dict[str, tuple[str, ...]] = {
     ),
     "recovery_states": (
         "Tests/UI/test_console_native_chat_flow.py::test_console_setup_required_state_groups_recovery_and_action_copy",
-        "Tests/UI/test_console_native_chat_flow.py::test_console_setup_blocked_send_adds_durable_transcript_recovery_feedback",
+        "Tests/UI/test_console_native_chat_flow.py::test_console_setup_blocked_send_is_unreachable_behind_modal",
         "Tests/UI/test_console_native_chat_flow.py::test_console_failed_stream_renders_inline_retry_and_recovers",
     ),
     "persistence_behavior": (
@@ -69,7 +69,7 @@ CONSOLE_PARITY_MATRIX: dict[str, tuple[str, ...]] = {
     ),
     "visible_workbench_actions": (
         "Tests/UI/test_console_workbench_contract.py::test_console_core_controls_are_visible_without_command_palette",
-        "Tests/UI/test_console_workbench_contract.py::test_console_recovery_action_button_is_visible_and_actionable",
+        "Tests/UI/test_console_workbench_contract.py::test_console_setup_card_recovery_action_button_is_visible_and_actionable",
     ),
     "command_palette_duplicates": (
         "Tests/UI/test_command_palette_basic.py",

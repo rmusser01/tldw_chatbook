@@ -112,10 +112,10 @@ async def test_clean_first_run_launches_home_and_exposes_setup_orientation(
             assert "nav-library" in nav_ids
             assert "nav-settings" in nav_ids
 
-            home_purpose = app.screen.query_one("#home-purpose", Static)
+            home_title = app.screen.query_one("#home-canvas-title", Static)
             primary_action = app.screen.query_one("#home-primary-action", Button)
             nav_overflow_hint = app.screen.query_one("#nav-overflow-hint", Static)
-            assert str(home_purpose.renderable).strip()
+            assert str(home_title.renderable).strip() == "Set up Console model"
             assert str(primary_action.label).strip() == "Set up Console model"
             assert str(primary_action.label).strip() != "Start in Console"
             assert "Ctrl+P" in str(nav_overflow_hint.renderable)
@@ -192,5 +192,4 @@ def test_local_path_guard_rejects_common_home_and_temp_prefixes(prefix: str) -> 
 
 def test_local_path_guard_allows_sanitized_temp_placeholders() -> None:
     _assert_no_local_path_prefixes("Fresh HOME: <tmp>/home")
-
 
