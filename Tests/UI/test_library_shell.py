@@ -356,6 +356,69 @@ async def test_library_shell_search_retains_value_after_submit():
         assert recomposed_input.has_focus
 
 
+def _never_loads(self) -> None:
+    """Stand in for ``_refresh_local_source_snapshot`` that never resolves.
+
+    Used to freeze ``LibraryScreen`` in its pre-load state deterministically,
+    instead of racing the real snapshot worker to assert on a narrow timing
+    window.
+    """
+    return None
+
+
+@pytest.mark.asyncio
+async def test_library_shell_shows_loading_state_before_snapshot_loads(monkeypatch):
+    """Before the local source snapshot loads, the canvas must show a loading
+    indicator instead of the false "no conversations" empty state, and the
+    rail must not claim a known zero count for Conversations.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [])
+
+    monkeypatch.setattr(LibraryScreen, "_refresh_local_source_snapshot", _never_loads)
+
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({"mode": "conversations"})
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert active_screen._library_loaded is False
+        assert active_screen.query_one("#library-canvas-loading")
+        assert not active_screen.query("#library-conversations-canvas")
+
+        visible = _visible_text(active_screen)
+        assert "Conversations (0)" not in visible
+
+
+@pytest.mark.asyncio
+async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
+    """A local-source lookup error must surface in the canvas, not only in
+    the (possibly collapsed) Details disclosure.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [])
+
+    monkeypatch.setattr(LibraryScreen, "_refresh_local_source_snapshot", _never_loads)
+
+    screen = LibraryScreen(app)
+    screen.apply_navigation_context({"mode": "conversations"})
+    screen._library_lookup_error = "Library sources are unavailable right now."
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await pilot.pause()
+        await pilot.pause()
+
+        error_static = active_screen.query_one("#library-canvas-error")
+        assert "unavailable" in str(error_static.renderable).lower()
+        assert not active_screen.query("#library-canvas-loading")
+
+
 @pytest.mark.asyncio
 async def test_library_shell_details_toggle_persists():
     app = _build_test_app()

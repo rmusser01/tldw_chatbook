@@ -56,7 +56,14 @@ def coerce_library_rail_preferences(raw: Any) -> LibraryRailPreferences:
 
 
 def serialize_library_rail_preferences(preferences: LibraryRailPreferences) -> dict[str, bool]:
-    """Serialize Library rail preferences to the persistence shape."""
+    """Serialize Library rail preferences to the persistence shape.
+
+    Args:
+        preferences: Rail open/collapsed state to persist.
+
+    Returns:
+        Dict of boolean ``*_open`` flags suitable for ``library.rail_state``.
+    """
     return {
         "browse_open": bool(preferences.browse_open),
         "create_open": bool(preferences.create_open),

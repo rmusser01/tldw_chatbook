@@ -8,6 +8,8 @@ from tldw_chatbook.Constants import TAB_INGEST, TAB_MEDIA, TAB_NOTES
 
 LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something new."
 
+LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
+
 
 @dataclass(frozen=True)
 class LibraryRailRow:
@@ -87,7 +89,7 @@ def build_library_shell_state(
             count_known=state.media_known,
         ),
         LibraryRailRow(
-            row_id="browse-conversations",
+            row_id=LIBRARY_ROW_BROWSE_CONVERSATIONS,
             section_id="browse",
             title="Conversations",
             target_kind="canvas",

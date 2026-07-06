@@ -39,6 +39,7 @@ from ...Library.library_rail_state import (
     serialize_library_rail_preferences,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LibraryShellInput,
     build_library_shell_state,
 )
@@ -236,7 +237,7 @@ LIBRARY_MODE_BY_BUTTON_ID = {
 # Maps a Library mode id to the shell rail row that selects that canvas so
 # navigation context and legacy mode switches land on the right canvas.
 LIBRARY_MODE_TO_ROW_ID = {
-    "conversations": "browse-conversations",
+    "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
     "collections": "browse-collections",
     "search": "browse-search",
     "study": "create-study",
@@ -533,7 +534,7 @@ class LibraryScreen(BaseAppScreen):
             self._invalidate_library_workspace_depth_state()
         if conversation_id:
             self._selected_conversation_id = conversation_id
-            self._library_selected_row_id = "browse-conversations"
+            self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
         if self.is_mounted:
             if self._active_mode == "collections" and not self._library_collections_loaded:
                 # Deep-link into Collections must load the snapshot the retired
@@ -2478,7 +2479,32 @@ class LibraryScreen(BaseAppScreen):
             canvas_host.styles.min_width = 40
             canvas_host.styles.height = "100%"
             with canvas_host:
-                if shell.canvas_kind == "conversations":
+                # Only the conversations canvas reads the local source
+                # snapshot directly, so only it can show a false "no
+                # conversations" empty state while that snapshot is still
+                # loading. "mode" canvases (Collections, Flashcards,
+                # Search/RAG, ...) and the landing/empty canvas are unaffected
+                # and must not be replaced by this loading/error copy.
+                is_conversations_canvas = shell.canvas_kind == "conversations"
+                if (
+                    is_conversations_canvas
+                    and not self._library_loaded
+                    and not self._library_lookup_error
+                ):
+                    yield Static(
+                        "Loading local Library sources…",
+                        id="library-canvas-loading",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
+                elif is_conversations_canvas and self._library_lookup_error:
+                    yield Static(
+                        self._library_lookup_error,
+                        id="library-canvas-error",
+                        classes="destination-purpose",
+                        markup=False,
+                    )
+                elif shell.canvas_kind == "conversations":
                     conversations_state = self._build_library_conversations_state()
                     self._selected_conversation_id = conversations_state.selected_id
                     yield LibraryConversationsCanvas(
@@ -2496,7 +2522,18 @@ class LibraryScreen(BaseAppScreen):
                     )
 
     def _build_library_shell_input(self) -> LibraryShellInput:
-        """Build the pure shell input from live counts and runtime state."""
+        """Build the pure shell input from live counts and runtime state.
+
+        While the local source snapshot is still loading (``_library_loaded``
+        is False) and no lookup error has been recorded yet, the media/notes/
+        conversations counts are reported as ``None`` rather than the
+        placeholder zeros seeded at construction time, so the rail does not
+        render a misleading ``(0)`` before the real snapshot arrives.
+
+        Returns:
+            Adapter-provided Library shell input reflecting live counts and
+            runtime state.
+        """
         runtime_state = getattr(
             getattr(self.app_instance, "runtime_policy", None), "state", None
         )
@@ -2515,12 +2552,13 @@ class LibraryScreen(BaseAppScreen):
         )
         counts = self._local_source_counts
         known = self._local_source_total_known
+        counts_known_yet = self._library_loaded or bool(self._library_lookup_error)
         return LibraryShellInput(
-            media_count=counts.get("media"),
+            media_count=counts.get("media") if counts_known_yet else None,
             media_known=known.get("media", True),
-            conversations_count=counts.get("conversations"),
+            conversations_count=counts.get("conversations") if counts_known_yet else None,
             conversations_known=known.get("conversations", True),
-            notes_count=counts.get("notes"),
+            notes_count=counts.get("notes") if counts_known_yet else None,
             notes_known=known.get("notes", True),
             collections_count=collections_count,
             runtime_source=active_source,
@@ -2646,7 +2684,7 @@ class LibraryScreen(BaseAppScreen):
             )
         except Exception:
             return
-        body.styles.display = "block" if open_state else "none"
+        body.display = open_state
         header.sync_open(open_state)
 
     @work(thread=True)
@@ -2699,7 +2737,12 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".console-rail-section-toggle")
     def handle_library_rail_section_toggle(self, event: Button.Pressed) -> None:
-        """Toggle a Library rail section and persist the preference."""
+        """Toggle a Library rail section and persist the preference.
+
+        Args:
+            event: Button press event emitted by a rail section's
+                collapse/expand toggle.
+        """
         button_id = event.button.id or ""
         prefix = f"{CONSOLE_RAIL_SECTION_TOGGLE_PREFIX}library-"
         if not button_id.startswith(prefix):
@@ -2713,21 +2756,29 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-conversation-row")
     def handle_library_conversation_row(self, event: Button.Pressed) -> None:
-        """Select a conversation row in the Library conversations canvas."""
+        """Select a conversation row in the Library conversations canvas.
+
+        Args:
+            event: Button press event emitted by a conversation row button.
+        """
         event.stop()
         conversation_id = str(getattr(event.button, "conversation_id", "") or "")
         if conversation_id:
             self._selected_conversation_id = conversation_id
-        self._library_selected_row_id = "browse-conversations"
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
         self._active_mode = "conversations"
         self.refresh(recompose=True)
 
     @on(Input.Submitted, "#library-search-input")
     def handle_library_search_submitted(self, event: Input.Submitted) -> None:
-        """Filter the conversations canvas from the rail search box."""
+        """Filter the conversations canvas from the rail search box.
+
+        Args:
+            event: Input submit event emitted by the rail's search box.
+        """
         event.stop()
         self._library_conversation_query = self._safe_text(event.value, max_length=200)
-        self._library_selected_row_id = "browse-conversations"
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
         self._active_mode = "conversations"
         self.refresh(recompose=True)
         self.call_after_refresh(self._focus_library_search_input)

@@ -152,8 +152,7 @@ class LibraryRail(Vertical):
             classes="library-rail-section-body",
         )
         details_body.styles.height = "auto"
-        if not details_open:
-            details_body.styles.display = "none"
+        details_body.display = details_open
         with details_body:
             yield Static(
                 "Status",
@@ -190,14 +189,13 @@ class LibraryRail(Vertical):
             classes="library-rail-section-body",
         )
         body.styles.height = "auto"
-        if not open_state:
-            body.styles.display = "none"
+        body.display = open_state
         with body:
             for row in section.rows:
                 selected = row.row_id == self.shell.selected_row_id
                 marker = "▸" if selected else " "
                 count_suffix = self._count_suffix(row.count, row.count_known)
-                section_hint = row.target_kind == "screen" and "opens screen" or "in Library"
+                section_hint = "opens screen" if row.target_kind == "screen" else "in Library"
                 button = Button(
                     f"{marker} {_visible_row_title(row.title)}{count_suffix}"
                     f"\n    {section_hint}",
