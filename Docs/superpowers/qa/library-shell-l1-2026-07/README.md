@@ -34,12 +34,14 @@ no fixtures or `_test_input` overrides.
   System/hub panes, wrapping cleanly within the rail pane (no clip past the
   border).
 - library-shell-details-actions-2026-07-05.png — rail scrolled to the bottom
-  of Details: the full workspace depth panel (per-source visibility table,
-  `Console/RAG handoff: 0 eligible, 5 blocked`, workspace rules) ending in
-  `Workspace actions → Create local workspace` and the Use-in-Console
-  affordance — proves the rail now scrolls and every Details row is reachable
-  (the `overflow: hidden` rail-reachability concern from review is resolved by
-  `92c31597`).
+  of Details: the trimmed workspace summary (rules, `Console/RAG handoff:
+  0 eligible, 5 blocked`, collections/import-export notes) ending in
+  `Workspace actions → Create local workspace`, the WIP/blocked callouts, and
+  the `Use in Console` action — proves the rail now scrolls and every Details
+  row is reachable (the `overflow: hidden` reachability concern is resolved by
+  `92c31597`). Per-source assignment table removed (`9c0c40b5`, user request):
+  it re-listed every conversation in the rail, duplicating Browse ▸
+  Conversations; Details now carries the workspace summary + actions only.
 
 ## Verification
 
