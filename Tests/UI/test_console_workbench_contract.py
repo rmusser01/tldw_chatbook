@@ -272,7 +272,7 @@ async def test_console_control_bar_exposes_compact_visible_actions():
 
 
 @pytest.mark.asyncio
-async def test_console_left_rail_prioritizes_attach_and_active_conversation():
+async def test_console_left_rail_orders_session_then_staged_context():
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -287,7 +287,7 @@ async def test_console_left_rail_prioritizes_attach_and_active_conversation():
             if _is_displayed(child)
         )
 
-        assert visible_text.index("Attach") < visible_text.index("Conversations")
+        assert visible_text.index("Conversations") < visible_text.index("Attach")
         assert "No sources attached." in visible_text
         assert "Chat 1" in visible_text
 

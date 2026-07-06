@@ -369,7 +369,6 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 }
 
 .home-dashboard-region,
-.console-region,
 .library-region,
 #artifacts-list-pane,
 #artifacts-detail-pane,
@@ -407,6 +406,17 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     min-height: 0;
     padding: 1;
     border: solid $ds-grid-line;
+    background: $ds-surface-panel;
+}
+
+/* Console's runtime frame (_frame_console_region) is the single border
+   source for .console-region; no CSS border here to avoid a doubled frame. */
+.console-region {
+    width: 1fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    padding: 1;
     background: $ds-surface-panel;
 }
 

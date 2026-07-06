@@ -297,6 +297,17 @@ def test_generated_console_stylesheet_includes_rail_section_rules():
         assert selector in generated_css, selector
 
 
+def test_generated_console_stylesheet_single_frame_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    for css_path in (
+        root / "components" / "_agentic_terminal.tcss",
+        root / "tldw_cli_modular.tcss",
+    ):
+        css = css_path.read_text()
+        block = _css_block(css, ".console-region")
+        assert "border:" not in block, css_path.name
+
+
 @pytest.mark.asyncio
 async def test_console_first_start_renders_left_rail_and_right_handle():
     app = _build_test_app()

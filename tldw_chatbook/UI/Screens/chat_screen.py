@@ -4529,9 +4529,9 @@ class ChatScreen(BaseAppScreen):
         return widget
 
     @staticmethod
-    def _staged_context_frame_variant(state: ConsoleStagedContextState) -> str:
-        """Use quiet framing when the staged context tray is only an empty placeholder."""
-        return "quiet" if state.is_empty else "solid"
+    def _staged_context_frame_variant(_state: ConsoleStagedContextState) -> str:
+        """Always use quiet framing; the rail frame is the single border source."""
+        return "quiet"
 
     @staticmethod
     def _workspace_context_frame_variant(_state: ConsoleWorkspaceContextState) -> str:
