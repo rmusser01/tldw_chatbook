@@ -496,6 +496,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_conversation_query: str = ""
         self._library_media_type_filter: str = "All"
         self._selected_media_id: str = ""
+        self._library_media_view: str = "list"
+        self._library_media_detail: Mapping[str, Any] | None = None
+        self._library_media_detail_loading: bool = False
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2626,6 +2629,46 @@ class LibraryScreen(BaseAppScreen):
             active_type=self._library_media_type_filter,
             selected_id=self._selected_media_id,
         )
+
+    async def _refresh_library_media_detail(self, media_id: str) -> None:
+        """Fetch and store the full detail for a selected Library media item.
+
+        Mirrors ``_refresh_library_collections_snapshot``: guards against an
+        unavailable media service, offloads the (possibly blocking) service
+        call via ``_run_library_service_call``, and recomposes once the
+        fetched detail (or a cleared/failed state) has been stored.
+
+        Not yet wired to row selection or rendered anywhere; Task 2 triggers
+        this worker from media-row selection and renders ``_library_media_detail``
+        via ``build_library_media_viewer_state``.
+
+        Args:
+            media_id: The Library media item id to fetch full detail for.
+        """
+        self._library_media_detail_loading = True
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        get_media_item = getattr(service, "get_media_item", None)
+        if not callable(get_media_item):
+            self._library_media_detail = None
+            self._library_media_detail_loading = False
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        try:
+            detail = await self._run_library_service_call(
+                get_media_item,
+                mode="local",
+                media_id=media_id,
+                include_content=True,
+                include_versions=True,
+            )
+        except Exception:
+            logger.warning(f"Failed to load Library media detail for {media_id!r}.", exc_info=True)
+            detail = None
+        self._library_media_detail = detail if isinstance(detail, Mapping) else None
+        self._library_media_detail_loading = False
+        if self.is_mounted:
+            self.refresh(recompose=True)
 
     def _compose_mode_canvas(self, mode: str) -> ComposeResult:
         """Render the canvas body for a mode row (moved middle-pane content)."""
