@@ -209,6 +209,75 @@ def test_local_service_direct_media_management_round_trips(memory_db_factory):
     assert after_permanent["items"] == []
 
 
+def test_local_service_update_media_item_persists_library_edit_fields_without_version(memory_db_factory):
+    """Regression test for the Library edit-save bug.
+
+    ``LibraryScreen._save_library_media_edit`` sends exactly these four
+    fields (title, author, url, keywords) to
+    ``update_media_item``/``update_media_metadata`` -- it must NOT send
+    ``version``, which is outside ``_SUPPORTED_METADATA_FIELDS`` and would
+    make every real save raise ``ValueError``. Drive the real local backend
+    (an in-memory ``MediaDatabase``, not a test fake) with that exact
+    payload and confirm the edit actually persists.
+    """
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        url="https://example.com/original.md",
+        title="Original Title",
+        content="Body text",
+        media_type="document",
+        keywords=["draft"],
+        author="Original Author",
+    )
+    service = LocalMediaReadingService(db)
+
+    updated = service.update_media_item(
+        media_id,
+        title="Revised Title",
+        author="Revised Author",
+        url="https://example.com/revised.md",
+        keywords=["reviewed", "final"],
+    )
+
+    assert updated["title"] == "Revised Title"
+    assert updated["author"] == "Revised Author"
+    assert updated["url"] == "https://example.com/revised.md"
+    # The DB layer does not guarantee keyword ordering; compare as sets.
+    assert set(updated["keywords"]) == {"reviewed", "final"}
+
+    # Re-fetch independently of the update's own return value to prove the
+    # write actually landed in the database rather than merely echoing back
+    # the caller's input.
+    refetched = service.get_media_item(media_id, include_content=False)
+    assert refetched["title"] == "Revised Title"
+    assert refetched["author"] == "Revised Author"
+    assert refetched["url"] == "https://example.com/revised.md"
+    assert set(refetched["keywords"]) == {"reviewed", "final"}
+
+
+def test_local_service_update_media_item_rejects_version_field(memory_db_factory):
+    """Pin the root cause: ``version`` is not a supported local metadata field.
+
+    This is the exact failure the Library edit-save handler used to trigger
+    in production by sending ``version=<current>`` alongside the edit
+    fields; the local backend's allowlist raises ``ValueError`` for it. If
+    a future change reintroduces sending ``version`` (or any other
+    unsupported field) from the Library screen, this documents why it
+    would break saves against a real database.
+    """
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Original Title",
+        content="Body text",
+        media_type="document",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+
+    with pytest.raises(ValueError, match="Unsupported local media metadata fields"):
+        service.update_media_item(media_id, title="Revised Title", version=1)
+
+
 def test_local_service_downloads_local_media_files_and_stored_content(memory_db_factory, tmp_path):
     db = memory_db_factory()
     source_file = tmp_path / "source.md"

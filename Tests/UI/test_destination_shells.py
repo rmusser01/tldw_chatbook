@@ -144,6 +144,12 @@ class StaticLibraryNotesListScopeService:
 
 
 class StaticLibraryMediaScopeService:
+    # Mirrors LocalMediaReadingService._SUPPORTED_METADATA_FIELDS in
+    # tldw_chatbook/Media/local_media_reading_service.py -- keep in sync so
+    # this fake fails the same way the real local backend does when a
+    # caller sends an unsupported field (e.g. ``version``).
+    _SUPPORTED_METADATA_FIELDS = {"title", "media_type", "author", "url", "keywords"}
+
     def __init__(self, media_items):
         self.media_items = tuple(media_items)
         self.calls = []
@@ -163,21 +169,40 @@ class StaticLibraryMediaScopeService:
                 return dict(item)
         return None
 
-    async def update_media_item(self, *, media_id, **fields):
+    async def update_media_item(self, *, media_id, mode=None, **fields):
         """Record the update call and apply it to the stored item in place.
 
-        Mirrors the real ``media_reading_scope_service.update_media_item``
-        signature (keyword-only ``media_id`` plus arbitrary field kwargs) so
-        a subsequent ``get_media_item`` reflects the edited values.
+        Mirrors the real ``media_reading_scope_service.update_media_item`` ->
+        ``LocalMediaReadingService.update_media_item`` chain: the scope-level
+        ``mode`` kwarg is stripped (never forwarded to the local backend),
+        and the remaining fields are checked against the local backend's
+        metadata allowlist. Any other field (e.g. a leftover ``version``)
+        raises ``ValueError`` just like the real
+        ``update_media_metadata`` does, so tests can't go green by sending
+        fields the production local backend would reject.
 
         Args:
             media_id: The media item id to update.
+            mode: Scope-level backend selector (e.g. ``"local"``); accepted
+                and discarded, matching ``MediaReadingScopeService``.
             **fields: Field values to merge onto the stored item (e.g.
-                ``title``, ``author``, ``url``, ``keywords``, ``version``).
+                ``title``, ``author``, ``url``, ``keywords``).
 
         Returns:
             The updated item mapping, or None when ``media_id`` is unknown.
+
+        Raises:
+            ValueError: If any field is outside the local metadata
+                allowlist.
         """
+        unsupported = sorted(
+            key for key, value in fields.items()
+            if value is not None and key not in self._SUPPORTED_METADATA_FIELDS
+        )
+        if unsupported:
+            unsupported_text = ", ".join(unsupported)
+            raise ValueError(f"Unsupported local media metadata fields: {unsupported_text}")
+
         self.update_calls.append({"media_id": media_id, **fields})
         target_id = str(media_id)
         updated_items = []

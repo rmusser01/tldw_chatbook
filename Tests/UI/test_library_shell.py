@@ -707,8 +707,15 @@ async def test_library_shell_media_edit_save_persists_and_exits_edit_mode():
         call = service.update_calls[-1]
         assert call["media_id"] == "media-1"
         assert call["title"] == "Interview Recording (Revised)"
+        assert call["author"] == "Jordan Lee"
+        assert call["url"] == ""
         assert call["keywords"] == ["interview", "audio"]
-        assert call["version"] == 1
+        # `version` is NOT a supported local metadata field (see
+        # LocalMediaReadingService._SUPPORTED_METADATA_FIELDS) -- sending it
+        # makes every real save raise ValueError. Assert it is absent so a
+        # future regression trips this test instead of silently failing in
+        # production.
+        assert "version" not in call
 
         assert screen._library_media_editing is False
         assert not screen.query("#library-media-edit-title")

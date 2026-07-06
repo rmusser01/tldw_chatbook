@@ -2975,11 +2975,6 @@ class LibraryScreen(BaseAppScreen):
             self.refresh(recompose=True)
             return
         keywords = [item.strip() for item in keywords_raw.split(",") if item.strip()]
-        version = (
-            self._library_media_detail.get("version")
-            if isinstance(self._library_media_detail, Mapping)
-            else None
-        )
         self.run_worker(
             self._save_library_media_edit(
                 media_id,
@@ -2987,7 +2982,6 @@ class LibraryScreen(BaseAppScreen):
                 author=author,
                 url=url,
                 keywords=keywords,
-                version=version,
             )
         )
 
@@ -2999,15 +2993,21 @@ class LibraryScreen(BaseAppScreen):
         author: str,
         url: str,
         keywords: list[str],
-        version: Any,
     ) -> None:
         """Persist metadata edits, then re-fetch detail and exit edit mode.
 
         Guards against a missing ``update_media_item`` service or a failed
-        write (e.g. an optimistic-locking version conflict) by logging the
-        failure and surfacing a quiet notice, but always re-fetches the
-        current detail afterwards so the viewer never shows a stale/
-        half-applied edit.
+        write by logging the failure and surfacing a quiet notice, but
+        always re-fetches the current detail afterwards so the viewer never
+        shows a stale/half-applied edit.
+
+        Only the local backend's supported metadata fields (title, author,
+        url, keywords) are sent -- notably ``version`` is NOT included.
+        ``Client_Media_DB_v2.update_media_metadata`` performs its own
+        optimistic-version check internally from the row it reads and takes
+        no caller-supplied ``version`` argument, so omitting it here loses
+        no locking guarantees while avoiding the local backend's metadata
+        field allowlist rejecting the write outright.
 
         Args:
             media_id: The Library media item id being edited.
@@ -3016,8 +3016,6 @@ class LibraryScreen(BaseAppScreen):
             url: New URL field value.
             keywords: New keywords, already split from the comma-separated
                 edit input.
-            version: The detail's optimistic-locking version prior to this
-                edit, or None when unavailable.
         """
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         update_media_item = getattr(service, "update_media_item", None)
@@ -3031,7 +3029,6 @@ class LibraryScreen(BaseAppScreen):
                     author=author,
                     url=url,
                     keywords=keywords,
-                    version=version,
                     isolate_in_worker=True,
                 )
             except Exception:
