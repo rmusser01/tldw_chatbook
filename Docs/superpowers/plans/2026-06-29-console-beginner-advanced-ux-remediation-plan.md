@@ -1122,7 +1122,7 @@ Update acceptance criteria to `[x]` and add implementation notes summarizing:
 Then run:
 
 ```bash
-backlog task edit 142 -s Done
+backlog task edit 144 -s Done
 ```
 
 - [ ] **Step 7: Commit closeout**
