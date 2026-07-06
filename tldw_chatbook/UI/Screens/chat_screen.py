@@ -3435,6 +3435,10 @@ class ChatScreen(BaseAppScreen):
             # Sessions not restored yet; retry on a later sync so open
             # unsaved sessions are never mistaken for orphans.
             return
+        if getattr(self.app_instance, "chachanotes_db", None) is None:
+            # Conversation liveness cannot be established yet; retry on a
+            # later sync rather than latching and never pruning this session.
+            return
         self._console_rail_prune_dispatched = True
         live_scope_ids: set[str] = set()
         for session in store.sessions():
@@ -3483,15 +3487,32 @@ class ChatScreen(BaseAppScreen):
             )
             if not prunable:
                 return
-            for key in prunable:
-                rail_state_config.pop(key, None)
             if delete_settings_from_cli_config("console.rail_state", prunable):
+                # The in-memory config dict is shared with UI-thread readers
+                # and writers; mutate it back on the UI thread, not here.
+                self.app.call_from_thread(
+                    self._drop_console_rail_preference_keys_in_memory, prunable
+                )
                 logger.info(
                     "Pruned {} orphaned Console rail preference section(s)",
                     len(prunable),
                 )
         except Exception as exc:
             logger.warning("Console rail preference prune skipped: {}", exc)
+
+    def _drop_console_rail_preference_keys_in_memory(self, keys: list[str]) -> None:
+        """Remove pruned keys from the live in-memory rail-state config (UI thread)."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            return
+        console_config = app_config.get("console")
+        if not isinstance(console_config, dict):
+            return
+        rail_state_config = console_config.get("rail_state")
+        if not isinstance(rail_state_config, dict):
+            return
+        for key in keys:
+            rail_state_config.pop(key, None)
 
     def _notify_console_rail_preference_save_failure(self) -> None:
         """Notify from the UI thread when background preference persistence fails."""

@@ -1403,7 +1403,13 @@ async def test_console_rail_prune_removes_orphans_and_is_one_shot(monkeypatch):
         console._dispatch_console_rail_preference_prune()
         await _wait_for_recorded_calls(pilot, deleted_calls, 1)
 
+        # The disk delete is recorded on the worker; the in-memory removal is
+        # scheduled back onto the UI thread, so wait for it to land.
         rail_state = app.app_config["console"]["rail_state"]
+        for _ in range(40):
+            if orphan_a not in rail_state and orphan_b not in rail_state:
+                break
+            await pilot.pause(0.05)
         assert live_key in rail_state
         assert global_key in rail_state
         assert orphan_a not in rail_state

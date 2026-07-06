@@ -2874,20 +2874,46 @@ def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[st
     return current_level
 
 
-_CONFIG_FILE_LOCK: Any = None
+# Eagerly created at import (single-threaded), so every caller shares one
+# lock. Lazy init would let the first two concurrent workers each build a
+# separate lock and defeat serialization on the first write.
+import threading as _threading
+
+_CONFIG_FILE_LOCK = _threading.Lock()
+
+# Fallback permissions for a config file that does not exist yet. config.toml
+# may hold plaintext secrets (when encryption is disabled), so it is created
+# owner-only rather than world-readable.
+_CONFIG_FILE_DEFAULT_MODE = 0o600
 
 
 def _config_file_lock():
-    """Serialize config-file read-modify-write cycles across thread workers.
+    """Return the shared config-file read-modify-write lock.
 
-    Saves run on Textual thread workers; without this lock two concurrent
-    read-modify-write cycles can silently drop one writer's update.
+    Returns:
+        The process-wide lock serializing config file saves/deletes across
+        Textual thread workers so concurrent cycles cannot drop updates.
     """
-    global _CONFIG_FILE_LOCK
-    if _CONFIG_FILE_LOCK is None:
-        import threading
-        _CONFIG_FILE_LOCK = threading.Lock()
     return _CONFIG_FILE_LOCK
+
+
+def _config_write_mode(config_path: Path) -> int:
+    """Choose the file mode to write a config file with.
+
+    Args:
+        config_path: Target config file path.
+
+    Returns:
+        The existing file's permission bits when it already exists (so a
+        hardened ``0600`` config is never silently widened), otherwise the
+        owner-only default.
+    """
+    try:
+        if config_path.exists():
+            return config_path.stat().st_mode & 0o777
+    except OSError:
+        pass
+    return _CONFIG_FILE_DEFAULT_MODE
 
 
 def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]]) -> bool:
@@ -2935,7 +2961,11 @@ def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]])
             return False
 
         try:
-            atomic_write_text(config_path, toml.dumps(config_data))
+            atomic_write_text(
+                config_path,
+                toml.dumps(config_data),
+                mode=_config_write_mode(config_path),
+            )
             logger.success(f"Successfully saved settings batch to {config_path}")
 
             _CONFIG_CACHE = None
@@ -2953,8 +2983,14 @@ def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]])
 def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
     """Remove keys from a config section and persist the file atomically.
 
-    Missing sections or keys are a no-op success. Returns False only when the
-    file exists but cannot be read or rewritten.
+    Args:
+        section: Dotted config section path (e.g. ``"console.rail_state"``).
+        keys: Keys to remove from that section.
+
+    Returns:
+        True on success, including the no-op cases where the file, section,
+        or every named key is already absent. False only when the file
+        exists but cannot be read or rewritten, or the path is not a table.
     """
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
     config_path = _get_effective_config_path()
@@ -2983,12 +3019,19 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
             )
             return False
 
-        removed = [key for key in keys if current_level.pop(key, None) is not None]
+        # Sentinel, not None: a key whose stored value is legitimately None
+        # must still count as removed so the file is rewritten.
+        _MISSING = object()
+        removed = [key for key in keys if current_level.pop(key, _MISSING) is not _MISSING]
         if not removed:
             return True
 
         try:
-            atomic_write_text(config_path, toml.dumps(config_data))
+            atomic_write_text(
+                config_path,
+                toml.dumps(config_data),
+                mode=_config_write_mode(config_path),
+            )
             logger.info(f"Removed {len(removed)} key(s) from [{section}] in {config_path}")
 
             _CONFIG_CACHE = None

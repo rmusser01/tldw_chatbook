@@ -173,18 +173,27 @@ def collect_prunable_console_rail_keys(
 
     A key is prunable only when it matches the canonical
     ``console_rail_state:<workspace>:<scope>`` shape and its scope id is
-    neither the reserved ``global`` scope nor present in ``live_scope_ids``
-    (live conversation ids plus open session ids, raw or sanitized).
+    neither the reserved ``global`` scope nor present in ``live_scope_ids``.
     Unrecognized key shapes are always kept.
+
+    Args:
+        stored_keys: Iterable of stored config key strings (non-string
+            entries are ignored). ``None`` is treated as empty.
+        live_scope_ids: Iterable of live scope ids (conversation ids plus
+            open session ids), matched after the module's key sanitization.
+            ``None`` is treated as empty.
+
+    Returns:
+        The subset of ``stored_keys`` safe to delete, order-preserved.
     """
     live_sanitized = {
         sanitized
-        for raw in live_scope_ids
+        for raw in (live_scope_ids or ())
         for sanitized in (_sanitize_optional_key_part(raw),)
         if sanitized
     }
     prunable: list[str] = []
-    for key in stored_keys:
+    for key in (stored_keys or ()):
         if not isinstance(key, str):
             continue
         parts = key.split(":")

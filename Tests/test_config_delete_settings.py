@@ -1,9 +1,9 @@
 """Tests for config_module.delete_settings_from_cli_config."""
 
 import os
+import tomllib
 
 import toml
-import tomllib
 
 from tldw_chatbook import config as config_module
 
@@ -134,3 +134,34 @@ def test_other_sections_and_keys_are_untouched(tmp_path, monkeypatch):
     }
     assert saved["console"]["collapse_large_pastes"] is True
     assert saved["chat_defaults"] == {"streaming": True, "temperature": 0.33}
+
+
+def test_delete_preserves_existing_file_permissions(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    _write_config(
+        config_path,
+        {"console": {"rail_state": {"console_rail_state:ws:orphan-1": {"left_open": True}}}},
+    )
+    os.chmod(config_path, 0o600)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    assert config_module.delete_settings_from_cli_config(
+        "console.rail_state",
+        ["console_rail_state:ws:orphan-1"],
+    )
+
+    # A hardened 0600 config must not be silently widened by the atomic write.
+    assert config_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_save_preserves_existing_file_permissions(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    _write_config(config_path, {"chat_defaults": {"streaming": True}})
+    os.chmod(config_path, 0o600)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    assert config_module.save_settings_to_cli_config(
+        {"chat_defaults": {"temperature": 0.5}}
+    )
+
+    assert config_path.stat().st_mode & 0o777 == 0o600
