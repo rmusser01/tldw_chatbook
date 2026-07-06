@@ -36,30 +36,37 @@ def _text(path: Path) -> str:
 
 @pytest.mark.asyncio
 async def test_library_surfaces_study_workflow_entry_points() -> None:
+    # The retired hub grouped these three entry points under a "Learning"
+    # heading inside the now-gone #library-source-browser, with a single
+    # static tooltip per button regardless of mode. The rail + canvas shell
+    # groups the same three rows under the "Create" rail section instead,
+    # and each row's canvas mounts exactly one live handoff button (the D2
+    # fix), with tooltip copy naming the button's own action label.
     app = _build_test_app()
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(160, 40)) as pilot:
         await pilot.pause(0.2)
         screen = _active_destination_screen(host)
-        visible_text = _visible_text(screen)
 
-        assert "Learning" in visible_text
+        assert "Create" in _visible_text(screen)
+        for row_id in ("create-study", "create-flashcards", "create-quizzes"):
+            assert screen.query_one(f"#library-row-{row_id}")
 
-        expected_tooltips = {
-            "#library-open-study": "Open Study globally or with Library sources.",
-            "#library-open-flashcards": "Open Flashcards globally or with Library sources.",
-            "#library-open-quizzes": "Open Quizzes globally or with Library sources.",
+        expected = {
+            "study": ("library-open-study", "Study Dashboard"),
+            "flashcards": ("library-open-flashcards", "Flashcards"),
+            "quizzes": ("library-open-quizzes", "Quizzes"),
         }
-        expected_labels = {
-            "#library-open-study": "Study Dashboard",
-            "#library-open-flashcards": "Flashcards",
-            "#library-open-quizzes": "Quizzes",
-        }
-        for selector, tooltip in expected_tooltips.items():
-            button = screen.query_one(selector, Button)
-            assert str(button.label) == expected_labels[selector]
-            assert str(button.tooltip) == tooltip
+        for mode, (button_id, label) in expected.items():
+            screen.query_one(f"#library-row-create-{mode}", Button).press()
+            await pilot.pause(0.1)
+            button = screen.query_one(f"#{button_id}", Button)
+            assert str(button.label) == label
+            assert str(button.tooltip) == (
+                f"Open {label} with the current Library source snapshot, "
+                "or globally when none is available."
+            )
 
 
 @pytest.mark.asyncio
@@ -72,10 +79,17 @@ async def test_library_study_entry_buttons_preserve_requested_section() -> None:
         await pilot.pause(0.2)
         screen = _active_destination_screen(host)
 
+        # Reaching the Flashcards/Quizzes handoff buttons now requires
+        # selecting their Create rail row first (they only mount inside
+        # their own mode canvas).
+        screen.query_one("#library-row-create-flashcards", Button).press()
+        await pilot.pause(0.1)
         screen.query_one("#library-open-flashcards", Button).press()
         await pilot.pause(0.1)
         app.open_study_screen.assert_called_with(initial_section="flashcards")
 
+        screen.query_one("#library-row-create-quizzes", Button).press()
+        await pilot.pause(0.1)
         screen.query_one("#library-open-quizzes", Button).press()
         await pilot.pause(0.1)
         app.open_study_screen.assert_called_with(initial_section="quizzes")
