@@ -1805,6 +1805,7 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-muted;
 }
 
+Button.library-mode-chip,
 Button.notes-mode-chip {
     width: auto;
     min-width: $ds-library-mode-chip-min-width;
@@ -1814,6 +1815,7 @@ Button.notes-mode-chip {
     border: none;
 }
 
+.library-mode-chip:focus,
 .notes-mode-chip:focus {
     outline: none;
     background: $ds-focus-bg;
