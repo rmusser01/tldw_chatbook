@@ -67,7 +67,7 @@ async def mount_settings_window(config_dict: dict, temp_config_path: Path, monke
     async with app.run_test() as pilot:
         await pilot.pause()
         window = app.query_one(ToolsSettingsWindow)
-        yield window
+        yield window, pilot
 
 
 @pytest.fixture
@@ -839,7 +839,7 @@ async def test_chat_api_key_field_prefilled_for_config_key(monkeypatch, temp_con
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {"openai": {"api_key": "sk-configured"}},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as window:
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
         field = window.query_one("#general-chat-api-key", Input)
         assert field.password is True
         assert field.value == "sk-configured"
@@ -853,7 +853,25 @@ async def test_chat_api_key_field_disabled_for_keyless_provider(monkeypatch, tem
         "chat_defaults": {"provider": "Ollama", "model": "llama3"},
         "api_settings": {},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as window:
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
         field = window.query_one("#general-chat-api-key", Input)
         assert field.disabled is True
         assert "No API key needed" in field.placeholder
+
+
+@pytest.mark.asyncio
+async def test_chat_api_key_field_reloads_on_provider_change(monkeypatch, temp_config_path):
+    config = {
+        "providers": {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
+        "api_settings": {"openai": {"api_key": "sk-configured"}},
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+        field = window.query_one("#general-chat-api-key", Input)
+        assert field.value == "sk-configured"
+
+        # Switch to a keyless provider -> field disables and clears
+        window.query_one("#general-chat-provider", Select).value = "Ollama"
+        await pilot.pause()
+        assert field.disabled is True
+        assert field.value == ""

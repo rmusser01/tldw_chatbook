@@ -829,7 +829,23 @@ class ToolsSettingsWindow(Container):
                         variant="default",
                         tooltip="View available models for the selected provider"
                     )
-    
+
+    @on(Select.Changed, "#general-chat-provider")
+    def _on_chat_provider_changed(self, event: Select.Changed) -> None:
+        """Reload the inline API-key field for the newly selected chat provider."""
+        try:
+            api_key_input = self.query_one("#general-chat-api-key", Input)
+        except QueryError:
+            return
+        provider = event.value
+        if not provider or provider is Select.BLANK:
+            return
+        readiness = get_provider_readiness(str(provider), self.config_data)
+        state = chat_api_key_field_state(readiness, locked=self._config_is_locked())
+        api_key_input.value = state.value
+        api_key_input.disabled = state.disabled
+        api_key_input.placeholder = state.placeholder
+
     def _compose_character_defaults_settings(self) -> ComposeResult:
         """Compose character default settings."""
         with VerticalScroll(classes="settings-tab-content"):
