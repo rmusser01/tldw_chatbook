@@ -1157,11 +1157,14 @@ async def test_library_use_in_console_uses_source_snapshot_context():
 @pytest.mark.parametrize(
     ("route", "selector", "target_route"),
     [
-        # The retired hub's #library-open-notes/#library-open-media buttons
-        # are dead; the rail rows are the surviving surface that still emit
-        # the same NavigateToScreen compatibility routes.
+        # The retired hub's #library-open-notes button is dead; the Browse ▸
+        # Notes rail row is the surviving surface that still emits the same
+        # NavigateToScreen compatibility route. Browse ▸ Media is no longer
+        # a screen-route row -- it is a canvas row like Conversations now
+        # (see test_library_media_action_switches_to_native_mode_without_route_handoff
+        # below); the media SCREEN route lives behind the canvas's own
+        # "Open in Media" action.
         ("library", "#library-row-browse-notes", "notes"),
-        ("library", "#library-row-browse-media", "media"),
         ("artifacts", "#artifacts-open-chatbooks", "chatbooks"),
         # The Personas destination is now a native workbench and no longer
         # hands off to the legacy CCP route via #personas-open-profiles.
@@ -1181,6 +1184,32 @@ async def test_destination_action_buttons_emit_compatibility_routes(route, selec
         await _wait_for_route(seen_routes, target_route, pilot)
 
     assert seen_routes[-1] == target_route
+
+
+@pytest.mark.asyncio
+async def test_library_media_action_switches_to_native_mode_without_route_handoff():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    seen_routes = []
+    host = DestinationHarness(app, "library", seen_routes)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        # The retired hub's #library-open-media button is dead; the Browse ▸
+        # Media rail row is the surviving trigger, and the media canvas
+        # mounting is the successor signal that the native (non-route) mode
+        # switch happened. The media SCREEN route now lives behind the
+        # canvas's own "Open in Media" action.
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+
+        assert getattr(screen, "_active_mode") == "media"
+        assert screen.query_one("#library-media-canvas")
+
+    assert seen_routes == []
 
 
 @pytest.mark.asyncio

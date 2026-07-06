@@ -15,7 +15,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches, QueryError
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Select, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...config import save_setting_to_cli_config
@@ -44,6 +44,7 @@ from ...Library.library_rail_state import (
 )
 from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
+    LIBRARY_ROW_BROWSE_MEDIA,
     LibraryShellInput,
     build_library_shell_state,
 )
@@ -60,6 +61,7 @@ from ...Widgets.Console.console_rail_section import (
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
     LibraryConversationsCanvas,
+    LibraryMediaCanvas,
     LibraryRail,
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
@@ -2485,15 +2487,19 @@ class LibraryScreen(BaseAppScreen):
             canvas_host.styles.min_width = 40
             canvas_host.styles.height = "100%"
             with canvas_host:
-                # Only the conversations canvas reads the local source
-                # snapshot directly, so only it can show a false "no
-                # conversations" empty state while that snapshot is still
-                # loading. "mode" canvases (Collections, Flashcards,
-                # Search/RAG, ...) and the landing/empty canvas are unaffected
-                # and must not be replaced by this loading/error copy.
-                is_conversations_canvas = shell.canvas_kind == "conversations"
+                # Only the conversations and media canvases read the local
+                # source snapshot directly, so only they can show a false
+                # "no conversations"/"no media" empty state while that
+                # snapshot is still loading. "mode" canvases (Collections,
+                # Flashcards, Search/RAG, ...) and the landing/empty canvas
+                # are unaffected and must not be replaced by this
+                # loading/error copy.
+                is_local_snapshot_canvas = shell.canvas_kind in (
+                    "conversations",
+                    "media",
+                )
                 if (
-                    is_conversations_canvas
+                    is_local_snapshot_canvas
                     and not self._library_loaded
                     and not self._library_lookup_error
                 ):
@@ -2503,7 +2509,7 @@ class LibraryScreen(BaseAppScreen):
                         classes="destination-purpose",
                         markup=False,
                     )
-                elif is_conversations_canvas and self._library_lookup_error:
+                elif is_local_snapshot_canvas and self._library_lookup_error:
                     yield Static(
                         self._library_lookup_error,
                         id="library-canvas-error",
@@ -2516,6 +2522,13 @@ class LibraryScreen(BaseAppScreen):
                     yield LibraryConversationsCanvas(
                         conversations_state,
                         id="library-conversations-canvas",
+                    )
+                elif shell.canvas_kind == "media":
+                    media_state = self._build_library_media_state()
+                    self._selected_media_id = media_state.selected_id
+                    yield LibraryMediaCanvas(
+                        media_state,
+                        id="library-media-canvas",
                     )
                 elif shell.canvas_kind == "mode":
                     yield from self._compose_mode_canvas(shell.canvas_target)
@@ -2722,8 +2735,9 @@ class LibraryScreen(BaseAppScreen):
                 self.post_message(NavigateToScreen(target_id))
             return
         if target_kind == "canvas":
-            self._library_conversation_query = ""
-            await self._select_library_rail_row(row_id, "conversations")
+            if target_id == "conversations":
+                self._library_conversation_query = ""
+            await self._select_library_rail_row(row_id, target_id or "conversations")
             return
         if target_kind == "mode":
             await self._select_library_rail_row(row_id, target_id)
@@ -2782,6 +2796,52 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
         self._active_mode = "conversations"
         self.refresh(recompose=True)
+
+    @on(Select.Changed, "#library-media-type-filter")
+    def handle_library_media_type_filter_changed(self, event: Select.Changed) -> None:
+        """Filter the Library media canvas by the selected media type.
+
+        A ``Select`` with ``allow_blank=False`` fires ``Changed`` for the
+        value it auto-selects at mount time, not only on real user
+        interaction (see ``notes_screen.handle_sort_changed`` for the same
+        guard). Without the no-op check below, that mount-time event would
+        trigger a recompose that remounts a fresh ``Select``, which fires
+        its own mount-time ``Changed``, looping forever.
+
+        Args:
+            event: Select change event emitted by the media type filter.
+        """
+        event.stop()
+        new_value = str(event.value)
+        if new_value == self._library_media_type_filter:
+            return
+        self._library_media_type_filter = new_value
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-media-row")
+    def handle_library_media_row(self, event: Button.Pressed) -> None:
+        """Select a media row in the Library media canvas.
+
+        Args:
+            event: Button press event emitted by a media row button.
+        """
+        event.stop()
+        media_id = str(getattr(event.button, "media_id", "") or "")
+        if media_id:
+            self._selected_media_id = media_id
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+        self._active_mode = "media"
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-open")
+    def handle_library_media_open(self, event: Button.Pressed) -> None:
+        """Hand off the selected media item to the Media screen.
+
+        Args:
+            event: Button press event emitted by the "Open in Media" action.
+        """
+        event.stop()
+        self.post_message(NavigateToScreen("media"))
 
     @on(Input.Submitted, "#library-search-input")
     def handle_library_search_submitted(self, event: Input.Submitted) -> None:

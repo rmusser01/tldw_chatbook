@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button
+from textual.widgets import Button, Select
 
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_destination_shells import (
@@ -106,6 +106,23 @@ def _two_conversations():
             "conversation_id": "chat-2",
             "message_count": 3,
             "updated_at": "2026-06-02T09:30:00Z",
+        },
+    ]
+
+
+def _two_media_items():
+    return [
+        {
+            "id": "media-1",
+            "title": "Interview Recording",
+            "type": "audio",
+            "last_modified": "2026-07-06T08:00:00Z",
+        },
+        {
+            "id": "media-2",
+            "title": "Product Demo Video",
+            "type": "video",
+            "last_modified": "2026-07-06T10:00:00Z",
         },
     ]
 
@@ -285,7 +302,14 @@ async def test_library_shell_rag_open_import_export_switches_canvas_and_selectio
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_row_navigates_without_selection_change():
+async def test_library_shell_media_row_selects_canvas_without_navigating():
+    """Browse ▸ Media is a canvas row now, not a screen-route shortcut.
+
+    Re-anchors the old screen-route contract: pressing the rail row must
+    render the media canvas in place (selecting it, like Conversations)
+    rather than firing ``NavigateToScreen("media")``. The media SCREEN
+    route now lives behind the canvas's own "Open in Media" action.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     seen = []
@@ -299,9 +323,140 @@ async def test_library_shell_media_row_navigates_without_selection_change():
         await pilot.pause()
         await pilot.pause()
 
-        assert seen[-1] == "media"
-        assert screen._library_selected_row_id == ""
-        assert screen.query_one("#library-canvas-landing")
+        assert seen == []
+        assert screen._library_selected_row_id == "browse-media"
+        assert screen.query_one("#library-media-canvas")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+
+        title = str(screen.query_one("#library-media-title").renderable)
+        assert title == "Media (2)"
+
+        assert screen.query_one("#library-media-type-filter", Select)
+
+        rows = list(screen.query(".library-media-row"))
+        assert len(rows) == 2
+        first_label = str(rows[0].label)
+        assert first_label.startswith("▸")
+        # Rows sort newest-first: media-2 (10:00) before media-1 (08:00).
+        assert "Product Demo Video" in first_label
+        assert "video" in first_label
+
+        preview = str(screen.query_one("#library-media-preview-lines").renderable)
+        assert "Product Demo Video" in preview
+        assert screen.query_one("#library-media-open")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_type_filter_narrows_list():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+
+        select = screen.query_one("#library-media-type-filter", Select)
+        select.value = "audio"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_type_filter == "audio"
+        rows = list(screen.query(".library-media-row"))
+        assert len(rows) == 1
+        assert "Interview Recording" in str(rows[0].label)
+
+        status = str(screen.query_one("#library-media-status").renderable)
+        assert "type: audio" in status
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_row_switches_selection():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+
+        preview_before = str(
+            screen.query_one("#library-media-preview-lines").renderable
+        )
+        assert "Product Demo Video" in preview_before
+        assert screen._selected_media_id == "media-2"
+
+        screen.query_one("#library-media-row-1").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._selected_media_id == "media-1"
+        preview_after = str(
+            screen.query_one("#library-media-preview-lines").renderable
+        )
+        assert "Interview Recording" in preview_after
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_open_posts_navigate_to_screen():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    seen = []
+    host = LibraryHarness(app, seen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-open")
+
+        screen.query_one("#library-media-open").press()
+        await pilot.pause()
+        await pilot.pause()
+
+    assert seen[-1] == "media"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_canvas_shows_loading_before_snapshot_loads(monkeypatch):
+    """Mirrors the conversations loading-gate contract for the media canvas."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+
+    monkeypatch.setattr(LibraryScreen, "_refresh_local_source_snapshot", _never_loads)
+
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = "browse-media"
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert active_screen._library_loaded is False
+        assert active_screen.query_one("#library-canvas-loading")
+        assert not active_screen.query("#library-media-canvas")
 
 
 @pytest.mark.asyncio
