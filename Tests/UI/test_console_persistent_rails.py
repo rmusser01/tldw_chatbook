@@ -682,6 +682,13 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
         lambda section, key, value: True,
         raising=False,
     )
+    deleted_keys: list[str] = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "delete_settings_from_cli_config",
+        lambda section, keys: deleted_keys.extend(keys) or True,
+        raising=False,
+    )
     monkeypatch.setattr(
         console_chat_store_module,
         "uuid4",
@@ -698,12 +705,12 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
 
     rail_state = app.app_config["console"]["rail_state"]
-    # The seeded session fallback entry is left untouched (raw two-key shape);
-    # the durable conversation copy is written through the full serialized shape.
-    assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-1"] == {
-        "left_open": False,
-        "right_open": True,
-    }
+    # The durable conversation copy is written through the full serialized
+    # shape, and the superseded session fallback entry is deleted so it can
+    # no longer accumulate as a permanent orphan section.
+    session_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-1"
+    assert session_key not in rail_state
+    assert session_key in deleted_keys
     assert rail_state[
         f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-1"
     ] == _rail_prefs(left_open=False, right_open=True)

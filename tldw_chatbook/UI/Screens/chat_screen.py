@@ -100,6 +100,7 @@ from ...Chat.console_rail_state import (
     build_console_rail_preference_key,
     build_console_rail_state,
     coerce_console_rail_preferences,
+    collect_prunable_console_rail_keys,
     serialize_console_rail_preferences,
 )
 from ...config import (
@@ -108,6 +109,7 @@ from ...config import (
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     coerce_bool_setting,
     coerce_int_setting,
+    delete_settings_from_cli_config,
     get_cli_providers_and_models,
     save_setting_to_cli_config,
 )
@@ -1037,6 +1039,7 @@ class ChatScreen(BaseAppScreen):
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
         self._console_chat_store: ConsoleChatStore | None = None
+        self._console_rail_prune_dispatched = False
         self._console_workspace_conversation_query = ""
         self._console_workspace_conversation_search_timer: Any | None = None
         self._console_workspace_conversation_search_token = 0
@@ -3415,6 +3418,81 @@ class ChatScreen(BaseAppScreen):
         if not saved and notify_on_failure:
             self.app.call_from_thread(self._notify_console_rail_preference_save_failure)
 
+    @work(thread=True)
+    def _delete_console_rail_preference_keys(self, keys: list[str]) -> None:
+        """Remove superseded/orphaned rail preference keys off the UI thread."""
+        try:
+            delete_settings_from_cli_config("console.rail_state", keys)
+        except Exception as exc:
+            logger.warning("Failed to prune Console rail preference keys: {}", exc)
+
+    def _dispatch_console_rail_preference_prune(self) -> None:
+        """Queue the one-shot orphaned rail-preference cleanup after mount."""
+        if self._console_rail_prune_dispatched:
+            return
+        store = self._console_chat_store
+        if store is None:
+            # Sessions not restored yet; retry on a later sync so open
+            # unsaved sessions are never mistaken for orphans.
+            return
+        self._console_rail_prune_dispatched = True
+        live_scope_ids: set[str] = set()
+        for session in store.sessions():
+            live_scope_ids.add(str(session.id))
+            persisted_id = getattr(session, "persisted_conversation_id", None)
+            if persisted_id:
+                live_scope_ids.add(str(persisted_id))
+        self._prune_console_rail_preferences(live_scope_ids)
+
+    @work(thread=True)
+    def _prune_console_rail_preferences(self, live_scope_ids: set[str]) -> None:
+        """Drop rail preference sections whose conversation/session is gone.
+
+        Rail preferences accumulate one config section per scope forever
+        (deleted conversations included); this best-effort pass bounds the
+        namespace to live scopes. It refuses to prune when conversation
+        liveness cannot be established.
+        """
+        try:
+            # Peek without _console_rail_state_config(): this is a read path
+            # and must not materialize an empty rail_state table.
+            app_config = getattr(self.app_instance, "app_config", None)
+            if not isinstance(app_config, dict):
+                return
+            console_config = app_config.get("console")
+            if not isinstance(console_config, dict):
+                return
+            rail_state_config = console_config.get("rail_state")
+            if not isinstance(rail_state_config, dict) or not rail_state_config:
+                return
+            stored_keys = list(rail_state_config.keys())
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            if db is None:
+                return
+            live = set(live_scope_ids)
+            offset = 0
+            page_size = 1000
+            while True:
+                rows = db.list_all_active_conversations(limit=page_size, offset=offset)
+                live.update(str(row["id"]) for row in rows if row.get("id"))
+                if len(rows) < page_size:
+                    break
+                offset += page_size
+            prunable = collect_prunable_console_rail_keys(
+                stored_keys, live_scope_ids=live
+            )
+            if not prunable:
+                return
+            for key in prunable:
+                rail_state_config.pop(key, None)
+            if delete_settings_from_cli_config("console.rail_state", prunable):
+                logger.info(
+                    "Pruned {} orphaned Console rail preference section(s)",
+                    len(prunable),
+                )
+        except Exception as exc:
+            logger.warning("Console rail preference prune skipped: {}", exc)
+
     def _notify_console_rail_preference_save_failure(self) -> None:
         """Notify from the UI thread when background preference persistence fails."""
         self.app_instance.notify(
@@ -3496,6 +3574,10 @@ class ChatScreen(BaseAppScreen):
             preferences,
             notify_on_failure=False,
         )
+        # The session-scoped fallback is superseded by the durable key; drop
+        # it so migrations stop leaving permanent orphan sections behind.
+        rail_state_config.pop(fallback_key, None)
+        self._delete_console_rail_preference_keys([fallback_key])
 
     def _current_console_session_id(self) -> Optional[str]:
         """Return a durable external Console session scope when one is available."""
@@ -3753,14 +3835,15 @@ class ChatScreen(BaseAppScreen):
             if section_id in CONSOLE_RAIL_SECTION_IDS:
                 changes[f"{section_id}_open"] = bool(section_open)
         next_preferences = replace(current, **changes)
-        rail_state_config[preference_key.value] = serialize_console_rail_preferences(
-            next_preferences
-        )
-        self._persist_console_rail_preferences(
-            preference_key.value,
-            next_preferences,
-            notify_on_failure=notify_on_failure,
-        )
+        if next_preferences != current:
+            rail_state_config[preference_key.value] = serialize_console_rail_preferences(
+                next_preferences
+            )
+            self._persist_console_rail_preferences(
+                preference_key.value,
+                next_preferences,
+                notify_on_failure=notify_on_failure,
+            )
         if right_open is not None:
             self._pending_console_launch_auto_open_inspector = False
         rail_state = self._current_console_rail_state()
@@ -5966,6 +6049,7 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_rail_visibility_if_changed(
                 self._current_console_rail_state()
             )
+            self._dispatch_console_rail_preference_prune()
         finally:
             self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False

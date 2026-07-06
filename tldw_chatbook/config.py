@@ -2874,6 +2874,22 @@ def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[st
     return current_level
 
 
+_CONFIG_FILE_LOCK: Any = None
+
+
+def _config_file_lock():
+    """Serialize config-file read-modify-write cycles across thread workers.
+
+    Saves run on Textual thread workers; without this lock two concurrent
+    read-modify-write cycles can silently drop one writer's update.
+    """
+    global _CONFIG_FILE_LOCK
+    if _CONFIG_FILE_LOCK is None:
+        import threading
+        _CONFIG_FILE_LOCK = threading.Lock()
+    return _CONFIG_FILE_LOCK
+
+
 def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]]) -> bool:
     """Persist multiple config values with one TOML read/write and one cache reload."""
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
@@ -2890,48 +2906,100 @@ def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]])
         logger.error(f"Could not create config directory {config_path.parent}: {e}")
         return False
 
-    config_data: Dict[str, Any] = {}
-    if config_path.exists():
+    with _config_file_lock():
+        config_data: Dict[str, Any] = {}
+        if config_path.exists():
+            try:
+                with open(config_path, "rb") as f:
+                    config_data = tomllib.load(f)
+            except tomllib.TOMLDecodeError as e:
+                logger.error(f"Corrupted config file at {config_path}. Cannot save. Please fix or delete it. Error: {e}")
+                # Consider creating a backup of the corrupt file for the user.
+                return False
+            except Exception as e:
+                logger.error(f"Unexpected error reading {config_path}: {e}", exc_info=True)
+                return False
+
+        try:
+            for section, values in section_values.items():
+                if not values:
+                    continue
+                current_level = _target_config_section(config_data, section)
+                for key, value in values.items():
+                    current_level[key] = _maybe_encrypt_setting_value(config_data, key, value)
+        except (TypeError, AttributeError):
+            logger.error(
+                "Configuration structure conflict. Could not save settings batch "
+                f"because a part of the path is not a table/dictionary. Please check your config file."
+            )
+            return False
+
+        try:
+            atomic_write_text(config_path, toml.dumps(config_data))
+            logger.success(f"Successfully saved settings batch to {config_path}")
+
+            _CONFIG_CACHE = None
+            _SETTINGS_CACHE = None
+            load_cli_config_and_ensure_existence(force_reload=True)
+            settings = load_settings(force_reload=True)
+            logger.info("Global configuration caches invalidated and reloaded.")
+
+            return True
+        except (IOError, OSError, toml.TomlDecodeError) as e:
+            logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
+            return False
+
+
+def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
+    """Remove keys from a config section and persist the file atomically.
+
+    Missing sections or keys are a no-op success. Returns False only when the
+    file exists but cannot be read or rewritten.
+    """
+    global _CONFIG_CACHE, _SETTINGS_CACHE, settings
+    config_path = _get_effective_config_path()
+    if not config_path.exists():
+        return True
+
+    with _config_file_lock():
         try:
             with open(config_path, "rb") as f:
-                config_data = tomllib.load(f)
+                config_data: Dict[str, Any] = tomllib.load(f)
         except tomllib.TOMLDecodeError as e:
-            logger.error(f"Corrupted config file at {config_path}. Cannot save. Please fix or delete it. Error: {e}")
-            # Consider creating a backup of the corrupt file for the user.
+            logger.error(f"Corrupted config file at {config_path}. Cannot delete from it. Error: {e}")
             return False
         except Exception as e:
             logger.error(f"Unexpected error reading {config_path}: {e}", exc_info=True)
             return False
 
-    try:
-        for section, values in section_values.items():
-            if not values:
-                continue
-            current_level = _target_config_section(config_data, section)
-            for key, value in values.items():
-                current_level[key] = _maybe_encrypt_setting_value(config_data, key, value)
-    except (TypeError, AttributeError):
-        logger.error(
-            "Configuration structure conflict. Could not save settings batch "
-            f"because a part of the path is not a table/dictionary. Please check your config file."
-        )
-        return False
+        current_level: Any = config_data
+        for part in section.split('.'):
+            if not isinstance(current_level, dict) or part not in current_level:
+                return True
+            current_level = current_level[part]
+        if not isinstance(current_level, dict):
+            logger.error(
+                f"Cannot delete keys from [{section}]: path is not a table in {config_path}."
+            )
+            return False
 
-    try:
-        with open(config_path, "w", encoding="utf-8") as f:
-            toml.dump(config_data, f)
-        logger.success(f"Successfully saved settings batch to {config_path}")
+        removed = [key for key in keys if current_level.pop(key, None) is not None]
+        if not removed:
+            return True
 
-        _CONFIG_CACHE = None
-        _SETTINGS_CACHE = None
-        load_cli_config_and_ensure_existence(force_reload=True)
-        settings = load_settings(force_reload=True)
-        logger.info("Global configuration caches invalidated and reloaded.")
+        try:
+            atomic_write_text(config_path, toml.dumps(config_data))
+            logger.info(f"Removed {len(removed)} key(s) from [{section}] in {config_path}")
 
-        return True
-    except (IOError, toml.TomlDecodeError) as e:
-        logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
-        return False
+            _CONFIG_CACHE = None
+            _SETTINGS_CACHE = None
+            load_cli_config_and_ensure_existence(force_reload=True)
+            settings = load_settings(force_reload=True)
+
+            return True
+        except (IOError, OSError, toml.TomlDecodeError) as e:
+            logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
+            return False
 
 
 def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
