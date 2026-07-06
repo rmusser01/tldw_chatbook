@@ -235,9 +235,10 @@ async def test_library_quizzes_mode_empty_state_explains_global_recovery_without
             "without Library context."
         ) in visible
 
-        # No rail row opens Study directly yet (see the flashcards-entry test
-        # note); call the still-live handler instead of a button click.
-        screen.open_quizzes()
+        # The in-canvas handoff button drives the Study handoff (no source
+        # snapshot -> plain section routing).
+        screen.query_one("#library-open-quizzes", Button).press()
+        await pilot.pause()
         await pilot.pause()
 
     app.open_study_screen.assert_called_once_with(initial_section="quizzes")
@@ -265,9 +266,9 @@ async def test_library_study_handoff_uses_counts_when_titles_are_unavailable() -
         assert "Carries forward: Library source snapshot (titles unavailable)" in visible
         assert "No Library source snapshot will be carried forward." not in visible
 
-        # No rail row opens Study directly yet (see the flashcards-entry test
-        # note); call the still-live handler instead of a button click.
-        screen.open_study()
+        # The in-canvas handoff button drives the Study handoff.
+        screen.query_one("#library-open-study", Button).press()
+        await pilot.pause()
         await pilot.pause()
 
     app.open_study_screen.assert_called_once()
@@ -282,12 +283,8 @@ async def test_library_study_handoff_uses_counts_when_titles_are_unavailable() -
 @pytest.mark.asyncio
 async def test_library_flashcards_handoff_supports_keyboard_activation_with_source_context() -> None:
     """Verify keyboard activation of the rail row reaches the Flashcards
-    handoff canvas, and the source context it carries is correct.
-
-    No rail row opens Study directly yet (see the flashcards-entry test
-    note), so only the row-selection half of this flow is exercised via
-    keyboard; the handoff itself is invoked directly on the still-live
-    handler.
+    handoff canvas, and pressing the in-canvas handoff button carries the
+    correct source context into Study.
     """
 
     app = _build_test_app()
@@ -304,7 +301,8 @@ async def test_library_flashcards_handoff_supports_keyboard_activation_with_sour
         await pilot.press("enter")
         await _wait_for_selector(screen, pilot, "#library-study-handoff-context")
 
-        screen.open_flashcards()
+        screen.query_one("#library-open-flashcards", Button).press()
+        await pilot.pause()
         await pilot.pause()
 
     app.open_study_screen.assert_called_once()

@@ -306,16 +306,9 @@ async def test_library_search_rag_empty_sources_has_mode_local_blocked_status() 
         recovery_button = screen.query_one("#library-rag-open-import-export", Button)
         assert str(recovery_button.label) == "Open Import/Export"
         assert recovery_button.tooltip == "Open Library Import/Export to add sources."
-        # NOTE: pressing this button does not actually switch the canvas.
-        # open_import_export_from_library_rag() calls _set_active_mode(),
-        # which sets self._active_mode directly, but compose_content()
-        # derives the mode canvas from self._library_selected_row_id (the
-        # rail selection), which this handler never updates -- the next
-        # recompose (_refresh_active_mode_widgets -> refresh(recompose=True))
-        # re-resolves canvas_target from the still-"browse-search" rail
-        # selection and silently reverts _active_mode back to "search".
-        # This looks like a pre-existing gap from the rail/canvas rework
-        # (out of Task 7's re-anchor-tests scope; flagged in the report).
+        # Pressing this button drives the shell selection to the Import/Export
+        # row so the recomposed canvas renders that mode; the canvas-switch
+        # behavior itself is covered by test_library_shell.py.
 
 
 @pytest.mark.asyncio
@@ -779,13 +772,21 @@ async def test_library_search_rag_run_query_preserves_panel_instances_during_upd
 async def test_library_search_rag_worker_completion_ignores_unmounted_screen(monkeypatch) -> None:
     app = _build_test_app()
     screen = LibraryScreen(app)
+    # Put the screen in the state where every guard in
+    # _apply_library_rag_search_outcome passes EXCEPT is_mounted, so that the
+    # mount guard is the sole thing preventing the DOM refresh. The code under
+    # test refreshes via _refresh_search_rag_panel_state_widgets (not the stale
+    # _sync_search_rag_panel), so that is the method the test must poison.
+    screen._active_mode = "search"
     screen._library_rag_query = "Find evidence"
+    monkeypatch.setattr(screen, "query", lambda *args, **kwargs: [object()])
 
-    async def fail_sync():
+    async def fail_refresh() -> None:
         raise AssertionError("unmounted worker completion should not touch the DOM")
 
-    monkeypatch.setattr(screen, "_sync_search_rag_panel", fail_sync)
+    monkeypatch.setattr(screen, "_refresh_search_rag_panel_state_widgets", fail_refresh)
 
+    assert screen.is_mounted is False
     await screen._apply_library_rag_search_outcome(
         LibraryRagSearchRequest(
             query="Find evidence",

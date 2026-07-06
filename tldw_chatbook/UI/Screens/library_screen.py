@@ -2039,6 +2039,26 @@ class LibraryScreen(BaseAppScreen):
             if self._has_local_sources()
             else "ds-recovery-callout is-blocked"
         )
+        action_button_id = {
+            "study": "library-open-study",
+            "flashcards": "library-open-flashcards",
+            "quizzes": "library-open-quizzes",
+        }.get(self._active_mode, "library-open-study")
+        handoff_toolbar = Horizontal(
+            Button(
+                copy["action_label"],
+                id=action_button_id,
+                classes="library-canvas-action",
+                compact=True,
+                tooltip=(
+                    f"Open {copy['action_label']} with the current Library "
+                    "source snapshot, or globally when none is available."
+                ),
+            ),
+            id="library-study-handoff-actions",
+            classes="ds-toolbar",
+        )
+        handoff_toolbar.styles.height = "auto"
         return Vertical(
             Static(
                 f"{copy['label']} handoff",
@@ -2067,6 +2087,7 @@ class LibraryScreen(BaseAppScreen):
                 id="library-study-handoff-recovery",
                 classes=recovery_classes,
             ),
+            handoff_toolbar,
             id="library-study-handoff-detail",
             classes="library-rag-region",
         )
@@ -2731,12 +2752,26 @@ class LibraryScreen(BaseAppScreen):
             if target_id:
                 self.post_message(NavigateToScreen(target_id))
             return
-        self._library_selected_row_id = row_id
         if target_kind == "canvas":
-            self._active_mode = "conversations"
             self._library_conversation_query = ""
-        elif target_kind == "mode":
-            self._active_mode = target_id
+            await self._select_library_rail_row(row_id, "conversations")
+            return
+        if target_kind == "mode":
+            await self._select_library_rail_row(row_id, target_id)
+            return
+        # Unknown target kind: select the row and recompose from selection.
+        await self._select_library_rail_row(row_id, self._active_mode)
+
+    async def _select_library_rail_row(self, row_id: str, active_mode: str) -> None:
+        """Apply a rail-row selection and recompose the canvas from it.
+
+        Shared by the rail-row press handler and in-canvas mode shortcuts so
+        that the single source of selection truth (``_library_selected_row_id``)
+        always drives the recomposed canvas -- setting ``_active_mode`` alone is
+        reverted by the next ``refresh(recompose=True)``.
+        """
+        self._library_selected_row_id = row_id
+        self._active_mode = active_mode
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -3385,7 +3420,9 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-rag-open-import-export")
     async def open_import_export_from_library_rag(self, event: Button.Pressed) -> None:
         event.stop()
-        await self._set_active_mode("import-export")
+        # Drive the shell selection so the recomposed canvas resolves to the
+        # Import/Export mode; flipping _active_mode alone reverts on recompose.
+        await self._select_library_rail_row("ingest-import-export", "import-export")
 
     async def _start_library_rag_query(self) -> None:
         panel_state = self._library_rag_panel_state()

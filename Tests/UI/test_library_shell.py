@@ -251,6 +251,38 @@ async def test_library_shell_flashcards_row_renders_mode_canvas():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_rag_open_import_export_switches_canvas_and_selection():
+    app = _build_test_app()
+    # Empty sources so the Search/RAG scope recovery button renders.
+    _seed_conversations(app, [])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-open-import-export")
+
+        screen.query_one("#library-rag-open-import-export").press()
+        await _wait_for_selector(
+            screen, pilot, "#library-import-export-workflow-title"
+        )
+
+        # The canvas now renders the Import/Export mode body, driven by the
+        # shell selection rather than a bare _active_mode flip.
+        canvas = screen.query_one("#library-canvas")
+        title = screen.query_one("#library-import-export-workflow-title")
+        assert canvas in title.ancestors
+        assert not screen.query("#library-search-rag-panel")
+
+        # ...and the rail selection marker moved to the Import/Export row.
+        assert screen._library_selected_row_id == "ingest-import-export"
+        row = screen.query_one("#library-row-ingest-import-export")
+        assert row.has_class("library-rail-row-selected")
+
+
+@pytest.mark.asyncio
 async def test_library_shell_media_row_navigates_without_selection_change():
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
