@@ -501,6 +501,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_view: str = "list"
         self._library_media_detail: Mapping[str, Any] | None = None
         self._library_media_editing: bool = False
+        self._library_media_confirming_delete: bool = False
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2540,6 +2541,7 @@ class LibraryScreen(BaseAppScreen):
                         yield LibraryMediaViewer(
                             build_library_media_viewer_state(self._library_media_detail),
                             editing=self._library_media_editing,
+                            confirming_delete=self._library_media_confirming_delete,
                             id="library-media-viewer",
                         )
                 elif shell.canvas_kind == "media":
@@ -2819,6 +2821,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_view = "list"
         self._library_media_detail = None
         self._library_media_editing = False
+        self._library_media_confirming_delete = False
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -2908,6 +2911,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_view = "viewer"
         self._library_media_detail = None
         self._library_media_editing = False
+        self._library_media_confirming_delete = False
         if media_id:
             self.run_worker(self._refresh_library_media_detail(media_id))
         self.refresh(recompose=True)
@@ -2922,6 +2926,7 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._library_media_view = "list"
         self._library_media_editing = False
+        self._library_media_confirming_delete = False
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-media-edit")
@@ -3045,6 +3050,119 @@ class LibraryScreen(BaseAppScreen):
 
     def _notify_library_media_edit_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed media-edit save.
+
+        Args:
+            message: Human-readable warning text to notify with.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-media-delete")
+    def handle_library_media_delete(self, event: Button.Pressed) -> None:
+        """Enter the inline delete-confirmation state for the open media viewer.
+
+        Deleting is destructive (it trashes the item), so the first press
+        only swaps the normal action row for a "Delete" / "Cancel" confirm
+        affordance; the actual service call only happens once the confirm
+        button (``#library-media-delete-confirm``) is pressed.
+
+        Args:
+            event: Button press event emitted by the viewer's "Delete" action.
+        """
+        event.stop()
+        self._library_media_confirming_delete = True
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-delete-cancel")
+    def handle_library_media_delete_cancel(self, event: Button.Pressed) -> None:
+        """Discard the pending delete confirmation and restore the normal action row.
+
+        Args:
+            event: Button press event emitted by the confirm affordance's
+                "Cancel" action.
+        """
+        event.stop()
+        self._library_media_confirming_delete = False
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-delete-confirm")
+    def handle_library_media_delete_confirm(self, event: Button.Pressed) -> None:
+        """Hand the confirmed delete off to a worker that trashes the item.
+
+        Reads the currently selected media id synchronously (before any
+        recompose can clear it) and defers the actual service call and list
+        mutation to ``_delete_library_media_item`` -- mirroring how
+        ``handle_library_media_edit_save`` defers to
+        ``_save_library_media_edit``.
+
+        Args:
+            event: Button press event emitted by the confirm affordance's
+                "Delete" action.
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        if not media_id:
+            self._library_media_confirming_delete = False
+            self.refresh(recompose=True)
+            return
+        self.run_worker(self._delete_library_media_item(media_id))
+
+    async def _delete_library_media_item(self, media_id: str) -> None:
+        """Trash the selected Library media item, then return to the list view.
+
+        Guards against a missing ``delete_media_item`` service or a failed
+        write by logging the failure and surfacing a quiet notice; either
+        way the pending confirmation is dismissed afterwards so a failed
+        delete never strands the viewer in the confirm state.
+
+        On success, the deleted item is dropped from the cached
+        ``_local_source_records["media"]`` snapshot (matched via
+        ``_source_record_id``, the same id-key precedence ``_study_source_items``
+        uses) so the list view reflects the trash immediately, without
+        waiting on a full snapshot re-fetch, and the canvas returns to its
+        list view.
+
+        Args:
+            media_id: The Library media item id to delete.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        delete_media_item = getattr(service, "delete_media_item", None)
+        deleted = False
+        if callable(delete_media_item):
+            try:
+                await self._run_library_service_call(
+                    delete_media_item,
+                    mode="local",
+                    media_id=media_id,
+                    isolate_in_worker=True,
+                )
+                deleted = True
+            except Exception:
+                logger.warning(
+                    f"Failed to delete Library media item {media_id!r}.", exc_info=True
+                )
+                self._notify_library_media_delete_warning(
+                    "Could not delete this media item."
+                )
+        else:
+            self._notify_library_media_delete_warning("Media deletion is unavailable.")
+
+        self._library_media_confirming_delete = False
+        if deleted:
+            self._local_source_records["media"] = tuple(
+                record
+                for record in self._local_source_records.get("media", ())
+                if self._source_record_id(record) != media_id
+            )
+            self._library_media_view = "list"
+            self._library_media_detail = None
+            self._selected_media_id = ""
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    def _notify_library_media_delete_warning(self, message: str) -> None:
+        """Surface a quiet warning notice for a failed media-delete attempt.
 
         Args:
             message: Human-readable warning text to notify with.

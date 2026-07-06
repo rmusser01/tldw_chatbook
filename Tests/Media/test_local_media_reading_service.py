@@ -278,6 +278,42 @@ def test_local_service_update_media_item_rejects_version_field(memory_db_factory
         service.update_media_item(media_id, title="Revised Title", version=1)
 
 
+def test_local_service_delete_media_item_removes_it_from_the_normal_list(memory_db_factory):
+    """Regression test for the Library viewer's Delete action.
+
+    ``LibraryScreen`` calls
+    ``media_reading_scope_service.delete_media_item(mode="local", media_id=...)``,
+    which the scope service forwards straight to
+    ``LocalMediaReadingService.delete_media_item``. Drive the real (in-memory)
+    ``MediaDatabase`` backend -- not a test fake -- and confirm the item is
+    actually moved to trash: it disappears from the normal paginated list
+    (``list_media_items`` / ``get_paginated_files``) and ``is_trash`` is set
+    on the underlying row, while an unrelated item is left untouched.
+    """
+    db = memory_db_factory()
+    kept_id, _, _ = db.add_media_with_keywords(
+        title="Keep", content="A", media_type="article", keywords=[]
+    )
+    target_id, _, _ = db.add_media_with_keywords(
+        title="Delete me", content="B", media_type="article", keywords=[]
+    )
+    service = LocalMediaReadingService(db)
+
+    before = service.list_media_items(page=1, results_per_page=10)
+    assert any(item["id"] == target_id for item in before["items"])
+
+    result = service.delete_media_item(target_id)
+
+    assert result == {"ok": True, "media_id": target_id}
+
+    after = service.list_media_items(page=1, results_per_page=10)
+    assert all(item["id"] != target_id for item in after["items"])
+    assert any(item["id"] == kept_id for item in after["items"])
+
+    trashed_row = db.get_media_by_id(target_id, include_trash=True)
+    assert trashed_row["is_trash"] in {1, True}
+
+
 def test_local_service_downloads_local_media_files_and_stored_content(memory_db_factory, tmp_path):
     db = memory_db_factory()
     source_file = tmp_path / "source.md"

@@ -155,6 +155,7 @@ class StaticLibraryMediaScopeService:
         self.calls = []
         self.detail_calls = []
         self.update_calls = []
+        self.delete_calls = []
 
     async def list_media_items(self, **kwargs):
         self.calls.append(kwargs)
@@ -218,6 +219,34 @@ class StaticLibraryMediaScopeService:
                 updated_items.append(item)
         self.media_items = tuple(updated_items)
         return updated
+
+    async def delete_media_item(self, *, media_id, mode=None):
+        """Record the delete call and remove the item from storage in place.
+
+        Mirrors the real ``media_reading_scope_service.delete_media_item`` ->
+        ``LocalMediaReadingService.delete_media_item`` chain, which moves the
+        item to trash: the scope-level ``mode`` kwarg is stripped, and the
+        item is dropped from ``media_items`` so a subsequent
+        ``list_media_items`` call omits it, matching the real backend's
+        normal (non-trash) paginated list no longer returning trashed items.
+
+        Args:
+            media_id: The media item id to delete.
+            mode: Scope-level backend selector (e.g. ``"local"``); accepted
+                and discarded, matching ``MediaReadingScopeService``.
+
+        Returns:
+            A ``{"ok": True, "media_id": media_id}`` mapping, matching the
+            real local backend's response shape.
+        """
+        self.delete_calls.append({"media_id": media_id})
+        target_id = str(media_id)
+        self.media_items = tuple(
+            item
+            for item in self.media_items
+            if str(item.get("id") or item.get("media_id") or "") != target_id
+        )
+        return {"ok": True, "media_id": media_id}
 
 
 class StaticLibraryConversationScopeService:

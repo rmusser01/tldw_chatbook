@@ -758,6 +758,112 @@ async def test_library_shell_media_edit_cancel_discards():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_media_delete_shows_inline_confirm_without_deleting():
+    """Pressing ``Delete`` shows the inline confirm affordance, not an immediate delete."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete")
+
+        screen.query_one("#library-media-delete").press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete-confirm")
+
+        assert screen._library_media_confirming_delete is True
+        assert screen.query_one("#library-media-delete-cancel")
+
+        service = app.media_reading_scope_service
+        assert service.delete_calls == []
+        assert screen._library_media_view == "viewer"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_delete_confirm_removes_item_and_returns_to_list():
+    """Confirming the delete trashes the item and drops it from the list view."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete")
+
+        screen.query_one("#library-media-delete").press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete-confirm")
+
+        screen.query_one("#library-media-delete-confirm").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.delete_calls and screen._library_media_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Delete never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+
+        assert service.delete_calls, "delete_media_item was never called"
+        assert service.delete_calls[-1]["media_id"] == "media-1"
+        assert screen._library_media_confirming_delete is False
+        assert screen._library_media_view == "list"
+        assert not screen.query("#library-media-viewer")
+        # media-1 ("Interview Recording") is deleted; only media-2 ("Product
+        # Demo Video") remains, re-indexed to row-0 by the sorted rebuild.
+        assert not any(
+            "Interview Recording" in str(getattr(button, "label", ""))
+            for button in screen.query(".library-media-row")
+        )
+        assert screen.query_one("#library-media-row-0")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_delete_cancel_leaves_item_intact():
+    """Cancelling the inline confirm discards it without calling the service."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete")
+
+        screen.query_one("#library-media-delete").press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete-confirm")
+
+        screen.query_one("#library-media-delete-cancel").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_confirming_delete is False
+        assert not screen.query("#library-media-delete-confirm")
+        assert screen.query_one("#library-media-delete")
+        title = str(screen.query_one("#library-media-viewer-title").renderable)
+        assert title == "Interview Recording"
+
+        service = app.media_reading_scope_service
+        assert service.delete_calls == []
+
+
+@pytest.mark.asyncio
 async def test_library_shell_media_canvas_shows_loading_before_snapshot_loads(monkeypatch):
     """Mirrors the conversations loading-gate contract for the media canvas."""
     app = _build_test_app()

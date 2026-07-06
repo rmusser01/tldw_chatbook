@@ -18,6 +18,8 @@ class LibraryMediaViewer(Vertical):
         viewer: Current media viewer display state.
         editing: Whether the metadata edit form should render in place of
             the read-only metadata block and action row.
+        confirming_delete: Whether the inline delete-confirmation affordance
+            should render in place of the normal action row.
     """
 
     def __init__(
@@ -25,11 +27,13 @@ class LibraryMediaViewer(Vertical):
         viewer: LibraryMediaViewerState,
         *,
         editing: bool = False,
+        confirming_delete: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.viewer = viewer
         self.editing = editing
+        self.confirming_delete = confirming_delete
         self.styles.width = "13fr"
         self.styles.min_width = 40
 
@@ -88,6 +92,16 @@ class LibraryMediaViewer(Vertical):
                 markup=False,
             )
 
+        if self.confirming_delete and not self.editing:
+            # A single full-width Static above the toolbar, not inside it --
+            # mixing a Static with the toolbar's Buttons is the known
+            # non-rendering failure mode called out on ``compose`` above.
+            yield Static(
+                "Delete this media? This moves it to trash.",
+                id="library-media-delete-confirm-copy",
+                markup=False,
+            )
+
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
@@ -101,6 +115,19 @@ class LibraryMediaViewer(Vertical):
                 yield Button(
                     "Cancel",
                     id="library-media-edit-cancel",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            elif self.confirming_delete:
+                yield Button(
+                    "Delete",
+                    id="library-media-delete-confirm",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Cancel",
+                    id="library-media-delete-cancel",
                     classes="library-canvas-action",
                     compact=True,
                 )
