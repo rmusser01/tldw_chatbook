@@ -1,4 +1,4 @@
-from tldw_chatbook.Constants import TAB_INGEST, TAB_MEDIA, TAB_NOTES
+from tldw_chatbook.Constants import TAB_INGEST, TAB_NOTES
 from tldw_chatbook.Library.library_shell_state import (
     LibraryShellInput,
     build_library_shell_state,
