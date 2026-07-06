@@ -689,6 +689,10 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     min-width: 0;
     height: 1;
     min-height: 1;
+    /* Neutralize the global `Select { width: 100%; margin-bottom: 1; }` rule so
+       the type filter stays compact on the header's single line (same fix as
+       #notes-sort-row Select). */
+    margin: 0;
 }
 
 #console-workspace-grid {
