@@ -103,7 +103,7 @@ def test_no_records_yields_default_empty_copy():
 
     assert state.rows == ()
     assert state.status_copy == ""
-    assert state.empty_copy == "No media files found."
+    assert state.empty_copy == "No media in your Library yet. Ingest something to see it here."
     assert state.selected_id == ""
     assert state.preview_lines == ()
     assert state.active_type == "All"
@@ -220,7 +220,7 @@ def test_untitled_fallback_for_missing_title():
 
 
 def test_empty_type_secondary_fallback():
-    """Record with empty or missing type shows secondary without type prefix."""
+    """Record with empty or missing type shows secondary as 'media' regardless of age."""
     records = [
         {
             "id": "media-a",
@@ -238,11 +238,9 @@ def test_empty_type_secondary_fallback():
 
     state = build_library_media_state(records, now=NOW)
 
-    # When type is empty/missing, secondary should be just age (no type prefix)
-    # If type is empty and age exists, secondary = age
-    # If both missing, secondary = "media"
-    assert state.rows[0].secondary == "3m"
-    assert state.rows[1].secondary == "2h"
+    # When type is empty/missing, secondary must be "media" regardless of age
+    assert state.rows[0].secondary == "media"
+    assert state.rows[1].secondary == "media"
 
 
 def test_media_secondary_fallback_when_no_type_no_age():
@@ -336,3 +334,36 @@ def test_no_type_status_copy_when_active_type_all():
 
     assert state.status_copy == ""
     assert state.empty_copy == ""
+
+
+def test_status_copy_uses_pre_limit_count():
+    """status_copy shows count of filtered entries (pre-limit), not displayed rows (post-limit)."""
+    # 100 video records + 10 other-type records = 110 total
+    records = (
+        [
+            {
+                "id": f"video-{i}",
+                "title": f"Video {i}",
+                "type": "video",
+                "ingestion_date": f"2026-07-06T{11 - (i % 12):02d}:00:00+00:00",
+            }
+            for i in range(100)
+        ]
+        + [
+            {
+                "id": f"other-{i}",
+                "title": f"Other {i}",
+                "type": "audio",
+                "ingestion_date": f"2026-07-06T{10 - (i % 10):02d}:00:00+00:00",
+            }
+            for i in range(10)
+        ]
+    )
+
+    # Filter to video type with limit=75
+    state = build_library_media_state(records, active_type="video", now=NOW, limit=75)
+
+    # Exactly 75 rows displayed (post-limit)
+    assert len(state.rows) == 75
+    # But status_copy shows all 100 video records (pre-limit)
+    assert state.status_copy == "100 of 110 · type: video"

@@ -8,10 +8,9 @@ from typing import Any, Mapping, Sequence
 
 from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
 
-LIBRARY_MEDIA_EMPTY_COPY = "No media files found."
+LIBRARY_MEDIA_EMPTY_COPY = "No media in your Library yet. Ingest something to see it here."
 
 _ID_KEYS = ("id", "media_id", "uuid")
-_TITLE_KEYS = ("title",)
 _TYPE_KEYS = ("type", "media_type")
 _UPDATED_KEYS = ("last_modified", "ingestion_date", "date", "updated_at")
 
@@ -89,9 +88,8 @@ def _secondary_text(media_type: str, age: str) -> str:
 
     Rules:
     - If type and age both present: 'type · age'
-    - If only type: 'type'
-    - If only age: 'age'
-    - If neither: 'media'
+    - If only type (no age): 'type'
+    - If no type: 'media' (regardless of age)
     """
     has_type = bool(media_type)
     has_age = bool(age)
@@ -100,9 +98,8 @@ def _secondary_text(media_type: str, age: str) -> str:
         return f"{media_type} · {age}"
     elif has_type:
         return media_type
-    elif has_age:
-        return age
     else:
+        # When no type, return 'media' regardless of age
         return "media"
 
 
@@ -198,8 +195,8 @@ def build_library_media_state(
 
     # Build status_copy and empty_copy
     if active_type != "All":
-        # When filtering by type, show count of matches
-        status_copy = f"{len(limited_entries)} of {total_count} · type: {active_type}"
+        # When filtering by type, show count of all matches (pre-limit) of {total_count} · type: {active_type}"
+        status_copy = f"{len(filtered_entries)} of {total_count} · type: {active_type}"
         if not rows:
             empty_copy = f"No media of type '{active_type}'."
         else:
