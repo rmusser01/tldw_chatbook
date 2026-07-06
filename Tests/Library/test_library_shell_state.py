@@ -25,7 +25,7 @@ def test_shell_sections_rows_and_targets_are_fixed():
     conv = browse.rows[1]
     assert (conv.target_kind, conv.target_id, conv.count) == ("canvas", "conversations", 128)
     media = browse.rows[0]
-    assert (media.target_kind, media.target_id) == ("screen", TAB_MEDIA)
+    assert (media.target_kind, media.target_id) == ("canvas", "media")
     create_ids = [r.row_id for r in shell.sections[1].rows]
     assert create_ids == ["create-note", "create-study", "create-flashcards", "create-quizzes"]
     assert [r.title for r in shell.sections[1].rows] == [
@@ -53,13 +53,21 @@ def test_conversations_selection_yields_conversations_canvas():
     assert shell.selected_row_id == "browse-conversations"
 
 
+def test_media_selection_yields_media_canvas():
+    shell = build_library_shell_state(
+        LibraryShellInput(media_count=5), selected_row_id="browse-media"
+    )
+    assert (shell.canvas_kind, shell.canvas_target) == ("media", "")
+    assert shell.selected_row_id == "browse-media"
+
+
 def test_mode_selection_yields_mode_canvas():
     shell = build_library_shell_state(LibraryShellInput(), selected_row_id="create-flashcards")
     assert (shell.canvas_kind, shell.canvas_target) == ("mode", "flashcards")
 
 
 def test_screen_and_unknown_rows_resolve_to_empty_canvas():
-    for row_id in ("browse-media", "create-note", "nope", ""):
+    for row_id in ("create-note", "nope", ""):
         shell = build_library_shell_state(LibraryShellInput(), selected_row_id=row_id)
         assert shell.canvas_kind == "empty", row_id
 
