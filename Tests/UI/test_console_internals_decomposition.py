@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_display_state import (
     build_console_evidence_display_state,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -2462,7 +2463,7 @@ async def test_console_session_tab_strip_uses_readable_new_tab_control_with_tool
         assert new_tab.region.width >= 12
         assert close_buttons
         for close_button in close_buttons:
-            assert str(close_button.label) == "x"
+            assert str(close_button.label) == GLYPH_CLOSE
             assert close_button.tooltip == "Close Console tab"
             assert close_button.region.width >= 3
 
