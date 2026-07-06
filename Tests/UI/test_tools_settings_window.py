@@ -1,6 +1,7 @@
 import pytest
 import pytest_asyncio
 import toml
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock, call
 import tempfile
@@ -35,6 +36,38 @@ def create_dummy_config(config_path: Path, content: dict):
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w") as f:
         toml.dump(content, f)
+
+
+class _ToolsSettingsHostApp(App):
+    """Minimal real App that hosts a ToolsSettingsWindow as its own app_instance."""
+
+    def __init__(self):
+        super().__init__()
+        self.notify = MagicMock()
+        self.push_screen = MagicMock()
+        self.unified_mcp_service = None
+        self.current_runtime_backend = "local"
+        self.server_sharing_scope_service = None
+        self.server_outputs_scope_service = None
+
+    def get_authoritative_runtime_source(self):
+        return self.current_runtime_backend
+
+    def compose(self):
+        yield ToolsSettingsWindow(app_instance=self)
+
+
+@asynccontextmanager
+async def mount_settings_window(config_dict: dict, temp_config_path: Path, monkeypatch):
+    """Write config_dict to temp_config_path, patch DEFAULT_CONFIG_PATH, and yield a live-mounted ToolsSettingsWindow driven by a real pilot."""
+    create_dummy_config(temp_config_path, config_dict)
+    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
+
+    app = _ToolsSettingsHostApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(ToolsSettingsWindow)
+        yield window
 
 
 @pytest.fixture
@@ -800,21 +833,13 @@ async def test_outputs_panel_routes_server_template_and_artifact_operations():
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_field_prefilled_for_config_key(monkeypatch, temp_config_path, mock_app_instance):
-    create_dummy_config(temp_config_path, {
+async def test_chat_api_key_field_prefilled_for_config_key(monkeypatch, temp_config_path):
+    config = {
         "providers": {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {"openai": {"api_key": "sk-configured"}},
-    })
-    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
-    window = ToolsSettingsWindow(app_instance=mock_app_instance)
-
-    if AppTest is None:
-        pytest.skip("AppTest not available in this version of Textual")
-
-    async with AppTest(app=mock_app_instance, driver_class=None) as pilot:
-        mock_app_instance.mount(window)
-        await pilot.pause()
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as window:
         field = window.query_one("#general-chat-api-key", Input)
         assert field.password is True
         assert field.value == "sk-configured"
@@ -822,21 +847,13 @@ async def test_chat_api_key_field_prefilled_for_config_key(monkeypatch, temp_con
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_field_disabled_for_keyless_provider(monkeypatch, temp_config_path, mock_app_instance):
-    create_dummy_config(temp_config_path, {
+async def test_chat_api_key_field_disabled_for_keyless_provider(monkeypatch, temp_config_path):
+    config = {
         "providers": {"Ollama": ["llama3"], "OpenAI": ["gpt-4o"]},
         "chat_defaults": {"provider": "Ollama", "model": "llama3"},
         "api_settings": {},
-    })
-    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
-    window = ToolsSettingsWindow(app_instance=mock_app_instance)
-
-    if AppTest is None:
-        pytest.skip("AppTest not available in this version of Textual")
-
-    async with AppTest(app=mock_app_instance, driver_class=None) as pilot:
-        mock_app_instance.mount(window)
-        await pilot.pause()
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as window:
         field = window.query_one("#general-chat-api-key", Input)
         assert field.disabled is True
         assert "No API key needed" in field.placeholder
