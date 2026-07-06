@@ -691,6 +691,30 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     padding: 0 1;
 }
 
+#library-media-edit-form {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+#library-media-edit-form Input {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-media-edit-form Input:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
 #console-workspace-grid {
     height: $ds-console-workspace-grid-height;
     min-height: 20;

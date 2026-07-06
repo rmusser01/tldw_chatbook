@@ -500,6 +500,7 @@ class LibraryScreen(BaseAppScreen):
         self._selected_media_id: str = ""
         self._library_media_view: str = "list"
         self._library_media_detail: Mapping[str, Any] | None = None
+        self._library_media_editing: bool = False
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2538,6 +2539,7 @@ class LibraryScreen(BaseAppScreen):
                     else:
                         yield LibraryMediaViewer(
                             build_library_media_viewer_state(self._library_media_detail),
+                            editing=self._library_media_editing,
                             id="library-media-viewer",
                         )
                 elif shell.canvas_kind == "media":
@@ -2816,6 +2818,7 @@ class LibraryScreen(BaseAppScreen):
         # Media again must show the list, not the stale viewer).
         self._library_media_view = "list"
         self._library_media_detail = None
+        self._library_media_editing = False
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -2904,6 +2907,7 @@ class LibraryScreen(BaseAppScreen):
         self._active_mode = "media"
         self._library_media_view = "viewer"
         self._library_media_detail = None
+        self._library_media_editing = False
         if media_id:
             self.run_worker(self._refresh_library_media_detail(media_id))
         self.refresh(recompose=True)
@@ -2917,7 +2921,140 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_media_view = "list"
+        self._library_media_editing = False
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-edit")
+    def handle_library_media_edit(self, event: Button.Pressed) -> None:
+        """Enter metadata edit mode for the open Library media viewer.
+
+        Args:
+            event: Button press event emitted by the viewer's "Edit" action.
+        """
+        event.stop()
+        self._library_media_editing = True
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-edit-cancel")
+    def handle_library_media_edit_cancel(self, event: Button.Pressed) -> None:
+        """Discard in-progress metadata edits and return to the read-only viewer.
+
+        Args:
+            event: Button press event emitted by the edit form's "Cancel" action.
+        """
+        event.stop()
+        self._library_media_editing = False
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-edit-save")
+    def handle_library_media_edit_save(self, event: Button.Pressed) -> None:
+        """Read the edit form's field values and hand the write off to a worker.
+
+        Reads the four edit inputs directly (before any recompose removes
+        them), splits the keywords input on commas, and defers the actual
+        persistence to ``_save_library_media_edit`` -- a worker that mirrors
+        how ``handle_library_media_row`` kicks off
+        ``_refresh_library_media_detail`` for the initial detail fetch.
+
+        Args:
+            event: Button press event emitted by the edit form's "Save" action.
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        if not media_id:
+            self._library_media_editing = False
+            self.refresh(recompose=True)
+            return
+        try:
+            title = self.query_one("#library-media-edit-title", Input).value
+            author = self.query_one("#library-media-edit-author", Input).value
+            url = self.query_one("#library-media-edit-url", Input).value
+            keywords_raw = self.query_one("#library-media-edit-keywords", Input).value
+        except (NoMatches, QueryError):
+            self._library_media_editing = False
+            self.refresh(recompose=True)
+            return
+        keywords = [item.strip() for item in keywords_raw.split(",") if item.strip()]
+        version = (
+            self._library_media_detail.get("version")
+            if isinstance(self._library_media_detail, Mapping)
+            else None
+        )
+        self.run_worker(
+            self._save_library_media_edit(
+                media_id,
+                title=title,
+                author=author,
+                url=url,
+                keywords=keywords,
+                version=version,
+            )
+        )
+
+    async def _save_library_media_edit(
+        self,
+        media_id: str,
+        *,
+        title: str,
+        author: str,
+        url: str,
+        keywords: list[str],
+        version: Any,
+    ) -> None:
+        """Persist metadata edits, then re-fetch detail and exit edit mode.
+
+        Guards against a missing ``update_media_item`` service or a failed
+        write (e.g. an optimistic-locking version conflict) by logging the
+        failure and surfacing a quiet notice, but always re-fetches the
+        current detail afterwards so the viewer never shows a stale/
+        half-applied edit.
+
+        Args:
+            media_id: The Library media item id being edited.
+            title: New title field value.
+            author: New author field value.
+            url: New URL field value.
+            keywords: New keywords, already split from the comma-separated
+                edit input.
+            version: The detail's optimistic-locking version prior to this
+                edit, or None when unavailable.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        update_media_item = getattr(service, "update_media_item", None)
+        if callable(update_media_item):
+            try:
+                await self._run_library_service_call(
+                    update_media_item,
+                    mode="local",
+                    media_id=media_id,
+                    title=title,
+                    author=author,
+                    url=url,
+                    keywords=keywords,
+                    version=version,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to save Library media edit for {media_id!r}.", exc_info=True
+                )
+                self._notify_library_media_edit_warning(
+                    "Could not save media changes; showing the latest saved version."
+                )
+        else:
+            self._notify_library_media_edit_warning("Media editing is unavailable.")
+        self._library_media_editing = False
+        await self._refresh_library_media_detail(media_id)
+
+    def _notify_library_media_edit_warning(self, message: str) -> None:
+        """Surface a quiet warning notice for a failed media-edit save.
+
+        Args:
+            message: Human-readable warning text to notify with.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
 
     @on(Button.Pressed, "#library-media-open")
     def handle_library_media_open(self, event: Button.Pressed) -> None:

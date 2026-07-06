@@ -148,6 +148,7 @@ class StaticLibraryMediaScopeService:
         self.media_items = tuple(media_items)
         self.calls = []
         self.detail_calls = []
+        self.update_calls = []
 
     async def list_media_items(self, **kwargs):
         self.calls.append(kwargs)
@@ -161,6 +162,37 @@ class StaticLibraryMediaScopeService:
             if item_id == target_id:
                 return dict(item)
         return None
+
+    async def update_media_item(self, *, media_id, **fields):
+        """Record the update call and apply it to the stored item in place.
+
+        Mirrors the real ``media_reading_scope_service.update_media_item``
+        signature (keyword-only ``media_id`` plus arbitrary field kwargs) so
+        a subsequent ``get_media_item`` reflects the edited values.
+
+        Args:
+            media_id: The media item id to update.
+            **fields: Field values to merge onto the stored item (e.g.
+                ``title``, ``author``, ``url``, ``keywords``, ``version``).
+
+        Returns:
+            The updated item mapping, or None when ``media_id`` is unknown.
+        """
+        self.update_calls.append({"media_id": media_id, **fields})
+        target_id = str(media_id)
+        updated_items = []
+        updated = None
+        for item in self.media_items:
+            item_id = str(item.get("id") or item.get("media_id") or "")
+            if item_id == target_id:
+                merged = dict(item)
+                merged.update(fields)
+                updated = merged
+                updated_items.append(merged)
+            else:
+                updated_items.append(item)
+        self.media_items = tuple(updated_items)
+        return updated
 
 
 class StaticLibraryConversationScopeService:

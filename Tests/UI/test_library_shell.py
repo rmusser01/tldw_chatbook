@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_destination_shells import (
@@ -634,6 +634,120 @@ async def test_library_shell_media_viewer_open_posts_navigate_to_screen():
         await pilot.pause()
 
     assert seen[-1] == "media"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_edit_shows_prefilled_form():
+    """Pressing ``Edit`` swaps the metadata block for prefilled edit inputs."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit")
+
+        screen.query_one("#library-media-edit").press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+
+        assert screen._library_media_editing is True
+        assert screen.query_one("#library-media-edit-title", Input).value == "Interview Recording"
+        assert screen.query_one("#library-media-edit-author", Input).value == "Jordan Lee"
+        assert screen.query_one("#library-media-edit-url", Input).value == ""
+        assert (
+            screen.query_one("#library-media-edit-keywords", Input).value
+            == "interview, audio"
+        )
+        assert screen.query_one("#library-media-edit-save")
+        assert screen.query_one("#library-media-edit-cancel")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_edit_save_persists_and_exits_edit_mode():
+    """Saving the edit form calls ``update_media_item`` and refreshes the viewer."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit")
+
+        screen.query_one("#library-media-edit").press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+
+        screen.query_one("#library-media-edit-title", Input).value = (
+            "Interview Recording (Revised)"
+        )
+
+        screen.query_one("#library-media-edit-save").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.update_calls and not screen._library_media_editing:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Save never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+
+        assert service.update_calls, "update_media_item was never called"
+        call = service.update_calls[-1]
+        assert call["media_id"] == "media-1"
+        assert call["title"] == "Interview Recording (Revised)"
+        assert call["keywords"] == ["interview", "audio"]
+        assert call["version"] == 1
+
+        assert screen._library_media_editing is False
+        assert not screen.query("#library-media-edit-title")
+        title = str(screen.query_one("#library-media-viewer-title").renderable)
+        assert title == "Interview Recording (Revised)"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_edit_cancel_discards():
+    """Cancelling the edit form discards changes without calling the service."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit")
+
+        screen.query_one("#library-media-edit").press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+
+        screen.query_one("#library-media-edit-title", Input).value = "Should not persist"
+
+        screen.query_one("#library-media-edit-cancel").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_editing is False
+        assert not screen.query("#library-media-edit-title")
+        title = str(screen.query_one("#library-media-viewer-title").renderable)
+        assert title == "Interview Recording"
+
+        service = app.media_reading_scope_service
+        assert service.update_calls == []
 
 
 @pytest.mark.asyncio
