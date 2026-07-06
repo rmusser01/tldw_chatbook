@@ -398,9 +398,17 @@ def get_encryption_module():
 
 
 def set_encryption_password(password: str):
-    """Set the encryption password for the current session."""
-    global _ENCRYPTION_PASSWORD
+    """Set the encryption password for the current session.
+
+    Also invalidates the settings/CLI config caches: any config loaded before the
+    password was available (e.g. the module-level ``APP_CONFIG`` primed at import,
+    before the startup unlock prompt) holds ciphertext, so it must be dropped and
+    re-decrypted on the next load.
+    """
+    global _ENCRYPTION_PASSWORD, _SETTINGS_CACHE, _CONFIG_CACHE
     _ENCRYPTION_PASSWORD = password
+    _SETTINGS_CACHE = None
+    _CONFIG_CACHE = None
     logger.info("Encryption password set for current session")
 
 
@@ -690,6 +698,12 @@ def load_settings(force_reload: bool = False) -> Dict:
     toml_config_data = deep_merge_dicts(toml_config_data, base_config_data) # Merge primary config
     toml_config_data = deep_merge_dicts(toml_config_data, user_override_config_data) # Merge user CLI overrides
     logger.info("Merged all configurations: CLI Defaults < Primary Config < User CLI Config.")
+    # Decrypt sensitive values (e.g. [api_settings].*.api_key) when config encryption
+    # is enabled and a session password is available; a no-op otherwise. Without this,
+    # app.app_config (populated from load_settings) would carry `enc:` ciphertext keys
+    # that the Chat send path passes to providers verbatim, failing auth. Mirrors the
+    # decrypt step in load_cli_config_and_ensure_existence.
+    toml_config_data = decrypt_config_section(toml_config_data)
     logger.debug("load_settings: Configuration loaded from disk (cache miss or forced reload)")
     # logger.debug(f"Final toml_config_data after potential merge: {toml_config_data}") # Optional: for verbose debugging
 
