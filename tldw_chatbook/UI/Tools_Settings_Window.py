@@ -882,6 +882,7 @@ class ToolsSettingsWindow(Container):
         key_to_persist = chat_api_key_value_to_persist(api_key_widget.value, field_state)
         if key_to_persist is None:
             return False
+        # provider_config_key normalizes to the same key get_provider_readiness reads (lower + spaces/dashes -> _).
         provider_key = provider_config_key(str(provider_value))
         if not save_setting_to_cli_config(f"api_settings.{provider_key}", "api_key", key_to_persist):
             return False

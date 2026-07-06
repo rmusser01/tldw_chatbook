@@ -1,7 +1,5 @@
 """Unit tests for the inline Chat-Defaults API-key field state helpers."""
 
-import pytest
-
 from tldw_chatbook.Chat.provider_readiness import (
     ProviderReadiness,
     ChatApiKeyFieldState,

@@ -324,6 +324,13 @@ def chat_api_key_value_to_persist(
 
     Skips when the field is non-persistable, blank, a placeholder, or unchanged
     from the currently displayed value.
+
+    Args:
+        new_value: The raw value typed in the field.
+        field_state: The ChatApiKeyFieldState for the selected provider.
+
+    Returns:
+        The stripped value to persist, or None to skip the write.
     """
     if not field_state.can_persist:
         return None
