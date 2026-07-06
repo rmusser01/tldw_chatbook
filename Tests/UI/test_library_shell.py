@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_destination_shells import (
@@ -117,12 +117,20 @@ def _two_media_items():
             "title": "Interview Recording",
             "type": "audio",
             "last_modified": "2026-07-06T08:00:00Z",
+            "author": "Jordan Lee",
+            "keywords": ["interview", "audio"],
+            "content": "Full transcript: the interview recording covers the quarterly roadmap.",
+            "version": 1,
         },
         {
             "id": "media-2",
             "title": "Product Demo Video",
             "type": "video",
             "last_modified": "2026-07-06T10:00:00Z",
+            "author": "Morgan Lee",
+            "keywords": ["demo", "video"],
+            "content": "Full transcript: the product demo video walks through the new dashboard.",
+            "version": 2,
         },
     ]
 
@@ -420,6 +428,13 @@ async def test_library_shell_media_type_filter_narrows_list():
 
 @pytest.mark.asyncio
 async def test_library_shell_media_row_switches_selection():
+    """Selecting a different media row updates ``_selected_media_id``.
+
+    Re-anchored for the in-canvas viewer rebuild: pressing a media row now
+    replaces the list with the full ``LibraryMediaViewer`` (no more inline
+    ``#library-media-preview-lines``), so selection is asserted against the
+    viewer's title/metadata instead of the old stub preview.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     host = LibraryHarness(app)
@@ -438,14 +453,107 @@ async def test_library_shell_media_row_switches_selection():
         assert screen._selected_media_id == "media-2"
 
         screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+
+        assert screen._selected_media_id == "media-1"
+        title = str(screen.query_one("#library-media-viewer-title").renderable)
+        assert title == "Interview Recording"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_row_opens_full_viewer_with_content():
+    """Pressing a media row switches to the in-canvas viewer.
+
+    The viewer must show the title, Type/Author metadata lines, and the
+    full stored content text (not just a 3-line preview stub), replacing
+    the list (``#library-media-list`` no longer present).
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+
+        assert screen._library_media_view == "viewer"
+        assert not screen.query("#library-media-list")
+
+        title = str(screen.query_one("#library-media-viewer-title").renderable)
+        assert title == "Interview Recording"
+
+        meta = str(screen.query_one("#library-media-viewer-meta").renderable)
+        assert "Type: audio" in meta
+        assert "Author: Jordan Lee" in meta
+
+        content_container = screen.query_one("#library-media-viewer-content")
+        content_text = str(content_container.query_one(Static).renderable)
+        assert "Full transcript: the interview recording" in content_text
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_back_returns_to_list():
+    """``#library-media-back`` returns the media canvas to its list view."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-back")
+
+        screen.query_one("#library-media-back").press()
         await pilot.pause()
         await pilot.pause()
 
-        assert screen._selected_media_id == "media-1"
-        preview_after = str(
-            screen.query_one("#library-media-preview-lines").renderable
-        )
-        assert "Interview Recording" in preview_after
+        assert screen._library_media_view == "list"
+        assert screen.query_one("#library-media-list")
+        assert not screen.query("#library-media-viewer-title")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_shows_loading_before_detail_loads(monkeypatch):
+    """The viewer shows a loading line until ``_library_media_detail`` arrives."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    monkeypatch.setattr(
+        LibraryScreen, "_refresh_library_media_detail", _media_detail_never_loads
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+
+        screen.query_one("#library-media-row-1").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_detail is None
+        assert screen.query_one("#library-media-viewer-loading")
+        assert not screen.query("#library-media-viewer-title")
+
+
+async def _media_detail_never_loads(self, media_id: str) -> None:
+    """Stand in for ``_refresh_library_media_detail`` that never resolves.
+
+    Used to freeze the viewer in its loading state deterministically,
+    instead of racing the real (async) detail fetch worker.
+    """
 
 
 @pytest.mark.asyncio
@@ -460,6 +568,30 @@ async def test_library_shell_media_open_posts_navigate_to_screen():
         await _wait_for_library_shell(screen, pilot)
 
         screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-open")
+
+        screen.query_one("#library-media-open").press()
+        await pilot.pause()
+        await pilot.pause()
+
+    assert seen[-1] == "media"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_open_posts_navigate_to_screen():
+    """``#library-media-open`` inside the full viewer also hands off to Media."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    seen = []
+    host = LibraryHarness(app, seen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-open")
 
         screen.query_one("#library-media-open").press()

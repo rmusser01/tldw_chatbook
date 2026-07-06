@@ -683,6 +683,14 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     margin: 0 0 1 0;
 }
 
+#library-media-viewer-content {
+    height: 1fr;
+    min-height: 10;
+    margin: 0 0 1 0;
+    border: solid $ds-grid-line;
+    padding: 0 1;
+}
+
 #console-workspace-grid {
     height: $ds-console-workspace-grid-height;
     min-height: 20;

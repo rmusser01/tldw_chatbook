@@ -147,10 +147,20 @@ class StaticLibraryMediaScopeService:
     def __init__(self, media_items):
         self.media_items = tuple(media_items)
         self.calls = []
+        self.detail_calls = []
 
     async def list_media_items(self, **kwargs):
         self.calls.append(kwargs)
         return {"items": list(self.media_items), "pagination": {"total_items": len(self.media_items)}}
+
+    async def get_media_item(self, *, media_id, **kwargs):
+        self.detail_calls.append({"media_id": media_id, **kwargs})
+        target_id = str(media_id)
+        for item in self.media_items:
+            item_id = str(item.get("id") or item.get("media_id") or "")
+            if item_id == target_id:
+                return dict(item)
+        return None
 
 
 class StaticLibraryConversationScopeService:

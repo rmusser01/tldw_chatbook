@@ -31,6 +31,7 @@ from ...Library.library_media_state import (
     LibraryMediaCanvasState,
     build_library_media_state,
 )
+from ...Library.library_media_viewer_state import build_library_media_viewer_state
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -62,6 +63,7 @@ from ...Widgets.Library import (
     LibraryCollectionsPanel,
     LibraryConversationsCanvas,
     LibraryMediaCanvas,
+    LibraryMediaViewer,
     LibraryRail,
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
@@ -2526,6 +2528,19 @@ class LibraryScreen(BaseAppScreen):
                         conversations_state,
                         id="library-conversations-canvas",
                     )
+                elif shell.canvas_kind == "media" and self._library_media_view == "viewer":
+                    if self._library_media_detail is None:
+                        yield Static(
+                            "Loading media…",
+                            id="library-media-viewer-loading",
+                            classes="destination-purpose",
+                            markup=False,
+                        )
+                    else:
+                        yield LibraryMediaViewer(
+                            build_library_media_viewer_state(self._library_media_detail),
+                            id="library-media-viewer",
+                        )
                 elif shell.canvas_kind == "media":
                     media_state = self._build_library_media_state()
                     self._selected_media_id = media_state.selected_id
@@ -2638,9 +2653,9 @@ class LibraryScreen(BaseAppScreen):
         call via ``_run_library_service_call``, and recomposes once the
         fetched detail (or a cleared/failed state) has been stored.
 
-        Not yet wired to row selection or rendered anywhere; Task 2 triggers
-        this worker from media-row selection and renders ``_library_media_detail``
-        via ``build_library_media_viewer_state``.
+        Triggered by ``handle_library_media_row`` on media-row selection;
+        ``compose_content`` renders the stored ``_library_media_detail`` via
+        ``build_library_media_viewer_state`` once this worker completes.
 
         Args:
             media_id: The Library media item id to fetch full detail for.
@@ -2869,7 +2884,12 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-media-row")
     def handle_library_media_row(self, event: Button.Pressed) -> None:
-        """Select a media row in the Library media canvas.
+        """Select a media row and open the full Library media viewer.
+
+        Switches the media canvas from its list view to the in-canvas
+        viewer, clears any stale detail, and kicks the async detail fetch
+        (``_refresh_library_media_detail``); the viewer renders a loading
+        line until that worker stores the fetched detail and recomposes.
 
         Args:
             event: Button press event emitted by a media row button.
@@ -2880,6 +2900,22 @@ class LibraryScreen(BaseAppScreen):
             self._selected_media_id = media_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
         self._active_mode = "media"
+        self._library_media_view = "viewer"
+        self._library_media_detail = None
+        self._library_media_detail_loading = True
+        if media_id:
+            self.run_worker(self._refresh_library_media_detail(media_id))
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-back")
+    def handle_library_media_back(self, event: Button.Pressed) -> None:
+        """Return the Library media canvas from the viewer to its list view.
+
+        Args:
+            event: Button press event emitted by the "‹ Back to list" action.
+        """
+        event.stop()
+        self._library_media_view = "list"
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-media-open")
