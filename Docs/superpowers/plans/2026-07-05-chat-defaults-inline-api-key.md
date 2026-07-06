@@ -6,7 +6,7 @@
 
 **Architecture:** Two pure, UI-agnostic helper functions in `Chat/provider_readiness.py` map a `ProviderReadiness` (the app's single source of truth for how a provider's key is resolved) into the field's render/persist state. `Tools_Settings_Window.py` renders the field from that state, reloads it when the provider dropdown changes, saves the entered key to `api_settings.<provider>.api_key` (exactly where both live send paths read), and refreshes the live `app.app_config` in place so no restart is needed.
 
-**Tech Stack:** Python ≥3.11, Textual ≥3.3.0, TOML config, pytest / pytest-asyncio, Textual `AppTest`.
+**Tech Stack:** Python ≥3.11, Textual ≥3.3.0 (installed 8.2.7 — `textual.app.AppTest` is NOT available; use `app.run_test()` real-pilot harness), TOML config, pytest / pytest-asyncio.
 
 ## Global Constraints
 
@@ -401,23 +401,35 @@ Add a `Select.Changed` handler scoped to the provider dropdown that recomputes t
 - Consumes: `get_provider_readiness`, `chat_api_key_field_state`, `_config_is_locked` (Task 2). `on`, `Select`, `Input`, `QueryError` already imported.
 - Produces: `ToolsSettingsWindow._on_chat_provider_changed(self, event: Select.Changed) -> None`.
 
-- [ ] **Step 1: Write the failing test**
+> **Test harness note (IMPORTANT):** `textual.app.AppTest` does NOT exist in this repo's Textual (8.2.7). Task 2 established the real-pilot helper `mount_settings_window(config_dict, temp_config_path, monkeypatch)` (an `@asynccontextmanager`) plus `_ToolsSettingsHostApp(App)` at the top of `Tests/UI/test_tools_settings_window.py`. Use that helper for all UI tests here — do NOT use `AppTest` or `mock_app_instance` for these tests.
+
+- [ ] **Step 1: Evolve the mount helper to also yield the pilot**
+
+Task 3 must flush a `Select.Changed` message, which needs `pilot.pause()`. Update `mount_settings_window` to yield both the window and the pilot, and update Task 2's two existing call sites accordingly:
+
+```python
+# in mount_settings_window(...):  change the final yield
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(ToolsSettingsWindow)
+        yield window, pilot
+```
+
+Update the two existing Task 2 tests from `async with mount_settings_window(...) as window:` to `async with mount_settings_window(...) as (window, pilot):` (they ignore `pilot`). Re-run `pytest Tests/UI/test_tools_settings_window.py -k chat_api_key_field -v` and confirm the two still pass before proceeding.
+
+- [ ] **Step 2: Write the failing test**
 
 Add to `Tests/UI/test_tools_settings_window.py`:
 
 ```python
 @pytest.mark.asyncio
-async def test_chat_api_key_field_reloads_on_provider_change(monkeypatch, temp_config_path, mock_app_instance):
-    create_dummy_config(temp_config_path, {
+async def test_chat_api_key_field_reloads_on_provider_change(monkeypatch, temp_config_path):
+    config = {
         "providers": {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {"openai": {"api_key": "sk-configured"}},
-    })
-    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
-    window = ToolsSettingsWindow(app_instance=mock_app_instance)
-    async with AppTest(app=mock_app_instance, driver_class=None) as pilot:
-        mock_app_instance.mount(window)
-        await pilot.pause()
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
         field = window.query_one("#general-chat-api-key", Input)
         assert field.value == "sk-configured"
 
@@ -428,12 +440,12 @@ async def test_chat_api_key_field_reloads_on_provider_change(monkeypatch, temp_c
         assert field.value == ""
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 3: Run test to verify it fails**
 
 Run: `pytest Tests/UI/test_tools_settings_window.py -k reloads_on_provider_change -v`
 Expected: FAIL — field stays enabled with `sk-configured` (no handler yet).
 
-- [ ] **Step 3: Add the handler**
+- [ ] **Step 4: Add the handler**
 
 Add to `ToolsSettingsWindow` (place directly after `_compose_chat_defaults_settings`):
 
@@ -455,12 +467,12 @@ Add to `ToolsSettingsWindow` (place directly after `_compose_chat_defaults_setti
         api_key_input.placeholder = state.placeholder
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 5: Run test to verify it passes**
 
 Run: `pytest Tests/UI/test_tools_settings_window.py -k reloads_on_provider_change -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add tldw_chatbook/UI/Tools_Settings_Window.py Tests/UI/test_tools_settings_window.py
@@ -498,20 +510,18 @@ from ..Chat.provider_readiness import (
 
 Add to `Tests/UI/test_tools_settings_window.py`:
 
+Use the `mount_settings_window` helper (yields `(window, pilot)`). The window's `app_instance` is the real host app, so set/read `app_config` on `window.app_instance`:
+
 ```python
 @pytest.mark.asyncio
-async def test_chat_api_key_save_writes_config_and_updates_live_config(monkeypatch, temp_config_path, mock_app_instance):
-    create_dummy_config(temp_config_path, {
+async def test_chat_api_key_save_writes_config_and_updates_live_config(monkeypatch, temp_config_path):
+    config = {
         "providers": {"OpenAI": ["gpt-4o"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {},
-    })
-    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
-    mock_app_instance.app_config = {"api_settings": {}}
-    window = ToolsSettingsWindow(app_instance=mock_app_instance)
-    async with AppTest(app=mock_app_instance, driver_class=None) as pilot:
-        mock_app_instance.mount(window)
-        await pilot.pause()
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+        window.app_instance.app_config = {"api_settings": {}}
         window.query_one("#general-chat-api-key", Input).value = "sk-brand-new"
 
         saved = window._save_chat_api_key()
@@ -522,22 +532,18 @@ async def test_chat_api_key_save_writes_config_and_updates_live_config(monkeypat
         assert written["api_settings"]["openai"]["api_key"] == "sk-brand-new"
 
         # Live app config updated in place (no restart needed)
-        assert mock_app_instance.app_config["api_settings"]["openai"]["api_key"] == "sk-brand-new"
+        assert window.app_instance.app_config["api_settings"]["openai"]["api_key"] == "sk-brand-new"
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_save_skips_blank(monkeypatch, temp_config_path, mock_app_instance):
-    create_dummy_config(temp_config_path, {
+async def test_chat_api_key_save_skips_blank(monkeypatch, temp_config_path):
+    config = {
         "providers": {"OpenAI": ["gpt-4o"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {},
-    })
-    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
-    mock_app_instance.app_config = {"api_settings": {}}
-    window = ToolsSettingsWindow(app_instance=mock_app_instance)
-    async with AppTest(app=mock_app_instance, driver_class=None) as pilot:
-        mock_app_instance.mount(window)
-        await pilot.pause()
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+        window.app_instance.app_config = {"api_settings": {}}
         window.query_one("#general-chat-api-key", Input).value = "   "
         assert window._save_chat_api_key() is False
         written = toml.load(temp_config_path)
