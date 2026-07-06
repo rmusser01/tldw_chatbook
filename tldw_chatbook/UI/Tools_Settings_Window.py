@@ -23,7 +23,7 @@ from textual.widgets import Markdown
 from textual import on
 # Local Imports
 from tldw_chatbook.config import (
-    load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config, 
+    load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config,
     API_MODELS_BY_PROVIDER, check_encryption_needed, get_detected_api_providers,
     enable_config_encryption, disable_config_encryption, change_encryption_password,
     get_encryption_password, get_cli_setting, get_prompts_db_path
@@ -38,6 +38,12 @@ from .Sharing_Panel import SharingPanel
 from ..Utils.path_validation import validate_path
 from .Theme_Editor_Window import ThemeEditorView
 from .Widgets import ConfigSearchResult, UIElementSearchEngine
+from ..Chat.provider_readiness import (
+    get_provider_readiness,
+    provider_config_key,
+    chat_api_key_field_state,
+    chat_api_key_value_to_persist,
+)
 #
 # Local Imports
 #
@@ -689,6 +695,13 @@ class ToolsSettingsWindow(Container):
                     tooltip="Reset all general settings to default values"
                 )
     
+    def _config_is_locked(self) -> bool:
+        """True when encryption is on but no session password is available."""
+        encryption_config = self.config_data.get("encryption", {})
+        if not encryption_config.get("enabled", False):
+            return False
+        return not get_encryption_password()
+
     def _compose_chat_defaults_settings(self) -> ComposeResult:
         """Compose chat default settings."""
         with VerticalScroll(classes="settings-tab-content"):
@@ -716,7 +729,21 @@ class ToolsSettingsWindow(Container):
                         classes="settings-select",
                         tooltip="Default AI provider for chat conversations"
                     )
-                    
+
+                    # Inline API key for the selected provider (new-user quick start)
+                    _readiness = get_provider_readiness(current_chat_provider, self.config_data)
+                    _key_state = chat_api_key_field_state(_readiness, locked=self._config_is_locked())
+                    yield Label("API Key:", classes="settings-label")
+                    yield Input(
+                        value=_key_state.value,
+                        password=True,
+                        disabled=_key_state.disabled,
+                        id="general-chat-api-key",
+                        classes="settings-input",
+                        placeholder=_key_state.placeholder,
+                        tooltip="API key for the selected provider. Saved to [api_settings.<provider>]."
+                    )
+
                     yield Label("Model:", classes="settings-label")
                     yield Input(
                         value=chat_config.get("model", "gpt-4o"),
@@ -803,7 +830,74 @@ class ToolsSettingsWindow(Container):
                         variant="default",
                         tooltip="View available models for the selected provider"
                     )
-    
+
+    @on(Select.Changed, "#general-chat-provider")
+    def _on_chat_provider_changed(self, event: Select.Changed) -> None:
+        """Reload the inline API-key field for the newly selected chat provider."""
+        try:
+            api_key_input = self.query_one("#general-chat-api-key", Input)
+        except QueryError:
+            return
+        provider = event.value
+        if not provider or provider is Select.BLANK:
+            # No provider selected: never leave the prior provider's key visible.
+            api_key_input.value = ""
+            api_key_input.disabled = True
+            api_key_input.placeholder = "Select a provider to enter an API key"
+            return
+        readiness = get_provider_readiness(str(provider), self.config_data)
+        state = chat_api_key_field_state(readiness, locked=self._config_is_locked())
+        api_key_input.value = state.value
+        api_key_input.disabled = state.disabled
+        api_key_input.placeholder = state.placeholder
+
+    def _refresh_live_api_settings(self) -> None:
+        """Push freshly-saved api_settings into the live app config (no restart).
+
+        Reloads via ``load_cli_config_and_ensure_existence`` (which decrypts when
+        config encryption is enabled) so an encrypted ``api_key`` reaches the live
+        config as usable plaintext rather than ``enc:`` ciphertext — the Chat send
+        path expects a real key. ``save_setting_to_cli_config`` has already
+        force-reloaded that cache, so no ``force_reload`` is needed here. Mutates
+        the existing ``app_config`` dict in place so components holding a reference
+        to it — including the Chat send path — observe the new key.
+        """
+        try:
+            reloaded = load_cli_config_and_ensure_existence()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"Could not refresh live api_settings after save: {exc}")
+            return
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            app_config["api_settings"] = reloaded.get("api_settings", {})
+        # Keep this window's own snapshot consistent.
+        self.config_data = reloaded
+
+    def _save_chat_api_key(self) -> bool:
+        """Persist the inline Chat-Defaults API key for the selected provider.
+
+        Returns:
+            True if a key was written (and the live config refreshed), else False.
+        """
+        try:
+            provider_value = self.query_one("#general-chat-provider", Select).value
+            api_key_widget = self.query_one("#general-chat-api-key", Input)
+        except QueryError:
+            return False
+        if not provider_value or provider_value is Select.BLANK:
+            return False
+        readiness = get_provider_readiness(str(provider_value), self.config_data)
+        field_state = chat_api_key_field_state(readiness, locked=self._config_is_locked())
+        key_to_persist = chat_api_key_value_to_persist(api_key_widget.value, field_state)
+        if key_to_persist is None:
+            return False
+        # provider_config_key normalizes to the same key get_provider_readiness reads (lower + spaces/dashes -> _).
+        provider_key = provider_config_key(str(provider_value))
+        if not save_setting_to_cli_config(f"api_settings.{provider_key}", "api_key", key_to_persist):
+            return False
+        self._refresh_live_api_settings()
+        return True
+
     def _compose_character_defaults_settings(self) -> ComposeResult:
         """Compose character default settings."""
         with VerticalScroll(classes="settings-tab-content"):
@@ -3073,6 +3167,9 @@ Thank you for using tldw-chatbook! 🎉
             
             # Chat Defaults
             if save_setting_to_cli_config("chat_defaults", "provider", self.query_one("#general-chat-provider", Select).value):
+                saved_count += 1
+            # Inline API key for the selected provider (contextual quick-start field)
+            if self._save_chat_api_key():
                 saved_count += 1
             if save_setting_to_cli_config("chat_defaults", "model", self.query_one("#general-chat-model", Input).value):
                 saved_count += 1

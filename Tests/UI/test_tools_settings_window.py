@@ -1,12 +1,14 @@
+import shutil
+import sqlite3
+import tempfile
+from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import MagicMock, patch, AsyncMock, call
+
 import pytest
 import pytest_asyncio
 import toml
-from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock, call
-import tempfile
-import shutil
-import sqlite3
-from datetime import datetime
 
 from textual.widgets import Button, Checkbox, Input, Select, TextArea, Label, Static
 from textual.app import App
@@ -35,6 +37,38 @@ def create_dummy_config(config_path: Path, content: dict):
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w") as f:
         toml.dump(content, f)
+
+
+class _ToolsSettingsHostApp(App):
+    """Minimal real App that hosts a ToolsSettingsWindow as its own app_instance."""
+
+    def __init__(self):
+        super().__init__()
+        self.notify = MagicMock()
+        self.push_screen = MagicMock()
+        self.unified_mcp_service = None
+        self.current_runtime_backend = "local"
+        self.server_sharing_scope_service = None
+        self.server_outputs_scope_service = None
+
+    def get_authoritative_runtime_source(self):
+        return self.current_runtime_backend
+
+    def compose(self):
+        yield ToolsSettingsWindow(app_instance=self)
+
+
+@asynccontextmanager
+async def mount_settings_window(config_dict: dict, temp_config_path: Path, monkeypatch):
+    """Write config_dict to temp_config_path, patch DEFAULT_CONFIG_PATH, and yield a live-mounted ToolsSettingsWindow driven by a real pilot."""
+    create_dummy_config(temp_config_path, config_dict)
+    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
+
+    app = _ToolsSettingsHostApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        window = app.query_one(ToolsSettingsWindow)
+        yield window, pilot
 
 
 @pytest.fixture
@@ -797,3 +831,136 @@ async def test_outputs_panel_routes_server_template_and_artifact_operations():
         )
         rendered_status = str(panel.query_one("#outputs-status", Static).render())
         assert "server:output:11" in rendered_status or "output_delete" in rendered_status
+
+
+@pytest.mark.asyncio
+async def test_chat_api_key_field_prefilled_for_config_key(monkeypatch, temp_config_path):
+    config = {
+        "providers": {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
+        "api_settings": {"openai": {"api_key": "test-configured-key"}},
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+        field = window.query_one("#general-chat-api-key", Input)
+        assert field.password is True
+        assert field.value == "test-configured-key"
+        assert field.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_chat_api_key_field_disabled_for_keyless_provider(monkeypatch, temp_config_path):
+    config = {
+        "providers": {"Ollama": ["llama3"], "OpenAI": ["gpt-4o"]},
+        "chat_defaults": {"provider": "Ollama", "model": "llama3"},
+        "api_settings": {},
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+        field = window.query_one("#general-chat-api-key", Input)
+        assert field.disabled is True
+        assert "No API key needed" in field.placeholder
+
+
+@pytest.mark.asyncio
+async def test_chat_api_key_field_reloads_on_provider_change(monkeypatch, temp_config_path):
+    config = {
+        "providers": {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
+        "api_settings": {"openai": {"api_key": "test-configured-key"}},
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+        field = window.query_one("#general-chat-api-key", Input)
+        assert field.value == "test-configured-key"
+
+        # Switch to a keyless provider -> field disables and clears
+        window.query_one("#general-chat-provider", Select).value = "Ollama"
+        await pilot.pause()
+        assert field.disabled is True
+        assert field.value == ""
+
+
+@pytest.mark.asyncio
+async def test_chat_api_key_save_writes_config_and_updates_live_config(monkeypatch, temp_config_path):
+    config = {
+        "providers": {"OpenAI": ["gpt-4o"]},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
+        "api_settings": {},
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+        window.app_instance.app_config = {"api_settings": {}}
+        window.query_one("#general-chat-api-key", Input).value = "test-brand-new-key"
+
+        saved = window._save_chat_api_key()
+        assert saved is True
+
+        # Written to the on-disk config under the normalized provider key
+        written = toml.load(temp_config_path)
+        assert written["api_settings"]["openai"]["api_key"] == "test-brand-new-key"
+
+        # Live app config updated in place (no restart needed)
+        assert window.app_instance.app_config["api_settings"]["openai"]["api_key"] == "test-brand-new-key"
+
+
+@pytest.mark.asyncio
+async def test_chat_api_key_save_skips_blank(monkeypatch, temp_config_path):
+    config = {
+        "providers": {"OpenAI": ["gpt-4o"]},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
+        "api_settings": {},
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+        window.app_instance.app_config = {"api_settings": {}}
+        window.query_one("#general-chat-api-key", Input).value = "   "
+        assert window._save_chat_api_key() is False
+        written = toml.load(temp_config_path)
+        assert written.get("api_settings", {}).get("openai", {}).get("api_key") is None
+
+
+@pytest.mark.asyncio
+async def test_chat_api_key_field_clears_when_provider_blanked(monkeypatch, temp_config_path):
+    """Blanking the provider must clear the field, not leave the prior key visible."""
+    config = {
+        "providers": {"OpenAI": ["gpt-4o"]},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
+        "api_settings": {"openai": {"api_key": "test-configured-key"}},
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+        field = window.query_one("#general-chat-api-key", Input)
+        assert field.value == "test-configured-key"
+
+        # The provider Select disallows a blank value in normal use, so drive the
+        # defensive handler branch directly with a synthetic BLANK change event.
+        select = window.query_one("#general-chat-provider", Select)
+        window._on_chat_provider_changed(Select.Changed(select, Select.BLANK))
+        assert field.value == ""
+        assert field.disabled is True
+        assert "Select a provider" in field.placeholder
+
+
+@pytest.mark.asyncio
+async def test_chat_api_key_save_pushes_decrypted_key_to_live_config_when_encrypted(monkeypatch, temp_config_path):
+    """With config encryption on, the live app_config must receive the DECRYPTED
+    key, never the on-disk ciphertext (which chat would send verbatim and fail)."""
+    # A session password unlocks the field and enables encrypt-on-write.
+    monkeypatch.setattr(tldw_chatbook.config, "_ENCRYPTION_PASSWORD", "test-master-pw")
+    config = {
+        "providers": {"OpenAI": ["gpt-4o"]},
+        "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
+        "api_settings": {},
+        "encryption": {"enabled": True},
+    }
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+        window.app_instance.app_config = {"api_settings": {}}
+        window.query_one("#general-chat-api-key", Input).value = "test-secret-live-key"
+
+        assert window._save_chat_api_key() is True
+
+        # On disk the key is encrypted...
+        enc_mod = tldw_chatbook.config.get_encryption_module()
+        written_key = toml.load(temp_config_path)["api_settings"]["openai"]["api_key"]
+        assert enc_mod.is_encrypted(written_key)
+        assert written_key != "test-secret-live-key"
+
+        # ...but the live config the send path reads holds decrypted plaintext.
+        live_key = window.app_instance.app_config["api_settings"]["openai"]["api_key"]
+        assert live_key == "test-secret-live-key"
+        assert not enc_mod.is_encrypted(live_key)
