@@ -37,9 +37,15 @@ Chips-bright (`console-chip-alert`) state: not staged in the live capture
 alert when > 0) and pure-state tests in `test_console_display_state.py`.
 
 Verification (2026-07-05, HEAD 14410be9): nine affected suites = 639
-passed, 1 failed — `test_console_details_toggle_expands_and_persists`,
-a load flake in the 9.5-minute combined run only (passes isolated 5.5s and
-file-scoped 35/35; rail-persistence path untouched by this branch). No
+passed, 1 failed — `test_console_details_toggle_expands_and_persists`.
+Root cause (diagnosed post-gate, not load): with a reused test profile the
+harness can resume a conversation whose stored `details_open=true`
+re-applies asynchronously before the test's toggle click, which then
+collapses instead of expanding (Phase 1 pref-reapply mechanism; untouched
+by this branch — fresh-profile A/B at base and HEAD was 6/6 green both
+sides). The test is hardened in the review-response commit: polled wait
+plus a state-proof re-toggle; 10/10 green against the contaminated
+profile afterwards. No
 expected-failure baseline remains: the long-stale left-rail priority test
 was realigned to the approved Session→Context order
 (`test_console_left_rail_orders_session_then_staged_context`), and the

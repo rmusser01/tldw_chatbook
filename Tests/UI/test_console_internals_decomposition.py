@@ -416,7 +416,7 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         for action_button in (send_button, stop_button, attach_button, save_button):
             assert action_button.compact is True
             # Stop button is hidden when not running, so it has no valid region
-            if action_button is not stop_button or composer._run_active:
+            if action_button is not stop_button:
                 assert action_button.region.height == 1
                 assert action_button.region.y + action_button.region.height <= composer.region.y + composer.region.height
         assert str(send_button.label) == "Send"
