@@ -2108,7 +2108,7 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-transcript-empty-state")
-        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
 
         assert not list(console.query("#console-provider-recovery-strip"))
         assert not list(console.query("#console-provider-blocker"))
@@ -2119,7 +2119,7 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         # (Phase 2 spec, section 2).
         recovery = console.query_one("#workbench-recovery-callout")
         button = console.query_one("#workbench-recovery-action", Button)
-        card_button = console.query_one("#console-empty-choose-model", Button)
+        card_button = console.query_one("#console-setup-modal-action", Button)
         assert recovery.display is False
         assert button.display is False
         assert card_button.display is True
@@ -2178,9 +2178,7 @@ async def test_console_provider_settings_action_hidden_when_provider_ready(monke
         await pilot.pause(0.1)
 
         assert not list(console.query("#console-open-provider-settings"))
-        action_row = console.query_one("#console-empty-action-row")
-        assert action_row.styles.display == "none"
-        assert action_row.display is False
+        assert not list(console.query("#console-empty-action-row"))
 
 
 @pytest.mark.asyncio
@@ -2195,7 +2193,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         # The shared Workbench recovery banner must stay hidden — the setup
         # card's action button and the composer's Send tooltip carry this
@@ -2232,8 +2230,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
 
         assert not list(console.query("#console-provider-blocker"))
         assert not list(console.query("#console-provider-recovery-strip"))
-        action_row = console.query_one("#console-empty-action-row")
-        assert action_row.styles.display == "none"
+        assert not list(console.query("#console-empty-action-row"))
         assert "Choose a model in Console Settings to start chatting." not in _visible_text(console)
         assert "Setup required: Choose model before sending." not in _visible_text(console)
 
@@ -2456,14 +2453,13 @@ async def test_console_empty_transcript_uses_compact_ready_state():
 
         assert len(empty_rows) == 1
         empty_panel = empty_rows[0]
-        # Ready state is compact: one displayed ready line, no visible action row.
+        # Ready state is compact: one displayed ready line, no action row at all.
         body = empty_panel.query_one("#console-empty-body", Static)
-        action_row = empty_panel.query_one("#console-empty-action-row")
         assert getattr(body.render(), "plain", str(body.render())) == (
             "Ready — type a message to begin."
         )
         assert body.display is True
-        assert action_row.styles.display == "none"
+        assert not list(empty_panel.query("#console-empty-action-row"))
         assert "No messages yet. Send a prompt or attach context." not in _visible_text(
             empty_panel
         )

@@ -18,10 +18,8 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction, ConsoleMessageActionService
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_QUIET_EMPTY_COPY,
-    CONSOLE_SETUP_CARD_TITLE,
     ConsoleSetupCardState,
 )
-from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 
 
 CONSOLE_TRANSCRIPT_RULE = "─" * 200
@@ -223,35 +221,6 @@ class ConsoleTranscriptActionButton(Button):
         action_buttons[(current_index + offset) % len(action_buttons)].focus()
 
 
-class ConsoleTranscriptEmptyAction(Button):
-    """Activation button shown when the Console transcript has no messages."""
-
-    def __init__(
-        self,
-        label: str,
-        *,
-        action_id: str,
-        tooltip: str,
-        id: str,
-    ) -> None:
-        super().__init__(
-            label,
-            id=id,
-            classes="console-transcript-empty-action",
-            compact=True,
-        )
-        self._workbench_action_id = action_id
-        self.tooltip = tooltip
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Route empty-state activation through the owning Workbench screen."""
-        action_id = getattr(self, "_workbench_action_id", "")
-        if not action_id:
-            return
-        event.stop()
-        self.post_message(WorkbenchActionRequested(action_id))
-
-
 class ConsoleTranscriptEmptyPanel(Vertical):
     """Actionable Console transcript empty state, driven by a setup card state."""
 
@@ -276,48 +245,12 @@ class ConsoleTranscriptEmptyPanel(Vertical):
         # (``mode == "card"``) this in-transcript panel shows only the quiet
         # empty line, dimmed under the overlay. ``ready_line``/``quiet`` render
         # as before.
-        title = Static(
-            CONSOLE_SETUP_CARD_TITLE,
-            id="console-empty-title",
-            classes="console-transcript-empty-title",
-        )
-        title.styles.display = "none"
-        yield title
-
         body = Static(
             self.card_state.body_copy or CONSOLE_QUIET_EMPTY_COPY,
             id="console-empty-body",
             classes="console-transcript-empty-body console-transcript-empty-state",
         )
         yield body
-
-        action_row = Horizontal(
-            ConsoleTranscriptEmptyAction(
-                self.provider_action_label,
-                action_id="provider-recovery",
-                tooltip=self.provider_action_tooltip,
-                id="console-empty-choose-model",
-            ),
-            ConsoleTranscriptEmptyAction(
-                "Attach context",
-                action_id="attach-context",
-                tooltip="Open context sources and attach workspace material.",
-                id="console-empty-attach-context",
-            ),
-            ConsoleTranscriptEmptyAction(
-                "Run Library RAG",
-                action_id="run-library-rag",
-                tooltip="Search Library sources before sending.",
-                id="console-empty-run-library-rag",
-            ),
-            id="console-empty-action-row",
-            classes="console-transcript-empty-action-row",
-        )
-        # The setup action row is owned by ``ConsoleSetupModal`` now; the
-        # in-transcript row is retained (hidden) only so legacy selectors keep
-        # resolving.
-        action_row.styles.display = "none"
-        yield action_row
 
     def sync_card_state(
         self,

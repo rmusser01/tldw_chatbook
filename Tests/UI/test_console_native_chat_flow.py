@@ -2260,7 +2260,7 @@ async def test_console_setup_required_state_groups_recovery_and_action_copy():
 
     async with host.run_test(size=(180, 54)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-empty-choose-model")
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
 
         # The shared Workbench recovery banner stays hidden — the blocking setup
         # modal groups the setup-blocked copy and the recovery action together

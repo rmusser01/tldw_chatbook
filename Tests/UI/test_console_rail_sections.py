@@ -182,8 +182,20 @@ async def test_setup_panel_card_mode_shows_quiet_line_without_steps_or_actions()
             getattr(body.renderable, "plain", body.renderable)
         )
         assert not list(app.query("#console-setup-step-1"))
-        assert app.query_one("#console-empty-title").styles.display == "none"
-        assert app.query_one("#console-empty-action-row").styles.display == "none"
+        assert not list(app.query("#console-empty-title"))
+        assert not list(app.query("#console-empty-action-row"))
+
+
+@pytest.mark.asyncio
+async def test_empty_panel_has_no_legacy_shim_widgets():
+    app = _SetupPanelApp(
+        ConsoleSetupCardState(mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY)
+    )
+    async with app.run_test(size=(100, 30)):
+        assert not list(app.query("#console-empty-title"))
+        assert not list(app.query("#console-empty-action-row"))
+        assert not list(app.query("#console-empty-choose-model"))
+        assert list(app.query("#console-empty-body"))
 
 
 class _SetupModalApp(App):
@@ -267,8 +279,8 @@ async def test_setup_panel_ready_line_hides_steps_and_actions():
         body = app.query_one("#console-empty-body", Static)
         assert CONSOLE_READY_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
         assert not list(app.query("#console-setup-step-1"))
-        assert app.query_one("#console-empty-action-row").styles.display == "none"
-        assert app.query_one("#console-empty-title").styles.display == "none"
+        assert not list(app.query("#console-empty-action-row"))
+        assert not list(app.query("#console-empty-title"))
 
 
 @pytest.mark.asyncio
@@ -280,7 +292,7 @@ async def test_setup_panel_quiet_mode_shows_only_quiet_copy():
         body = app.query_one("#console-empty-body", Static)
         assert CONSOLE_QUIET_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
         assert not list(app.query("#console-setup-step-1"))
-        assert app.query_one("#console-empty-action-row").styles.display == "none"
+        assert not list(app.query("#console-empty-action-row"))
 
 
 @pytest.mark.asyncio
@@ -309,7 +321,7 @@ async def test_setup_panel_coerces_non_card_state_to_quiet_copy():
         body = app.query_one("#console-empty-body", Static)
         assert CONSOLE_QUIET_EMPTY_COPY in str(getattr(body.renderable, "plain", body.renderable))
         assert not list(app.query("#console-setup-step-1"))
-        assert app.query_one("#console-empty-action-row").styles.display == "none"
+        assert not list(app.query("#console-empty-action-row"))
 
 
 # ---------------------------------------------------------------------------

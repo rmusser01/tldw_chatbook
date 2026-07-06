@@ -470,8 +470,8 @@ async def test_console_empty_transcript_exposes_beginner_activation_actions():
         )
         assert "Choose model" in _widget_text(console.query_one("#console-setup-modal-action"))
         # The modal carries no attach/RAG affordances; those stay on the control bar.
-        assert not _is_displayed(console.query_one("#console-empty-attach-context"))
-        assert not _is_displayed(console.query_one("#console-empty-run-library-rag"))
+        assert not list(console.query("#console-empty-attach-context"))
+        assert not list(console.query("#console-empty-run-library-rag"))
         assert _is_displayed(console.query_one("#console-control-attach-context"))
         assert _is_displayed(console.query_one("#console-control-run-library-rag"))
 
@@ -493,8 +493,8 @@ async def test_console_ready_empty_transcript_exposes_activation_panel_copy():
         assert _widget_text(console.query_one("#console-empty-body")) == (
             "Ready — type a message to begin."
         )
-        assert not _is_displayed(console.query_one("#console-empty-title"))
-        assert not _is_displayed(console.query_one("#console-empty-action-row"))
+        assert not list(console.query("#console-empty-title"))
+        assert not list(console.query("#console-empty-action-row"))
 
 
 @pytest.mark.asyncio
@@ -528,8 +528,8 @@ async def test_console_ready_empty_transcript_omits_setup_action_row():
         await _wait_for_selector(console, pilot, "#console-shell")
         await _wait_for_selector(console, pilot, "#console-transcript-empty-state")
 
-        assert not _is_displayed(console.query_one("#console-empty-action-row"))
-        assert not _is_displayed(console.query_one("#console-empty-choose-model"))
+        assert not list(console.query("#console-empty-action-row"))
+        assert not list(console.query("#console-empty-choose-model"))
         assert _widget_text(console.query_one("#console-empty-body")) == (
             "Ready — type a message to begin."
         )
@@ -638,7 +638,7 @@ async def test_console_empty_transcript_provider_recovery_label_matches_setup_bl
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 
-        action = console.query_one("#console-empty-choose-model")
+        action = console.query_one("#console-setup-modal-action")
         assert _widget_text(action) == CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         assert str(action.tooltip or "") == "Configure OpenAI API and API key in Settings"
 
