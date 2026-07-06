@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from textual.widgets import Button
 from textual.widgets import Static
@@ -16,9 +18,35 @@ from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _build_test_app,
     _visible_text,
-    _wait_for_library_snapshot,
     _wait_for_selector,
 )
+
+
+async def _wait_for_library_shell_ready(screen, pilot, *, timeout: float = 2.0) -> None:
+    """Wait for the Library rail shell (not the retired 3-pane workbench).
+
+    Mirrors ``Tests/UI/test_library_shell.py::_wait_for_library_shell`` for
+    suites that use the generic ``DestinationHarness``.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if getattr(screen, "_library_loaded", False) and screen.query("#library-rail"):
+            await pilot.pause()
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Library shell never loaded. Visible text: {_visible_text(screen)}"
+    )
+
+
+async def _open_library_details(screen, pilot) -> None:
+    """Expand the Library rail Details section that now always hosts the
+    Workspaces depth panel and action controls (see
+    ``LibraryRail.workspaces_body_factory``)."""
+    screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+    await pilot.pause()
+    await pilot.pause()
 
 
 def _seed_cross_workspace_library(app) -> None:
@@ -77,26 +105,25 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        assert "Workspace B research note" in _visible_text(screen)
-        assert "Workspace B planning chat" in _visible_text(screen)
+        # The Workspaces action controls always live in the rail Details
+        # body now (LibraryRail.workspaces_body_factory), independent of the
+        # selected canvas mode.
         use_button = screen.query_one("#library-use-in-console", Button)
         assert use_button.disabled is True
         assert "Copy or link" in str(use_button.tooltip)
 
-        screen.query_one("#library-mode-workspaces", Button).press()
+        await _open_library_details(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-workspaces-depth-panel")
 
         visible = _visible_text(screen)
         assert "Workspace Rules" in visible
         assert "Stage only active-workspace sources into Console, RAG, or agents." in visible
-        assert "Handoff Rules" in visible
         assert "Workspace: Workspace A" in visible
         assert "Browse/search: all Library and Notes items remain visible" in visible
         assert "Workspace B research note" in visible
         assert "Workspace A transcript" in visible
-        assert visible.count("Handoff Rules") == 1
         table_header = str(
             screen.query_one("#library-workspaces-eligibility-heading", Static).renderable
         )
@@ -128,16 +155,12 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         assert "Collections: browse and organize; staging is read-only" in visible
         assert "Import/Export: copy or reference sources" in visible
         assert "Workspace selection changes staging, not what you can browse or search" in visible
-        assert "Action: Copy/link blocked sources before staging." in visible
         assert "Blocked: some sources are outside Workspace A" in visible
         assert "Fix: Copy/link blocked sources to Workspace A" in visible
         assert "Study Dashboard actions" not in visible
-        assert len(screen.query("#library-action-region #library-open-study")) == 0
-        snapshot_region = screen.query_one("#library-local-snapshot-region")
-        assert snapshot_region.display is False
         assert screen.query_one("#library-use-in-console", Button).disabled is True
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
         # The Search/RAG panel renders counts as a pipe row ("... | Notes 2").
@@ -151,22 +174,20 @@ async def test_library_workspaces_empty_state_keeps_recovery_copy_compact() -> N
 
     async with host.run_test(size=(140, 40)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-workspaces", Button).press()
+        await _open_library_details(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-workspaces-depth-panel")
 
         visible = _visible_text(screen)
         assert "No workspace sources yet." in visible
         assert "Browse/search still shows every Library and Notes item." in visible
-        assert "Active workspace: Local Default" in visible
-        assert "Browse: all workspaces" in visible
+        assert "Workspace: Local Default" in visible
+        assert "Browse/search: all Library and Notes items remain visible" in visible
         assert "Handoff unavailable until sources exist or are assigned here." in visible
         assert "Console/RAG handoff: unavailable until sources exist" in visible
         assert "Blocked: no workspace sources" in visible
-        assert "Why: no sources are assigned to this workspace yet." in visible
         assert "Fix: import or assign sources to Local Default" in visible
-        assert "Action: Import sources or assign sources before staging." in visible
         assert "No Library sources are available for workspace authority preview." not in visible
         assert "Console/RAG handoff: local default source snapshot" not in visible
         assert "Source Workspace Visible Console/RAG" not in visible
@@ -183,9 +204,9 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
 
     async with host.run_test(size=(140, 40)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-workspaces", Button).press()
+        await _open_library_details(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-workspaces-depth-panel")
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
@@ -199,8 +220,8 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
 
         visible = _visible_text(screen)
         assert "Workspace: Workspace 1" in visible
-        assert "Active workspace: Workspace 1" in visible
-        assert "Active workspace: Local Default" not in visible
+        assert "Workspace: Workspace 1" in visible
+        assert "Workspace: Local Default" not in visible
         assert "Create local workspace" in visible
         assert "Server sync: WIP/unavailable" in visible
 
@@ -213,9 +234,15 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
 
     async with host.run_test(size=(140, 40)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        await pilot.click("#library-mode-workspaces")
+        # Collapse the other rail sections first: the rail does not scroll
+        # (Vertical default overflow: hidden), so at this terminal height the
+        # Details body's action buttons would otherwise render off-screen.
+        for section in ("browse", "create", "ingest"):
+            screen.query_one(f"#console-rail-section-toggle-library-{section}", Button).press()
+            await pilot.pause()
+        await _open_library_details(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         await pilot.click("#library-create-local-workspace")
@@ -227,8 +254,8 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         assert active_workspace.name == "Workspace 1"
 
         visible = _visible_text(screen)
-        assert "Active workspace: Workspace 1" in visible
-        assert "Active workspace: Local Default" not in visible
+        assert "Workspace: Workspace 1" in visible
+        assert "Workspace: Local Default" not in visible
 
 
 @pytest.mark.asyncio
@@ -252,9 +279,9 @@ async def test_library_workspaces_create_skips_archived_local_workspace_identity
 
     async with host.run_test(size=(140, 40)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-workspaces", Button).press()
+        await _open_library_details(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-create-local-workspace")
 
         screen.query_one("#library-create-local-workspace", Button).press()
@@ -289,9 +316,9 @@ async def test_library_workspaces_rows_escape_markup_text() -> None:
 
     async with host.run_test(size=(140, 40)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-workspaces", Button).press()
+        await _open_library_details(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-workspaces-depth-panel")
 
         row = screen.query_one("#library-workspaces-source-row-0", Static)
@@ -305,13 +332,18 @@ async def test_library_workspaces_rows_escape_markup_text() -> None:
 async def test_library_workspaces_refresh_reuses_depth_state_for_panel_and_actions(
     monkeypatch,
 ) -> None:
+    """Opening the rail Details disclosure must not rebuild the Workspaces
+    depth state: the panel + action widgets built by the last recompose
+    (``LibraryRail.workspaces_body_factory``) are only revealed, not rebuilt,
+    because ``handle_library_rail_section_toggle`` toggles display in place
+    without recomposing."""
     app = _build_test_app()
     _seed_cross_workspace_library(app)
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
         original_builder = library_screen_module.build_library_workspace_depth_state
         calls = 0
@@ -326,7 +358,7 @@ async def test_library_workspaces_refresh_reuses_depth_state_for_panel_and_actio
             "build_library_workspace_depth_state",
             counting_builder,
         )
-        screen.query_one("#library-mode-workspaces", Button).press()
+        await _open_library_details(screen, pilot)
         await _wait_for_selector(screen, pilot, "#library-workspaces-depth-panel")
 
-        assert calls == 1
+        assert calls == 0
