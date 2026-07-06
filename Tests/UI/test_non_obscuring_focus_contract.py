@@ -677,12 +677,17 @@ def test_console_composer_action_availability_states_are_visually_distinct():
 
 
 def test_library_mode_chip_active_states_use_selected_focus_contracts():
+    """``.library-mode-chip:focus`` (the retired mode-strip's own focus rule)
+    was removed once the Library screen stopped rendering any widget with
+    that class (see Task 7's rail/canvas rework); ``.notes-mode-chip:focus``
+    keeps that contract. ``.library-mode-chip.is-active``/``:focus`` are
+    untouched (still shared with ``.notes-mode-chip``/``.personas-mode-chip``
+    and out of this retirement's scope), so those assertions stay."""
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8"),
     ):
-        focus = css_block(text, ".library-mode-chip:focus")
-        assert_non_obscuring_focus(focus)
+        assert ".library-mode-chip:focus" not in css_selectors(text)
 
         active = css_block(text, ".library-mode-chip.is-active")
         assert_readable_selected_state_contract(active)

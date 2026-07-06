@@ -83,20 +83,27 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             )
             await _wait_until(
                 pilot,
-                lambda: bool(app.screen.query("#library-open-import-export")),
+                lambda: bool(app.screen.query("#library-row-ingest-import-export")),
             )
+            # The retired hub's "Import/Export Sources" / "Search/RAG"
+            # action-region copy is gone; the rail row titles are the
+            # surviving discoverable surface for the same two capabilities.
             library_text = _screen_text(app)
-            assert "Import/Export Sources" in library_text
-            assert "Search/RAG" in library_text
+            assert "Import / Export" in library_text
+            assert "Search / RAG" in library_text
 
-            # Import/Export is now an in-Library mode; the ingest screen is
-            # one press deeper via the mode's "Open Ingest" action.
-            app.screen.query_one("#library-open-import-export", Button).press()
+            # Import/Export is reached via its own rail row (proving the
+            # native mode renders in place); the in-canvas "Open Ingest"
+            # button lived only in the never-mounted #library-action-region
+            # and is dead (see test_destination_shells.py), so the Ingest
+            # screen is now reached via the always-visible Ingest > Import
+            # media rail row instead of a button inside Import/Export mode.
+            app.screen.query_one("#library-row-ingest-import-export", Button).press()
             await _wait_until(
                 pilot,
-                lambda: bool(app.screen.query("#library-import-export-open-ingest")),
+                lambda: app.current_tab == "library" and "Import/Export mode" in _screen_text(app),
             )
-            app.screen.query_one("#library-import-export-open-ingest", Button).press()
+            app.screen.query_one("#library-row-ingest-import-media", Button).press()
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == "ingest"
@@ -113,12 +120,13 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
                 pilot,
                 lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
             )
-            # Search/RAG is likewise an in-Library mode now.
+            # Search/RAG is likewise an in-Library mode, reached via its
+            # rail row rather than the retired #library-open-search chip.
             await _wait_until(
                 pilot,
-                lambda: bool(app.screen.query("#library-open-search")),
+                lambda: bool(app.screen.query("#library-row-browse-search")),
             )
-            app.screen.query_one("#library-open-search", Button).press()
+            app.screen.query_one("#library-row-browse-search", Button).press()
             await _wait_until(
                 pilot,
                 lambda: bool(app.screen.query("#library-search-rag-panel")),

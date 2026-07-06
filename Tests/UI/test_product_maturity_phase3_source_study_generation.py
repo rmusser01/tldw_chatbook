@@ -133,6 +133,11 @@ async def test_library_source_context_carries_study_pack_source_items() -> None:
     async with host.run_test(size=(180, 50)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_library_snapshot(screen, pilot)
+        # The retired hub rendered #library-open-study globally; the rail +
+        # canvas shell only mounts it inside the create-study mode canvas, so
+        # the Study row must be selected first to reach the same button.
+        await pilot.click("#library-row-create-study")
+        await pilot.pause(0.1)
         await pilot.click("#library-open-study")
         await pilot.pause(0.1)
 

@@ -45,7 +45,7 @@ TERMINAL_SIZE_MATRIX = (
 DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
     "home": ("#home-triage-grid",),
     "console": ("#console-shell", "#console-transcript-region"),
-    "library": ("#library-shell",),
+    "library": ("#library-shell-grid",),
     "artifacts": ("#artifacts-shell",),
     "personas": ("#personas-shell",),
     "watchlists_collections": ("#watchlists-collections-shell",),
