@@ -87,7 +87,7 @@ def test_keyless_provider_is_disabled_and_not_persistable():
 
 def test_locked_config_is_disabled_with_unlock_hint():
     state = chat_api_key_field_state(
-        _readiness(ready=True, api_key="sk-secret", api_key_source="config:api_settings.openai.api_key"),
+        _readiness(ready=True, api_key="test-secret-key", api_key_source="config:api_settings.openai.api_key"),
         locked=True,
     )
     assert state.disabled is True
@@ -98,17 +98,17 @@ def test_locked_config_is_disabled_with_unlock_hint():
 
 def test_config_key_is_prefilled():
     state = chat_api_key_field_state(
-        _readiness(ready=True, api_key="sk-abc123", api_key_source="config:api_settings.openai.api_key"),
+        _readiness(ready=True, api_key="test-key-abc123", api_key_source="config:api_settings.openai.api_key"),
         locked=False,
     )
     assert state.disabled is False
-    assert state.value == "sk-abc123"
+    assert state.value == "test-key-abc123"
     assert state.can_persist is True
 
 
 def test_env_key_shows_hint_and_empty_value():
     state = chat_api_key_field_state(
-        _readiness(ready=True, api_key="sk-env", api_key_source="env:OPENAI_API_KEY", env_var="OPENAI_API_KEY"),
+        _readiness(ready=True, api_key="test-env-key", api_key_source="env:OPENAI_API_KEY", env_var="OPENAI_API_KEY"),
         locked=False,
     )
     assert state.value == ""
@@ -126,7 +126,7 @@ def test_missing_key_is_empty_and_persistable():
 
 def test_persist_skips_when_not_persistable():
     state = ChatApiKeyFieldState(value="", disabled=True, placeholder="", can_persist=False)
-    assert chat_api_key_value_to_persist("sk-new", state) is None
+    assert chat_api_key_value_to_persist("test-new-key", state) is None
 
 
 def test_persist_skips_blank_and_placeholder():
@@ -136,13 +136,13 @@ def test_persist_skips_blank_and_placeholder():
 
 
 def test_persist_skips_unchanged_config_value():
-    state = ChatApiKeyFieldState(value="sk-abc123", disabled=False, placeholder="", can_persist=True)
-    assert chat_api_key_value_to_persist("sk-abc123", state) is None
+    state = ChatApiKeyFieldState(value="test-key-abc123", disabled=False, placeholder="", can_persist=True)
+    assert chat_api_key_value_to_persist("test-key-abc123", state) is None
 
 
 def test_persist_returns_stripped_new_value():
-    state = ChatApiKeyFieldState(value="sk-old", disabled=False, placeholder="", can_persist=True)
-    assert chat_api_key_value_to_persist("  sk-new  ", state) == "sk-new"
+    state = ChatApiKeyFieldState(value="test-old-key", disabled=False, placeholder="", can_persist=True)
+    assert chat_api_key_value_to_persist("  test-new-key  ", state) == "test-new-key"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -272,7 +272,7 @@ async def test_chat_api_key_field_prefilled_for_config_key(monkeypatch, temp_con
     create_dummy_config(temp_config_path, {
         "providers": {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
-        "api_settings": {"openai": {"api_key": "sk-configured"}},
+        "api_settings": {"openai": {"api_key": "test-configured-key"}},
     })
     monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
     window = ToolsSettingsWindow(app_instance=mock_app_instance)
@@ -281,7 +281,7 @@ async def test_chat_api_key_field_prefilled_for_config_key(monkeypatch, temp_con
         await pilot.pause()
         field = window.query_one("#general-chat-api-key", Input)
         assert field.password is True
-        assert field.value == "sk-configured"
+        assert field.value == "test-configured-key"
         assert field.disabled is False
 
 
@@ -427,11 +427,11 @@ async def test_chat_api_key_field_reloads_on_provider_change(monkeypatch, temp_c
     config = {
         "providers": {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
-        "api_settings": {"openai": {"api_key": "sk-configured"}},
+        "api_settings": {"openai": {"api_key": "test-configured-key"}},
     }
     async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
         field = window.query_one("#general-chat-api-key", Input)
-        assert field.value == "sk-configured"
+        assert field.value == "test-configured-key"
 
         # Switch to a keyless provider -> field disables and clears
         window.query_one("#general-chat-provider", Select).value = "Ollama"
@@ -443,7 +443,7 @@ async def test_chat_api_key_field_reloads_on_provider_change(monkeypatch, temp_c
 - [ ] **Step 3: Run test to verify it fails**
 
 Run: `pytest Tests/UI/test_tools_settings_window.py -k reloads_on_provider_change -v`
-Expected: FAIL — field stays enabled with `sk-configured` (no handler yet).
+Expected: FAIL — field stays enabled with `test-configured-key` (no handler yet).
 
 - [ ] **Step 4: Add the handler**
 
@@ -522,17 +522,17 @@ async def test_chat_api_key_save_writes_config_and_updates_live_config(monkeypat
     }
     async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
         window.app_instance.app_config = {"api_settings": {}}
-        window.query_one("#general-chat-api-key", Input).value = "sk-brand-new"
+        window.query_one("#general-chat-api-key", Input).value = "test-brand-new-key"
 
         saved = window._save_chat_api_key()
         assert saved is True
 
         # Written to the on-disk config under the normalized provider key
         written = toml.load(temp_config_path)
-        assert written["api_settings"]["openai"]["api_key"] == "sk-brand-new"
+        assert written["api_settings"]["openai"]["api_key"] == "test-brand-new-key"
 
         # Live app config updated in place (no restart needed)
-        assert window.app_instance.app_config["api_settings"]["openai"]["api_key"] == "sk-brand-new"
+        assert window.app_instance.app_config["api_settings"]["openai"]["api_key"] == "test-brand-new-key"
 
 
 @pytest.mark.asyncio

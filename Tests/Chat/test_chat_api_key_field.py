@@ -44,7 +44,7 @@ def test_keyless_provider_is_disabled_and_not_persistable():
 
 def test_locked_config_is_disabled_with_unlock_hint():
     state = chat_api_key_field_state(
-        _readiness(ready=True, api_key="sk-secret", api_key_source="config:api_settings.openai.api_key"),
+        _readiness(ready=True, api_key="test-secret-key", api_key_source="config:api_settings.openai.api_key"),
         locked=True,
     )
     assert state.disabled is True
@@ -55,17 +55,17 @@ def test_locked_config_is_disabled_with_unlock_hint():
 
 def test_config_key_is_prefilled():
     state = chat_api_key_field_state(
-        _readiness(ready=True, api_key="sk-abc123", api_key_source="config:api_settings.openai.api_key"),
+        _readiness(ready=True, api_key="test-key-abc123", api_key_source="config:api_settings.openai.api_key"),
         locked=False,
     )
     assert state.disabled is False
-    assert state.value == "sk-abc123"
+    assert state.value == "test-key-abc123"
     assert state.can_persist is True
 
 
 def test_env_key_shows_hint_and_empty_value():
     state = chat_api_key_field_state(
-        _readiness(ready=True, api_key="sk-env", api_key_source="env:OPENAI_API_KEY", env_var="OPENAI_API_KEY"),
+        _readiness(ready=True, api_key="test-env-key", api_key_source="env:OPENAI_API_KEY", env_var="OPENAI_API_KEY"),
         locked=False,
     )
     assert state.value == ""
@@ -83,7 +83,7 @@ def test_missing_key_is_empty_and_persistable():
 
 def test_persist_skips_when_not_persistable():
     state = ChatApiKeyFieldState(value="", disabled=True, placeholder="", can_persist=False)
-    assert chat_api_key_value_to_persist("sk-new", state) is None
+    assert chat_api_key_value_to_persist("test-new-key", state) is None
 
 
 def test_persist_skips_blank_and_placeholder():
@@ -93,10 +93,10 @@ def test_persist_skips_blank_and_placeholder():
 
 
 def test_persist_skips_unchanged_config_value():
-    state = ChatApiKeyFieldState(value="sk-abc123", disabled=False, placeholder="", can_persist=True)
-    assert chat_api_key_value_to_persist("sk-abc123", state) is None
+    state = ChatApiKeyFieldState(value="test-key-abc123", disabled=False, placeholder="", can_persist=True)
+    assert chat_api_key_value_to_persist("test-key-abc123", state) is None
 
 
 def test_persist_returns_stripped_new_value():
-    state = ChatApiKeyFieldState(value="sk-old", disabled=False, placeholder="", can_persist=True)
-    assert chat_api_key_value_to_persist("  sk-new  ", state) == "sk-new"
+    state = ChatApiKeyFieldState(value="test-old-key", disabled=False, placeholder="", can_persist=True)
+    assert chat_api_key_value_to_persist("  test-new-key  ", state) == "test-new-key"

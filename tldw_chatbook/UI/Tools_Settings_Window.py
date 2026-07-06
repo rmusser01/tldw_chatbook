@@ -26,7 +26,7 @@ from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence, DEFAULT_CONFIG_PATH, save_setting_to_cli_config,
     API_MODELS_BY_PROVIDER, check_encryption_needed, get_detected_api_providers,
     enable_config_encryption, disable_config_encryption, change_encryption_password,
-    get_encryption_password, get_cli_setting, get_prompts_db_path, load_settings
+    get_encryption_password, get_cli_setting, get_prompts_db_path
 )
 from loguru import logger
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
@@ -840,6 +840,10 @@ class ToolsSettingsWindow(Container):
             return
         provider = event.value
         if not provider or provider is Select.BLANK:
+            # No provider selected: never leave the prior provider's key visible.
+            api_key_input.value = ""
+            api_key_input.disabled = True
+            api_key_input.placeholder = "Select a provider to enter an API key"
             return
         readiness = get_provider_readiness(str(provider), self.config_data)
         state = chat_api_key_field_state(readiness, locked=self._config_is_locked())
@@ -850,11 +854,16 @@ class ToolsSettingsWindow(Container):
     def _refresh_live_api_settings(self) -> None:
         """Push freshly-saved api_settings into the live app config (no restart).
 
-        Mutates the existing ``app_config`` dict in place so components that hold
-        a reference to it — including the Chat send path — observe the new key.
+        Reloads via ``load_cli_config_and_ensure_existence`` (which decrypts when
+        config encryption is enabled) so an encrypted ``api_key`` reaches the live
+        config as usable plaintext rather than ``enc:`` ciphertext — the Chat send
+        path expects a real key. ``save_setting_to_cli_config`` has already
+        force-reloaded that cache, so no ``force_reload`` is needed here. Mutates
+        the existing ``app_config`` dict in place so components holding a reference
+        to it — including the Chat send path — observe the new key.
         """
         try:
-            reloaded = load_settings(force_reload=True)
+            reloaded = load_cli_config_and_ensure_existence()
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"Could not refresh live api_settings after save: {exc}")
             return
@@ -862,7 +871,7 @@ class ToolsSettingsWindow(Container):
         if isinstance(app_config, dict):
             app_config["api_settings"] = reloaded.get("api_settings", {})
         # Keep this window's own snapshot consistent.
-        self.config_data = load_cli_config_and_ensure_existence(force_reload=True)
+        self.config_data = reloaded
 
     def _save_chat_api_key(self) -> bool:
         """Persist the inline Chat-Defaults API key for the selected provider.
