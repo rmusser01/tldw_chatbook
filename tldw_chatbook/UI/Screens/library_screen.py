@@ -36,6 +36,11 @@ from ...Library.library_media_viewer_state import (
     build_library_media_viewer_state,
     find_content_matches,
 )
+from ...Library.library_notes_state import (
+    build_library_notes_list_state,
+    next_notes_sort_mode,
+    sort_notes_records,
+)
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -68,6 +73,7 @@ from ...Widgets.Library import (
     LibraryConversationsCanvas,
     LibraryMediaCanvas,
     LibraryMediaViewer,
+    LibraryNotesCanvas,
     LibraryRail,
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
@@ -511,6 +517,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing_analysis: bool = False
         self._library_media_content_query: str = ""
         self._library_media_content_match_index: int = 0
+        self._library_notes_view: str = "list"
+        self._library_notes_sort: str = "newest"
+        self._library_notes_filter: str = ""
+        self._library_notes_filter_records: list | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2593,16 +2603,17 @@ class LibraryScreen(BaseAppScreen):
             canvas_host.styles.min_width = 40
             canvas_host.styles.height = "100%"
             with canvas_host:
-                # Only the conversations and media canvases read the local
-                # source snapshot directly, so only they can show a false
-                # "no conversations"/"no media" empty state while that
-                # snapshot is still loading. "mode" canvases (Collections,
-                # Flashcards, Search/RAG, ...) and the landing/empty canvas
-                # are unaffected and must not be replaced by this
-                # loading/error copy.
+                # Only the conversations, media, and notes canvases read the
+                # local source snapshot directly, so only they can show a
+                # false "no conversations"/"no media"/"no notes" empty state
+                # while that snapshot is still loading. "mode" canvases
+                # (Collections, Flashcards, Search/RAG, ...) and the
+                # landing/empty canvas are unaffected and must not be
+                # replaced by this loading/error copy.
                 is_local_snapshot_canvas = shell.canvas_kind in (
                     "conversations",
                     "media",
+                    "notes",
                 )
                 if (
                     is_local_snapshot_canvas
@@ -2656,6 +2667,22 @@ class LibraryScreen(BaseAppScreen):
                     yield LibraryMediaCanvas(
                         media_state,
                         id="library-media-canvas",
+                    )
+                elif shell.canvas_kind == "notes":
+                    source_records = (
+                        self._library_notes_filter_records
+                        if self._library_notes_filter_records is not None
+                        else self._local_source_records.get("notes", ())
+                    )
+                    notes_list_state = build_library_notes_list_state(
+                        sort_notes_records(source_records, self._library_notes_sort),
+                        filter_note=self._library_notes_filter,
+                    )
+                    yield LibraryNotesCanvas(
+                        notes_list_state,
+                        sort_mode=self._library_notes_sort,
+                        filter_value=self._library_notes_filter,
+                        id="library-notes-canvas",
                     )
                 elif shell.canvas_kind == "mode":
                     yield from self._compose_mode_canvas(shell.canvas_target)
@@ -2992,6 +3019,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing_analysis = False
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
+        self._library_notes_view = "list"
+        self._library_notes_filter = ""
+        self._library_notes_filter_records = None
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -3096,6 +3126,71 @@ class LibraryScreen(BaseAppScreen):
                 group="library_media_detail",
             )
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-sort")
+    def handle_library_notes_sort(self, event: Button.Pressed) -> None:
+        """Cycle the Library notes canvas sort mode (newest/oldest/title).
+
+        Args:
+            event: Button press event emitted by the notes sort control.
+        """
+        event.stop()
+        self._library_notes_sort = next_notes_sort_mode(self._library_notes_sort)
+        self.refresh(recompose=True)
+
+    @on(Input.Submitted, "#library-notes-filter")
+    def handle_library_notes_filter(self, event: Input.Submitted) -> None:
+        """Apply the Library notes filter on Enter via the ``search_notes`` seam.
+
+        Args:
+            event: Input submission event emitted by the notes filter box.
+        """
+        event.stop()
+        submitted = self._safe_text(event.value, max_length=200).strip()
+        if submitted == self._library_notes_filter:
+            return
+        self._library_notes_filter = submitted
+        if not submitted:
+            self._library_notes_filter_records = None
+            self.refresh(recompose=True)
+            return
+        self.run_worker(
+            self._run_library_notes_filter(submitted),
+            exclusive=True,
+            group="library_notes_filter",
+        )
+
+    async def _run_library_notes_filter(self, query: str) -> None:
+        """Fetch filtered notes from the ``search_notes`` seam and recompose.
+
+        Args:
+            query: The submitted filter text.
+        """
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        if service is None:
+            return
+        try:
+            records = await self._run_library_service_call(
+                service.search_notes,
+                scope="local_note",
+                query=query,
+                limit=LIBRARY_SOURCE_PAGE_SIZES["notes"],
+                user_id=getattr(self.app_instance, "notes_user_id", None) or "default_user",
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.warning("Library notes filter failed.", exc_info=True)
+            return
+        self._library_notes_filter_records = list(records or [])
+        self.refresh(recompose=True)
+        self.call_after_refresh(self._focus_library_notes_filter_input)
+
+    def _focus_library_notes_filter_input(self) -> None:
+        """Restore focus to the notes filter box after a filter recompose."""
+        try:
+            self.query_one("#library-notes-filter", Input).focus()
+        except (NoMatches, QueryError):
+            pass
 
     @on(Button.Pressed, "#library-media-back")
     def handle_library_media_back(self, event: Button.Pressed) -> None:

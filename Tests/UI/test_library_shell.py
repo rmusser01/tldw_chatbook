@@ -2176,3 +2176,65 @@ async def test_library_shell_media_use_in_chat_body_not_truncated_for_short_cont
     assert short_content in payload.body
     # Verify the structure includes the excerpt section.
     assert "Content excerpt:" in payload.body
+
+
+def _two_notes():
+    return [
+        {"id": "n-1", "title": "Q3 retro", "content": "alpha budget line",
+         "last_modified": "2026-07-07T11:57:00+00:00", "version": 2},
+        {"id": "n-2", "title": "Reading list", "content": "bravo",
+         "last_modified": "2026-07-06T12:00:00+00:00", "version": 1},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_row_opens_notes_list_canvas():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        header = str(screen.query_one("#library-notes-header").renderable)
+        assert header == "Notes (2)"
+        assert screen.query_one("#library-notes-filter")
+        assert screen.query_one("#library-notes-sort")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sort_button_cycles():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-sort")
+        assert screen._library_notes_sort == "newest"
+        screen.query_one("#library-notes-sort").press()
+        await pilot.pause()
+        assert screen._library_notes_sort == "oldest"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_filter_queries_search_seam():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        box = screen.query_one("#library-notes-filter", Input)
+        box.value = "retro"
+        box.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(); await pilot.pause()
+        service = app.notes_scope_service
+        assert service.search_calls[-1]["query"] == "retro"
+        assert screen._library_notes_filter == "retro"

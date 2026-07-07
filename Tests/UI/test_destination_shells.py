@@ -124,10 +124,112 @@ class StaticLibraryNotesScopeService:
     def __init__(self, notes):
         self.notes = tuple(notes)
         self.calls = []
+        self.search_calls = []
+        self.detail_calls = []
+        self.save_calls = []
+        self.delete_calls = []
+        self._next_note_id = len(self.notes) + 1
 
     async def list_notes(self, **kwargs):
         self.calls.append(kwargs)
         return {"items": list(self.notes), "pagination": {"total": len(self.notes)}}
+
+    async def search_notes(self, *, scope, query, limit=None, user_id=None, offset=0, **kwargs):
+        """Case-insensitive title/content substring search, matching the
+        real ``NotesScopeService.search_notes`` -> local backend's
+        ``search_notes`` shape: a plain list of matching note records
+        (no ``items``/``pagination`` envelope, unlike ``list_notes``).
+        """
+        self.search_calls.append(
+            {"scope": scope, "query": query, "limit": limit, "user_id": user_id, "offset": offset, **kwargs}
+        )
+        needle = str(query or "").strip().lower()
+        matches = [
+            dict(note)
+            for note in self.notes
+            if needle
+            and (
+                needle in str(note.get("title") or "").lower()
+                or needle in str(note.get("content") or "").lower()
+            )
+        ]
+        if isinstance(limit, int):
+            matches = matches[:limit]
+        return matches
+
+    async def get_note_detail(self, *, scope, note_id, user_id=None, **kwargs):
+        self.detail_calls.append({"scope": scope, "note_id": note_id, "user_id": user_id, **kwargs})
+        target_id = str(note_id)
+        for note in self.notes:
+            if str(note.get("id")) == target_id:
+                return dict(note)
+        return None
+
+    async def save_note(
+        self, *, scope, title, content, note_id=None, version=None, user_id=None, keywords=None, **kwargs
+    ):
+        """Create (append, version=1) or update (version-checked) a note.
+
+        Mirrors ``NotesScopeService.save_note``'s local-scope contract: an
+        update whose ``version`` does not match the stored version returns
+        ``False`` instead of raising, and a successful update bumps the
+        stored version by one.
+        """
+        self.save_calls.append(
+            {
+                "scope": scope,
+                "title": title,
+                "content": content,
+                "note_id": note_id,
+                "version": version,
+                "user_id": user_id,
+                "keywords": keywords,
+                **kwargs,
+            }
+        )
+        notes = list(self.notes)
+        if note_id:
+            target_id = str(note_id)
+            for index, note in enumerate(notes):
+                if str(note.get("id")) != target_id:
+                    continue
+                stored_version = note.get("version")
+                if version != stored_version:
+                    return False
+                updated = dict(note)
+                updated["title"] = title
+                updated["content"] = content
+                updated["version"] = int(stored_version or 0) + 1
+                if keywords is not None:
+                    updated["keywords"] = list(keywords)
+                notes[index] = updated
+                self.notes = tuple(notes)
+                return updated
+            return False
+        new_id = f"note-{self._next_note_id}"
+        self._next_note_id += 1
+        created = {"id": new_id, "title": title, "content": content, "version": 1}
+        if keywords is not None:
+            created["keywords"] = list(keywords)
+        notes.append(created)
+        self.notes = tuple(notes)
+        return created
+
+    async def delete_note(self, *, scope, note_id, version, user_id=None, **kwargs):
+        self.delete_calls.append(
+            {"scope": scope, "note_id": note_id, "version": version, "user_id": user_id, **kwargs}
+        )
+        notes = list(self.notes)
+        target_id = str(note_id)
+        for index, note in enumerate(notes):
+            if str(note.get("id")) != target_id:
+                continue
+            if version != note.get("version"):
+                return False
+            del notes[index]
+            self.notes = tuple(notes)
+            return True
+        return False
 
 
 class StaticLibraryNotesListScopeService:
@@ -1489,14 +1591,17 @@ async def test_library_notes_action_switches_to_canvas_without_route_handoff():
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
         # Browse ▸ Notes used to emit a NavigateToScreen("notes") compatibility
-        # route to the legacy Notes screen; it now selects the (still-empty
-        # pending Task 3) in-canvas "notes" target and stays on the Library
-        # screen, matching how Media/Conversations already stopped routing.
+        # route to the legacy Notes screen; it now selects the in-canvas
+        # "notes" target and stays on the Library screen, matching how
+        # Media/Conversations already stopped routing. The notes canvas
+        # mounting is the successor signal that the native (non-route) mode
+        # switch happened.
         screen.query_one("#library-row-browse-notes", Button).press()
-        await pilot.pause(0.1)
+        await _wait_for_selector(screen, pilot, "#library-notes-canvas")
 
         assert getattr(screen, "_library_selected_row_id") == "browse-notes"
-        assert screen.query_one("#library-canvas-landing")
+        assert getattr(screen, "_active_mode") == "notes"
+        assert screen.query_one("#library-notes-canvas")
 
     assert seen_routes == []
 
