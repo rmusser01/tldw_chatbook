@@ -970,6 +970,40 @@ async def test_library_shell_media_viewer_renders_seeded_highlight():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_media_highlight_non_rich_color_does_not_crash_render():
+    """A Textual-valid but Rich-invalid color (e.g. 'transparent') must not crash.
+
+    The swatch color is consumed as a Rich style; validating with Textual's
+    (superset) parser let 'transparent'/'hsl(...)'/'ansi_*' through and then
+    crashed at render (rich.errors.MissingStyle). Such colors must fall back
+    to plain text instead.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        media=_two_media_items(),
+        highlights=[("media-1", "Fragile quote", None, "transparent")],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        # Reaching this selector means the viewer rendered without raising.
+        await _wait_for_selector(screen, pilot, "#library-media-highlight-0")
+
+        quote = screen.query_one("#library-media-highlight-0").renderable
+        # No swatch marker (color not renderable); it survives as plain text.
+        assert "●" not in quote.plain
+        assert "transparent" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
 async def test_library_shell_media_highlight_add_creates_and_renders_new_highlight():
     """Filling the quote input and pressing Add calls ``create_highlight`` and renders it."""
     app = _build_test_app()
@@ -1297,6 +1331,13 @@ def _media_item_with_multiline_content():
     return items
 
 
+def _media_item_with_two_hits_on_one_line():
+    """A media item whose only matching line contains "budget" twice."""
+    items = _two_media_items()
+    items[0]["content"] = "The budget and the budget again on one single line."
+    return items
+
+
 async def _open_media_viewer(screen, pilot):
     """Navigate to the media list and open the first row's viewer."""
     screen.query_one("#library-row-browse-media").press()
@@ -1382,6 +1423,29 @@ async def test_library_shell_media_content_search_highlights_matches_in_body():
         ]
         assert highlighted.count("budget") == 2
         assert all(part.lower() == "budget" for part in highlighted)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_one_mark_per_matching_line():
+    """A line with two hits is one match and gets one mark (count == visible marks)."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_two_hits_on_one_line())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+
+        # One matching line -> "Match 1 of 1", even though "budget" appears twice.
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == "Match 1 of 1 matches"
+        # ...and exactly one styled mark in the body, so count == visible marks.
+        content = screen.query_one("#library-media-viewer-content-text").renderable
+        marks = [span for span in content.spans if str(span.style)]
+        assert len(marks) == 1
+        assert content.plain[marks[0].start : marks[0].end] == "budget"
 
 
 @pytest.mark.asyncio

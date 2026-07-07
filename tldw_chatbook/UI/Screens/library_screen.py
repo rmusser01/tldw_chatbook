@@ -3468,9 +3468,12 @@ class LibraryScreen(BaseAppScreen):
             event: Input submit event emitted by the content search box.
         """
         event.stop()
-        if event.value == self._library_media_content_query:
+        # Strip once at the source so the status count, the body highlighting,
+        # and prev/next navigation all search the exact same needle.
+        submitted = event.value.strip()
+        if submitted == self._library_media_content_query:
             return
-        self._library_media_content_query = event.value
+        self._library_media_content_query = submitted
         self._library_media_content_match_index = 0
         self.refresh(recompose=True)
         self.call_after_refresh(self._focus_library_media_content_search_input)

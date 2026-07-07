@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from rich.color import Color
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.color import Color
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
@@ -254,36 +254,45 @@ class LibraryMediaViewer(Vertical):
         return f"Match {index + 1} of {len(matches)} matches"
 
     def _content_renderable(self) -> Text | str:
-        """Return the content body, with every query occurrence highlighted while searching.
+        """Return the content body, marking the matched lines while searching.
 
         With no active search this is the plain content string. While a
-        search is active, occurrences of the query (case-insensitive) are
-        marked with a reverse style so the matches the status line counts
-        are actually visible in the body -- otherwise "Match 1 of N" points
-        at hits the reader cannot see. Built as a Rich ``Text`` from raw
-        slices (never markup) so arbitrary content cannot inject styles.
+        search is active, the first occurrence of the query on each matching
+        line is marked (case-insensitive), so the number of visible marks
+        equals the line-based "Match N of M" count from
+        ``find_content_matches`` -- otherwise the count and the highlighting
+        would disagree on any line that contains the query twice. The
+        currently-focused match (``content_match_index``) is marked
+        ``reverse bold`` while the others are ``reverse``, so prev/next has a
+        visible target. Built as a Rich ``Text`` from raw slices (never
+        markup) so arbitrary content cannot inject styles.
 
         Returns:
-            The plain content ``str`` when idle, or a Rich ``Text`` with
-            highlighted matches while searching.
+            The plain content ``str`` when idle, or a Rich ``Text`` with the
+            matched lines marked while searching.
         """
         content = self.viewer.content or "No stored content."
         query = (self.content_query or "").strip()
         if not query or not self.viewer.content:
             return content
+        matches = find_content_matches(self.viewer.content, query)
+        if not matches:
+            return content
+        current_line = matches[self.content_match_index % len(matches)]
         needle = query.lower()
-        haystack = content.lower()
         span = len(needle)
         text = Text()
-        cursor = 0
-        while True:
-            hit = haystack.find(needle, cursor)
+        for index, line in enumerate(content.split("\n")):
+            if index:
+                text.append("\n")
+            hit = line.lower().find(needle)
             if hit == -1:
-                text.append(content[cursor:])
-                break
-            text.append(content[cursor:hit])
-            text.append(content[hit : hit + span], style="reverse")
-            cursor = hit + span
+                text.append(line)
+                continue
+            style = "reverse bold" if index == current_line else "reverse"
+            text.append(line[:hit])
+            text.append(line[hit : hit + span], style=style)
+            text.append(line[hit + span :])
         return text
 
     def _compose_edit_form(self) -> ComposeResult:
@@ -388,16 +397,25 @@ class LibraryMediaViewer(Vertical):
 
     @staticmethod
     def _renderable_color(color: str) -> str | None:
-        """Return ``color`` if it parses as a renderable color, else None.
+        """Return ``color`` if it is renderable as a Rich style color, else None.
 
         Highlight colors are free-text (the add form's "Color (optional)"),
         so a value like "highlighter pink" cannot be shown as a swatch.
+
+        Validated with Rich's ``Color.parse`` -- the SAME grammar that
+        consumes the value in ``_highlight_quote_text`` (``Text.append(...,
+        style=color)``). Textual's color grammar is a superset (it accepts
+        ``transparent``/``hsl(...)``/``rgba(...)``/``ansi_*`` which Rich
+        rejects), so validating with Textual's parser would let those pass
+        here and then raise ``rich.errors.MissingStyle`` inside Textual's
+        layout at render time -- a persistent, data-triggered crash.
 
         Args:
             color: The stored highlight color string.
 
         Returns:
-            The color string when Textual can parse it, otherwise None.
+            The color string when Rich can render it as a style color,
+            otherwise None (the caller then shows it as plain text instead).
         """
         if not color:
             return None

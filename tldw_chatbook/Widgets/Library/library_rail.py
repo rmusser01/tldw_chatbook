@@ -100,16 +100,19 @@ class LibraryRail(Vertical):
         preferences: LibraryRailPreferences,
         *,
         query: str = "",
-        search_placeholder: str | None = None,
     ) -> None:
         """Refresh the rail from new state.
+
+        The search placeholder is not synced here: the Library screen
+        refreshes the rail by full ``recompose`` (rebuilding a fresh
+        ``LibraryRail`` whose ``__init__`` recomputes the context-aware
+        placeholder), so a ``sync_state`` placeholder argument would be
+        dead. It is set once at construction instead.
 
         Args:
             shell: Latest Library shell display state.
             preferences: Latest section preferences.
             query: Latest search box text.
-            search_placeholder: Latest search-box placeholder; keeps the
-                current one when None.
 
         Returns:
             None.
@@ -117,8 +120,6 @@ class LibraryRail(Vertical):
         self.shell = shell
         self.preferences = preferences
         self.query = query
-        if search_placeholder is not None:
-            self.search_placeholder = search_placeholder
         self.refresh(recompose=True)
 
     def _section_open(self, section_id: str) -> bool:
