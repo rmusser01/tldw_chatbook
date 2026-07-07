@@ -7,6 +7,7 @@ from tldw_chatbook.Library.library_notes_state import (
     LibraryNotesListRow,
     build_library_note_editor_state,
     build_library_notes_list_state,
+    build_note_export_content,
     next_notes_sort_mode,
     notes_autosave_status_text,
     sort_notes_records,
@@ -89,3 +90,46 @@ def test_autosave_status_text_variants():
     assert notes_autosave_status_text("saved", word_count=2) == "2 words · saved"
     assert notes_autosave_status_text("conflict", word_count=2) == "2 words · changed elsewhere"
     assert notes_autosave_status_text("error", word_count=2) == "2 words · save failed"
+
+
+EXPORT_NOW = datetime(2026, 7, 7, 9, 30, 15)
+
+
+def test_export_content_markdown_has_frontmatter_and_heading():
+    text = build_note_export_content(
+        "Q3 retro", "alpha body", "retro, q3", "n-1", "markdown", now=EXPORT_NOW
+    )
+    assert text.startswith("---\n")
+    assert "title: Q3 retro\n" in text
+    assert "date: 2026-07-07 09:30:15\n" in text
+    assert "keywords: retro, q3\n" in text
+    assert "note_id: n-1\n" in text
+    assert "---\n\n# Q3 retro\n\nalpha body" in text
+
+
+def test_export_content_text_has_header_and_rule():
+    text = build_note_export_content(
+        "Q3 retro", "alpha body", "retro, q3", "n-1", "text", now=EXPORT_NOW
+    )
+    assert text.startswith("Title: Q3 retro\n")
+    assert "Date: 2026-07-07 09:30:15\n" in text
+    assert "Keywords: retro, q3\n" in text
+    assert "Note ID: n-1\n" in text
+    assert "=" * 50 in text
+    assert text.endswith("alpha body")
+
+
+def test_export_content_blank_title_falls_back_to_untitled():
+    markdown_text = build_note_export_content("   ", "body", "", "n-2", "markdown", now=EXPORT_NOW)
+    assert "title: Untitled Note\n" in markdown_text
+    assert "# Untitled Note" in markdown_text
+    text = build_note_export_content("", "body", "", "n-2", "text", now=EXPORT_NOW)
+    assert text.startswith("Title: Untitled Note\n")
+
+
+def test_export_content_now_defaults_when_omitted():
+    text = build_note_export_content("Title", "body", "", "n-3", "text")
+    assert "Date: " in text
+    # No fixed value to assert against, but the stamp must be well-formed.
+    date_line = next(line for line in text.splitlines() if line.startswith("Date: "))
+    datetime.strptime(date_line.removeprefix("Date: "), "%Y-%m-%d %H:%M:%S")

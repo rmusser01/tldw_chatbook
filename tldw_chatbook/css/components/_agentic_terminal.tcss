@@ -741,6 +741,87 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-muted;
 }
 
+#library-notes-empty {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    margin: 0 0 1 0;
+    color: $ds-text-muted;
+}
+
+#library-notes-create-header {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    content-align: left middle;
+}
+
+/* Note editor: title/keywords Inputs match the filter box's field look
+   (tall border, focus accent) rather than defaulting to Textual's bare
+   Input styling. */
+#library-note-title,
+#library-note-keywords {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+#library-note-title:focus,
+#library-note-keywords:focus {
+    border: tall $ds-input-focus-accent;
+    outline: none;
+    background: $ds-input-focus-bg;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+/* Bounded editor: a bare TextArea in this scrolling canvas defaults to
+   height:1fr, which would balloon to fill available space and crowd out
+   the keywords/meta/action row beneath it. height:auto with a floor and a
+   generous ceiling keeps short notes compact while long notes scroll
+   inside the field itself instead of pushing the rest of the editor off
+   screen. */
+#library-note-body {
+    height: auto;
+    min-height: 12;
+    max-height: 20;
+    margin: 0 0 1 0;
+}
+
+/* The read-only Markdown preview takes the TextArea's place one-for-one
+   when Preview is toggled on, so it gets the same bounded footprint (plus
+   its own scroll region, since Markdown has no implicit one here). */
+#library-note-preview-body {
+    height: auto;
+    min-height: 12;
+    max-height: 20;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: solid $ds-grid-line;
+    overflow-y: auto;
+}
+
+/* Muted meta line: same tier as the media viewer's metadata block
+   (#library-media-viewer-meta) so both editors read consistently. */
+#library-note-meta {
+    width: 100%;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+#library-note-conflict-copy,
+#library-note-delete-confirm-copy {
+    width: 100%;
+    height: auto;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
 #library-media-title {
     width: 100%;
     min-width: 0;

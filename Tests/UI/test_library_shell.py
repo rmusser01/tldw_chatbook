@@ -7,8 +7,9 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Collapsible, Input, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
 
+from tldw_chatbook.Third_Party.textual_fspicker import FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_destination_shells import (
@@ -2940,6 +2941,288 @@ async def test_library_shell_note_delete_confirm_does_not_arm_autosave(monkeypat
         assert screen._library_note_confirming_delete is False
         assert not screen.query("#library-note-delete-confirm")
         assert screen.query_one("#library-note-delete")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_delete_stale_version_rearms_the_editor():
+    """Task 7 regression rider: the delete confirm's stale-version failure
+    path must re-arm dirty-tracking around its recompose, the same
+    ``_library_note_editor_armed = False`` +
+    ``call_after_refresh(_arm_library_note_editor)`` dance every other
+    notes-editor recompose already uses (before this rider fix, this one
+    call site skipped it). Proven deterministically via a spy on
+    ``_arm_library_note_editor`` rather than by observing autosave timing:
+    a worker-triggered recompose racing its own mount-time
+    ``Input``/``TextArea`` ``Changed`` events against the re-arm is a
+    pre-existing characteristic of this mechanism (independently
+    reproducible today on the already-shipped save-conflict recompose in
+    ``_save_library_note``), so asserting "no autosave ever fires" around
+    the recompose itself would be asserting a guarantee this codebase
+    doesn't actually make -- not something introduced or fixable within
+    this rider's narrow scope (adding the same dance already used
+    elsewhere to 3 more call sites).
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        service = app.notes_scope_service
+        # Another writer deletes/updates n-1 out from under the open editor,
+        # bumping its stored version so the confirmed delete below is stale.
+        _bump_note_version_externally(service, "n-1")
+
+        screen.query_one("#library-note-delete").press()
+        await _wait_for_selector(screen, pilot, "#library-note-delete-confirm")
+        await pilot.pause()
+
+        # Spy on the re-arm hook from here on, so only calls triggered by
+        # the confirmed (stale) delete below count -- entering confirm mode
+        # already re-arms once on its own (a separate, already-covered path).
+        rearm_calls: list[bool] = []
+        original_arm = screen._arm_library_note_editor
+
+        def _spy_arm() -> None:
+            rearm_calls.append(True)
+            original_arm()
+
+        screen._arm_library_note_editor = _spy_arm
+
+        screen.query_one("#library-note-delete-confirm").press()
+
+        for _ in range(150):
+            if service.delete_calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Delete confirm never called the delete_note seam.")
+
+        # The delete lost the optimistic-lock race (falsy result): the note
+        # must still be open in the editor, not removed.
+        for _ in range(150):
+            if not screen._library_note_confirming_delete:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Stale-version delete never returned to the normal action row.")
+        await pilot.pause()
+
+        assert screen._library_notes_view == "editor"
+        assert screen._selected_note_id == "n-1"
+        assert screen.query_one("#library-note-delete")
+        assert rearm_calls, (
+            "The stale-version delete failure path never re-armed the "
+            "editor's dirty-tracking after its recompose."
+        )
+        assert screen._library_note_editor_armed is True
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_preview_toggle_shows_markdown_and_restores_edit():
+    """Preview swaps the body TextArea for a read-only Markdown widget
+    rendering the *current* (unsaved) text; toggling back to Edit restores
+    the TextArea with that same edit intact.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        body = screen.query_one("#library-note-body", TextArea)
+        body.text = "alpha budget line, unsaved preview edit"
+        await pilot.pause()
+
+        screen.query_one("#library-note-preview").press()
+        await _wait_for_selector(screen, pilot, "#library-note-preview-body")
+
+        assert not screen.query("#library-note-body")
+        preview = screen.query_one("#library-note-preview-body", Markdown)
+        assert "alpha budget line, unsaved preview edit" in preview.source
+        assert str(screen.query_one("#library-note-preview").label) == "Edit"
+        # Title/keywords stay live Inputs -- only the body swaps.
+        assert screen.query_one("#library-note-title", Input).value == "Q3 retro"
+
+        screen.query_one("#library-note-preview").press()
+        await _wait_for_selector(screen, pilot, "#library-note-body")
+
+        assert not screen.query("#library-note-preview-body")
+        restored_body = screen.query_one("#library-note-body", TextArea)
+        assert restored_body.text == "alpha budget line, unsaved preview edit"
+        assert str(screen.query_one("#library-note-preview").label) == "Preview"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_export_markdown_pushes_file_save_dialog():
+    """Export .md pushes a ``FileSave`` dialog pre-filled with a sanitized
+    default filename derived from the note's current title."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-export-md").press()
+        for _ in range(150):
+            if isinstance(host.screen_stack[-1], FileSave):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Export .md never pushed a FileSave dialog.")
+
+        dialog = host.screen_stack[-1]
+        assert dialog._default_file == "Q3 retro.md"
+
+        await host.pop_screen()
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_write_export_file_writes_expected_content(tmp_path):
+    """The export write-path (bypassing the dialog UI, which is exercised
+    separately above) writes the same content ``build_note_export_content``
+    produces and notifies on success -- the "pure part" the brief calls out
+    as pilot-testable independent of driving the real file dialog.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        destination = tmp_path / "export.md"
+        await screen._write_library_note_export_file(
+            destination, "markdown", "Q3 retro", "alpha budget line", "alpha, beta", "n-1"
+        )
+
+        written = destination.read_text(encoding="utf-8")
+        assert "title: Q3 retro" in written
+        assert "keywords: alpha, beta" in written
+        assert "note_id: n-1" in written
+        assert written.endswith("alpha budget line")
+        app.notify.assert_called_once()
+        assert "exported successfully" in app.notify.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_copy_calls_clipboard_seam():
+    """Copy calls the app's ``copy_to_clipboard`` seam with the markdown
+    export shape and notifies on success."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.copy_to_clipboard = Mock()
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-copy").press()
+        await pilot.pause()
+
+    app.copy_to_clipboard.assert_called_once()
+    copied = app.copy_to_clipboard.call_args.args[0]
+    assert copied.startswith("---\n")
+    assert "title: Q3 retro" in copied
+    assert "alpha budget line" in copied
+    app.notify.assert_called_once()
+    assert "copied to clipboard" in app.notify.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_use_in_console_triggers_handoff():
+    """"Use in Console" stages the open note as Console context, mirroring
+    the media viewer's "Use in Chat" handoff test.
+    """
+    app = _build_test_app()
+    note_items = _two_notes()[:1]
+    _seed_conversations(app, [], notes=note_items)
+    app.open_chat_with_handoff = Mock()
+    _link_library_items_to_active_workspace(
+        app,
+        (("note", "n-1", "Q3 retro"),),
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-use-in-console").press()
+        await pilot.pause()
+        await pilot.pause()
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert payload.source == "notes"
+    assert payload.item_type == "note"
+    assert payload.source_id == "n-1"
+    assert payload.title == "Q3 retro"
+    assert "alpha budget line" in payload.body
+    assert payload.metadata["note_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_use_in_console_without_open_note_notifies():
+    """No handoff fires when no note is currently open in the editor."""
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    app.open_chat_with_handoff = Mock()
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert screen._selected_note_id == ""
+        screen._open_selected_library_note_handoff()
+        await pilot.pause()
+
+    app.open_chat_with_handoff.assert_not_called()
+    app.notify.assert_called_once()
+    message = app.notify.call_args.args[0]
+    assert "Open a note" in message
+
+
+def test_library_note_css_bounds_editor_body_and_mutes_meta():
+    """Generated-CSS presence check (house pattern: see
+    ``test_library_source_actions_use_console_text_control_style``) --
+    the note editor's ``TextArea`` must never be left at Textual's default
+    ``height: 1fr`` inside the scrolling Library canvas, and the meta line
+    must use the same muted tone as the media viewer's.
+    """
+    source_css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text(encoding="utf-8")
+    bundled_css = Path("tldw_chatbook/css/tldw_cli_modular.tcss").read_text(encoding="utf-8")
+    for css in (source_css, bundled_css):
+        assert "#library-note-body {" in css
+        body_block = css[css.index("#library-note-body {"):]
+        body_block = body_block[: body_block.index("}")]
+        assert "height: auto;" in body_block
+        assert "min-height: 12;" in body_block
+        assert "max-height: 20;" in body_block
+
+        assert "#library-note-meta {" in css
+        meta_block = css[css.index("#library-note-meta {"):]
+        meta_block = meta_block[: meta_block.index("}")]
+        assert "color: $ds-text-muted;" in meta_block
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Input, Markdown, Static, TextArea
 
 from tldw_chatbook.Library.library_notes_state import (
     LibraryNoteEditorState,
@@ -34,9 +34,13 @@ class LibraryNotesCanvas(Vertical):
             Create > New note row.
         editor_state: The note to render in editor mode. Required when
             ``mode == "editor"``.
-        preview: Reserved for the Markdown preview toggle (a later task);
-            accepted now so callers can start passing it, but it has no
-            effect on rendering yet.
+        preview: When ``True`` (editor mode only), renders ``editor_state``'s
+            content as read-only ``Markdown`` in place of the editable
+            ``TextArea`` -- the screen is responsible for threading the
+            live (possibly unsaved) body text into ``editor_state.content``
+            before toggling this on, so switching to preview never drops
+            in-progress edits. The Preview/Edit action button's label
+            reflects this flag.
         conflict: When ``True`` (editor mode only), renders the save
             conflict banner -- a quiet explanatory line plus Overwrite/
             Reload actions -- in addition to the normal editor fields.
@@ -136,10 +140,16 @@ class LibraryNotesCanvas(Vertical):
             value=editor_state.title,
             id="library-note-title",
         )
-        yield TextArea(
-            editor_state.content,
-            id="library-note-body",
-        )
+        if self.preview:
+            yield Markdown(
+                editor_state.content,
+                id="library-note-preview-body",
+            )
+        else:
+            yield TextArea(
+                editor_state.content,
+                id="library-note-body",
+            )
         yield Input(
             value=editor_state.keywords_text,
             placeholder="Keywords (comma-separated)",
@@ -206,7 +216,7 @@ class LibraryNotesCanvas(Vertical):
                     compact=True,
                 )
                 yield Button(
-                    "Preview",
+                    "Edit" if self.preview else "Preview",
                     id="library-note-preview",
                     classes="library-canvas-action",
                     compact=True,

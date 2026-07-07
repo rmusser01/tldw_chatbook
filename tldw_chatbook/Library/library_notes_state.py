@@ -154,6 +154,57 @@ def build_library_note_editor_state(
     )
 
 
+def build_note_export_content(
+    title: str,
+    content: str,
+    keywords_text: str,
+    note_id: Any,
+    export_format: str,
+    *,
+    now: datetime | None = None,
+) -> str:
+    """Render a note's export text, mirroring ``notes_screen._build_export_content``.
+
+    Args:
+        title: The note's current (possibly unsaved) title. Blank/whitespace
+            falls back to ``"Untitled Note"``.
+        content: The note's current (possibly unsaved) body text.
+        keywords_text: The note's keywords as a single comma-separated
+            string (the editor's keywords ``Input`` value).
+        note_id: The note's id, interpolated as-is (``str()``-coerced by
+            the format strings below).
+        export_format: ``"markdown"`` for the frontmatter + ``# title``
+            shape; any other value renders the plain-text shape.
+        now: Timestamp to stamp the export with. Defaults to
+            ``datetime.now()`` (naive, local time) -- matching the
+            original's un-timezoned stamp -- so callers can pin it in tests.
+
+    Returns:
+        The rendered export text.
+    """
+    current_title = (title or "").strip() or "Untitled Note"
+    timestamp = (now if now is not None else datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+    if export_format == "markdown":
+        return (
+            f"---\n"
+            f"title: {current_title}\n"
+            f"date: {timestamp}\n"
+            f"keywords: {keywords_text}\n"
+            f"note_id: {note_id}\n"
+            f"---\n\n"
+            f"# {current_title}\n\n"
+            f"{content}"
+        )
+    return (
+        f"Title: {current_title}\n"
+        f"Date: {timestamp}\n"
+        f"Keywords: {keywords_text}\n"
+        f"Note ID: {note_id}\n\n"
+        f"{'=' * 50}\n\n"
+        f"{content}"
+    )
+
+
 def notes_autosave_status_text(state: str, *, word_count: int) -> str:
     base = f"{word_count} words" if word_count != 1 else "1 word"
     suffix = {

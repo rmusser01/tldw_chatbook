@@ -7,6 +7,7 @@ import inspect
 import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -43,6 +44,7 @@ from ...Library.library_notes_state import (
     LibraryNoteEditorState,
     build_library_note_editor_state,
     build_library_notes_list_state,
+    build_note_export_content,
     next_notes_sort_mode,
     notes_autosave_status_text,
     sort_notes_records,
@@ -69,6 +71,7 @@ from ...runtime_policy.server_event_scope import event_principal_id_from_active_
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
+from ...Third_Party.textual_fspicker import FileSave
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Workspaces import LibraryWorkspaceDepthState, build_library_workspace_depth_state
 from ...Widgets.Console.console_rail_section import (
@@ -537,6 +540,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_autosave_timer: Timer | None = None
         self._library_note_conflict_snapshot: LibraryNoteEditorState | None = None
         self._library_note_confirming_delete: bool = False
+        self._library_note_preview: bool = False
+        # Live-capture snapshot seeded whenever the Preview toggle fires, so
+        # neither entering nor leaving preview drops unsaved edits (the
+        # Markdown widget shown in preview mode has no widget text of its
+        # own to read back). See ``handle_library_note_preview_toggle``.
+        self._library_note_preview_snapshot: LibraryNoteEditorState | None = None
         # Guards against the spurious ``Input.Changed`` that Textual fires
         # when an ``Input(value=...)`` widget mounts with a non-empty
         # initial value: without this, opening a note (or leaving a
@@ -2757,12 +2766,21 @@ class LibraryScreen(BaseAppScreen):
                             markup=False,
                         )
                     else:
+                        # The Preview snapshot (when present) carries the
+                        # live -- possibly unsaved -- text captured by the
+                        # last Preview toggle, so restoring from preview (or
+                        # any other recompose while it's live) never reverts
+                        # to the stale on-disk ``_library_note_detail``.
+                        editor_state = (
+                            self._library_note_preview_snapshot
+                            if self._library_note_preview_snapshot is not None
+                            else build_library_note_editor_state(self._library_note_detail)
+                        )
                         yield LibraryNotesCanvas(
                             mode="editor",
-                            editor_state=build_library_note_editor_state(
-                                self._library_note_detail
-                            ),
+                            editor_state=editor_state,
                             confirming_delete=self._library_note_confirming_delete,
+                            preview=self._library_note_preview,
                             id="library-notes-canvas",
                         )
                 elif shell.canvas_kind == "notes":
@@ -3027,6 +3045,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_dirty = False
         self._library_note_autosave_state = "idle"
         self._library_note_conflict_snapshot = None
+        self._library_note_preview = False
+        self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -3054,6 +3074,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_autosave_state = "idle"
         self._library_note_conflict_snapshot = None
         self._library_note_confirming_delete = False
+        self._library_note_preview = False
+        self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
@@ -3338,6 +3360,8 @@ class LibraryScreen(BaseAppScreen):
             self._library_note_conflict_snapshot = None
             self._library_note_dirty = False
             self._library_note_autosave_state = "idle"
+            self._library_note_preview = False
+            self._library_note_preview_snapshot = None
             self._library_note_editor_armed = False
             if self.is_mounted:
                 self.refresh(recompose=True)
@@ -3412,6 +3436,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_conflict_snapshot = None
         self._library_note_dirty = False
         self._library_note_autosave_state = "saved"
+        self._library_note_preview = False
+        self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -3434,6 +3460,289 @@ class LibraryScreen(BaseAppScreen):
             exclusive=True,
             group="library_note_save",
         )
+
+    # ----- Notes editor: preview, export, copy, use-in-console -----------
+
+    def _read_library_note_editor_fields(self) -> tuple[str, str, str] | None:
+        """Read the note editor's current (possibly unsaved) title/content/keywords.
+
+        Tolerates the Preview toggle: when ``#library-note-body`` is a
+        read-only ``Markdown`` widget (no live text of its own), the body
+        falls back to the live-capture snapshot taken when Preview was
+        entered (see ``handle_library_note_preview_toggle``) instead of the
+        stale ``_library_note_detail``.
+
+        Returns:
+            ``(title, content, keywords_text)`` read from the live widgets
+            (and/or the preview snapshot), or ``None`` if the editor isn't
+            mounted.
+        """
+        try:
+            title = self.query_one("#library-note-title", Input).value
+            keywords_text = self.query_one("#library-note-keywords", Input).value
+        except (NoMatches, QueryError):
+            return None
+        if self._library_note_preview:
+            content = (
+                self._library_note_preview_snapshot.content
+                if self._library_note_preview_snapshot is not None
+                else ""
+            )
+        else:
+            try:
+                content = self.query_one("#library-note-body", TextArea).text
+            except (NoMatches, QueryError):
+                return None
+        return title, content, keywords_text
+
+    @on(Button.Pressed, "#library-note-preview")
+    def handle_library_note_preview_toggle(self, event: Button.Pressed) -> None:
+        """Toggle the note editor between edit and read-only Markdown preview.
+
+        Captures the live editor text (via ``_read_library_note_editor_fields``,
+        which already knows how to read through a prior Preview toggle)
+        *before* flipping the flag and recomposing, so neither entering nor
+        leaving preview silently drops in-progress edits -- the same
+        live-widget-capture discipline ``_save_library_note``'s conflict
+        branch already uses. A no-op while a save conflict is showing: that
+        recompose branch ignores ``preview`` entirely (it always shows the
+        live conflict text), so toggling here would have no visible effect
+        beyond leaving a stale flag/snapshot behind.
+
+        Args:
+            event: Button press event emitted by the editor's Preview/Edit
+                action.
+        """
+        event.stop()
+        if self._library_notes_view != "editor" or self._library_note_autosave_state == "conflict":
+            return
+        fields = self._read_library_note_editor_fields()
+        if fields is None:
+            return
+        title, content, keywords_text = fields
+        self._library_note_preview_snapshot = LibraryNoteEditorState(
+            note_id=self._selected_note_id,
+            title=title,
+            content=content,
+            keywords_text=keywords_text,
+            version=self._library_note_version,
+            meta_line=self._library_note_meta_base_line(),
+            has_note=True,
+        )
+        self._library_note_preview = not self._library_note_preview
+        self._library_note_editor_armed = False
+        self.refresh(recompose=True)
+        self.call_after_refresh(self._arm_library_note_editor)
+
+    async def _export_library_note(self, export_format: str) -> None:
+        """Push the Export dialog for the open Library note.
+
+        Mirrors ``notes_screen._export_current_note``'s dialog flow -- a
+        ``FileSave`` prompt pre-filled with a sanitized default filename,
+        whose callback writes the built export content once a path is
+        chosen. The export reads the *live* editor widgets (via
+        ``_read_library_note_editor_fields``), never the DB, so unlike
+        Save there is nothing to flush first.
+
+        Note: the real ``Third_Party.textual_fspicker.FileSave`` dialog
+        only accepts ``location``/``title``/``default_file`` (not the
+        ``default_filename``/``context`` kwargs ``notes_screen.py`` passes
+        it, which would raise ``TypeError`` if that path ever actually
+        ran) -- this uses the dialog's real constructor shape.
+
+        Args:
+            export_format: ``"markdown"`` for the frontmatter export
+                (Export .md), or ``"text"`` for the plain-text export
+                (Export .txt).
+        """
+        if self._library_notes_view != "editor" or not self._selected_note_id:
+            return
+        fields = self._read_library_note_editor_fields()
+        if fields is None:
+            return
+        title, content, keywords_text = fields
+        note_id = self._selected_note_id
+        safe_title = "".join(
+            char for char in (title.strip() or "note") if char.isalnum() or char in (" ", "-", "_")
+        ).rstrip() or "note"
+        default_filename = f"{safe_title}.md" if export_format == "markdown" else f"{safe_title}.txt"
+        dialog_title = "Export Note as Markdown" if export_format == "markdown" else "Export Note as Text"
+        await self.app.push_screen(
+            FileSave(
+                location=str(Path.home()),
+                title=dialog_title,
+                default_file=default_filename,
+            ),
+            callback=lambda path: self.call_after_refresh(
+                self._write_library_note_export_file,
+                path,
+                export_format,
+                title,
+                content,
+                keywords_text,
+                note_id,
+            ),
+        )
+
+    async def _write_library_note_export_file(
+        self,
+        selected_path: Path | None,
+        export_format: str,
+        title: str,
+        content: str,
+        keywords_text: str,
+        note_id: str,
+    ) -> None:
+        """Write the exported note content to the path chosen via ``FileSave``.
+
+        Args:
+            selected_path: The chosen destination, or ``None`` if the
+                dialog was cancelled.
+            export_format: ``"markdown"`` or ``"text"`` (see
+                ``build_note_export_content``).
+            title: The note title captured when Export was pressed.
+            content: The note body captured when Export was pressed.
+            keywords_text: The note's keywords, as a comma-separated string.
+            note_id: The note's id.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if not selected_path:
+            if callable(notify):
+                notify("Note export cancelled.", severity="information")
+            return
+        try:
+            selected_path.write_text(
+                build_note_export_content(title, content, keywords_text, note_id, export_format),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Error exporting Library note {note_id!r} to '{selected_path}'.", exc_info=True
+            )
+            if callable(notify):
+                notify(f"Error exporting note: {type(exc).__name__}", severity="error")
+            return
+        if callable(notify):
+            notify(f"Note exported successfully to {selected_path.name}", severity="information")
+
+    @on(Button.Pressed, "#library-note-export-md")
+    async def handle_library_note_export_markdown(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._export_library_note("markdown")
+
+    @on(Button.Pressed, "#library-note-export-txt")
+    async def handle_library_note_export_text(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._export_library_note("text")
+
+    @on(Button.Pressed, "#library-note-copy")
+    def handle_library_note_copy(self, event: Button.Pressed) -> None:
+        """Copy the open Library note to the clipboard as markdown.
+
+        Uses the app's ``copy_to_clipboard`` seam (the same
+        ``getattr``-gated pattern every other Library handoff/action in
+        this screen already uses) rather than importing ``pyperclip``
+        directly the way ``notes_screen._copy_current_note_to_clipboard``
+        does -- that makes this testable via a recorded fake the way the
+        rest of this screen's actions are, and doesn't add a hard runtime
+        dependency on a package that isn't always installed/working.
+
+        Args:
+            event: Button press event emitted by the editor's Copy action.
+        """
+        event.stop()
+        notify = getattr(self.app_instance, "notify", None)
+        if self._library_notes_view != "editor" or not self._selected_note_id:
+            return
+        fields = self._read_library_note_editor_fields()
+        if fields is None:
+            return
+        title, content, keywords_text = fields
+        note_id = self._selected_note_id
+        export_content = build_note_export_content(title, content, keywords_text, note_id, "markdown")
+        copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
+        if not callable(copy_to_clipboard):
+            if callable(notify):
+                notify("Clipboard copy is unavailable in this runtime.", severity="warning")
+            return
+        try:
+            copy_to_clipboard(export_content)
+        except Exception as exc:
+            logger.warning(f"Failed to copy Library note {note_id!r} to clipboard.", exc_info=True)
+            if callable(notify):
+                notify(f"Error copying note: {type(exc).__name__}", severity="error")
+            return
+        if callable(notify):
+            notify("Note copied to clipboard as markdown!", severity="information")
+
+    def _selected_library_note_handoff_payload(self) -> ChatHandoffPayload | None:
+        """Build the Console handoff payload for the open Library note.
+
+        Mirrors ``_selected_media_handoff_payload``: reads the currently
+        open note's live (possibly unsaved) editor fields rather than a
+        list-row selection, matching ``notes_screen._build_note_chat_handoff_payload``'s
+        local-note shape.
+
+        Returns:
+            A ``ChatHandoffPayload`` staging the open note as Console
+            context, or ``None`` when no note is currently open.
+        """
+        if self._library_notes_view != "editor" or not self._selected_note_id:
+            return None
+        fields = self._read_library_note_editor_fields()
+        if fields is None:
+            return None
+        title, content, keywords_text = fields
+        note_id = self._selected_note_id
+        keywords = self._library_note_keywords_from_input(keywords_text) or []
+        return ChatHandoffPayload.from_source_content(
+            source="notes",
+            item_type="note",
+            title=title.strip() or "Untitled Note",
+            body=content,
+            source_id=str(note_id),
+            suggested_prompt="Use this note as context and help me work with it.",
+            runtime_backend="local",
+            source_owner="local",
+            source_selector_state="local",
+            discovery_owner="notes",
+            discovery_entity_id=str(note_id),
+            scope_type="global",
+            metadata={
+                "note_version": self._library_note_version,
+                "keywords": keywords,
+            },
+        )
+
+    def _open_selected_library_note_handoff(self) -> None:
+        """Stage the note open in the editor into Console via the shared handoff.
+
+        Mirrors ``_open_selected_media_handoff``: builds the payload, then
+        guards on having an open note, the workspace context-handoff gate,
+        and the app exposing ``open_chat_with_handoff`` at all.
+        """
+        workspace_state = self._library_workspace_depth_state()
+        payload = self._selected_library_note_handoff_payload()
+        notify = getattr(self.app_instance, "notify", None)
+        if payload is None:
+            if callable(notify):
+                notify("Open a note before using it in Console.", severity="warning")
+            return
+        if not workspace_state.context_handoff_enabled:
+            if callable(notify):
+                notify(workspace_state.context_handoff_tooltip, severity="warning")
+            return
+        open_chat_with_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not callable(open_chat_with_handoff):
+            if callable(notify):
+                notify("Console handoff is unavailable for Library Notes.", severity="warning")
+            return
+        open_chat_with_handoff(payload)
+
+    @on(Button.Pressed, "#library-note-use-in-console")
+    def handle_library_note_use_in_console(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._open_selected_library_note_handoff()
 
     def _compose_mode_canvas(self, mode: str) -> ComposeResult:
         """Render the canvas body for a mode row (moved middle-pane content)."""
@@ -3788,6 +4097,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_autosave_state = "idle"
         self._library_note_conflict_snapshot = None
         self._library_note_confirming_delete = False
+        self._library_note_preview = False
+        self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
         if note_id:
             # Exclusive in its own group so rapidly switching rows cancels the
@@ -3920,8 +4231,10 @@ class LibraryScreen(BaseAppScreen):
         if not callable(delete_note):
             self._library_note_confirming_delete = False
             self._notify_library_note_delete_warning("Note deletion is unavailable.")
+            self._library_note_editor_armed = False
             if self.is_mounted:
                 self.refresh(recompose=True)
+                self.call_after_refresh(self._arm_library_note_editor)
             return
 
         try:
@@ -3943,8 +4256,10 @@ class LibraryScreen(BaseAppScreen):
                 return
             self._library_note_confirming_delete = False
             self._notify_library_note_delete_warning("Could not delete this note.")
+            self._library_note_editor_armed = False
             if self.is_mounted:
                 self.refresh(recompose=True)
+                self.call_after_refresh(self._arm_library_note_editor)
             return
 
         # Discard a stale result: the user has since switched to a different
@@ -3957,8 +4272,10 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_note_delete_warning(
                 "This note changed elsewhere — refresh and try again."
             )
+            self._library_note_editor_armed = False
             if self.is_mounted:
                 self.refresh(recompose=True)
+                self.call_after_refresh(self._arm_library_note_editor)
             return
 
         self._reset_library_note_editor_state()
@@ -4143,6 +4460,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_autosave_state = "idle"
         self._library_note_conflict_snapshot = None
         self._library_note_confirming_delete = False
+        self._library_note_preview = False
+        self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
