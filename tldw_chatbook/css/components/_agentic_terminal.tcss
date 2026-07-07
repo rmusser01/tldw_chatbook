@@ -719,10 +719,22 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 #library-media-viewer {
     height: 100%;
     overflow-y: auto;
+    /* Never scroll horizontally: without this the vertical scroll container
+       sizes its content to the widest child's natural width, so a long
+       unbroken line (analysis summary, URL) sets a wide virtual width and
+       width:100% children match it instead of wrapping. Constrain to the
+       visible width so long lines wrap. */
+    overflow-x: hidden;
     scrollbar-background: $ds-surface-panel;
     scrollbar-color: $ds-grid-line;
     scrollbar-color-hover: $ds-grid-line;
     scrollbar-color-active: $ds-action-focus;
+}
+
+/* Text bodies default to width:auto (shrink-to-content); fill the width so
+   long lines wrap within the (now horizontally-constrained) viewer. */
+#library-media-viewer Static {
+    width: 100%;
 }
 
 #library-media-viewer-content {

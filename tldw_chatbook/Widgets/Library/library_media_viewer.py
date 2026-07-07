@@ -55,7 +55,11 @@ class LibraryMediaViewer(Vertical):
         self.editing_analysis = editing_analysis
         self.content_query = content_query
         self.content_match_index = content_match_index
-        self.styles.width = "13fr"
+        # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
+        # width here breaks width:100% child resolution so long lines (analysis
+        # summary, a long URL) clip instead of wrapping. 1fr fills the same
+        # space and lets the text bodies wrap.
+        self.styles.width = "1fr"
         self.styles.min_width = 40
 
     def compose(self) -> ComposeResult:
