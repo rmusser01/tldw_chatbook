@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_destination_shells import (
@@ -979,9 +979,18 @@ async def test_library_shell_media_highlight_add_creates_and_renders_new_highlig
         screen.query_one("#library-row-browse-media").press()
         await _wait_for_selector(screen, pilot, "#library-media-row-1")
         screen.query_one("#library-media-row-1").press()
-        await _wait_for_selector(screen, pilot, "#library-media-highlight-quote")
+        await _wait_for_selector(screen, pilot, "#library-media-highlight-add-collapsible")
 
         assert not screen.query(".library-media-highlight-delete")
+
+        # The add-highlight form starts collapsed; expand it before typing
+        # into its inputs, mirroring how a real user would reveal the form.
+        collapsible = screen.query_one(
+            "#library-media-highlight-add-collapsible", Collapsible
+        )
+        assert collapsible.collapsed
+        collapsible.collapsed = False
+        await pilot.pause()
 
         screen.query_one("#library-media-highlight-quote", Input).value = "New highlight quote"
         screen.query_one("#library-media-highlight-add").press()
@@ -1310,6 +1319,25 @@ async def _open_media_viewer_and_submit_content_search(screen, pilot, query):
 
 
 @pytest.mark.asyncio
+async def test_library_shell_media_content_search_no_query_hides_status_and_nav():
+    """With no active search, only the search box renders -- no orphaned status/prev/next."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer(screen, pilot)
+
+        assert screen.query_one("#library-media-content-search")
+        assert not screen.query("#library-media-content-search-status")
+        assert not screen.query("#library-media-content-search-prev")
+        assert not screen.query("#library-media-content-search-next")
+
+
+@pytest.mark.asyncio
 async def test_library_shell_media_content_search_shows_match_count():
     """Submitting a query shows the match count and starts at the first match."""
     app = _build_test_app()
@@ -1346,8 +1374,8 @@ async def test_library_shell_media_content_search_no_matches_shows_status():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_content_search_empty_query_shows_blank_status():
-    """Submitting a blank query clears the query and the status line."""
+async def test_library_shell_media_content_search_empty_query_hides_status_and_nav():
+    """Submitting a blank query clears the query and hides the status/prev/next row."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
     host = LibraryHarness(app)
@@ -1357,10 +1385,16 @@ async def test_library_shell_media_content_search_empty_query_shows_blank_status
         await _wait_for_library_shell(screen, pilot)
 
         await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+        assert screen.query_one("#library-media-content-search-status")
+
         await _submit_content_search_query(screen, pilot, "")
 
-        status = str(screen.query_one("#library-media-content-search-status").renderable)
-        assert status == ""
+        # With no active query, the status line and prev/next toolbar are not
+        # rendered at all -- they aren't just blank, they're gone -- so the
+        # orphaned nav doesn't linger under the search box.
+        assert not screen.query("#library-media-content-search-status")
+        assert not screen.query("#library-media-content-search-prev")
+        assert not screen.query("#library-media-content-search-next")
         assert screen._library_media_content_query == ""
 
 

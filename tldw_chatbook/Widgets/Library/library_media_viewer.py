@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_media_viewer_state import (
     LibraryMediaHighlightRow,
@@ -178,23 +178,30 @@ class LibraryMediaViewer(Vertical):
                 )
 
     def _compose_content_search(self) -> ComposeResult:
-        """Render the in-content search box, match-count status, and prev/next actions.
+        """Render the in-content search box, and its status/prev-next only while active.
 
-        Stacked full-width above the content ``VerticalScroll`` -- the
-        Input and Static are each their own row, and prev/next live in a
+        The search ``Input`` always renders, full-width above the content
+        ``VerticalScroll``. The match-count status ``Static`` and the
+        prev/next ``ds-toolbar`` only render while ``self.content_query``
+        is non-empty -- with no active search there is nothing to page
+        through, so the status line and toolbar are omitted entirely
+        rather than left showing as empty/orphaned chrome. When present,
+        Input and Static are each their own row and prev/next live in a
         plain ``ds-toolbar`` of buttons only, matching the render-safety
         rule on ``compose`` above (never mix a ``1fr`` sibling with a
         fixed-width widget in one ``Horizontal``).
 
         Returns:
-            ComposeResult for the content search row, status line, and
-            prev/next action toolbar.
+            ComposeResult for the content search row and, when a query is
+            active, the status line and prev/next action toolbar.
         """
         yield Input(
             value=self.content_query,
             placeholder="Search content…",
             id="library-media-content-search",
         )
+        if not self.content_query:
+            return
         matches = find_content_matches(self.viewer.content, self.content_query)
         yield Static(
             self._content_search_status_text(matches),
@@ -333,7 +340,7 @@ class LibraryMediaViewer(Vertical):
                 )
 
     def _compose_highlights(self) -> ComposeResult:
-        """Render the highlights section: existing rows, then the add form.
+        """Render the highlights section: existing rows, then the collapsed add form.
 
         Each highlight is a full-width ``Static`` (quote, plus a
         ``Color: .../Note: ...`` line when present) immediately followed by
@@ -342,6 +349,14 @@ class LibraryMediaViewer(Vertical):
         The delete button carries the highlight's id as a plain attribute
         (mirroring ``LibraryMediaCanvas`` setting ``button.media_id``) so the
         screen's class-selector handler can read it back.
+
+        The highlight list always renders in full above the add form. The
+        add form itself (the three inputs + "Add highlight" button) is
+        nested inside a collapsed-by-default ``Collapsible`` -- it was
+        dominating the section with three large empty inputs even when a
+        user just wants to read existing highlights, so it now stays out of
+        the way until explicitly opened. All add-form widget ids are
+        unchanged; only their container changed.
 
         Returns:
             ComposeResult for the highlights section.
@@ -372,7 +387,11 @@ class LibraryMediaViewer(Vertical):
                 )
                 delete_button.highlight_id = highlight.highlight_id
                 yield delete_button
-        with Vertical(id="library-media-highlight-form"):
+        with Collapsible(
+            title="Add highlight",
+            collapsed=True,
+            id="library-media-highlight-add-collapsible",
+        ):
             yield Input(
                 placeholder="Quote",
                 id="library-media-highlight-quote",
