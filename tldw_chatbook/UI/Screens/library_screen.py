@@ -3338,13 +3338,18 @@ class LibraryScreen(BaseAppScreen):
         quote = quote.strip()
         if not quote:
             return
+        # Exclusive in its own group so a rapid double-press cancels the first
+        # add instead of inserting the same highlight twice (the add write is
+        # not idempotent, unlike delete).
         self.run_worker(
             self._add_library_media_highlight(
                 media_id,
                 quote=quote,
                 note=note.strip() or None,
                 color=color.strip() or None,
-            )
+            ),
+            exclusive=True,
+            group="library_media_highlight_add",
         )
 
     async def _add_library_media_highlight(
