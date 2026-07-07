@@ -2579,6 +2579,90 @@ async def test_library_shell_note_flush_on_rail_switch_saves_before_switching():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_note_save_result_after_switch_is_discarded():
+    """A save started for note A that only resolves after the user has
+    already switched to note B's editor must not land its version bump or
+    "saved" meta status on B -- the same stale-result discipline
+    ``_refresh_library_note_detail`` and ``_resolve_library_note_conflict``
+    already apply to their own out-of-order results.
+    """
+    app = _build_test_app()
+    service = _DelayedSaveLibraryNotesScopeService(_two_notes())
+    app.notes_scope_service = service
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(_two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)  # opens n-1 (seeded at version 2)
+
+        assert screen._selected_note_id == "n-1"
+        assert screen._library_note_version == 2
+
+        # Arm a save for n-1 whose fake response is deliberately delayed, but
+        # never dirty the editor -- the save is triggered purely by the Save
+        # button so ``_library_note_dirty`` stays False and a subsequent row
+        # switch's flush is a no-op, letting the switch complete immediately
+        # while this save is still in flight.
+        screen.query_one("#library-note-save").press()
+        for _ in range(50):
+            if service.save_started:
+                break
+            await pilot.pause(0.01)
+        else:
+            raise AssertionError("Save never called the save_note seam.")
+
+        # Switch to n-2's editor while n-1's save is still sleeping. The
+        # notes canvas only renders row buttons in its list view, so this
+        # goes via Back (a no-op flush, since nothing is dirty) then a row
+        # press -- the same "row press" switch path a user takes.
+        screen.query_one("#library-note-back").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-1")
+        screen.query_one("#library-notes-row-1").press()
+        for _ in range(150):
+            if screen._selected_note_id == "n-2":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Row switch to n-2 never completed.")
+
+        for _ in range(150):
+            detail = screen._library_note_detail
+            if isinstance(detail, dict) and str(detail.get("id")) == "n-2":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("n-2 detail never loaded.")
+
+        assert screen._library_note_version == 1  # n-2's own seeded version
+        n2_meta_before = str(screen.query_one("#library-note-meta").renderable)
+        assert "saved" not in n2_meta_before
+
+        # Now let the stale n-1 save resolve and give the (buggy) mutation a
+        # few pause cycles to land, if it were going to.
+        for _ in range(150):
+            if service.save_calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("The stale n-1 save never resolved.")
+        for _ in range(10):
+            await pilot.pause(0.02)
+
+        assert screen._selected_note_id == "n-2"
+        assert screen._library_note_version == 1, (
+            "n-1's stale save result clobbered n-2's version: "
+            f"{screen._library_note_version!r}"
+        )
+        n2_meta_after = str(screen.query_one("#library-note-meta").renderable)
+        assert "saved" not in n2_meta_after, (
+            f"n-1's stale save result leaked into n-2's meta line: {n2_meta_after!r}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_shell_note_conflict_shows_overwrite_reload_and_keeps_user_text():
     """A version conflict (the seam returns ``False``) stops the autosave
     timer, shows the Overwrite/Reload actions, and re-seeds the editor from

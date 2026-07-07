@@ -3149,6 +3149,15 @@ class LibraryScreen(BaseAppScreen):
         recomposes into the conflict UI, re-seeded from the user's live
         widget text -- never from the stale ``_library_note_detail``.
 
+        The save is awaited inline (see ``_flush_library_note_save``, which
+        bypasses the exclusive ``library_note_save`` worker group), so
+        another note can become selected while this call is still in
+        flight. Every branch below therefore re-checks that the note this
+        save was *for* is still the selected one -- and the editor is still
+        showing -- before mutating any shared editor state, mirroring the
+        stale-result guard in ``_refresh_library_note_detail`` and
+        ``_resolve_library_note_conflict``.
+
         Args:
             explicit: Whether this save was triggered by the Save button
                 (``True``) or the autosave debounce/flush (``False``). Not
@@ -3157,6 +3166,7 @@ class LibraryScreen(BaseAppScreen):
         """
         if self._library_notes_view != "editor" or not self._selected_note_id:
             return
+        note_id = self._selected_note_id
         try:
             title_widget = self.query_one("#library-note-title", Input)
             body_widget = self.query_one("#library-note-body", TextArea)
@@ -3185,7 +3195,7 @@ class LibraryScreen(BaseAppScreen):
                 scope="local_note",
                 title=title,
                 content=content,
-                note_id=self._selected_note_id,
+                note_id=note_id,
                 version=self._library_note_version,
                 user_id=self._library_notes_user_id(),
                 keywords=keywords,
@@ -3194,11 +3204,19 @@ class LibraryScreen(BaseAppScreen):
         except ConflictError:
             result = False
         except Exception:
-            logger.warning(
-                f"Library note save failed for {self._selected_note_id!r}.", exc_info=True
-            )
+            logger.warning(f"Library note save failed for {note_id!r}.", exc_info=True)
+            if note_id != self._selected_note_id or self._library_notes_view != "editor":
+                return
             self._library_note_autosave_state = "error"
             self._update_library_note_meta_static(content=raw_content)
+            return
+
+        # Discard a stale result: the user has since switched to a
+        # different note (or left the editor) while this save was in
+        # flight. Mutating shared state past this point would land this
+        # note's save result -- version bump, meta line, or conflict UI --
+        # on whatever note is now selected.
+        if note_id != self._selected_note_id or self._library_notes_view != "editor":
             return
 
         if result:
@@ -3208,6 +3226,8 @@ class LibraryScreen(BaseAppScreen):
                     self._library_note_version = version
             else:
                 self._library_note_version = (self._library_note_version or 0) + 1
+            if isinstance(self._library_note_detail, dict):
+                self._library_note_detail["version"] = self._library_note_version
             self._library_note_dirty = False
             self._library_note_autosave_state = "saved"
             self._update_library_note_meta_static(content=raw_content)
@@ -3226,7 +3246,7 @@ class LibraryScreen(BaseAppScreen):
             "conflict", word_count=len(raw_content.split())
         )
         self._library_note_conflict_snapshot = LibraryNoteEditorState(
-            note_id=self._selected_note_id,
+            note_id=note_id,
             title=raw_title,
             content=raw_content,
             keywords_text=raw_keywords_text,
