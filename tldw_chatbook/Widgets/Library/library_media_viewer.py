@@ -11,6 +11,7 @@ from textual.widgets import Button, Input, Static, TextArea
 from tldw_chatbook.Library.library_media_viewer_state import (
     LibraryMediaHighlightRow,
     LibraryMediaViewerState,
+    find_content_matches,
 )
 
 
@@ -27,6 +28,11 @@ class LibraryMediaViewer(Vertical):
         editing_analysis: Whether the analysis edit form (a prefilled
             ``TextArea`` + Save/Cancel) should render in place of the
             read-only analysis text and its "Edit analysis" action.
+        content_query: Current in-content search query, or "" when no
+            search is active.
+        content_match_index: Index into ``find_content_matches``' result
+            for the currently focused match (wrapped mod the match count
+            by the screen before it is passed in here).
     """
 
     def __init__(
@@ -37,6 +43,8 @@ class LibraryMediaViewer(Vertical):
         confirming_delete: bool = False,
         highlights: Sequence[LibraryMediaHighlightRow] = (),
         editing_analysis: bool = False,
+        content_query: str = "",
+        content_match_index: int = 0,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -45,6 +53,8 @@ class LibraryMediaViewer(Vertical):
         self.confirming_delete = confirming_delete
         self.highlights = tuple(highlights)
         self.editing_analysis = editing_analysis
+        self.content_query = content_query
+        self.content_match_index = content_match_index
         self.styles.width = "13fr"
         self.styles.min_width = 40
 
@@ -85,6 +95,7 @@ class LibraryMediaViewer(Vertical):
             id="library-media-viewer-content-title",
             classes="destination-section",
         )
+        yield from self._compose_content_search()
         with VerticalScroll(id="library-media-viewer-content"):
             yield Static(
                 self.viewer.content or "No stored content.",
@@ -165,6 +176,65 @@ class LibraryMediaViewer(Vertical):
                     classes="library-canvas-action",
                     compact=True,
                 )
+
+    def _compose_content_search(self) -> ComposeResult:
+        """Render the in-content search box, match-count status, and prev/next actions.
+
+        Stacked full-width above the content ``VerticalScroll`` -- the
+        Input and Static are each their own row, and prev/next live in a
+        plain ``ds-toolbar`` of buttons only, matching the render-safety
+        rule on ``compose`` above (never mix a ``1fr`` sibling with a
+        fixed-width widget in one ``Horizontal``).
+
+        Returns:
+            ComposeResult for the content search row, status line, and
+            prev/next action toolbar.
+        """
+        yield Input(
+            value=self.content_query,
+            placeholder="Search content…",
+            id="library-media-content-search",
+        )
+        matches = find_content_matches(self.viewer.content, self.content_query)
+        yield Static(
+            self._content_search_status_text(matches),
+            id="library-media-content-search-status",
+            markup=False,
+        )
+        search_toolbar = Horizontal(classes="ds-toolbar")
+        search_toolbar.styles.height = "auto"
+        with search_toolbar:
+            yield Button(
+                "◀ Prev",
+                id="library-media-content-search-prev",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                "Next ▶",
+                id="library-media-content-search-next",
+                classes="library-canvas-action",
+                compact=True,
+            )
+
+    def _content_search_status_text(self, matches: tuple[int, ...]) -> str:
+        """Build the in-content search status line text.
+
+        Args:
+            matches: Ordered line indices matching ``self.content_query``,
+                as returned by ``find_content_matches``.
+
+        Returns:
+            "" when the query is blank (no search active), "No matches"
+            when a non-blank query has no hits, otherwise
+            "Match {i} of {n} matches" for the current (wrapped) index.
+        """
+        if not self.content_query:
+            return ""
+        if not matches:
+            return "No matches"
+        index = self.content_match_index % len(matches)
+        return f"Match {index + 1} of {len(matches)} matches"
 
     def _compose_edit_form(self) -> ComposeResult:
         """Render the metadata edit inputs, prefilled from ``viewer.edit_fields``.

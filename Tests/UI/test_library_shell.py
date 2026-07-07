@@ -1198,6 +1198,163 @@ async def test_library_shell_media_analysis_cancel_discards():
         assert service.analysis_calls == []
 
 
+def _media_item_with_multiline_content():
+    """A media item whose content has two lines containing "budget"."""
+    items = _two_media_items()
+    items[0]["content"] = "\n".join(
+        [
+            "Intro paragraph about the roadmap.",
+            "The budget forecast is discussed here.",
+            "Another neutral line.",
+            "Second budget line appears here too.",
+        ]
+    )
+    return items
+
+
+async def _open_media_viewer(screen, pilot):
+    """Navigate to the media list and open the first row's viewer."""
+    screen.query_one("#library-row-browse-media").press()
+    await _wait_for_selector(screen, pilot, "#library-media-row-1")
+    screen.query_one("#library-media-row-1").press()
+    await _wait_for_selector(screen, pilot, "#library-media-content-search")
+
+
+async def _submit_content_search_query(screen, pilot, query):
+    """Type ``query`` into the open viewer's content search box and press Enter."""
+    search_input = screen.query_one("#library-media-content-search", Input)
+    search_input.value = query
+    search_input.focus()
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
+    await pilot.pause()
+
+
+async def _open_media_viewer_and_submit_content_search(screen, pilot, query):
+    """Open the first media row's viewer and submit a content-search query."""
+    await _open_media_viewer(screen, pilot)
+    await _submit_content_search_query(screen, pilot, query)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_shows_match_count():
+    """Submitting a query shows the match count and starts at the first match."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == "Match 1 of 2 matches"
+        assert screen._library_media_content_query == "budget"
+        assert screen._library_media_content_match_index == 0
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_no_matches_shows_status():
+    """A query with no hits in the content shows a "No matches" status."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "nonexistent-term")
+
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == "No matches"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_empty_query_shows_blank_status():
+    """Submitting a blank query clears the query and the status line."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+        await _submit_content_search_query(screen, pilot, "")
+
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == ""
+        assert screen._library_media_content_query == ""
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_next_prev_advances_match_index():
+    """Next/Prev cycle the match index (wrapping) and update the status line."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+        assert screen._library_media_content_match_index == 0
+
+        screen.query_one("#library-media-content-search-next").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_content_match_index == 1
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == "Match 2 of 2 matches"
+
+        # Next wraps back around to the first match.
+        screen.query_one("#library-media-content-search-next").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_content_match_index == 0
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == "Match 1 of 2 matches"
+
+        # Prev wraps backwards to the last match.
+        screen.query_one("#library-media-content-search-prev").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_content_match_index == 1
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == "Match 2 of 2 matches"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_resets_on_back():
+    """Returning to the media list clears the in-content search state."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+        assert screen._library_media_content_query == "budget"
+
+        screen.query_one("#library-media-back").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_content_query == ""
+        assert screen._library_media_content_match_index == 0
+
+
 @pytest.mark.asyncio
 async def test_library_shell_media_canvas_shows_loading_before_snapshot_loads(monkeypatch):
     """Mirrors the conversations loading-gate contract for the media canvas."""

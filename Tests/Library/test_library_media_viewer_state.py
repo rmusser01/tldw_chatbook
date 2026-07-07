@@ -9,6 +9,7 @@ from tldw_chatbook.Library.library_media_viewer_state import (
     LibraryMediaViewerState,
     build_library_media_highlight_rows,
     build_library_media_viewer_state,
+    find_content_matches,
 )
 
 NOW = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
@@ -419,3 +420,67 @@ def test_default_now_uses_current_time_when_not_supplied():
     assert state.media_id == "1"
     # Some plausible age line should be present (years old relative to real "now").
     assert any(line.startswith("Ingested:") for line in state.metadata_lines)
+
+
+def test_find_content_matches_returns_matching_line_indices_in_order():
+    """Multi-line content: only the lines containing the query are returned, in order."""
+    content = "alpha line\nbravo line\ncharlie line\nbravo again"
+
+    matches = find_content_matches(content, "bravo")
+
+    assert matches == (1, 3)
+
+
+def test_find_content_matches_is_case_insensitive():
+    """Query matching ignores case on both sides."""
+    content = "The Quick Fox\nlazy dog\nQUICK step"
+
+    assert find_content_matches(content, "quick") == (0, 2)
+    assert find_content_matches(content, "QUICK") == (0, 2)
+
+
+def test_find_content_matches_no_match_returns_empty_tuple():
+    """A query with no hits in the content returns an empty tuple."""
+    content = "one\ntwo\nthree"
+
+    assert find_content_matches(content, "nonexistent") == ()
+
+
+def test_find_content_matches_empty_query_returns_empty_tuple():
+    """A blank query returns no matches even when content is present."""
+    content = "one\ntwo\nthree"
+
+    assert find_content_matches(content, "") == ()
+
+
+def test_find_content_matches_empty_content_returns_empty_tuple():
+    """Blank content returns no matches even when a query is given."""
+    assert find_content_matches("", "anything") == ()
+
+
+def test_find_content_matches_none_content_or_query_returns_empty_tuple():
+    """None content/query is tolerated the same as an empty string."""
+    assert find_content_matches(None, "anything") == ()  # type: ignore[arg-type]
+    assert find_content_matches("some content", None) == ()  # type: ignore[arg-type]
+
+
+def test_find_content_matches_multiple_occurrences_on_one_line_counts_once():
+    """A line with the query appearing more than once is only reported once."""
+    content = "bravo bravo bravo\ncharlie"
+
+    assert find_content_matches(content, "bravo") == (0,)
+
+
+def test_find_content_matches_multiple_matches_on_different_lines():
+    """Every distinct matching line is reported, preserving document order."""
+    content = "\n".join(
+        [
+            "no match here",
+            "TARGET found",
+            "still nothing",
+            "another target line",
+            "target once more",
+        ]
+    )
+
+    assert find_content_matches(content, "target") == (1, 3, 4)

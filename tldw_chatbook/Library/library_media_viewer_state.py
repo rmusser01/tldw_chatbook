@@ -219,6 +219,36 @@ def build_library_media_viewer_state(
     )
 
 
+def find_content_matches(content: str, query: str) -> tuple[int, ...]:
+    """Find the 0-based line indices of lines containing ``query`` in ``content``.
+
+    Matching is case-insensitive and a line is reported at most once even
+    when the query occurs multiple times on it. This is the pure core of
+    the Library media viewer's in-content search -- the widget/screen layer
+    is responsible for scrolling to (and optionally highlighting) the
+    resulting line indices.
+
+    Args:
+        content: Full content/transcript text to search within. Tolerated
+            to be None/blank, which yields no matches.
+        query: Search text to look for. Tolerated to be None/blank, which
+            yields no matches.
+
+    Returns:
+        Ordered (ascending) line indices of matching lines, or an empty
+        tuple when either ``content`` or ``query`` is blank, or there are
+        no matches.
+    """
+    if not content or not query:
+        return ()
+    needle = query.lower()
+    return tuple(
+        index
+        for index, line in enumerate(content.split("\n"))
+        if needle in line.lower()
+    )
+
+
 def _highlight_id_text(highlight: Mapping[str, Any]) -> str:
     value = highlight.get("id")
     if value is None:

@@ -13,7 +13,7 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Input, Static, TextArea
 
@@ -34,6 +34,7 @@ from ...Library.library_media_state import (
 from ...Library.library_media_viewer_state import (
     build_library_media_highlight_rows,
     build_library_media_viewer_state,
+    find_content_matches,
 )
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
@@ -507,6 +508,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_confirming_delete: bool = False
         self._library_media_highlights: list[dict[str, Any]] = []
         self._library_media_editing_analysis: bool = False
+        self._library_media_content_query: str = ""
+        self._library_media_content_match_index: int = 0
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2551,6 +2554,8 @@ class LibraryScreen(BaseAppScreen):
                                 self._library_media_highlights
                             ),
                             editing_analysis=self._library_media_editing_analysis,
+                            content_query=self._library_media_content_query,
+                            content_match_index=self._library_media_content_match_index,
                             id="library-media-viewer",
                         )
                 elif shell.canvas_kind == "media":
@@ -2883,6 +2888,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
         self._library_media_editing_analysis = False
+        self._library_media_content_query = ""
+        self._library_media_content_match_index = 0
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -2975,6 +2982,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
         self._library_media_editing_analysis = False
+        self._library_media_content_query = ""
+        self._library_media_content_match_index = 0
         if media_id:
             self.run_worker(self._refresh_library_media_detail(media_id))
         self.refresh(recompose=True)
@@ -2991,6 +3000,8 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing = False
         self._library_media_confirming_delete = False
         self._library_media_editing_analysis = False
+        self._library_media_content_query = ""
+        self._library_media_content_match_index = 0
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-media-edit")
@@ -3223,6 +3234,8 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_detail = None
             self._library_media_highlights = []
             self._library_media_editing_analysis = False
+            self._library_media_content_query = ""
+            self._library_media_content_match_index = 0
             self._selected_media_id = ""
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -3370,6 +3383,103 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity="warning")
+
+    @on(Input.Submitted, "#library-media-content-search")
+    def handle_library_media_content_search_submitted(self, event: Input.Submitted) -> None:
+        """Set the in-content search query and jump to the first match.
+
+        Submitted (rather than Changed) is used deliberately: recomposing
+        the whole screen on every keystroke would remount
+        ``#library-media-content-search`` and drop focus/cursor position
+        mid-typing, so the query only takes effect on Enter -- mirroring
+        ``handle_library_search_submitted``'s rail search box. A no-op
+        guard (mirroring ``update_library_rag_query``) skips the recompose
+        entirely when the submitted text matches the current query.
+
+        Args:
+            event: Input submit event emitted by the content search box.
+        """
+        event.stop()
+        if event.value == self._library_media_content_query:
+            return
+        self._library_media_content_query = event.value
+        self._library_media_content_match_index = 0
+        self.refresh(recompose=True)
+        self.call_after_refresh(self._focus_library_media_content_search_input)
+
+    def _focus_library_media_content_search_input(self) -> None:
+        """Re-focus the content search box after a submit-triggered recompose.
+
+        Mirrors ``_focus_library_search_input``: the Submitted-driven
+        recompose above remounts a brand-new
+        ``#library-media-content-search``, so without this, focus falls
+        back to the screen after every search.
+        """
+        try:
+            self.query_one("#library-media-content-search", Input).focus()
+        except (NoMatches, QueryError):
+            pass
+
+    @on(Button.Pressed, "#library-media-content-search-next")
+    def handle_library_media_content_search_next(self, event: Button.Pressed) -> None:
+        """Advance to the next in-content search match and scroll it into view.
+
+        Args:
+            event: Button press event emitted by the "Next" search action.
+        """
+        event.stop()
+        self._advance_library_media_content_match(1)
+
+    @on(Button.Pressed, "#library-media-content-search-prev")
+    def handle_library_media_content_search_prev(self, event: Button.Pressed) -> None:
+        """Return to the previous in-content search match and scroll it into view.
+
+        Args:
+            event: Button press event emitted by the "Prev" search action.
+        """
+        event.stop()
+        self._advance_library_media_content_match(-1)
+
+    def _advance_library_media_content_match(self, step: int) -> None:
+        """Move the current content-search match index and scroll to it.
+
+        No-ops when there is no open item or the query has no matches
+        (the status line already reads "No matches" in that case).
+
+        Args:
+            step: ``1`` to move to the next match, ``-1`` for the previous
+                one; wraps around the match count either direction.
+        """
+        detail = self._library_media_detail if isinstance(self._library_media_detail, Mapping) else None
+        content = build_library_media_viewer_state(detail).content if detail else ""
+        matches = find_content_matches(content, self._library_media_content_query)
+        if not matches:
+            return
+        self._library_media_content_match_index = (
+            self._library_media_content_match_index + step
+        ) % len(matches)
+        line_index = matches[self._library_media_content_match_index]
+        self.refresh(recompose=True)
+        self.call_after_refresh(self._scroll_library_media_content_to_line, line_index)
+
+    def _scroll_library_media_content_to_line(self, line_index: int) -> None:
+        """Scroll the content region so the given line index is visible.
+
+        Uses the content ``VerticalScroll``'s ``scroll_to`` on the Y axis
+        as an approximation of "the matched line" -- the content renders
+        as a single ``Static``, so this is not pixel-perfect line
+        targeting, but it reliably brings the matched line into (or near)
+        view, which is the required bar for this feature.
+
+        Args:
+            line_index: 0-based line index within the content text to
+                reveal.
+        """
+        try:
+            content_scroll = self.query_one("#library-media-viewer-content", VerticalScroll)
+        except (NoMatches, QueryError):
+            return
+        content_scroll.scroll_to(y=line_index, animate=False)
 
     @on(Button.Pressed, "#library-media-read-later")
     def handle_library_media_read_later(self, event: Button.Pressed) -> None:
