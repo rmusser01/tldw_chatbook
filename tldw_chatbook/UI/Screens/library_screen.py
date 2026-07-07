@@ -3169,10 +3169,12 @@ class LibraryScreen(BaseAppScreen):
     async def _save_library_note(self, *, explicit: bool) -> None:
         """Save the open Library note's current editor text.
 
-        Reads the three editor widgets synchronously, sanitizes the fields,
-        and calls ``save_note`` through the offloaded service seam
-        (``note_id``/``version`` supplied, so this is always the update
-        path). A successful save bumps ``_library_note_version`` in memory
+        Reads title/content/keywords via ``_read_library_note_editor_fields``
+        (which tolerates the Preview toggle, falling back to the live-capture
+        snapshot for the body when ``#library-note-body`` isn't mounted),
+        sanitizes the fields, and calls ``save_note`` through the offloaded
+        service seam (``note_id``/``version`` supplied, so this is always the
+        update path). A successful save bumps ``_library_note_version`` in memory
         and updates only the meta line -- it never recomposes, so the
         ``TextArea``/``Input`` widget instances stay identical across a
         save. A version conflict (a falsy result from the seam, or a
@@ -3199,16 +3201,10 @@ class LibraryScreen(BaseAppScreen):
         if self._library_notes_view != "editor" or not self._selected_note_id:
             return
         note_id = self._selected_note_id
-        try:
-            title_widget = self.query_one("#library-note-title", Input)
-            body_widget = self.query_one("#library-note-body", TextArea)
-            keywords_widget = self.query_one("#library-note-keywords", Input)
-        except (NoMatches, QueryError):
+        fields = self._read_library_note_editor_fields()
+        if fields is None:
             return
-
-        raw_title = title_widget.value
-        raw_content = body_widget.text
-        raw_keywords_text = keywords_widget.value
+        raw_title, raw_content, raw_keywords_text = fields
 
         title = self._sanitize_media_field(raw_title, max_length=300)
         content = self._sanitize_note_content(raw_content, max_length=2_000_000)

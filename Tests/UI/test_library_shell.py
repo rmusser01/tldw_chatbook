@@ -3060,6 +3060,120 @@ async def test_library_shell_note_preview_toggle_shows_markdown_and_restores_edi
 
 
 @pytest.mark.asyncio
+async def test_library_shell_note_save_works_while_previewing():
+    """Pressing Save while Preview is on must still persist the edit.
+
+    While Preview is showing, ``#library-note-body`` is a read-only
+    ``Markdown`` widget -- not the ``TextArea`` -- so a naive
+    ``query_one("#library-note-body", TextArea)`` raises ``NoMatches``.
+    ``_save_library_note`` must instead read through the preview-aware
+    ``_read_library_note_editor_fields`` helper (the same one Export/Copy/
+    Use-in-Console already rely on) so Save is not a silent no-op while
+    previewing.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-body", TextArea).text = (
+            "alpha budget line, edited while about to preview"
+        )
+        await pilot.pause()
+
+        screen.query_one("#library-note-preview").press()
+        await _wait_for_selector(screen, pilot, "#library-note-preview-body")
+        assert not screen.query("#library-note-body")
+
+        screen.query_one("#library-note-save").press()
+
+        service = app.notes_scope_service
+        for _ in range(150):
+            if service.save_calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Save never called the save_note seam while previewing."
+            )
+
+        call = service.save_calls[-1]
+        assert call["content"] == "alpha budget line, edited while about to preview"
+
+        for _ in range(150):
+            if not screen._library_note_dirty:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Save while previewing never cleared the dirty flag.")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_back_flushes_while_previewing():
+    """Back must flush a pending edit even while Preview is still on.
+
+    Regression pilot for the "silent data loss" finding: edit the body,
+    toggle Preview on (without toggling back to Edit), then press Back
+    immediately -- the edit must reach the seam before the view switches
+    to the notes list, mirroring the flush-on-Back contract already
+    proven for the non-preview case.
+    """
+    app = _build_test_app()
+    service = _DelayedSaveLibraryNotesScopeService(_two_notes())
+    app.notes_scope_service = service
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(_two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-body", TextArea).text = (
+            "alpha budget line, edited then previewed then back"
+        )
+        await pilot.pause()
+
+        screen.query_one("#library-note-preview").press()
+        await _wait_for_selector(screen, pilot, "#library-note-preview-body")
+        assert not screen.query("#library-note-body")
+
+        screen.query_one("#library-note-back").press()
+        for _ in range(50):
+            if service.save_started:
+                break
+            await pilot.pause(0.01)
+        else:
+            raise AssertionError(
+                "Back never triggered the flush save while previewing."
+            )
+
+        # The save is still sleeping: the view must not have switched yet.
+        assert screen._library_notes_view == "editor"
+
+        for _ in range(150):
+            if screen._library_notes_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Back never completed once the previewing flush resolved."
+            )
+
+        assert service.save_calls, (
+            "The flushed save while previewing never actually completed."
+        )
+        assert service.save_calls[-1]["content"] == (
+            "alpha budget line, edited then previewed then back"
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_shell_note_export_markdown_pushes_file_save_dialog():
     """Export .md pushes a ``FileSave`` dialog pre-filled with a sanitized
     default filename derived from the note's current title."""
