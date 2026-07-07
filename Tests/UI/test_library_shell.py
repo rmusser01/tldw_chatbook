@@ -1834,3 +1834,112 @@ async def test_library_shell_details_body_has_no_duplicate_collapse_control():
             tooltip = button.tooltip or ""
             assert "Collapse Details" not in label
             assert "Collapse Details" not in tooltip
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_use_in_chat_body_truncated_for_long_content():
+    """``body_truncated`` is True when media content exceeds 500 chars.
+
+    The handoff excerpt is capped at LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS (500),
+    so long content must set body_truncated=True. This test seeds media with
+    600 chars and asserts both the flag and that the excerpt is bounded.
+    """
+    app = _build_test_app()
+    media_items = _two_media_items()[:1]
+    # Seed with content > 500 chars: use a marker string repeated to exceed 500.
+    long_content = "This is long content. " * 35  # ~770 chars
+    media_items[0]["content"] = long_content
+    _seed_conversations(app, [], media=media_items)
+    app.open_chat_with_handoff = Mock()
+    _link_library_items_to_active_workspace(
+        app,
+        (("media", "media-1", "Interview Recording"),),
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        screen.query_one("#library-media-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-media-use-in-chat")
+
+        screen.query_one("#library-media-use-in-chat").press()
+        await pilot.pause()
+        await pilot.pause()
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert payload.source == "library"
+    assert payload.item_type == "media"
+    assert payload.source_id == "media-1"
+    assert payload.title == "Interview Recording"
+    assert payload.body_truncated is True
+    # The payload.body includes metadata headers plus the excerpt.
+    # Verify the excerpt is bounded: a marker string only in the first
+    # 500 chars should appear, but content after position 500 should not.
+    assert "This is long content." in payload.body
+    # Verify truncation: content after char 500 should not be present.
+    # The full content string repeated would produce a pattern that continues,
+    # so if truncated, it will end mid-word or mid-pattern.
+    assert "Content excerpt:" in payload.body
+    # Count the actual content after "Content excerpt:" header
+    excerpt_start = payload.body.find("Content excerpt:")
+    content_part = payload.body[excerpt_start:]
+    # The excerpt part should be much shorter than the original content
+    assert len(content_part) < len(long_content)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_use_in_chat_body_not_truncated_for_short_content():
+    """``body_truncated`` is False when media content is <= 500 chars.
+
+    Short content does not set the truncated flag. This test seeds media with
+    300 chars and asserts body_truncated=False and that the full content
+    is included in the excerpt.
+    """
+    app = _build_test_app()
+    media_items = _two_media_items()[:1]
+    # Seed with content < 500 chars: a 300-char realistic string
+    short_content = (
+        "This is a medium-length transcript excerpt that stays well under "
+        "the 500-character limit. It contains enough text to be substantial "
+        "but short enough to pass through without truncation. This demonstrates "
+        "that the body_truncated flag correctly handles content that fits "
+        "entirely within the handoff excerpt boundary."
+    )
+    media_items[0]["content"] = short_content
+    _seed_conversations(app, [], media=media_items)
+    app.open_chat_with_handoff = Mock()
+    _link_library_items_to_active_workspace(
+        app,
+        (("media", "media-1", "Interview Recording"),),
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        screen.query_one("#library-media-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-media-use-in-chat")
+
+        screen.query_one("#library-media-use-in-chat").press()
+        await pilot.pause()
+        await pilot.pause()
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert payload.source == "library"
+    assert payload.item_type == "media"
+    assert payload.source_id == "media-1"
+    assert payload.title == "Interview Recording"
+    assert payload.body_truncated is False
+    # Full content should be present (not truncated) in the body payload.
+    assert short_content in payload.body
+    # Verify the structure includes the excerpt section.
+    assert "Content excerpt:" in payload.body
