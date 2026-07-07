@@ -166,3 +166,32 @@ async def test_save_with_keywords_returns_dict_with_bumped_version_and_persists(
     )
     persisted_keywords = sorted(row["keyword"] for row in keyword_rows)
     assert persisted_keywords == ["a", "c"]
+
+
+@pytest.mark.asyncio
+async def test_create_from_note_template_round_trips_title_and_content(notes_scope_service):
+    """The Library screen's in-canvas Create view (task 6) creates a note
+    from a ``NOTE_TEMPLATES`` entry's raw title/content via this exact
+    seam call shape (no keywords, no version): confirms the returned id is
+    a plain string (not a dict -- the create path only becomes a dict when
+    ``keywords`` is passed) and that ``get_note_detail`` round-trips the
+    saved title/content unchanged.
+    """
+    template_title = "Meeting Notes - {date}"
+    template_content = "## Meeting Notes\n\n**Date:** {date}\n**Attendees:**\n"
+
+    created_id = await notes_scope_service.save_note(
+        scope="local_note",
+        title=template_title,
+        content=template_content,
+        note_id=None,
+        user_id=USER_ID,
+    )
+    assert isinstance(created_id, str) and created_id
+
+    detail = await notes_scope_service.get_note_detail(
+        scope="local_note", note_id=created_id, user_id=USER_ID
+    )
+    assert detail["title"] == template_title
+    assert detail["content"] == template_content
+    assert detail["version"] == 1

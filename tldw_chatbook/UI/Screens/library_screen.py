@@ -60,6 +60,7 @@ from ...Library.library_rail_state import (
 from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_BROWSE_NOTES,
     LibraryShellInput,
     build_library_shell_state,
 )
@@ -2777,6 +2778,11 @@ class LibraryScreen(BaseAppScreen):
                         filter_value=self._library_notes_filter,
                         id="library-notes-canvas",
                     )
+                elif shell.canvas_kind == "notes-create":
+                    yield LibraryNotesCanvas(
+                        mode="create",
+                        id="library-notes-canvas",
+                    )
                 elif shell.canvas_kind == "mode":
                     yield from self._compose_mode_canvas(shell.canvas_target)
                 else:
@@ -3769,7 +3775,7 @@ class LibraryScreen(BaseAppScreen):
         note_id = str(getattr(event.button, "note_id", "") or "")
         if note_id:
             self._selected_note_id = note_id
-        self._library_selected_row_id = "browse-notes"
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         self._active_mode = "notes"
         self._library_notes_view = "editor"
         self._library_note_detail = None
@@ -3806,6 +3812,176 @@ class LibraryScreen(BaseAppScreen):
             return
         self._reset_library_note_editor_state()
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-create-blank")
+    def handle_library_notes_create_blank(self, event: Button.Pressed) -> None:
+        """Create a blank local note from the in-canvas Create view.
+
+        Args:
+            event: Button press event emitted by the "Blank note" action.
+        """
+        event.stop()
+        self.run_worker(
+            self._create_library_note(title="Untitled", content=""),
+            exclusive=True,
+            group="library_note_create",
+        )
+
+    @on(Button.Pressed, ".library-notes-template-row")
+    def handle_library_notes_create_template(self, event: Button.Pressed) -> None:
+        """Create a local note pre-filled from the pressed template row.
+
+        Args:
+            event: Button press event emitted by a template row button.
+        """
+        event.stop()
+        template_key = str(getattr(event.button, "template_key", "") or "")
+        from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
+
+        title, content = self._library_note_template_fields(NOTE_TEMPLATES.get(template_key))
+        self.run_worker(
+            self._create_library_note(title=title, content=content),
+            exclusive=True,
+            group="library_note_create",
+        )
+
+    @staticmethod
+    def _library_note_template_fields(template: Any) -> tuple[str, str]:
+        """Resolve a note template's title/content for the create flow.
+
+        Malformed or unknown templates (not a mapping, or missing/non-string
+        ``title``) degrade to the same "Untitled" / empty-body defaults the
+        Blank note button uses. The real ``NOTE_TEMPLATES`` shape (bundled
+        ``Config_Files/note_templates.json`` or a user override) always
+        carries plain-string ``title``/``content`` values -- callables/
+        "content builders" never occur in practice -- but a non-string,
+        non-``None`` ``content`` is still coerced on a best-effort basis
+        (calling it first if it is callable) rather than raising, so one
+        odd template can never break the create view for the others.
+
+        Note this does not resolve ``{date}``/``{time}`` placeholders the
+        way the standalone Notes screen's template flow does (see
+        ``notes_screen._create_local_note_from_template``); the Library
+        create view's template fields are used verbatim.
+
+        Args:
+            template: The raw ``NOTE_TEMPLATES[key]`` value, or ``None``
+                when the key is unknown.
+
+        Returns:
+            A ``(title, content)`` tuple, always ``str``.
+        """
+        if not isinstance(template, Mapping):
+            return "Untitled", ""
+        raw_title = template.get("title")
+        title = raw_title if isinstance(raw_title, str) and raw_title.strip() else "Untitled"
+        raw_content = template.get("content")
+        if isinstance(raw_content, str):
+            content = raw_content
+        elif raw_content is None:
+            content = ""
+        else:
+            candidate = raw_content
+            if callable(candidate):
+                try:
+                    candidate = candidate()
+                except Exception:
+                    candidate = ""
+            try:
+                content = str(candidate)
+            except Exception:
+                content = ""
+        return title, content
+
+    async def _create_library_note(self, *, title: str, content: str) -> None:
+        """Create a new local note from the in-canvas Create view and open it.
+
+        Shared by the Blank note button and every template row: both
+        resolve their title/content synchronously (see
+        ``_library_note_template_fields``) and hand off to this single
+        creation seam. Sanitizes the fields through the same Task 5
+        boundary helpers ``_save_library_note`` uses, then calls
+        ``save_note`` with ``note_id=None`` (the create path) offloaded via
+        ``_run_library_service_call``.
+
+        On success, switches straight into the editor for the newly
+        created note: selects the Browse > Notes rail row, refreshes the
+        local source snapshot (so the new note appears in both the notes
+        list and the rail's count -- the same full-refresh the initial
+        mount load uses, since there is no existing "append one record"
+        mutation path for notes to reuse) and kicks the existing
+        ``_refresh_library_note_detail`` worker.
+
+        A missing/failed save leaves the create view in place with a quiet
+        warning notice, mirroring ``_notify_library_media_edit_warning``.
+
+        Args:
+            title: The note's title (already resolved; not yet sanitized).
+            content: The note's body (already resolved; not yet sanitized).
+        """
+        sanitized_title = self._sanitize_media_field(title, max_length=300)
+        sanitized_content = self._sanitize_note_content(content, max_length=2_000_000)
+
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        save_note = getattr(service, "save_note", None)
+        if not callable(save_note):
+            self._notify_library_note_create_warning("Note creation is unavailable.")
+            return
+        try:
+            result = await self._run_library_service_call(
+                save_note,
+                scope="local_note",
+                title=sanitized_title,
+                content=sanitized_content,
+                note_id=None,
+                user_id=self._library_notes_user_id(),
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.warning("Library note create failed.", exc_info=True)
+            self._notify_library_note_create_warning("Could not create the note.")
+            return
+
+        created_id = result.get("id") if isinstance(result, Mapping) else result
+        created_id = str(created_id) if created_id else ""
+        if not created_id:
+            self._notify_library_note_create_warning("Could not create the note.")
+            return
+
+        self._selected_note_id = created_id
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+        self._active_mode = "notes"
+        self._library_notes_view = "editor"
+        self._library_note_detail = None
+        self._library_note_version = None
+        self._library_note_dirty = False
+        self._library_note_autosave_state = "idle"
+        self._library_note_conflict_snapshot = None
+        self._library_note_editor_armed = False
+        self._library_notes_filter = ""
+        self._library_notes_filter_records = None
+        # Reuses the same full local-source reload the initial mount load
+        # runs (already its own exclusive worker via @work) rather than a
+        # targeted append, since notes have no existing "patch the cached
+        # snapshot" mutation path the way media edits/deletes do.
+        self._refresh_local_source_snapshot()
+        self.run_worker(
+            self._refresh_library_note_detail(created_id),
+            exclusive=True,
+            group="library_note_detail",
+        )
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    def _notify_library_note_create_warning(self, message: str) -> None:
+        """Surface a quiet warning notice for a failed Library note create.
+
+        Args:
+            message: Human-readable warning text to notify with.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
 
     @on(Button.Pressed, "#library-media-back")
     def handle_library_media_back(self, event: Button.Pressed) -> None:

@@ -179,7 +179,11 @@ class StaticLibraryNotesScopeService:
         omitted (``None``) a successful update returns the plain ``True``
         the real local backend returns; only when ``keywords`` is passed
         does a successful update return a dict carrying the bumped
-        ``version``.
+        ``version``. The create path (no ``note_id``) mirrors this exactly:
+        omitted ``keywords`` returns the bare new id (a ``str``, matching
+        ``NotesScopeService.save_note``'s local-scope create path -- see
+        ``Tests/Notes/test_notes_scope_service_library_canvas.py``), and
+        only a passed ``keywords`` upgrades the return to a dict.
         """
         self.save_calls.append(
             {
@@ -219,7 +223,9 @@ class StaticLibraryNotesScopeService:
             created["keywords"] = list(keywords)
         notes.append(created)
         self.notes = tuple(notes)
-        return created
+        if keywords is None:
+            return new_id
+        return dict(created)
 
     async def delete_note(self, *, scope, note_id, version, user_id=None, **kwargs):
         self.delete_calls.append(

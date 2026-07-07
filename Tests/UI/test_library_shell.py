@@ -2788,3 +2788,100 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
         assert not screen.query("#library-note-conflict-reload")
         assert screen.query_one("#library-note-body", TextArea).text == "Server-side content"
         assert screen.query_one("#library-note-title", Input).value == "Server-side title"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_note_row_renders_blank_and_template_rows():
+    """Selecting the rail's Create > New note row renders the Blank note
+    action plus at least one template row, carrying a ``template_key``."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+
+        assert screen.query_one("#library-notes-create-blank")
+        template_row = screen.query_one("#library-notes-template-0")
+        assert getattr(template_row, "template_key", None)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_blank_note_lands_in_editor():
+    """Pressing Blank note calls ``save_note`` with ``note_id=None`` and
+    ``title="Untitled"``, then opens the in-canvas editor on the newly
+    created note and refreshes the notes rail count."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+
+        screen.query_one("#library-notes-create-blank").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+
+        service = app.notes_scope_service
+        assert service.save_calls, "Blank note create never called the seam."
+        call = service.save_calls[-1]
+        assert call["note_id"] is None
+        assert call["title"] == "Untitled"
+        assert call["content"] == ""
+
+        assert screen._library_notes_view == "editor"
+        assert screen._library_selected_row_id == "browse-notes"
+        created_note = next(n for n in service.notes if n["title"] == "Untitled")
+        assert screen._selected_note_id == created_note["id"]
+        assert screen.query_one("#library-note-title", Input).value == "Untitled"
+
+        for _ in range(150):
+            if screen._local_source_counts.get("notes") == 3:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("The notes snapshot/rail count never refreshed after create.")
+        rail_label = str(screen.query_one("#library-row-browse-notes").label)
+        assert "(3)" in rail_label
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_from_template_uses_template_fields():
+    """Pressing a template row creates a note using that template's raw
+    title/content (verbatim -- no ``{date}``/``{time}`` substitution)."""
+    from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+
+        template_button = next(
+            button
+            for button in screen.query(".library-notes-template-row")
+            if getattr(button, "template_key", None) == "meeting"
+        )
+        expected = NOTE_TEMPLATES["meeting"]
+        template_button.press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+
+        service = app.notes_scope_service
+        assert service.save_calls, "Template create never called the seam."
+        call = service.save_calls[-1]
+        assert call["note_id"] is None
+        assert call["title"] == expected["title"]
+        assert call["content"] == expected["content"]
+        assert screen._library_notes_view == "editor"

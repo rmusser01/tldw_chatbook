@@ -10,6 +10,7 @@ LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something 
 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
 LIBRARY_ROW_BROWSE_MEDIA = "browse-media"
+LIBRARY_ROW_BROWSE_NOTES = "browse-notes"
 
 
 @dataclass(frozen=True)
@@ -99,7 +100,7 @@ def build_library_shell_state(
             count_known=state.conversations_known,
         ),
         LibraryRailRow(
-            row_id="browse-notes",
+            row_id=LIBRARY_ROW_BROWSE_NOTES,
             section_id="browse",
             title="Notes",
             target_kind="canvas",

@@ -1,7 +1,9 @@
-"""Library notes canvas: list mode (rows + filter + sort) and editor mode."""
+"""Library notes canvas: list mode (rows + filter + sort), editor mode, and
+create mode (Blank note + template rows)."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from textual.app import ComposeResult
@@ -27,7 +29,9 @@ class LibraryNotesCanvas(Vertical):
         filter_value: Current notes filter text, prefilled into the filter
             ``Input``.
         mode: ``"list"`` renders the notes list; ``"editor"`` renders the
-            in-canvas note editor for ``editor_state``.
+            in-canvas note editor for ``editor_state``; ``"create"`` renders
+            the Blank note / template picker reached from the rail's
+            Create > New note row.
         editor_state: The note to render in editor mode. Required when
             ``mode == "editor"``.
         preview: Reserved for the Markdown preview toggle (a later task);
@@ -66,6 +70,9 @@ class LibraryNotesCanvas(Vertical):
     def compose(self) -> ComposeResult:
         if self.mode == "editor":
             yield from self._compose_editor()
+            return
+        if self.mode == "create":
+            yield from self._compose_create()
             return
         yield from self._compose_list()
 
@@ -202,3 +209,56 @@ class LibraryNotesCanvas(Vertical):
                 classes="library-canvas-action library-media-action-danger",
                 compact=True,
             )
+
+    def _compose_create(self) -> ComposeResult:
+        """Render the notes canvas in create mode: Blank note + template rows.
+
+        Reached via the rail's Create > New note row (canvas kind
+        ``"notes-create"``). The Blank note action and every template row
+        are stacked, full-width, compact buttons styled like the list
+        view's note rows (``library-notes-create-row`` copies the
+        ``library-notes-row`` look) so the create view reads as more note
+        rows rather than a distinct toolbar -- a *different* class on
+        purpose: reusing ``library-notes-row`` itself would also match the
+        list view's ``.library-notes-row`` press handler (selecting a note
+        row and opening the editor for it), double-dispatching alongside
+        this view's own create handlers on every press. Templates come
+        from ``NOTE_TEMPLATES`` (imported locally to match the existing
+        deferred-import convention used elsewhere for this module-level
+        dict), sorted by key for a stable order; each row's
+        ``template_key`` attribute (mirroring ``note_id`` on list rows) is
+        read by the screen's press handler to resolve the template's
+        fields via ``_library_note_template_fields`` -- this widget only
+        needs the key and a human label, never the raw title/content.
+        """
+        yield Static(
+            "New note",
+            id="library-notes-create-header",
+            classes="destination-section",
+            markup=False,
+        )
+        yield Button(
+            "Blank note",
+            id="library-notes-create-blank",
+            classes="library-notes-create-row",
+            compact=True,
+        )
+        from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
+        from tldw_chatbook.Widgets.Note_Widgets.notes_workbench_panes import (
+            template_display_label,
+        )
+
+        for index, (key, template) in enumerate(sorted(NOTE_TEMPLATES.items())):
+            label = (
+                template_display_label(key, template)
+                if isinstance(template, Mapping)
+                else str(key).replace("_", " ")
+            )
+            button = Button(
+                label,
+                id=f"library-notes-template-{index}",
+                classes="library-notes-create-row library-notes-template-row",
+                compact=True,
+            )
+            button.template_key = key
+            yield button

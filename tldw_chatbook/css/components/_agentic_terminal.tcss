@@ -672,6 +672,27 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-primary;
 }
 
+/* Same look as .library-notes-row, on a separate class: the notes Create
+   view's Blank note / template rows must not also match the list view's
+   ".library-notes-row" press handler (opening the editor for the pressed
+   row's note_id), which would double-dispatch alongside the Create view's
+   own handlers on every press. */
+.library-notes-create-row {
+    width: 100%;
+    min-width: 0;
+    height: 2;
+    min-height: 2;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
 .library-canvas-action {
     height: $ds-home-control-button-height;
     min-height: $ds-home-control-button-height;
