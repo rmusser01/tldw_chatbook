@@ -2854,8 +2854,12 @@ async def test_library_shell_create_blank_note_lands_in_editor():
 
 @pytest.mark.asyncio
 async def test_library_shell_create_from_template_uses_template_fields():
-    """Pressing a template row creates a note using that template's raw
-    title/content (verbatim -- no ``{date}``/``{time}`` substitution)."""
+    """Pressing a template row creates a note using that template's title/
+    content with ``{date}``/``{time}``/``{datetime}`` placeholders resolved
+    to the current date/time -- mirroring the standalone Notes screen's
+    ``_create_local_note_from_template`` substitution semantics."""
+    from datetime import datetime
+
     from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
 
     app = _build_test_app()
@@ -2875,13 +2879,41 @@ async def test_library_shell_create_from_template_uses_template_fields():
             if getattr(button, "template_key", None) == "meeting"
         )
         expected = NOTE_TEMPLATES["meeting"]
+        # Capture the date both before and after pressing the row so a
+        # midnight rollover mid-test can't make this flaky.
+        before = datetime.now().strftime("%Y-%m-%d")
         template_button.press()
         await _wait_for_selector(screen, pilot, "#library-note-title")
+        after = datetime.now().strftime("%Y-%m-%d")
 
         service = app.notes_scope_service
         assert service.save_calls, "Template create never called the seam."
         call = service.save_calls[-1]
         assert call["note_id"] is None
-        assert call["title"] == expected["title"]
-        assert call["content"] == expected["content"]
+        assert "{date}" not in call["title"]
+        assert "{date}" not in call["content"]
+        assert "{time}" not in call["content"]
+        assert call["title"] in (
+            expected["title"].format(date=before),
+            expected["title"].format(date=after),
+        )
+        assert re.search(r"\*\*Date:\*\* \d{4}-\d{2}-\d{2}", call["content"])
+        assert re.search(r"\*\*Time:\*\* \d{2}:\d{2}", call["content"])
         assert screen._library_notes_view == "editor"
+
+
+def test_library_note_template_fields_malformed_placeholder_degrades_to_raw_text():
+    """A template with an unknown ``{placeholder}`` or an unbalanced brace
+    must not raise -- the create flow falls back to the raw (unsubstituted)
+    text instead of crashing, mirroring the guarded ``.format()`` call the
+    standalone Notes screen uses but degrading gracefully instead of
+    aborting the create."""
+    template = {
+        "title": "Notes - {unknown_key}",
+        "content": "Stray brace ahead: { oops",
+    }
+
+    title, content = LibraryScreen._library_note_template_fields(template)
+
+    assert title == "Notes - {unknown_key}"
+    assert content == "Stray brace ahead: { oops"

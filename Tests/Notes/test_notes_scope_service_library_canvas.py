@@ -13,6 +13,8 @@ that a hand-rolled fake could get wrong silently; these tests pin the real
 behavior down.
 """
 
+from datetime import datetime
+
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
@@ -170,20 +172,24 @@ async def test_save_with_keywords_returns_dict_with_bumped_version_and_persists(
 
 @pytest.mark.asyncio
 async def test_create_from_note_template_round_trips_title_and_content(notes_scope_service):
-    """The Library screen's in-canvas Create view (task 6) creates a note
-    from a ``NOTE_TEMPLATES`` entry's raw title/content via this exact
-    seam call shape (no keywords, no version): confirms the returned id is
-    a plain string (not a dict -- the create path only becomes a dict when
-    ``keywords`` is passed) and that ``get_note_detail`` round-trips the
-    saved title/content unchanged.
+    """The Library screen's in-canvas Create view (task 6) resolves a
+    ``NOTE_TEMPLATES`` entry's ``{date}`` placeholders before ever calling
+    this seam (see ``LibraryScreen._library_note_template_fields``), so the
+    title/content it hands to ``save_note`` already have the current date
+    substituted in -- no literal ``{date}`` survives. This pins the seam's
+    call shape (no keywords, no version: returned id is a plain string, not
+    a dict -- the create path only becomes a dict when ``keywords`` is
+    passed) and confirms ``get_note_detail`` round-trips the resolved
+    title/content unchanged.
     """
-    template_title = "Meeting Notes - {date}"
-    template_content = "## Meeting Notes\n\n**Date:** {date}\n**Attendees:**\n"
+    today = datetime.now().strftime("%Y-%m-%d")
+    resolved_title = f"Meeting Notes - {today}"
+    resolved_content = f"## Meeting Notes\n\n**Date:** {today}\n**Attendees:**\n"
 
     created_id = await notes_scope_service.save_note(
         scope="local_note",
-        title=template_title,
-        content=template_content,
+        title=resolved_title,
+        content=resolved_content,
         note_id=None,
         user_id=USER_ID,
     )
@@ -192,6 +198,8 @@ async def test_create_from_note_template_round_trips_title_and_content(notes_sco
     detail = await notes_scope_service.get_note_detail(
         scope="local_note", note_id=created_id, user_id=USER_ID
     )
-    assert detail["title"] == template_title
-    assert detail["content"] == template_content
+    assert "{date}" not in detail["title"]
+    assert "{date}" not in detail["content"]
+    assert detail["title"] == resolved_title
+    assert detail["content"] == resolved_content
     assert detail["version"] == 1

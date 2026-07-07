@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import re
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any
 
 from loguru import logger
@@ -3859,10 +3860,14 @@ class LibraryScreen(BaseAppScreen):
         (calling it first if it is callable) rather than raising, so one
         odd template can never break the create view for the others.
 
-        Note this does not resolve ``{date}``/``{time}`` placeholders the
-        way the standalone Notes screen's template flow does (see
-        ``notes_screen._create_local_note_from_template``); the Library
-        create view's template fields are used verbatim.
+        ``{date}``/``{time}``/``{datetime}`` placeholders are resolved
+        against the current time, mirroring the standalone Notes screen's
+        ``notes_screen._create_local_note_from_template`` substitution
+        (same placeholder names, same ``strftime`` formats). Unlike that
+        flow -- which notifies and aborts the create on a malformed
+        placeholder -- a template with an unknown ``{placeholder}`` or a
+        stray brace degrades to the raw (unsubstituted) text here, so one
+        broken template can never crash the create view for the others.
 
         Args:
             template: The raw ``NOTE_TEMPLATES[key]`` value, or ``None``
@@ -3891,6 +3896,21 @@ class LibraryScreen(BaseAppScreen):
                 content = str(candidate)
             except Exception:
                 content = ""
+
+        now = datetime.now()
+        placeholder_values = {
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H:%M"),
+            "datetime": now.strftime("%Y-%m-%d %H:%M"),
+        }
+        try:
+            title = title.format(**placeholder_values)
+        except (KeyError, ValueError, IndexError):
+            pass
+        try:
+            content = content.format(**placeholder_values)
+        except (KeyError, ValueError, IndexError):
+            pass
         return title, content
 
     async def _create_library_note(self, *, title: str, content: str) -> None:
