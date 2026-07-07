@@ -3406,6 +3406,14 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_match_index = 0
         self.refresh(recompose=True)
         self.call_after_refresh(self._focus_library_media_content_search_input)
+        # Bring the first match into view on submit; otherwise the status line
+        # claims "Match 1 of N" while the hit stays below the fold until the
+        # user cycles Next all the way around.
+        detail = self._library_media_detail if isinstance(self._library_media_detail, Mapping) else None
+        content = build_library_media_viewer_state(detail).content if detail else ""
+        matches = find_content_matches(content, self._library_media_content_query)
+        if matches:
+            self.call_after_refresh(self._scroll_library_media_content_to_line, matches[0])
 
     def _focus_library_media_content_search_input(self) -> None:
         """Re-focus the content search box after a submit-triggered recompose.

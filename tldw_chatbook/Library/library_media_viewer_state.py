@@ -219,7 +219,7 @@ def build_library_media_viewer_state(
     )
 
 
-def find_content_matches(content: str, query: str) -> tuple[int, ...]:
+def find_content_matches(content: str | None, query: str | None) -> tuple[int, ...]:
     """Find the 0-based line indices of lines containing ``query`` in ``content``.
 
     Matching is case-insensitive and a line is reported at most once even
