@@ -2702,6 +2702,74 @@ async def test_library_shell_note_conflict_shows_overwrite_reload_and_keeps_user
 
 
 @pytest.mark.asyncio
+async def test_library_shell_note_conflict_during_preview_reads_live_text():
+    """A save conflict raised while Preview is toggled on must not leave a
+    stale ``_library_note_preview``/``_library_note_preview_snapshot`` behind:
+    the conflict UI always renders the live ``TextArea`` (``compose`` never
+    threads ``preview`` through for the conflict branch), so
+    ``_read_library_note_editor_fields`` still reading through the old
+    preview snapshot would send stale, pre-preview text to the seam on a
+    save from the conflict UI -- and visibly revert the user's on-screen
+    edits on the next recompose.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        service = app.notes_scope_service
+
+        screen.query_one("#library-note-body", TextArea).text = "T1"
+        await pilot.pause()
+
+        screen.query_one("#library-note-preview").press()
+        await _wait_for_selector(screen, pilot, "#library-note-preview-body")
+        assert screen._library_note_preview is True
+
+        _bump_note_version_externally(service, "n-1")  # now stored at v3; screen still has v2
+
+        screen.query_one("#library-note-save").press()
+        for _ in range(150):
+            if screen._library_note_autosave_state == "conflict":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("The version conflict was never reached.")
+
+        # The conflict UI always shows the live TextArea, never the
+        # read-only Markdown preview, regardless of the Preview flag.
+        conflict_body = screen.query_one("#library-note-body", TextArea)
+        assert conflict_body.text == "T1"
+
+        conflict_body.text = "T2"
+        await pilot.pause()
+
+        calls_before_second_save = len(service.save_calls)
+        screen.query_one("#library-note-save").press()
+        for _ in range(150):
+            if len(service.save_calls) > calls_before_second_save:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("The second Save press never called the seam.")
+        # Give the resulting conflict recompose a few cycles to settle.
+        for _ in range(10):
+            await pilot.pause(0.02)
+
+        assert service.save_calls[-1]["content"] == "T2", (
+            "The conflict-UI save sent stale pre-preview text to the seam: "
+            f"{service.save_calls[-1]['content']!r}"
+        )
+        assert screen.query_one("#library-note-body", TextArea).text == "T2", (
+            "The second conflict recompose reverted the user's on-screen edit."
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_shell_note_conflict_overwrite_resaves_with_fresh_version():
     """Overwrite re-fetches the note silently, takes only the fresh
     version, and re-saves the user's kept text at that version -- ending

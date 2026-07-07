@@ -3284,6 +3284,8 @@ class LibraryScreen(BaseAppScreen):
             ),
             has_note=True,
         )
+        self._library_note_preview = False
+        self._library_note_preview_snapshot = None
         self._library_note_editor_armed = False
         if self.is_mounted:
             self.refresh(recompose=True)
