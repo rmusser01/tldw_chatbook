@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from rich.text import Text
 from textual.app import ComposeResult
+from textual.color import Color
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
@@ -102,7 +104,7 @@ class LibraryMediaViewer(Vertical):
         yield from self._compose_content_search()
         with VerticalScroll(id="library-media-viewer-content"):
             yield Static(
-                self.viewer.content or "No stored content.",
+                self._content_renderable(),
                 id="library-media-viewer-content-text",
                 markup=False,
             )
@@ -251,6 +253,39 @@ class LibraryMediaViewer(Vertical):
         index = self.content_match_index % len(matches)
         return f"Match {index + 1} of {len(matches)} matches"
 
+    def _content_renderable(self) -> Text | str:
+        """Return the content body, with every query occurrence highlighted while searching.
+
+        With no active search this is the plain content string. While a
+        search is active, occurrences of the query (case-insensitive) are
+        marked with a reverse style so the matches the status line counts
+        are actually visible in the body -- otherwise "Match 1 of N" points
+        at hits the reader cannot see. Built as a Rich ``Text`` from raw
+        slices (never markup) so arbitrary content cannot inject styles.
+
+        Returns:
+            The plain content ``str`` when idle, or a Rich ``Text`` with
+            highlighted matches while searching.
+        """
+        content = self.viewer.content or "No stored content."
+        query = (self.content_query or "").strip()
+        if not query or not self.viewer.content:
+            return content
+        needle = query.lower()
+        haystack = content.lower()
+        span = len(needle)
+        text = Text()
+        cursor = 0
+        while True:
+            hit = haystack.find(needle, cursor)
+            if hit == -1:
+                text.append(content[cursor:])
+                break
+            text.append(content[cursor:hit])
+            text.append(content[hit : hit + span], style="reverse")
+            cursor = hit + span
+        return text
+
     def _compose_edit_form(self) -> ComposeResult:
         """Render the metadata edit inputs, prefilled from ``viewer.edit_fields``.
 
@@ -351,16 +386,82 @@ class LibraryMediaViewer(Vertical):
                     compact=True,
                 )
 
+    @staticmethod
+    def _renderable_color(color: str) -> str | None:
+        """Return ``color`` if it parses as a renderable color, else None.
+
+        Highlight colors are free-text (the add form's "Color (optional)"),
+        so a value like "highlighter pink" cannot be shown as a swatch.
+
+        Args:
+            color: The stored highlight color string.
+
+        Returns:
+            The color string when Textual can parse it, otherwise None.
+        """
+        if not color:
+            return None
+        try:
+            Color.parse(color)
+        except Exception:
+            return None
+        return color
+
+    def _highlight_quote_text(self, highlight: LibraryMediaHighlightRow) -> Text:
+        """Build the quote line, led by a swatch tinted to the highlight color.
+
+        Color is the language of a highlighting feature, so a parseable
+        color shows as a tinted "●" marker before the quote rather than as
+        the bare word "yellow". Built as a Rich ``Text`` (only the marker is
+        styled; the quote is appended as a raw slice) so quote content can
+        never inject styles.
+
+        Args:
+            highlight: The highlight row to render.
+
+        Returns:
+            A Rich ``Text`` of the (optionally swatched) quote.
+        """
+        text = Text()
+        swatch = self._renderable_color(highlight.color)
+        if swatch:
+            text.append("● ", style=swatch)
+        text.append(f"“{highlight.quote}”")
+        return text
+
+    def _highlight_meta_text(self, highlight: LibraryMediaHighlightRow) -> str:
+        """Build the highlight's secondary line (note, and color only if not swatched).
+
+        The color is shown here as text only when it is not renderable as a
+        swatch (so no information is lost for exotic color strings); a
+        renderable color is already conveyed by the quote's tinted marker.
+
+        Args:
+            highlight: The highlight row to render.
+
+        Returns:
+            The secondary line text, or "" when there is nothing to show.
+        """
+        parts: list[str] = []
+        if highlight.color and not self._renderable_color(highlight.color):
+            parts.append(f"Color: {highlight.color}")
+        if highlight.note:
+            parts.append(f"Note: {highlight.note}")
+        return " · ".join(parts)
+
     def _compose_highlights(self) -> ComposeResult:
         """Render the highlights section: existing rows, then the collapsed add form.
 
-        Each highlight is a full-width ``Static`` (quote, plus a
-        ``Color: .../Note: ...`` line when present) immediately followed by
-        its own full-width delete ``Button`` -- stacked, not paired inside a
-        ``Horizontal``, matching the render-safety rule on ``compose`` above.
-        The delete button carries the highlight's id as a plain attribute
-        (mirroring ``LibraryMediaCanvas`` setting ``button.media_id``) so the
-        screen's class-selector handler can read it back.
+        Each highlight is its own indented card ``Vertical`` holding the
+        quote ``Static`` (led by a swatch tinted to the highlight color), an
+        optional meta ``Static`` (note, and color-as-text only when it is not
+        a renderable swatch), and a compact "✕ Delete" ``Button`` -- so a
+        per-row delete is unambiguously tied to one highlight. All children
+        are stacked full-width inside the card, matching the render-safety
+        rule on ``compose`` above. The delete button carries the highlight's
+        id as a plain attribute (mirroring ``LibraryMediaCanvas`` setting
+        ``button.media_id``) so the screen's class-selector handler can read
+        it back.
 
         The highlight list always renders in full above the add form. The
         add form itself (the three inputs + "Add highlight" button) is
@@ -386,19 +487,31 @@ class LibraryMediaViewer(Vertical):
             )
         else:
             for index, highlight in enumerate(self.highlights):
-                yield Static(
-                    highlight.display_text,
-                    id=f"library-media-highlight-{index}",
-                    markup=False,
-                )
-                delete_button = Button(
-                    "Delete highlight",
-                    id=f"library-media-highlight-delete-{index}",
-                    classes="library-canvas-action library-media-highlight-delete",
-                    compact=True,
-                )
-                delete_button.highlight_id = highlight.highlight_id
-                yield delete_button
+                # Each highlight is its own indented card (quote, optional
+                # meta, its delete) so a per-row delete is unambiguously tied
+                # to one highlight -- a flat list of identical "Delete
+                # highlight" buttons could not say which it removed.
+                with Vertical(classes="library-media-highlight-row"):
+                    yield Static(
+                        self._highlight_quote_text(highlight),
+                        id=f"library-media-highlight-{index}",
+                        markup=False,
+                    )
+                    meta_text = self._highlight_meta_text(highlight)
+                    if meta_text:
+                        yield Static(
+                            meta_text,
+                            classes="library-media-highlight-meta",
+                            markup=False,
+                        )
+                    delete_button = Button(
+                        "✕ Delete",
+                        id=f"library-media-highlight-delete-{index}",
+                        classes="library-canvas-action library-media-highlight-delete",
+                        compact=True,
+                    )
+                    delete_button.highlight_id = highlight.highlight_id
+                    yield delete_button
         with Collapsible(
             title="Add highlight",
             collapsed=True,

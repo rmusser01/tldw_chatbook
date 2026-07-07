@@ -961,7 +961,11 @@ async def test_library_shell_media_viewer_renders_seeded_highlight():
         visible = _visible_text(screen)
         assert "Important sentence" in visible
         assert "Check this" in visible
-        assert "yellow" in visible
+        # A renderable color is conveyed by a tinted "●" swatch on the quote,
+        # not by the literal word "yellow".
+        quote = screen.query_one("#library-media-highlight-0").renderable
+        assert "●" in quote.plain
+        assert any("yellow" in str(span.style).lower() for span in quote.spans)
         assert screen.query_one("#library-media-highlight-delete-0")
 
 
@@ -1354,6 +1358,30 @@ async def test_library_shell_media_content_search_shows_match_count():
         assert status == "Match 1 of 2 matches"
         assert screen._library_media_content_query == "budget"
         assert screen._library_media_content_match_index == 0
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_highlights_matches_in_body():
+    """While searching, each query occurrence in the content body is styled."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+
+        content = screen.query_one("#library-media-viewer-content-text").renderable
+        # Rendered as a Rich Text with a styled span over each "budget".
+        highlighted = [
+            content.plain[span.start : span.end]
+            for span in content.spans
+            if str(span.style)
+        ]
+        assert highlighted.count("budget") == 2
+        assert all(part.lower() == "budget" for part in highlighted)
 
 
 @pytest.mark.asyncio

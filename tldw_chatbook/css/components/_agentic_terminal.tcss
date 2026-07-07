@@ -683,10 +683,32 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     margin: 0 0 1 0;
 }
 
+/* Title: brightest + bold so it anchors the viewer; metadata recedes (muted)
+   so the two read as distinct tiers instead of one wall of text. */
+#library-media-viewer-title {
+    width: 100%;
+    text-style: bold;
+    color: $ds-text-primary;
+    margin: 0 0 1 0;
+}
+
+#library-media-viewer-meta {
+    width: 100%;
+    color: $ds-text-muted;
+    margin: 0 0 1 0;
+}
+
+/* Section headers: bold + a thin top rule so Content / Analysis / Highlights
+   read as real section boundaries the eye can find without reading. */
 #library-media-viewer-content-title,
 #library-media-viewer-analysis-title,
 #library-media-viewer-highlights-title {
-    margin: 1 0 0 0;
+    width: 100%;
+    text-style: bold;
+    color: $ds-text-primary;
+    border-top: solid $ds-grid-line;
+    padding: 1 0 0 0;
+    margin: 1 0 1 0;
 }
 
 #library-media-content-search {
@@ -739,9 +761,11 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
 
 #library-media-viewer-content {
     /* Bounded so short content stays compact and long content scrolls inside
-       this region; height:1fr here ballooned the pane and split the sections. */
+       this region; height:1fr here ballooned the pane and split the sections.
+       max-height is generous so typical content shows in full (only long
+       transcripts engage the inner scroll), reducing nested-scroll friction. */
     height: auto;
-    max-height: 14;
+    max-height: 18;
     min-height: 3;
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
@@ -766,6 +790,25 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
    so it is neither adjacent to Edit nor visually competing with it. */
 .library-media-action-danger {
     margin: 0 0 0 4;
+    color: $ds-text-muted;
+}
+
+/* Each highlight is an indented card so its quote, meta, and delete read as
+   one unit -- a per-row delete then clearly belongs to a single highlight. */
+.library-media-highlight-row {
+    width: 100%;
+    height: auto;
+    border-left: solid $ds-grid-line;
+    padding: 0 0 0 1;
+    margin: 0 0 1 0;
+}
+
+.library-media-highlight-meta {
+    width: 100%;
+    color: $ds-text-muted;
+}
+
+.library-media-highlight-delete {
     color: $ds-text-muted;
 }
 
