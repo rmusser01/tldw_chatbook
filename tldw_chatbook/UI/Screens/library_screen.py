@@ -650,6 +650,35 @@ class LibraryScreen(BaseAppScreen):
         return fallback
 
     @staticmethod
+    def _sanitize_media_field(value: Any, *, max_length: int) -> str:
+        """Sanitize a user-entered media field at the UI boundary.
+
+        Runs the shared ``input_validation`` helpers before the value is
+        handed to a persistence service (``update_media_item`` /
+        ``create_highlight`` / ``save_analysis_version``), so over-long
+        input is truncated and control characters are stripped, and any
+        HTML/script markup that trips ``validate_text_input`` is neutralized
+        -- keeping unsafe or oversized content from reaching storage. Normal
+        text (including a lone ``<``/``>`` in prose) is returned unchanged.
+
+        Args:
+            value: The raw widget value to sanitize.
+            max_length: Maximum length to allow before truncation.
+
+        Returns:
+            The sanitized field value.
+        """
+        text = sanitize_string(str(value or ""), max_length=max_length)
+        if not validate_text_input(text, max_length=max_length, allow_html=False):
+            # A dangerous HTML/script pattern was detected: break it up
+            # (drop the angle brackets and inline handlers) but keep the
+            # rest of the field rather than discarding user content.
+            text = text.replace("<", "").replace(">", "")
+            for pattern in ("javascript:", "onclick=", "onerror="):
+                text = text.replace(pattern, "")
+        return text
+
+    @staticmethod
     def _safe_sync_scope_text(value: Any, *, max_length: int = 200) -> str | None:
         """Return a validated Sync scope value or None when unsafe/empty."""
 
@@ -2765,8 +2794,18 @@ class LibraryScreen(BaseAppScreen):
         except Exception:
             logger.warning(f"Failed to load Library media detail for {media_id!r}.", exc_info=True)
             detail = None
+        # Discard out-of-order results: if the user has since selected a
+        # different media row (or left the viewer), a slower in-flight fetch
+        # for the previous selection must not overwrite the current one. The
+        # highlights fetch is a second await point, so re-check after it too
+        # and store detail + highlights together only when still current.
+        if media_id != self._selected_media_id or self._library_media_view != "viewer":
+            return
+        highlights = await self._fetch_library_media_highlights(media_id)
+        if media_id != self._selected_media_id or self._library_media_view != "viewer":
+            return
         self._library_media_detail = detail if isinstance(detail, Mapping) else None
-        self._library_media_highlights = await self._fetch_library_media_highlights(media_id)
+        self._library_media_highlights = highlights
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -3048,7 +3087,14 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
         if media_id:
-            self.run_worker(self._refresh_library_media_detail(media_id))
+            # Exclusive in its own group so rapidly switching rows cancels the
+            # previous in-flight detail fetch instead of letting a slower older
+            # fetch finish and overwrite the newer selection's viewer.
+            self.run_worker(
+                self._refresh_library_media_detail(media_id),
+                exclusive=True,
+                group="library_media_detail",
+            )
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-media-back")
@@ -3117,7 +3163,16 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_editing = False
             self.refresh(recompose=True)
             return
-        keywords = [item.strip() for item in keywords_raw.split(",") if item.strip()]
+        # Validate/sanitize each user-entered field at the UI boundary before
+        # it reaches the persistence service.
+        title = self._sanitize_media_field(title, max_length=1000)
+        author = self._sanitize_media_field(author, max_length=1000)
+        url = self._sanitize_media_field(url, max_length=2000)
+        keywords = [
+            cleaned
+            for item in keywords_raw.split(",")
+            if (cleaned := self._sanitize_media_field(item, max_length=200).strip())
+        ]
         self.run_worker(
             self._save_library_media_edit(
                 media_id,
@@ -3174,6 +3229,12 @@ class LibraryScreen(BaseAppScreen):
                     keywords=keywords,
                     isolate_in_worker=True,
                 )
+                # Keep the media list's local snapshot in step with the write
+                # so navigating back shows the new title/author/url/keywords
+                # immediately, not the pre-edit values until a full refetch.
+                self._patch_local_media_record(
+                    media_id, title=title, author=author, url=url, keywords=keywords
+                )
             except Exception:
                 logger.warning(
                     f"Failed to save Library media edit for {media_id!r}.", exc_info=True
@@ -3185,6 +3246,38 @@ class LibraryScreen(BaseAppScreen):
             self._notify_library_media_edit_warning("Media editing is unavailable.")
         self._library_media_editing = False
         await self._refresh_library_media_detail(media_id)
+
+    def _patch_local_media_record(
+        self,
+        media_id: str,
+        *,
+        title: str,
+        author: str,
+        url: str,
+        keywords: list[str],
+    ) -> None:
+        """Update the cached media snapshot record after a saved metadata edit.
+
+        The viewer re-fetches its detail from the backend, but the media
+        *list* is rendered from ``_local_source_records['media']`` (seeded
+        once at load), so without this the list keeps showing the pre-edit
+        fields until a full snapshot refresh. Only the record whose id
+        matches ``media_id`` is replaced; all others are passed through
+        unchanged.
+
+        Args:
+            media_id: The edited media item's id.
+            title: Saved title value.
+            author: Saved author value.
+            url: Saved URL value.
+            keywords: Saved keywords list.
+        """
+        self._local_source_records["media"] = tuple(
+            dict(record, title=title, author=author, url=url, keywords=list(keywords))
+            if self._source_record_id(record) == media_id
+            else record
+            for record in self._local_source_records.get("media", ())
+        )
 
     def _notify_library_media_edit_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed media-edit save.
@@ -3336,9 +3429,13 @@ class LibraryScreen(BaseAppScreen):
             color = self.query_one("#library-media-highlight-color", Input).value
         except (NoMatches, QueryError):
             return
-        quote = quote.strip()
+        # Validate/sanitize each user-entered field at the UI boundary before
+        # it reaches the persistence service.
+        quote = self._sanitize_media_field(quote, max_length=10000).strip()
         if not quote:
             return
+        note = self._sanitize_media_field(note, max_length=10000).strip() or None
+        color = self._sanitize_media_field(color, max_length=100).strip() or None
         # Exclusive in its own group so a rapid double-press cancels the first
         # add instead of inserting the same highlight twice (the add write is
         # not idempotent, unlike delete).
@@ -3346,8 +3443,8 @@ class LibraryScreen(BaseAppScreen):
             self._add_library_media_highlight(
                 media_id,
                 quote=quote,
-                note=note.strip() or None,
-                color=color.strip() or None,
+                note=note,
+                color=color,
             ),
             exclusive=True,
             group="library_media_highlight_add",
@@ -3690,6 +3787,11 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_editing_analysis = False
             self.refresh(recompose=True)
             return
+        # Validate/sanitize the user-entered analysis at the UI boundary
+        # before it reaches the persistence service.
+        analysis_content = self._sanitize_media_field(
+            analysis_content, max_length=100000
+        )
         detail = (
             self._library_media_detail
             if isinstance(self._library_media_detail, Mapping)

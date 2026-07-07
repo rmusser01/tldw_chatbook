@@ -230,20 +230,27 @@ def find_content_matches(content: str | None, query: str | None) -> tuple[int, .
     is responsible for scrolling to (and optionally highlighting) the
     resulting line indices.
 
+    The query is stripped before matching so a padded query (e.g. a
+    trailing space from the search box) counts and scrolls to the same
+    lines the viewer highlights -- the highlighter strips too, so both
+    stay in lockstep regardless of what the caller passes.
+
     Args:
         content: Full content/transcript text to search within. Tolerated
             to be None/blank, which yields no matches.
-        query: Search text to look for. Tolerated to be None/blank, which
-            yields no matches.
+        query: Search text to look for. Tolerated to be None/blank (or
+            whitespace-only), which yields no matches.
 
     Returns:
         Ordered (ascending) line indices of matching lines, or an empty
-        tuple when either ``content`` or ``query`` is blank, or there are
-        no matches.
+        tuple when either ``content`` or the stripped ``query`` is blank,
+        or there are no matches.
     """
     if not content or not query:
         return ()
-    needle = query.lower()
+    needle = query.strip().lower()
+    if not needle:
+        return ()
     return tuple(
         index
         for index, line in enumerate(content.split("\n"))

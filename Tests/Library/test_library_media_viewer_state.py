@@ -453,6 +453,24 @@ def test_find_content_matches_empty_query_returns_empty_tuple():
     assert find_content_matches(content, "") == ()
 
 
+def test_find_content_matches_strips_surrounding_whitespace_in_query():
+    """A padded query matches the same lines as its trimmed form.
+
+    The in-content highlighter strips the query, so match-finding/scrolling
+    must strip too or the status/scroll would disagree with the highlights.
+    """
+    content = "alpha line\nbudget line\ncharlie"
+
+    assert find_content_matches(content, "  budget  ") == (1,)
+
+
+def test_find_content_matches_whitespace_only_query_returns_empty_tuple():
+    """A whitespace-only query is treated as blank (no matches)."""
+    content = "one\ntwo\nthree"
+
+    assert find_content_matches(content, "   ") == ()
+
+
 def test_find_content_matches_empty_content_returns_empty_tuple():
     """Blank content returns no matches even when a query is given."""
     assert find_content_matches("", "anything") == ()

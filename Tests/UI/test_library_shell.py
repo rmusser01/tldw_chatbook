@@ -797,6 +797,113 @@ async def test_library_shell_media_edit_save_persists_and_exits_edit_mode():
         assert title == "Interview Recording (Revised)"
 
 
+async def _open_media_edit_and_save_title(screen, pilot, new_title):
+    """Open media-1's edit form, set the title, save, and wait for completion."""
+    screen.query_one("#library-row-browse-media").press()
+    await _wait_for_selector(screen, pilot, "#library-media-row-1")
+    screen.query_one("#library-media-row-1").press()
+    await _wait_for_selector(screen, pilot, "#library-media-edit")
+
+    screen.query_one("#library-media-edit").press()
+    await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+    screen.query_one("#library-media-edit-title", Input).value = new_title
+    screen.query_one("#library-media-edit-save").press()
+
+    service = screen.app_instance.media_reading_scope_service
+    for _ in range(150):
+        if service.update_calls and not screen._library_media_editing:
+            break
+        await pilot.pause(0.02)
+    else:
+        raise AssertionError(f"Save never completed. Visible: {_visible_text(screen)}")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_edit_save_updates_list_snapshot_cache():
+    """Saving a metadata edit updates the cached list snapshot, so the media
+    list shows the new title immediately instead of the pre-edit value."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_edit_and_save_title(screen, pilot, "Renamed In List")
+
+        # The cached list snapshot record now carries the new title.
+        cached = {
+            screen._source_record_id(r): r
+            for r in screen._local_source_records.get("media", ())
+        }
+        assert cached["media-1"]["title"] == "Renamed In List"
+
+        # ...and the list view reflects it after navigating back.
+        screen.query_one("#library-media-back").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        assert "Renamed In List" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_edit_save_sanitizes_user_input():
+    """User-entered edit fields are sanitized at the UI boundary, so HTML/script
+    markup never reaches the persistence service."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_edit_and_save_title(
+            screen, pilot, "Clean<script>alert(1)</script>Title"
+        )
+
+        sent_title = screen.app_instance.media_reading_scope_service.update_calls[-1]["title"]
+        assert "<script" not in sent_title.lower()
+        assert "</script" not in sent_title.lower()
+        # ...but the surrounding legitimate text is preserved.
+        assert "Clean" in sent_title
+        assert "Title" in sent_title
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_detail_race_discards_stale_fetch():
+    """A detail fetch that completes for a no-longer-selected media id must be
+    discarded instead of overwriting the currently-open viewer."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+        for _ in range(150):
+            detail = screen._library_media_detail
+            if isinstance(detail, dict) and str(detail.get("id")) == "media-1":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("media-1 detail never loaded.")
+        assert screen._selected_media_id == "media-1"
+
+        # Simulate a slower in-flight fetch for the previously-selected media-2
+        # completing now: it must not overwrite media-1's detail.
+        await screen._refresh_library_media_detail("media-2")
+
+        detail = screen._library_media_detail
+        assert isinstance(detail, dict)
+        assert str(detail.get("id")) == "media-1"
+
+
 @pytest.mark.asyncio
 async def test_library_shell_media_edit_cancel_discards():
     """Cancelling the edit form discards changes without calling the service."""
