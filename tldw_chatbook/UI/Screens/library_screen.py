@@ -3039,7 +3039,24 @@ class LibraryScreen(BaseAppScreen):
         # same stale-race guard as ``_refresh_library_media_detail``.
         if note_id != self._selected_note_id or self._library_notes_view != "editor":
             return
-        self._library_note_detail = detail if isinstance(detail, Mapping) else None
+        if not isinstance(detail, Mapping):
+            # The note no longer exists -- deleted elsewhere, or a stale
+            # ghost row from an already-out-of-date list snapshot. Leaving
+            # ``_library_note_detail`` at ``None`` here would strand the
+            # canvas on the "Loading note…" placeholder forever (it never
+            # becomes a real dict). Fall back to the list view instead of
+            # that dead end, mirroring the delete-success flow's full
+            # snapshot reload.
+            logger.info(
+                f"Library note {note_id!r} is no longer available; returning to list."
+            )
+            self._reset_library_note_editor_state()
+            self._notify_library_note_missing_warning()
+            self._refresh_local_source_snapshot()
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        self._library_note_detail = detail
         editor_state = build_library_note_editor_state(self._library_note_detail)
         self._library_note_version = editor_state.version
         self._library_note_dirty = False
@@ -4277,6 +4294,12 @@ class LibraryScreen(BaseAppScreen):
             return
 
         self._reset_library_note_editor_state()
+        # Clear any active filter (mirroring the create flow in
+        # ``_create_library_note``): the filtered result set is now stale,
+        # and leaving it in place would let the just-deleted note keep
+        # rendering as a ghost row until the filter box is resubmitted.
+        self._library_notes_filter = ""
+        self._library_notes_filter_records = None
         # Reuses the same full local-source reload Task 6's create flow
         # uses (already its own exclusive worker via @work) so the list
         # view and the rail's Notes count both drop the deleted note.
@@ -4293,6 +4316,17 @@ class LibraryScreen(BaseAppScreen):
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity="warning")
+
+    def _notify_library_note_missing_warning(self) -> None:
+        """Surface a quiet warning when an opened note is no longer available.
+
+        Used by ``_refresh_library_note_detail`` when the fetched detail
+        resolves to nothing -- the note was deleted elsewhere, or the row
+        pressed was already a stale ghost row.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify("That note is no longer available.", severity="warning")
 
     @on(Button.Pressed, "#library-notes-create-blank")
     def handle_library_notes_create_blank(self, event: Button.Pressed) -> None:

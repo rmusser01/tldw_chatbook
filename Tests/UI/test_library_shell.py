@@ -3090,6 +3090,134 @@ async def test_library_shell_note_delete_stale_version_rearms_the_editor():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_filtered_delete_refreshes_list_without_ghost():
+    """Deleting a note opened from a filtered list must clear the active
+    filter and refresh from the full snapshot, so the deleted note does
+    not linger as a ghost row in the (now-stale) filtered results
+    (final-review finding, part A).
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        box = screen.query_one("#library-notes-filter", Input)
+        box.value = "retro"
+        box.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+
+        # The filter narrows the list to just "Q3 retro" (n-1).
+        assert not any(
+            "Reading list" in str(getattr(button, "label", ""))
+            for button in screen.query(".library-notes-row")
+        )
+        assert screen._library_notes_filter == "retro"
+
+        screen.query_one("#library-notes-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        assert screen._selected_note_id == "n-1"
+
+        screen.query_one("#library-note-delete").press()
+        await _wait_for_selector(screen, pilot, "#library-note-delete-confirm")
+        screen.query_one("#library-note-delete-confirm").press()
+
+        service = app.notes_scope_service
+        for _ in range(150):
+            if service.delete_calls and screen._library_notes_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Delete never completed. Visible text: {_visible_text(screen)}"
+            )
+
+        rows_text: list[str] = []
+        for _ in range(150):
+            rows_text = [
+                str(getattr(button, "label", ""))
+                for button in screen.query(".library-notes-row")
+            ]
+            if any("Reading list" in text for text in rows_text) and not any(
+                "Q3 retro" in text for text in rows_text
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"List never settled on the refreshed (unfiltered) snapshot: {rows_text}"
+            )
+
+        assert screen._library_notes_filter == ""
+        assert screen._library_notes_filter_records is None
+        filter_box = screen.query_one("#library-notes-filter", Input)
+        assert filter_box.value == ""
+        assert not any("Q3 retro" in text for text in rows_text), (
+            f"Deleted note still rendered as a ghost row: {rows_text}"
+        )
+        assert any("Reading list" in text for text in rows_text), (
+            f"Remaining note missing from the refreshed list: {rows_text}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_opening_missing_note_falls_back_to_list():
+    """Pressing a row whose note has since vanished (a ghost row, or a note
+    deleted elsewhere) must fall back to the list view instead of stranding
+    the canvas on the "Loading note…" placeholder forever (final-review
+    finding, part B).
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        row_button = screen.query_one("#library-notes-row-0")
+        assert row_button.note_id == "n-1"
+
+        # Simulate the note vanishing out from under the still-rendered row
+        # (deleted elsewhere, or simply a stale/ghost row): the fake's
+        # ``get_note_detail`` now resolves to ``None`` for "n-1".
+        service = app.notes_scope_service
+        service.notes = tuple(
+            note for note in service.notes if note.get("id") != "n-1"
+        )
+
+        row_button.press()
+
+        for _ in range(150):
+            if screen._library_notes_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Never fell back to the list. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+
+        assert not screen.query("#library-note-loading"), (
+            "Stuck on the permanent 'Loading note…' placeholder."
+        )
+        assert not screen.query("#library-note-title")
+        assert screen._library_note_detail is None
+        assert screen._selected_note_id == ""
+        app.notify.assert_called_once()
+        assert app.notify.call_args.kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
 async def test_library_shell_note_preview_toggle_shows_markdown_and_restores_edit():
     """Preview swaps the body TextArea for a read-only Markdown widget
     rendering the *current* (unsaved) text; toggling back to Edit restores
