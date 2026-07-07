@@ -42,6 +42,11 @@ class LibraryNotesCanvas(Vertical):
             Reload actions -- in addition to the normal editor fields.
             ``editor_state`` must already reflect the user's kept text
             (never the server's stale detail) when this is set.
+        confirming_delete: When ``True`` (editor mode only, and only when
+            ``conflict`` is not also set), renders the inline delete
+            confirmation affordance -- a quiet explanatory line plus
+            Delete/Cancel actions -- in place of the normal action row.
+            Mirrors ``LibraryMediaViewer.confirming_delete``.
     """
 
     def __init__(
@@ -54,6 +59,7 @@ class LibraryNotesCanvas(Vertical):
         editor_state: LibraryNoteEditorState | None = None,
         preview: bool = False,
         conflict: bool = False,
+        confirming_delete: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -64,6 +70,7 @@ class LibraryNotesCanvas(Vertical):
         self.editor_state = editor_state
         self.preview = preview
         self.conflict = conflict
+        self.confirming_delete = confirming_delete
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -151,64 +158,89 @@ class LibraryNotesCanvas(Vertical):
                 classes="destination-purpose",
                 markup=False,
             )
+        confirming_delete = self.confirming_delete and not self.conflict
+        if confirming_delete:
+            # A single full-width Static above the toolbar, not inside it --
+            # mixing a Static with the toolbar's Buttons is the known
+            # non-rendering failure mode called out on the media viewer's
+            # ``compose`` (the pattern this mirrors).
+            yield Static(
+                "Delete this note? This cannot be undone from Library.",
+                id="library-note-delete-confirm-copy",
+                markup=False,
+            )
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
-            if self.conflict:
+            if confirming_delete:
                 yield Button(
-                    "Overwrite",
-                    id="library-note-conflict-overwrite",
+                    "Delete",
+                    id="library-note-delete-confirm",
+                    classes="library-canvas-action library-media-action-danger",
+                    compact=True,
+                )
+                yield Button(
+                    "Cancel",
+                    id="library-note-delete-cancel",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+            else:
+                if self.conflict:
+                    yield Button(
+                        "Overwrite",
+                        id="library-note-conflict-overwrite",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Reload",
+                        id="library-note-conflict-reload",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                yield Button(
+                    "Save",
+                    id="library-note-save",
                     classes="library-canvas-action",
                     compact=True,
                 )
                 yield Button(
-                    "Reload",
-                    id="library-note-conflict-reload",
+                    "Preview",
+                    id="library-note-preview",
                     classes="library-canvas-action",
                     compact=True,
                 )
-            yield Button(
-                "Save",
-                id="library-note-save",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Preview",
-                id="library-note-preview",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Use in Console",
-                id="library-note-use-in-console",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Export .md",
-                id="library-note-export-md",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Export .txt",
-                id="library-note-export-txt",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Copy",
-                id="library-note-copy",
-                classes="library-canvas-action",
-                compact=True,
-            )
-            yield Button(
-                "Delete",
-                id="library-note-delete",
-                classes="library-canvas-action library-media-action-danger",
-                compact=True,
-            )
+                yield Button(
+                    "Use in Console",
+                    id="library-note-use-in-console",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Export .md",
+                    id="library-note-export-md",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Export .txt",
+                    id="library-note-export-txt",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Copy",
+                    id="library-note-copy",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Delete",
+                    id="library-note-delete",
+                    classes="library-canvas-action library-media-action-danger",
+                    compact=True,
+                )
 
     def _compose_create(self) -> ComposeResult:
         """Render the notes canvas in create mode: Blank note + template rows.

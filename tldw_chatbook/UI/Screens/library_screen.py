@@ -536,6 +536,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_autosave_state: str = "idle"
         self._library_notes_autosave_timer: Timer | None = None
         self._library_note_conflict_snapshot: LibraryNoteEditorState | None = None
+        self._library_note_confirming_delete: bool = False
         # Guards against the spurious ``Input.Changed`` that Textual fires
         # when an ``Input(value=...)`` widget mounts with a non-empty
         # initial value: without this, opening a note (or leaving a
@@ -2761,6 +2762,7 @@ class LibraryScreen(BaseAppScreen):
                             editor_state=build_library_note_editor_state(
                                 self._library_note_detail
                             ),
+                            confirming_delete=self._library_note_confirming_delete,
                             id="library-notes-canvas",
                         )
                 elif shell.canvas_kind == "notes":
@@ -3051,6 +3053,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_dirty = False
         self._library_note_autosave_state = "idle"
         self._library_note_conflict_snapshot = None
+        self._library_note_confirming_delete = False
         self._library_note_editor_armed = False
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
@@ -3784,6 +3787,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_dirty = False
         self._library_note_autosave_state = "idle"
         self._library_note_conflict_snapshot = None
+        self._library_note_confirming_delete = False
         self._library_note_editor_armed = False
         if note_id:
             # Exclusive in its own group so rapidly switching rows cancels the
@@ -3813,6 +3817,163 @@ class LibraryScreen(BaseAppScreen):
             return
         self._reset_library_note_editor_state()
         self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-note-delete")
+    async def handle_library_note_delete(self, event: Button.Pressed) -> None:
+        """Enter the inline delete-confirmation state for the open note.
+
+        Deleting is destructive, so the first press only swaps the normal
+        action row for a "Delete" / "Cancel" confirm affordance (mirroring
+        ``handle_library_media_delete``); the actual service call only
+        happens once the confirm button (``#library-note-delete-confirm``)
+        is pressed.
+
+        Flushes a dirty edit first (awaited) so the version the confirmed
+        delete sends is never stale; an unresolved save conflict aborts
+        entering the confirm state so the user resolves it via
+        Overwrite/Reload first, same as Back and note-row selection.
+
+        Args:
+            event: Button press event emitted by the editor's "Delete" action.
+        """
+        event.stop()
+        await self._flush_library_note_save()
+        if self._library_note_autosave_state == "conflict":
+            return
+        self._library_note_confirming_delete = True
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-note-delete-cancel")
+    def handle_library_note_delete_cancel(self, event: Button.Pressed) -> None:
+        """Discard the pending delete confirmation and restore the normal action row.
+
+        Args:
+            event: Button press event emitted by the confirm affordance's
+                "Cancel" action.
+        """
+        event.stop()
+        self._library_note_confirming_delete = False
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-note-delete-confirm")
+    def handle_library_note_delete_confirm(self, event: Button.Pressed) -> None:
+        """Hand the confirmed delete off to a worker that removes the note.
+
+        Reads the currently selected note id/version synchronously (before
+        any recompose can clear them) and defers the actual service call
+        and state mutation to ``_delete_library_note`` -- mirroring
+        ``handle_library_media_delete_confirm``.
+
+        Args:
+            event: Button press event emitted by the confirm affordance's
+                "Delete" action.
+        """
+        event.stop()
+        note_id = self._selected_note_id
+        if not note_id:
+            self._library_note_confirming_delete = False
+            self.refresh(recompose=True)
+            return
+        self.run_worker(
+            self._delete_library_note(note_id, version=self._library_note_version),
+            exclusive=True,
+            group="library_note_delete",
+        )
+
+    async def _delete_library_note(self, note_id: str, *, version: int | None) -> None:
+        """Delete the selected Library note, then return to the list view.
+
+        Calls ``delete_note`` through the offloaded service seam. The real
+        local notes backend signals a stale (optimistic-lock) ``version``
+        by raising ``ConflictError`` (mirroring ``update_note``'s
+        stale-version signaling, see ``_save_library_note``), so that
+        exception is normalized to the same falsy ``deleted`` outcome as an
+        explicit ``False`` return -- both are quiet-warning, stay-in-editor
+        outcomes here, never a crash.
+
+        Guards against a missing ``delete_note`` service the same way
+        ``_delete_library_media_item`` guards a missing
+        ``delete_media_item``.
+
+        On success, drops the note from the cached local-source snapshot by
+        re-running the full snapshot reload (the same seam Task 6's create
+        flow uses -- notes have no existing "patch the cached snapshot"
+        mutation path the way media deletes do) so the list view and the
+        rail's Notes count both reflect the deletion, resets the editor
+        state, and returns to the list view.
+
+        A stale result -- the user has since switched to a different note
+        while this delete was in flight -- is discarded before mutating any
+        shared editor state, mirroring the freshness guard in
+        ``_save_library_note``.
+
+        Args:
+            note_id: The Library note id to delete.
+            version: The note's in-memory version at confirm time.
+        """
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        delete_note = getattr(service, "delete_note", None)
+        if not callable(delete_note):
+            self._library_note_confirming_delete = False
+            self._notify_library_note_delete_warning("Note deletion is unavailable.")
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+
+        try:
+            deleted = await self._run_library_service_call(
+                delete_note,
+                scope="local_note",
+                note_id=note_id,
+                version=version,
+                user_id=self._library_notes_user_id(),
+                isolate_in_worker=True,
+            )
+        except ConflictError:
+            deleted = False
+        except Exception:
+            logger.warning(
+                f"Failed to delete Library note {note_id!r}.", exc_info=True
+            )
+            if note_id != self._selected_note_id or self._library_notes_view != "editor":
+                return
+            self._library_note_confirming_delete = False
+            self._notify_library_note_delete_warning("Could not delete this note.")
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+
+        # Discard a stale result: the user has since switched to a different
+        # note (or left the editor) while this delete was in flight.
+        if note_id != self._selected_note_id or self._library_notes_view != "editor":
+            return
+
+        if not deleted:
+            self._library_note_confirming_delete = False
+            self._notify_library_note_delete_warning(
+                "This note changed elsewhere — refresh and try again."
+            )
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+
+        self._reset_library_note_editor_state()
+        # Reuses the same full local-source reload Task 6's create flow
+        # uses (already its own exclusive worker via @work) so the list
+        # view and the rail's Notes count both drop the deleted note.
+        self._refresh_local_source_snapshot()
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    def _notify_library_note_delete_warning(self, message: str) -> None:
+        """Surface a quiet warning notice for a failed Library note delete.
+
+        Args:
+            message: Human-readable warning text to notify with.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
 
     @on(Button.Pressed, "#library-notes-create-blank")
     def handle_library_notes_create_blank(self, event: Button.Pressed) -> None:
@@ -3977,6 +4138,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_note_dirty = False
         self._library_note_autosave_state = "idle"
         self._library_note_conflict_snapshot = None
+        self._library_note_confirming_delete = False
         self._library_note_editor_armed = False
         self._library_notes_filter = ""
         self._library_notes_filter_records = None

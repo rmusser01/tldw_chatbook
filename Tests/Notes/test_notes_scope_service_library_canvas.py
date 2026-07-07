@@ -203,3 +203,70 @@ async def test_create_from_note_template_round_trips_title_and_content(notes_sco
     assert detail["title"] == resolved_title
     assert detail["content"] == resolved_content
     assert detail["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_with_correct_version_removes_the_note(notes_scope_service):
+    """A correct-version delete returns the real local backend's plain
+    ``True`` (``CharactersRAGDB.soft_delete_note``'s success return), and
+    the note is gone from both ``get_note_detail`` (soft-deleted rows are
+    filtered out, so this is None/missing exactly like a never-existing
+    id) and ``list_notes``. The Library screen's delete confirm handler
+    depends on this truthy/removed shape.
+    """
+    created = await notes_scope_service.save_note(
+        scope="local_note", title="To delete", content="body", user_id=USER_ID,
+    )
+
+    deleted = await notes_scope_service.delete_note(
+        scope="local_note", note_id=created, version=1, user_id=USER_ID,
+    )
+    assert deleted is True
+
+    detail = await notes_scope_service.get_note_detail(
+        scope="local_note", note_id=created, user_id=USER_ID
+    )
+    assert detail is None
+
+    remaining = notes_scope_service.local_notes_service.list_notes(USER_ID, limit=100)
+    assert all(note["id"] != created for note in remaining)
+
+
+@pytest.mark.asyncio
+async def test_delete_with_stale_version_raises_conflict_and_does_not_remove(
+    notes_scope_service,
+):
+    """A stale ``version`` on delete does not return a falsy value -- the
+    real local backend (``CharactersRAGDB.soft_delete_note``) raises
+    ``ConflictError`` on the optimistic-lock mismatch, exactly like
+    ``update_note``, and the note is left in place. The Library screen's
+    delete confirm handler must catch this exception and treat it the same
+    as a falsy result (quiet warning, stay in the editor) rather than
+    letting it propagate.
+    """
+    created = await notes_scope_service.save_note(
+        scope="local_note", title="Original", content="body", user_id=USER_ID,
+    )
+    await notes_scope_service.save_note(
+        scope="local_note",
+        title="Updated",
+        content="body2",
+        note_id=created,
+        version=1,
+        user_id=USER_ID,
+    )  # note is now at version 2
+
+    with pytest.raises(ConflictError):
+        await notes_scope_service.delete_note(
+            scope="local_note",
+            note_id=created,
+            version=1,  # stale: the note is already at version 2
+            user_id=USER_ID,
+        )
+
+    detail = await notes_scope_service.get_note_detail(
+        scope="local_note", note_id=created, user_id=USER_ID
+    )
+    assert detail is not None
+    assert detail["title"] == "Updated"
+    assert detail["version"] == 2
