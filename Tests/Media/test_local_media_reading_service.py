@@ -396,6 +396,84 @@ def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_facto
     assert db.get_media_read_it_later_state(media_id) is None
 
 
+def test_local_service_get_media_detail_reflects_read_it_later_toggle_used_by_viewer(memory_db_factory):
+    """Regression test for the Library viewer's read-it-later button.
+
+    The viewer decides its saved state and re-fetches via
+    ``get_media_detail``/``get_media_item`` (not the raw
+    ``save_to_read_it_later`` return value) -- this proves that fetch path
+    reflects the toggle, including the real backend's asymmetric shape:
+    after removal, ``is_read_it_later`` is absent entirely (the
+    ``MediaReadItLaterState`` row is deleted), not merely False.
+    """
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    service = LocalMediaReadingService(db)
+
+    before = service.get_media_detail(media_id)
+    assert "is_read_it_later" not in before
+
+    service.save_to_read_it_later(media_id)
+    after_save = service.get_media_detail(media_id)
+    assert after_save["is_read_it_later"] is True
+    assert after_save["saved_at"] is not None
+
+    # get_media_item (the exact call the viewer's detail fetch uses) must
+    # also reflect the saved state.
+    item_after_save = service.get_media_item(media_id, include_content=True, include_versions=True)
+    assert item_after_save["is_read_it_later"] is True
+
+    service.remove_from_read_it_later(media_id)
+    after_remove = service.get_media_detail(media_id)
+    assert "is_read_it_later" not in after_remove
+    assert "saved_at" not in after_remove
+
+
+def test_local_service_get_media_item_surfaces_latest_document_version_analysis(memory_db_factory):
+    """Regression test for the Library viewer's analysis section.
+
+    ``analysis_content`` lives on ``DocumentVersions``, not the top-level
+    Media row -- this proves ``save_analysis_version`` + a re-fetched
+    ``get_media_item(..., include_versions=True)`` round-trips the analysis
+    text via the newest version, ordered ``versions[0]`` first (matching
+    ``get_all_document_versions``'s ``ORDER BY version_number DESC``).
+    """
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Report", content="Body text", media_type="article", keywords=[]
+    )
+    service = LocalMediaReadingService(db)
+
+    before = service.get_media_item(media_id, include_versions=True, include_version_content=True)
+    assert before.get("analysis_content") is None
+
+    first_save = service.save_analysis_version(
+        media_id, content="Body text", analysis_content="First analysis"
+    )
+    assert first_save["media_id"] == media_id
+
+    after_first_save = service.get_media_item(
+        media_id, include_content=True, include_versions=True, include_version_content=True
+    )
+    versions = after_first_save["versions"]
+    # add_media_with_keywords already created version 1 (analysis_content
+    # None); save_analysis_version created a second version rather than
+    # mutating it.
+    assert len(versions) == 2
+    assert versions[0]["analysis_content"] == "First analysis"
+    assert versions[0]["version_number"] == max(v["version_number"] for v in versions)
+
+    # Editing again creates a new version rather than mutating the old one,
+    # and the newest version's analysis is what the viewer must show.
+    service.save_analysis_version(media_id, content="Body text", analysis_content="Revised analysis")
+    after_second_save = service.get_media_item(media_id, include_content=True, include_versions=True)
+    versions_after_revision = after_second_save["versions"]
+    assert versions_after_revision[0]["analysis_content"] == "Revised analysis"
+    assert len(versions_after_revision) == len(versions) + 1
+    # Older version's analysis is preserved, not overwritten.
+    assert any(v["analysis_content"] == "First analysis" for v in versions_after_revision[1:])
+
+
 def test_local_service_saves_direct_reading_item_with_content(memory_db_factory):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)

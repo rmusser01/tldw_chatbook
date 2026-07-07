@@ -15,7 +15,7 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches, QueryError
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...config import save_setting_to_cli_config
@@ -506,6 +506,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing: bool = False
         self._library_media_confirming_delete: bool = False
         self._library_media_highlights: list[dict[str, Any]] = []
+        self._library_media_editing_analysis: bool = False
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2549,6 +2550,7 @@ class LibraryScreen(BaseAppScreen):
                             highlights=build_library_media_highlight_rows(
                                 self._library_media_highlights
                             ),
+                            editing_analysis=self._library_media_editing_analysis,
                             id="library-media-viewer",
                         )
                 elif shell.canvas_kind == "media":
@@ -2880,6 +2882,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing = False
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
+        self._library_media_editing_analysis = False
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -2971,6 +2974,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_editing = False
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
+        self._library_media_editing_analysis = False
         if media_id:
             self.run_worker(self._refresh_library_media_detail(media_id))
         self.refresh(recompose=True)
@@ -2986,6 +2990,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_view = "list"
         self._library_media_editing = False
         self._library_media_confirming_delete = False
+        self._library_media_editing_analysis = False
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-media-edit")
@@ -3217,6 +3222,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_view = "list"
             self._library_media_detail = None
             self._library_media_highlights = []
+            self._library_media_editing_analysis = False
             self._selected_media_id = ""
         if self.is_mounted:
             self.refresh(recompose=True)
@@ -3357,6 +3363,201 @@ class LibraryScreen(BaseAppScreen):
 
     def _notify_library_media_highlight_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed highlight mutation.
+
+        Args:
+            message: Human-readable warning text to notify with.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-media-read-later")
+    def handle_library_media_read_later(self, event: Button.Pressed) -> None:
+        """Toggle the open media item's read-it-later state via a worker.
+
+        Reads the currently known saved state from ``_library_media_detail``
+        (already reflecting ``is_read_it_later`` from the last fetch) to
+        decide whether to save or remove, mirroring how
+        ``handle_library_media_delete_confirm`` reads state synchronously
+        before deferring to a worker.
+
+        Args:
+            event: Button press event emitted by the viewer's "Read it
+                later" / "Remove from read-it-later" action.
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        if not media_id:
+            return
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else {}
+        )
+        currently_saved = bool(detail.get("is_read_it_later"))
+        self.run_worker(
+            self._toggle_library_media_read_later(media_id, currently_saved=currently_saved)
+        )
+
+    async def _toggle_library_media_read_later(
+        self, media_id: str, *, currently_saved: bool
+    ) -> None:
+        """Save or remove the read-it-later state, then re-fetch detail.
+
+        Guards against a missing ``save_to_read_it_later``/
+        ``remove_from_read_it_later`` service or a failed write by logging
+        the failure and surfacing a quiet notice, but always re-fetches
+        detail afterwards so the button's label never shows a stale state.
+
+        Args:
+            media_id: The Library media item id to toggle.
+            currently_saved: Whether the item is currently saved for
+                read-it-later (determines whether to save or remove).
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        method_name = "remove_from_read_it_later" if currently_saved else "save_to_read_it_later"
+        method = getattr(service, method_name, None)
+        if callable(method):
+            try:
+                await self._run_library_service_call(
+                    method,
+                    mode="local",
+                    media_id=media_id,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to toggle Library media read-it-later state for {media_id!r}.",
+                    exc_info=True,
+                )
+                self._notify_library_media_read_later_warning(
+                    "Could not update read-it-later status."
+                )
+        else:
+            self._notify_library_media_read_later_warning("Read-it-later is unavailable.")
+        await self._refresh_library_media_detail(media_id)
+
+    def _notify_library_media_read_later_warning(self, message: str) -> None:
+        """Surface a quiet warning notice for a failed read-it-later toggle.
+
+        Args:
+            message: Human-readable warning text to notify with.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-media-analysis-edit")
+    def handle_library_media_analysis_edit(self, event: Button.Pressed) -> None:
+        """Enter analysis edit mode for the open Library media viewer.
+
+        Args:
+            event: Button press event emitted by the analysis section's
+                "Edit analysis" action.
+        """
+        event.stop()
+        self._library_media_editing_analysis = True
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-analysis-cancel")
+    def handle_library_media_analysis_cancel(self, event: Button.Pressed) -> None:
+        """Discard in-progress analysis edits and return to the read-only view.
+
+        Args:
+            event: Button press event emitted by the analysis edit form's
+                "Cancel" action.
+        """
+        event.stop()
+        self._library_media_editing_analysis = False
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-analysis-save")
+    def handle_library_media_analysis_save(self, event: Button.Pressed) -> None:
+        """Read the analysis edit TextArea and hand the write off to a worker.
+
+        Reads the edited analysis text directly (before any recompose
+        removes the TextArea) and the current document content from the
+        loaded detail -- ``save_analysis_version`` requires both, since it
+        creates a new ``DocumentVersions`` row carrying the (unchanged)
+        content alongside the edited analysis. Mirrors how
+        ``handle_library_media_edit_save`` reads its form inputs
+        synchronously before deferring to a worker.
+
+        Args:
+            event: Button press event emitted by the analysis edit form's
+                "Save" action.
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        if not media_id:
+            self._library_media_editing_analysis = False
+            self.refresh(recompose=True)
+            return
+        try:
+            analysis_content = self.query_one(
+                "#library-media-analysis-edit-text", TextArea
+            ).text
+        except (NoMatches, QueryError):
+            self._library_media_editing_analysis = False
+            self.refresh(recompose=True)
+            return
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else {}
+        )
+        content = str(detail.get("content") or "")
+        self.run_worker(
+            self._save_library_media_analysis(
+                media_id,
+                content=content,
+                analysis_content=analysis_content,
+            )
+        )
+
+    async def _save_library_media_analysis(
+        self, media_id: str, *, content: str, analysis_content: str
+    ) -> None:
+        """Persist an analysis edit as a new document version, then re-fetch detail.
+
+        Guards against a missing ``save_analysis_version`` service or a
+        failed write by logging the failure and surfacing a quiet notice,
+        but always re-fetches detail afterwards so the viewer never shows a
+        stale/half-applied edit. Analysis (re)generation via an LLM is
+        explicitly out of scope -- this only persists caller-supplied text.
+
+        Args:
+            media_id: The Library media item id being edited.
+            content: The current document content, sent unchanged alongside
+                the edited analysis (``save_analysis_version`` requires it).
+            analysis_content: The edited analysis text to persist.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        save_analysis_version = getattr(service, "save_analysis_version", None)
+        if callable(save_analysis_version):
+            try:
+                await self._run_library_service_call(
+                    save_analysis_version,
+                    mode="local",
+                    media_id=media_id,
+                    content=content,
+                    analysis_content=analysis_content,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to save Library media analysis for {media_id!r}.", exc_info=True
+                )
+                self._notify_library_media_analysis_warning(
+                    "Could not save analysis changes; showing the latest saved version."
+                )
+        else:
+            self._notify_library_media_analysis_warning("Analysis editing is unavailable.")
+        self._library_media_editing_analysis = False
+        await self._refresh_library_media_detail(media_id)
+
+    def _notify_library_media_analysis_warning(self, message: str) -> None:
+        """Surface a quiet warning notice for a failed analysis-edit save.
 
         Args:
             message: Human-readable warning text to notify with.

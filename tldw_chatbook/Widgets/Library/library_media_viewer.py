@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_media_viewer_state import (
     LibraryMediaHighlightRow,
@@ -24,6 +24,9 @@ class LibraryMediaViewer(Vertical):
         confirming_delete: Whether the inline delete-confirmation affordance
             should render in place of the normal action row.
         highlights: Reading highlights for this media item, in display order.
+        editing_analysis: Whether the analysis edit form (a prefilled
+            ``TextArea`` + Save/Cancel) should render in place of the
+            read-only analysis text and its "Edit analysis" action.
     """
 
     def __init__(
@@ -33,6 +36,7 @@ class LibraryMediaViewer(Vertical):
         editing: bool = False,
         confirming_delete: bool = False,
         highlights: Sequence[LibraryMediaHighlightRow] = (),
+        editing_analysis: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -40,6 +44,7 @@ class LibraryMediaViewer(Vertical):
         self.editing = editing
         self.confirming_delete = confirming_delete
         self.highlights = tuple(highlights)
+        self.editing_analysis = editing_analysis
         self.styles.width = "13fr"
         self.styles.min_width = 40
 
@@ -86,17 +91,7 @@ class LibraryMediaViewer(Vertical):
                 id="library-media-viewer-content-text",
                 markup=False,
             )
-        if self.viewer.has_analysis:
-            yield Static(
-                "Analysis",
-                id="library-media-viewer-analysis-title",
-                classes="destination-section",
-            )
-            yield Static(
-                self.viewer.analysis,
-                id="library-media-viewer-analysis-text",
-                markup=False,
-            )
+        yield from self._compose_analysis()
 
         yield from self._compose_highlights()
 
@@ -153,7 +148,7 @@ class LibraryMediaViewer(Vertical):
                     compact=True,
                 )
                 yield Button(
-                    "Read it later",
+                    "Remove from read-it-later" if self.viewer.read_later else "Read it later",
                     id="library-media-read-later",
                     classes="library-canvas-action",
                     compact=True,
@@ -202,6 +197,70 @@ class LibraryMediaViewer(Vertical):
                 placeholder="Keywords (comma-separated)",
                 id="library-media-edit-keywords",
             )
+
+    def _compose_analysis(self) -> ComposeResult:
+        """Render the Analysis section: read-only text + Edit toggle, or the edit form.
+
+        Always renders (mirroring the Content section's always-present
+        placeholder) so "Edit analysis" is reachable even when no analysis
+        exists yet -- editing an empty analysis simply creates the first
+        one via ``save_analysis_version``. Analysis (re)generation via an
+        LLM is explicitly out of scope; this only edits existing text.
+
+        Returns:
+            ComposeResult for the Analysis section.
+        """
+        yield Static(
+            "Analysis",
+            id="library-media-viewer-analysis-title",
+            classes="destination-section",
+        )
+        if self.editing_analysis:
+            yield from self._compose_analysis_edit_form()
+        else:
+            yield Static(
+                self.viewer.analysis or "No analysis yet.",
+                id="library-media-viewer-analysis-text",
+                markup=False,
+            )
+            yield Button(
+                "Edit analysis",
+                id="library-media-analysis-edit",
+                classes="library-canvas-action",
+                compact=True,
+            )
+
+    def _compose_analysis_edit_form(self) -> ComposeResult:
+        """Render the analysis edit ``TextArea`` prefilled with the current analysis.
+
+        ``TextArea`` renders cleanly full-width in a plain ``Vertical``
+        (verified when this canvas's rendering approach was chosen), so
+        this follows the same stacked, render-safe shape as
+        ``_compose_edit_form``.
+
+        Returns:
+            ComposeResult for the analysis edit form.
+        """
+        with Vertical(id="library-media-analysis-edit-form"):
+            yield TextArea(
+                self.viewer.analysis,
+                id="library-media-analysis-edit-text",
+            )
+            toolbar = Horizontal(classes="ds-toolbar")
+            toolbar.styles.height = "auto"
+            with toolbar:
+                yield Button(
+                    "Save",
+                    id="library-media-analysis-save",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Cancel",
+                    id="library-media-analysis-cancel",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
 
     def _compose_highlights(self) -> ComposeResult:
         """Render the highlights section: existing rows, then the add form.

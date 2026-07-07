@@ -27,6 +27,7 @@ def test_full_detail_builds_all_metadata_lines_in_order():
         "content": "full transcript text",
         "analysis_content": "summary text",
         "version": 3,
+        "is_read_it_later": True,
     }
 
     state = build_library_media_viewer_state(detail, now=NOW)
@@ -52,6 +53,7 @@ def test_full_detail_builds_all_metadata_lines_in_order():
         "url": "http://example.com/alpha",
         "keywords": "a, b",
     }
+    assert state.read_later is True
 
 
 def test_media_type_key_fallback():
@@ -172,6 +174,102 @@ def test_content_and_analysis_absent_yields_false_flags_and_empty_strings():
     assert state.has_analysis is False
 
 
+def test_analysis_falls_back_to_latest_document_version_when_top_level_absent():
+    """Local media details never carry top-level analysis_content -- it lives on
+    DocumentVersions only, surfaced via get_media_item's ``versions`` list
+    (newest-first). The newest version's analysis_content must be surfaced.
+    """
+    detail = {
+        "media_id": "1",
+        "title": "T",
+        "type": "article",
+        "versions": [
+            {"version_number": 2, "analysis_content": "Latest analysis"},
+            {"version_number": 1, "analysis_content": None},
+        ],
+    }
+
+    state = build_library_media_viewer_state(detail, now=NOW)
+
+    assert state.analysis == "Latest analysis"
+    assert state.has_analysis is True
+
+
+def test_analysis_prefers_top_level_analysis_content_over_versions():
+    """When a top-level analysis_content IS present, it wins over versions."""
+    detail = {
+        "media_id": "1",
+        "title": "T",
+        "type": "article",
+        "analysis_content": "Top-level analysis",
+        "versions": [{"version_number": 1, "analysis_content": "Version analysis"}],
+    }
+
+    state = build_library_media_viewer_state(detail, now=NOW)
+
+    assert state.analysis == "Top-level analysis"
+
+
+def test_analysis_blank_when_latest_version_has_no_analysis_even_if_older_one_does():
+    """The latest version's analysis is authoritative -- an older version's
+    analysis is not used as a fallback when the newest version is blank
+    (e.g. after an explicit clear or a content-only rollback version).
+    """
+    detail = {
+        "media_id": "1",
+        "title": "T",
+        "type": "article",
+        "versions": [
+            {"version_number": 2, "analysis_content": None},
+            {"version_number": 1, "analysis_content": "Old analysis"},
+        ],
+    }
+
+    state = build_library_media_viewer_state(detail, now=NOW)
+
+    assert state.analysis == ""
+    assert state.has_analysis is False
+
+
+def test_analysis_blank_when_versions_absent_or_not_a_list():
+    """Missing/non-list versions field is tolerated -> blank analysis."""
+    assert build_library_media_viewer_state(
+        {"media_id": "1", "title": "T", "type": "article"}, now=NOW
+    ).analysis == ""
+    assert build_library_media_viewer_state(
+        {"media_id": "1", "title": "T", "type": "article", "versions": "not-a-list"}, now=NOW
+    ).analysis == ""
+    assert build_library_media_viewer_state(
+        {"media_id": "1", "title": "T", "type": "article", "versions": [{"analysis_content": None}, "not-a-mapping"]},
+        now=NOW,
+    ).analysis == ""
+
+
+def test_read_later_true_when_detail_flag_set():
+    """read_later reflects a truthy is_read_it_later flag on the detail."""
+    detail = {"media_id": "1", "title": "T", "type": "article", "is_read_it_later": True}
+
+    state = build_library_media_viewer_state(detail, now=NOW)
+
+    assert state.read_later is True
+
+
+def test_read_later_false_when_flag_absent_or_falsy():
+    """read_later defaults to False when the flag is absent or falsy.
+
+    Mirrors the real local backend: after
+    LocalMediaReadingService.remove_from_read_it_later, the
+    MediaReadItLaterState row is deleted entirely, so a re-fetched detail
+    has no is_read_it_later key at all (not even False).
+    """
+    assert build_library_media_viewer_state(
+        {"media_id": "1", "title": "T", "type": "article"}, now=NOW
+    ).read_later is False
+    assert build_library_media_viewer_state(
+        {"media_id": "1", "title": "T", "type": "article", "is_read_it_later": False}, now=NOW
+    ).read_later is False
+
+
 def test_whitespace_only_content_and_analysis_treated_as_blank():
     """Whitespace-only content/analysis strings are stripped to blank -> has_* False."""
     detail = {
@@ -225,6 +323,7 @@ def test_none_detail_yields_empty_state():
     assert state.has_analysis is False
     assert state.version is None
     assert state.edit_fields == {"title": "", "author": "", "url": "", "keywords": ""}
+    assert state.read_later is False
 
 
 def test_non_mapping_detail_tolerated_like_none():

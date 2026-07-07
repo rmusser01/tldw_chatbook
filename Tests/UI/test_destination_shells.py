@@ -165,6 +165,8 @@ class StaticLibraryMediaScopeService:
         self.list_highlights_calls = []
         self.create_highlight_calls = []
         self.delete_highlight_calls = []
+        self.read_it_later_calls = []
+        self.analysis_calls = []
         for item_id, quote, note, color in highlights or ():
             self._seed_highlight(item_id, quote=quote, note=note, color=color)
 
@@ -302,6 +304,112 @@ class StaticLibraryMediaScopeService:
             if str(item.get("id") or item.get("media_id") or "") != target_id
         )
         return {"ok": True, "media_id": media_id}
+
+    async def save_to_read_it_later(self, *, media_id, mode=None):
+        """Mark a media item saved for read-it-later, matching the real
+        ``media_reading_scope_service.save_to_read_it_later`` ->
+        ``LocalMediaReadingService.save_to_read_it_later`` chain (``mode``
+        accepted and discarded).
+        """
+        self.read_it_later_calls.append({"action": "save", "media_id": media_id})
+        return self._set_read_it_later_state(media_id, saved=True)
+
+    async def remove_from_read_it_later(self, *, media_id, mode=None):
+        """Clear a media item's read-it-later state, matching the real
+        ``media_reading_scope_service.remove_from_read_it_later`` ->
+        ``LocalMediaReadingService.remove_from_read_it_later`` chain
+        (``mode`` accepted and discarded).
+        """
+        self.read_it_later_calls.append({"action": "remove", "media_id": media_id})
+        return self._set_read_it_later_state(media_id, saved=False)
+
+    def _set_read_it_later_state(self, media_id, *, saved):
+        """Apply the read-it-later flag to the stored item in place.
+
+        On removal, the ``is_read_it_later``/``saved_at`` keys are dropped
+        entirely rather than set to ``False``/``None`` -- mirroring the
+        real local backend, whose ``MediaReadItLaterState`` row is deleted
+        outright on removal, so a re-fetched detail has neither key present
+        (see ``LocalMediaReadingService._enrich_with_read_it_later_state``).
+        """
+        target_id = str(media_id)
+        updated_items = []
+        saved_at = None
+        for item in self.media_items:
+            item_id = str(item.get("id") or item.get("media_id") or "")
+            if item_id == target_id:
+                merged = dict(item)
+                if saved:
+                    saved_at = merged.get("saved_at") or "2026-01-01T00:00:00Z"
+                    merged["is_read_it_later"] = True
+                    merged["saved_at"] = saved_at
+                else:
+                    merged.pop("is_read_it_later", None)
+                    merged.pop("saved_at", None)
+                updated_items.append(merged)
+            else:
+                updated_items.append(item)
+        self.media_items = tuple(updated_items)
+        return {"media_id": media_id, "is_read_it_later": saved, "saved_at": saved_at}
+
+    async def save_analysis_version(self, *, media_id, content, analysis_content, mode=None, prompt=None):
+        """Create a new document version carrying ``analysis_content``, matching
+        the real ``media_reading_scope_service.save_analysis_version`` ->
+        ``LocalMediaReadingService.save_analysis_version`` ->
+        ``Client_Media_DB_v2.create_document_version`` chain (``mode``
+        accepted and discarded). New versions are prepended (newest first),
+        matching the real backend's ``get_all_document_versions`` ordering
+        (``ORDER BY version_number DESC``).
+        """
+        self.analysis_calls.append(
+            {
+                "media_id": media_id,
+                "content": content,
+                "analysis_content": analysis_content,
+                "prompt": prompt,
+            }
+        )
+        return self._append_document_version(
+            media_id, content=content, analysis_content=analysis_content, prompt=prompt
+        )
+
+    async def overwrite_analysis_version(self, *, media_id, content, analysis_content, mode=None, prompt=None):
+        """Alias for ``save_analysis_version``, matching the real backend
+        (``LocalMediaReadingService.overwrite_analysis_version`` simply
+        delegates to ``save_analysis_version``).
+        """
+        return await self.save_analysis_version(
+            media_id=media_id, content=content, analysis_content=analysis_content, mode=mode, prompt=prompt
+        )
+
+    def _append_document_version(self, media_id, *, content, analysis_content, prompt):
+        target_id = str(media_id)
+        updated_items = []
+        new_version = None
+        for item in self.media_items:
+            item_id = str(item.get("id") or item.get("media_id") or "")
+            if item_id == target_id:
+                merged = dict(item)
+                existing_versions = list(merged.get("versions") or [])
+                next_version_number = (
+                    max((v.get("version_number", 0) for v in existing_versions), default=0) + 1
+                )
+                new_version = {
+                    "id": next_version_number,
+                    "uuid": f"version-{next_version_number}",
+                    "media_id": media_id,
+                    "version_number": next_version_number,
+                    "analysis_content": analysis_content,
+                    "prompt": prompt,
+                    "content": content,
+                }
+                merged["versions"] = [new_version, *existing_versions]
+                merged["content"] = content
+                updated_items.append(merged)
+            else:
+                updated_items.append(item)
+        self.media_items = tuple(updated_items)
+        return new_version
 
 
 class StaticLibraryConversationScopeService:

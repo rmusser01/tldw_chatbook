@@ -53,6 +53,9 @@ class LibraryMediaViewerState:
         version: Optimistic-locking version from the detail row, or None.
         edit_fields: Current values for the edit form, keyed by
             "title"/"author"/"url"/"keywords".
+        read_later: Whether the item is currently saved for read-it-later,
+            sourced from the detail's ``is_read_it_later`` flag (as set by
+            ``LocalMediaReadingService._enrich_with_read_it_later_state``).
     """
 
     media_id: str
@@ -64,6 +67,7 @@ class LibraryMediaViewerState:
     has_analysis: bool
     version: int | None
     edit_fields: dict[str, str]
+    read_later: bool
 
 
 def _text(value: Any) -> str:
@@ -116,7 +120,36 @@ def _empty_state() -> LibraryMediaViewerState:
         has_analysis=False,
         version=None,
         edit_fields=dict(_EMPTY_EDIT_FIELDS),
+        read_later=False,
     )
+
+
+def _latest_version_analysis_text(detail: Mapping[str, Any]) -> str:
+    """Return the newest document version's analysis text, or "".
+
+    Local media detail rows never carry ``analysis_content`` at the top
+    level -- it lives on ``DocumentVersions`` rows only (see
+    ``Client_Media_DB_v2.create_document_version``). ``get_media_item``'s
+    ``versions`` list is already ordered newest-first
+    (``get_all_document_versions`` sorts ``ORDER BY version_number DESC``),
+    so the first entry's ``analysis_content`` is the current analysis --
+    including intentionally blank when the latest version cleared it.
+
+    Args:
+        detail: A ``get_media_item`` detail mapping, possibly carrying a
+            ``versions`` list.
+
+    Returns:
+        The latest version's stripped analysis text, or "" when there are
+        no versions or the newest one has none.
+    """
+    versions = detail.get("versions")
+    if not isinstance(versions, Sequence) or isinstance(versions, (str, bytes)):
+        return ""
+    for version in versions:
+        if isinstance(version, Mapping):
+            return _text(version.get("analysis_content"))
+    return ""
 
 
 def build_library_media_viewer_state(
@@ -164,7 +197,8 @@ def build_library_media_viewer_state(
         lines.append(f"Ingested: {ingested_age}")
 
     content = _text(detail.get("content"))
-    analysis = _text(detail.get("analysis_content"))
+    analysis = _text(detail.get("analysis_content")) or _latest_version_analysis_text(detail)
+    read_later = bool(detail.get("is_read_it_later"))
 
     return LibraryMediaViewerState(
         media_id=media_id,
@@ -181,6 +215,7 @@ def build_library_media_viewer_state(
             "url": url,
             "keywords": keywords_text,
         },
+        read_later=read_later,
     )
 
 

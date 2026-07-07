@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_destination_shells import (
@@ -970,6 +970,232 @@ async def test_library_shell_media_highlight_delete_removes_it():
         assert service.delete_highlight_calls[-1]["highlight_id"] == "1"
         assert "Doomed highlight" not in _visible_text(screen)
         assert not screen.query(".library-media-highlight-delete")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_read_later_saves_and_flips_button_label():
+    """Pressing "Read it later" calls save_to_read_it_later and flips the label."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-read-later")
+
+        assert str(screen.query_one("#library-media-read-later", Button).label) == "Read it later"
+
+        screen.query_one("#library-media-read-later").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.read_it_later_calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Toggle never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert service.read_it_later_calls[-1] == {"action": "save", "media_id": "media-1"}
+        assert screen._library_media_detail["is_read_it_later"] is True
+        assert (
+            str(screen.query_one("#library-media-read-later", Button).label)
+            == "Remove from read-it-later"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_read_later_removes_when_already_saved():
+    """Pressing the toggle on an already-saved item calls remove_from_read_it_later."""
+    app = _build_test_app()
+    media_items = _two_media_items()
+    media_items[0]["is_read_it_later"] = True
+    _seed_conversations(app, _two_conversations(), media=media_items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-read-later")
+
+        assert (
+            str(screen.query_one("#library-media-read-later", Button).label)
+            == "Remove from read-it-later"
+        )
+
+        screen.query_one("#library-media-read-later").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.read_it_later_calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Toggle never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert service.read_it_later_calls[-1] == {"action": "remove", "media_id": "media-1"}
+        assert "is_read_it_later" not in screen._library_media_detail
+        assert str(screen.query_one("#library-media-read-later", Button).label) == "Read it later"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_shows_analysis_from_latest_version():
+    """Analysis text from the newest DocumentVersions row renders in the viewer.
+
+    Local media details never carry top-level analysis_content (it lives on
+    DocumentVersions only) -- this proves the viewer surfaces it from the
+    ``versions`` list returned by ``get_media_item``.
+    """
+    app = _build_test_app()
+    media_items = _two_media_items()
+    media_items[0]["versions"] = [
+        {"version_number": 2, "analysis_content": "Roadmap analysis"},
+        {"version_number": 1, "analysis_content": None},
+    ]
+    _seed_conversations(app, _two_conversations(), media=media_items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-analysis-text")
+
+        analysis_text = str(screen.query_one("#library-media-viewer-analysis-text").renderable)
+        assert analysis_text == "Roadmap analysis"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_analysis_edit_shows_prefilled_textarea():
+    """Pressing "Edit analysis" swaps the analysis text for a prefilled TextArea."""
+    app = _build_test_app()
+    media_items = _two_media_items()
+    media_items[0]["versions"] = [{"version_number": 1, "analysis_content": "Existing analysis"}]
+    _seed_conversations(app, _two_conversations(), media=media_items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+
+        screen.query_one("#library-media-analysis-edit").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit-text")
+
+        assert screen._library_media_editing_analysis is True
+        text_area = screen.query_one("#library-media-analysis-edit-text", TextArea)
+        assert text_area.text == "Existing analysis"
+        assert screen.query_one("#library-media-analysis-save")
+        assert screen.query_one("#library-media-analysis-cancel")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_analysis_save_persists_and_exits_edit_mode():
+    """Saving the analysis edit form calls save_analysis_version and refreshes the viewer."""
+    app = _build_test_app()
+    media_items = _two_media_items()
+    media_items[0]["versions"] = [{"version_number": 1, "analysis_content": "Existing analysis"}]
+    _seed_conversations(app, _two_conversations(), media=media_items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+
+        screen.query_one("#library-media-analysis-edit").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit-text")
+
+        screen.query_one("#library-media-analysis-edit-text", TextArea).text = (
+            "Revised analysis"
+        )
+
+        screen.query_one("#library-media-analysis-save").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.analysis_calls and not screen._library_media_editing_analysis:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Save never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+
+        assert service.analysis_calls, "save_analysis_version was never called"
+        call = service.analysis_calls[-1]
+        assert call["media_id"] == "media-1"
+        assert call["analysis_content"] == "Revised analysis"
+        assert call["content"] == "Full transcript: the interview recording covers the quarterly roadmap."
+
+        assert screen._library_media_editing_analysis is False
+        assert not screen.query("#library-media-analysis-edit-text")
+        analysis_text = str(screen.query_one("#library-media-viewer-analysis-text").renderable)
+        assert analysis_text == "Revised analysis"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_analysis_cancel_discards():
+    """Cancelling the analysis edit form discards changes without calling the service."""
+    app = _build_test_app()
+    media_items = _two_media_items()
+    media_items[0]["versions"] = [{"version_number": 1, "analysis_content": "Existing analysis"}]
+    _seed_conversations(app, _two_conversations(), media=media_items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+
+        screen.query_one("#library-media-analysis-edit").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit-text")
+
+        screen.query_one("#library-media-analysis-edit-text", TextArea).text = "Should not persist"
+
+        screen.query_one("#library-media-analysis-cancel").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_editing_analysis is False
+        assert not screen.query("#library-media-analysis-edit-text")
+        analysis_text = str(screen.query_one("#library-media-viewer-analysis-text").renderable)
+        assert analysis_text == "Existing analysis"
+
+        service = app.media_reading_scope_service
+        assert service.analysis_calls == []
 
 
 @pytest.mark.asyncio
