@@ -144,13 +144,272 @@ class StaticLibraryNotesListScopeService:
 
 
 class StaticLibraryMediaScopeService:
-    def __init__(self, media_items):
+    # Mirrors LocalMediaReadingService._SUPPORTED_METADATA_FIELDS in
+    # tldw_chatbook/Media/local_media_reading_service.py -- keep in sync so
+    # this fake fails the same way the real local backend does when a
+    # caller sends an unsupported field (e.g. ``version``).
+    _SUPPORTED_METADATA_FIELDS = {"title", "media_type", "author", "url", "keywords"}
+
+    def __init__(self, media_items, highlights=None):
         self.media_items = tuple(media_items)
         self.calls = []
+        self.detail_calls = []
+        self.update_calls = []
+        self.delete_calls = []
+        # item_id (str) -> list of highlight dicts, mirroring the field
+        # names LocalMediaReadingService._highlight_row_to_dict returns
+        # ("id"/"item_id"/"quote"/"note"/"color"/...), keyed the same way
+        # ``media_id``/``item_id`` is normalized elsewhere in this fake.
+        self.highlights_by_item_id: dict = {}
+        self._next_highlight_id = 1
+        self.list_highlights_calls = []
+        self.create_highlight_calls = []
+        self.delete_highlight_calls = []
+        self.read_it_later_calls = []
+        self.analysis_calls = []
+        for item_id, quote, note, color in highlights or ():
+            self._seed_highlight(item_id, quote=quote, note=note, color=color)
+
+    def _seed_highlight(self, item_id, *, quote, note=None, color=None):
+        highlight = {
+            "id": self._next_highlight_id,
+            "item_id": str(item_id),
+            "quote": quote,
+            "note": note,
+            "color": color,
+        }
+        self._next_highlight_id += 1
+        self.highlights_by_item_id.setdefault(str(item_id), []).append(highlight)
+        return highlight
+
+    async def list_highlights(self, *, item_id, mode=None):
+        """Return the stored highlights for ``item_id``, matching the real
+        ``media_reading_scope_service.list_highlights`` -> ``LocalMediaReadingService.list_highlights``
+        chain (``mode`` accepted and discarded).
+        """
+        self.list_highlights_calls.append({"item_id": item_id})
+        return [dict(highlight) for highlight in self.highlights_by_item_id.get(str(item_id), [])]
+
+    async def create_highlight(self, *, item_id, quote, mode=None, note=None, color=None, **kwargs):
+        """Record and store a new highlight, matching the real
+        ``media_reading_scope_service.create_highlight`` -> ``LocalMediaReadingService.create_highlight``
+        chain (``mode`` accepted and discarded).
+        """
+        self.create_highlight_calls.append(
+            {"item_id": item_id, "quote": quote, "note": note, "color": color}
+        )
+        return self._seed_highlight(item_id, quote=quote, note=note, color=color)
+
+    async def delete_highlight(self, *, highlight_id, mode=None):
+        """Remove a highlight by id, matching the real
+        ``media_reading_scope_service.delete_highlight`` -> ``LocalMediaReadingService.delete_highlight``
+        chain (``mode`` accepted and discarded).
+        """
+        self.delete_highlight_calls.append({"highlight_id": highlight_id})
+        removed = False
+        for item_id, highlights in list(self.highlights_by_item_id.items()):
+            remaining = [h for h in highlights if str(h["id"]) != str(highlight_id)]
+            if len(remaining) != len(highlights):
+                removed = True
+            self.highlights_by_item_id[item_id] = remaining
+        return {"success": removed}
 
     async def list_media_items(self, **kwargs):
         self.calls.append(kwargs)
         return {"items": list(self.media_items), "pagination": {"total_items": len(self.media_items)}}
+
+    async def get_media_item(self, *, media_id, **kwargs):
+        self.detail_calls.append({"media_id": media_id, **kwargs})
+        target_id = str(media_id)
+        for item in self.media_items:
+            item_id = str(item.get("id") or item.get("media_id") or "")
+            if item_id == target_id:
+                return dict(item)
+        return None
+
+    async def update_media_item(self, *, media_id, mode=None, **fields):
+        """Record the update call and apply it to the stored item in place.
+
+        Mirrors the real ``media_reading_scope_service.update_media_item`` ->
+        ``LocalMediaReadingService.update_media_item`` chain: the scope-level
+        ``mode`` kwarg is stripped (never forwarded to the local backend),
+        and the remaining fields are checked against the local backend's
+        metadata allowlist. Any other field (e.g. a leftover ``version``)
+        raises ``ValueError`` just like the real
+        ``update_media_metadata`` does, so tests can't go green by sending
+        fields the production local backend would reject.
+
+        Args:
+            media_id: The media item id to update.
+            mode: Scope-level backend selector (e.g. ``"local"``); accepted
+                and discarded, matching ``MediaReadingScopeService``.
+            **fields: Field values to merge onto the stored item (e.g.
+                ``title``, ``author``, ``url``, ``keywords``).
+
+        Returns:
+            The updated item mapping, or None when ``media_id`` is unknown.
+
+        Raises:
+            ValueError: If any field is outside the local metadata
+                allowlist.
+        """
+        unsupported = sorted(
+            key for key, value in fields.items()
+            if value is not None and key not in self._SUPPORTED_METADATA_FIELDS
+        )
+        if unsupported:
+            unsupported_text = ", ".join(unsupported)
+            raise ValueError(f"Unsupported local media metadata fields: {unsupported_text}")
+
+        self.update_calls.append({"media_id": media_id, **fields})
+        target_id = str(media_id)
+        updated_items = []
+        updated = None
+        for item in self.media_items:
+            item_id = str(item.get("id") or item.get("media_id") or "")
+            if item_id == target_id:
+                merged = dict(item)
+                merged.update(fields)
+                updated = merged
+                updated_items.append(merged)
+            else:
+                updated_items.append(item)
+        self.media_items = tuple(updated_items)
+        return updated
+
+    async def delete_media_item(self, *, media_id, mode=None):
+        """Record the delete call and remove the item from storage in place.
+
+        Mirrors the real ``media_reading_scope_service.delete_media_item`` ->
+        ``LocalMediaReadingService.delete_media_item`` chain, which moves the
+        item to trash: the scope-level ``mode`` kwarg is stripped, and the
+        item is dropped from ``media_items`` so a subsequent
+        ``list_media_items`` call omits it, matching the real backend's
+        normal (non-trash) paginated list no longer returning trashed items.
+
+        Args:
+            media_id: The media item id to delete.
+            mode: Scope-level backend selector (e.g. ``"local"``); accepted
+                and discarded, matching ``MediaReadingScopeService``.
+
+        Returns:
+            A ``{"ok": True, "media_id": media_id}`` mapping, matching the
+            real local backend's response shape.
+        """
+        self.delete_calls.append({"media_id": media_id})
+        target_id = str(media_id)
+        self.media_items = tuple(
+            item
+            for item in self.media_items
+            if str(item.get("id") or item.get("media_id") or "") != target_id
+        )
+        return {"ok": True, "media_id": media_id}
+
+    async def save_to_read_it_later(self, *, media_id, mode=None):
+        """Mark a media item saved for read-it-later, matching the real
+        ``media_reading_scope_service.save_to_read_it_later`` ->
+        ``LocalMediaReadingService.save_to_read_it_later`` chain (``mode``
+        accepted and discarded).
+        """
+        self.read_it_later_calls.append({"action": "save", "media_id": media_id})
+        return self._set_read_it_later_state(media_id, saved=True)
+
+    async def remove_from_read_it_later(self, *, media_id, mode=None):
+        """Clear a media item's read-it-later state, matching the real
+        ``media_reading_scope_service.remove_from_read_it_later`` ->
+        ``LocalMediaReadingService.remove_from_read_it_later`` chain
+        (``mode`` accepted and discarded).
+        """
+        self.read_it_later_calls.append({"action": "remove", "media_id": media_id})
+        return self._set_read_it_later_state(media_id, saved=False)
+
+    def _set_read_it_later_state(self, media_id, *, saved):
+        """Apply the read-it-later flag to the stored item in place.
+
+        On removal, the ``is_read_it_later``/``saved_at`` keys are dropped
+        entirely rather than set to ``False``/``None`` -- mirroring the
+        real local backend, whose ``MediaReadItLaterState`` row is deleted
+        outright on removal, so a re-fetched detail has neither key present
+        (see ``LocalMediaReadingService._enrich_with_read_it_later_state``).
+        """
+        target_id = str(media_id)
+        updated_items = []
+        saved_at = None
+        for item in self.media_items:
+            item_id = str(item.get("id") or item.get("media_id") or "")
+            if item_id == target_id:
+                merged = dict(item)
+                if saved:
+                    saved_at = merged.get("saved_at") or "2026-01-01T00:00:00Z"
+                    merged["is_read_it_later"] = True
+                    merged["saved_at"] = saved_at
+                else:
+                    merged.pop("is_read_it_later", None)
+                    merged.pop("saved_at", None)
+                updated_items.append(merged)
+            else:
+                updated_items.append(item)
+        self.media_items = tuple(updated_items)
+        return {"media_id": media_id, "is_read_it_later": saved, "saved_at": saved_at}
+
+    async def save_analysis_version(self, *, media_id, content, analysis_content, mode=None, prompt=None):
+        """Create a new document version carrying ``analysis_content``, matching
+        the real ``media_reading_scope_service.save_analysis_version`` ->
+        ``LocalMediaReadingService.save_analysis_version`` ->
+        ``Client_Media_DB_v2.create_document_version`` chain (``mode``
+        accepted and discarded). New versions are prepended (newest first),
+        matching the real backend's ``get_all_document_versions`` ordering
+        (``ORDER BY version_number DESC``).
+        """
+        self.analysis_calls.append(
+            {
+                "media_id": media_id,
+                "content": content,
+                "analysis_content": analysis_content,
+                "prompt": prompt,
+            }
+        )
+        return self._append_document_version(
+            media_id, content=content, analysis_content=analysis_content, prompt=prompt
+        )
+
+    async def overwrite_analysis_version(self, *, media_id, content, analysis_content, mode=None, prompt=None):
+        """Alias for ``save_analysis_version``, matching the real backend
+        (``LocalMediaReadingService.overwrite_analysis_version`` simply
+        delegates to ``save_analysis_version``).
+        """
+        return await self.save_analysis_version(
+            media_id=media_id, content=content, analysis_content=analysis_content, mode=mode, prompt=prompt
+        )
+
+    def _append_document_version(self, media_id, *, content, analysis_content, prompt):
+        target_id = str(media_id)
+        updated_items = []
+        new_version = None
+        for item in self.media_items:
+            item_id = str(item.get("id") or item.get("media_id") or "")
+            if item_id == target_id:
+                merged = dict(item)
+                existing_versions = list(merged.get("versions") or [])
+                next_version_number = (
+                    max((v.get("version_number", 0) for v in existing_versions), default=0) + 1
+                )
+                new_version = {
+                    "id": next_version_number,
+                    "uuid": f"version-{next_version_number}",
+                    "media_id": media_id,
+                    "version_number": next_version_number,
+                    "analysis_content": analysis_content,
+                    "prompt": prompt,
+                    "content": content,
+                }
+                merged["versions"] = [new_version, *existing_versions]
+                merged["content"] = content
+                updated_items.append(merged)
+            else:
+                updated_items.append(item)
+        self.media_items = tuple(updated_items)
+        return new_version
 
 
 class StaticLibraryConversationScopeService:
@@ -1157,11 +1416,14 @@ async def test_library_use_in_console_uses_source_snapshot_context():
 @pytest.mark.parametrize(
     ("route", "selector", "target_route"),
     [
-        # The retired hub's #library-open-notes/#library-open-media buttons
-        # are dead; the rail rows are the surviving surface that still emit
-        # the same NavigateToScreen compatibility routes.
+        # The retired hub's #library-open-notes button is dead; the Browse ▸
+        # Notes rail row is the surviving surface that still emits the same
+        # NavigateToScreen compatibility route. Browse ▸ Media is no longer
+        # a screen-route row -- it is a canvas row like Conversations now
+        # (see test_library_media_action_switches_to_native_mode_without_route_handoff
+        # below); the media SCREEN route lives behind the canvas's own
+        # "Open in Media" action.
         ("library", "#library-row-browse-notes", "notes"),
-        ("library", "#library-row-browse-media", "media"),
         ("artifacts", "#artifacts-open-chatbooks", "chatbooks"),
         # The Personas destination is now a native workbench and no longer
         # hands off to the legacy CCP route via #personas-open-profiles.
@@ -1181,6 +1443,32 @@ async def test_destination_action_buttons_emit_compatibility_routes(route, selec
         await _wait_for_route(seen_routes, target_route, pilot)
 
     assert seen_routes[-1] == target_route
+
+
+@pytest.mark.asyncio
+async def test_library_media_action_switches_to_native_mode_without_route_handoff():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    seen_routes = []
+    host = DestinationHarness(app, "library", seen_routes)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        # The retired hub's #library-open-media button is dead; the Browse ▸
+        # Media rail row is the surviving trigger, and the media canvas
+        # mounting is the successor signal that the native (non-route) mode
+        # switch happened. The media SCREEN route now lives behind the
+        # canvas's own "Open in Media" action.
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+
+        assert getattr(screen, "_active_mode") == "media"
+        assert screen.query_one("#library-media-canvas")
+
+    assert seen_routes == []
 
 
 @pytest.mark.asyncio

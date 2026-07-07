@@ -81,6 +81,7 @@ class LibraryRail(Vertical):
         preferences: LibraryRailPreferences,
         *,
         query: str = "",
+        search_placeholder: str = "Search conversations…",
         workspaces_body_factory: Callable[[], Iterable[Widget]] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -88,6 +89,7 @@ class LibraryRail(Vertical):
         self.shell = shell
         self.preferences = preferences
         self.query = query
+        self.search_placeholder = search_placeholder
         self.workspaces_body_factory = workspaces_body_factory
         self.styles.width = "3fr"
         self.styles.min_width = 24
@@ -100,6 +102,12 @@ class LibraryRail(Vertical):
         query: str = "",
     ) -> None:
         """Refresh the rail from new state.
+
+        The search placeholder is not synced here: the Library screen
+        refreshes the rail by full ``recompose`` (rebuilding a fresh
+        ``LibraryRail`` whose ``__init__`` recomputes the context-aware
+        placeholder), so a ``sync_state`` placeholder argument would be
+        dead. It is set once at construction instead.
 
         Args:
             shell: Latest Library shell display state.
@@ -134,7 +142,7 @@ class LibraryRail(Vertical):
         """
         yield Input(
             value=self.query,
-            placeholder="Search conversations…",
+            placeholder=self.search_placeholder,
             id="library-search-input",
         )
         for section in self.shell.sections:

@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button
+from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_destination_shells import (
@@ -61,9 +61,11 @@ def _visible_text(screen) -> str:
     return " ".join(chunks)
 
 
-def _seed_conversations(app, conversations, *, notes=None, media=None):
+def _seed_conversations(app, conversations, *, notes=None, media=None, highlights=None):
     app.notes_scope_service = StaticLibraryNotesScopeService(notes or [])
-    app.media_reading_scope_service = StaticLibraryMediaScopeService(media or [])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService(
+        media or [], highlights=highlights
+    )
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
         conversations
     )
@@ -106,6 +108,31 @@ def _two_conversations():
             "conversation_id": "chat-2",
             "message_count": 3,
             "updated_at": "2026-06-02T09:30:00Z",
+        },
+    ]
+
+
+def _two_media_items():
+    return [
+        {
+            "id": "media-1",
+            "title": "Interview Recording",
+            "type": "audio",
+            "last_modified": "2026-07-06T08:00:00Z",
+            "author": "Jordan Lee",
+            "keywords": ["interview", "audio"],
+            "content": "Full transcript: the interview recording covers the quarterly roadmap.",
+            "version": 1,
+        },
+        {
+            "id": "media-2",
+            "title": "Product Demo Video",
+            "type": "video",
+            "last_modified": "2026-07-06T10:00:00Z",
+            "author": "Morgan Lee",
+            "keywords": ["demo", "video"],
+            "content": "Full transcript: the product demo video walks through the new dashboard.",
+            "version": 2,
         },
     ]
 
@@ -285,7 +312,14 @@ async def test_library_shell_rag_open_import_export_switches_canvas_and_selectio
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_row_navigates_without_selection_change():
+async def test_library_shell_media_row_selects_canvas_without_navigating():
+    """Browse ▸ Media is a canvas row now, not a screen-route shortcut.
+
+    Re-anchors the old screen-route contract: pressing the rail row must
+    render the media canvas in place (selecting it, like Conversations)
+    rather than firing ``NavigateToScreen("media")``. The media SCREEN
+    route now lives behind the canvas's own "Open in Media" action.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     seen = []
@@ -299,9 +333,1353 @@ async def test_library_shell_media_row_navigates_without_selection_change():
         await pilot.pause()
         await pilot.pause()
 
-        assert seen[-1] == "media"
-        assert screen._library_selected_row_id == ""
-        assert screen.query_one("#library-canvas-landing")
+        assert seen == []
+        assert screen._library_selected_row_id == "browse-media"
+        assert screen.query_one("#library-media-canvas")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+
+        title = str(screen.query_one("#library-media-title").renderable)
+        assert title == "Media (2)"
+
+        filter_button = screen.query_one("#library-media-type-filter", Button)
+        assert str(filter_button.label) == "type: All ▸"
+
+        rows = list(screen.query(".library-media-row"))
+        assert len(rows) == 2
+        first_label = str(rows[0].label)
+        assert first_label.startswith("▸")
+        # Rows sort newest-first: media-2 (10:00) before media-1 (08:00).
+        assert "Product Demo Video" in first_label
+        assert "video" in first_label
+
+        preview = str(screen.query_one("#library-media-preview-lines").renderable)
+        assert "Product Demo Video" in preview
+        assert screen.query_one("#library-media-open")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_type_filter_narrows_list():
+    """Pressing the cycling filter button advances through type_options.
+
+    The media fixture seeds two types ("audio", "video"), so
+    ``type_options`` resolves to ``("All", "audio", "video")``. One press
+    from the "All" default advances to "audio"; a second press advances to
+    "video"; a third press wraps back around to "All".
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+
+        filter_button = screen.query_one("#library-media-type-filter", Button)
+
+        filter_button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_type_filter == "audio"
+        filter_button = screen.query_one("#library-media-type-filter", Button)
+        assert str(filter_button.label) == "type: audio ▸"
+        rows = list(screen.query(".library-media-row"))
+        assert len(rows) == 1
+        assert "Interview Recording" in str(rows[0].label)
+
+        status = str(screen.query_one("#library-media-status").renderable)
+        assert "type: audio" in status
+
+        filter_button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_type_filter == "video"
+        filter_button = screen.query_one("#library-media-type-filter", Button)
+        assert str(filter_button.label) == "type: video ▸"
+        rows = list(screen.query(".library-media-row"))
+        assert len(rows) == 1
+        assert "Product Demo Video" in str(rows[0].label)
+
+        filter_button.press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_type_filter == "All"
+        filter_button = screen.query_one("#library-media-type-filter", Button)
+        assert str(filter_button.label) == "type: All ▸"
+        rows = list(screen.query(".library-media-row"))
+        assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_row_switches_selection():
+    """Selecting a different media row updates ``_selected_media_id``.
+
+    Re-anchored for the in-canvas viewer rebuild: pressing a media row now
+    replaces the list with the full ``LibraryMediaViewer`` (no more inline
+    ``#library-media-preview-lines``), so selection is asserted against the
+    viewer's title/metadata instead of the old stub preview.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+
+        preview_before = str(
+            screen.query_one("#library-media-preview-lines").renderable
+        )
+        assert "Product Demo Video" in preview_before
+        assert screen._selected_media_id == "media-2"
+
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+
+        assert screen._selected_media_id == "media-1"
+        title = str(screen.query_one("#library-media-viewer-title").renderable)
+        assert title == "Interview Recording"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_row_opens_full_viewer_with_content():
+    """Pressing a media row switches to the in-canvas viewer.
+
+    The viewer must show the title, Type/Author metadata lines, and the
+    full stored content text (not just a 3-line preview stub), replacing
+    the list (``#library-media-list`` no longer present).
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+
+        assert screen._library_media_view == "viewer"
+        assert not screen.query("#library-media-list")
+
+        title = str(screen.query_one("#library-media-viewer-title").renderable)
+        assert title == "Interview Recording"
+
+        meta = str(screen.query_one("#library-media-viewer-meta").renderable)
+        assert "Type: audio" in meta
+        assert "Author: Jordan Lee" in meta
+
+        content_container = screen.query_one("#library-media-viewer-content")
+        content_text = str(content_container.query_one(Static).renderable)
+        assert "Full transcript: the interview recording" in content_text
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_use_in_chat_triggers_handoff():
+    """``#library-media-use-in-chat`` stages the open media item as Console context.
+
+    Uses the same clean ``ChatHandoffPayload`` + ``open_chat_with_handoff``
+    handoff the Library conversation "Use in Console" action already uses.
+    Seeds a single media item (rather than the usual two-item fixture) so
+    the workspace context-handoff gate -- which is computed across *every*
+    visible Library source, not just the one item under test -- isn't
+    tripped up by an unlinked sibling row.
+    """
+    app = _build_test_app()
+    media_items = _two_media_items()[:1]
+    _seed_conversations(app, [], media=media_items)
+    app.open_chat_with_handoff = Mock()
+    _link_library_items_to_active_workspace(
+        app,
+        (("media", "media-1", "Interview Recording"),),
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        screen.query_one("#library-media-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-media-use-in-chat")
+
+        screen.query_one("#library-media-use-in-chat").press()
+        await pilot.pause()
+        await pilot.pause()
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert payload.source == "library"
+    assert payload.item_type == "media"
+    assert payload.source_id == "media-1"
+    assert payload.title == "Interview Recording"
+    assert "Full transcript: the interview recording" in payload.body
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_use_in_chat_without_open_item_notifies():
+    """No handoff fires when no media item is currently loaded in the viewer.
+
+    The "Use in Chat" button only mounts once a media item's detail has
+    loaded into the viewer, so this exercises the same guard directly:
+    calling the handler with ``_library_media_detail`` still at its
+    freshly-mounted ``None`` must notify instead of staging anything.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    app.open_chat_with_handoff = Mock()
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert screen._library_media_detail is None
+        screen._open_selected_media_handoff()
+        await pilot.pause()
+
+    app.open_chat_with_handoff.assert_not_called()
+    app.notify.assert_called_once()
+    message = app.notify.call_args.args[0]
+    assert "Open a media item" in message
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_back_returns_to_list():
+    """``#library-media-back`` returns the media canvas to its list view."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-back")
+
+        screen.query_one("#library-media-back").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_view == "list"
+        assert screen.query_one("#library-media-list")
+        assert not screen.query("#library-media-viewer-title")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_rail_reentry_resets_to_list():
+    """Re-entering Browse Media from the rail must show the list, not a stale viewer.
+
+    A rail-row press is always a fresh entry into a content type. If the
+    media viewer was left open on a previous visit, navigating away via
+    another rail row and then pressing "Browse Media" again must land on
+    the media list -- not resume the previously opened item's viewer.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+
+        screen.query_one("#library-row-browse-conversations").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        screen.query_one("#library-row-browse-media").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.query_one("#library-media-list")
+        assert not screen.query("#library-media-viewer-title")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_shows_loading_before_detail_loads(monkeypatch):
+    """The viewer shows a loading line until ``_library_media_detail`` arrives."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    monkeypatch.setattr(
+        LibraryScreen, "_refresh_library_media_detail", _media_detail_never_loads
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+
+        screen.query_one("#library-media-row-1").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_detail is None
+        assert screen.query_one("#library-media-viewer-loading")
+        assert not screen.query("#library-media-viewer-title")
+
+
+async def _media_detail_never_loads(self, media_id: str) -> None:
+    """Stand in for ``_refresh_library_media_detail`` that never resolves.
+
+    Used to freeze the viewer in its loading state deterministically,
+    instead of racing the real (async) detail fetch worker.
+    """
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_open_posts_navigate_to_screen():
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    seen = []
+    host = LibraryHarness(app, seen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-open")
+
+        screen.query_one("#library-media-open").press()
+        await pilot.pause()
+        await pilot.pause()
+
+    assert seen[-1] == "media"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_open_posts_navigate_to_screen():
+    """``#library-media-open`` inside the full viewer also hands off to Media."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    seen = []
+    host = LibraryHarness(app, seen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-open")
+
+        screen.query_one("#library-media-open").press()
+        await pilot.pause()
+        await pilot.pause()
+
+    assert seen[-1] == "media"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_edit_shows_prefilled_form():
+    """Pressing ``Edit`` swaps the metadata block for prefilled edit inputs."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit")
+
+        screen.query_one("#library-media-edit").press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+
+        assert screen._library_media_editing is True
+        assert screen.query_one("#library-media-edit-title", Input).value == "Interview Recording"
+        assert screen.query_one("#library-media-edit-author", Input).value == "Jordan Lee"
+        assert screen.query_one("#library-media-edit-url", Input).value == ""
+        assert (
+            screen.query_one("#library-media-edit-keywords", Input).value
+            == "interview, audio"
+        )
+        assert screen.query_one("#library-media-edit-save")
+        assert screen.query_one("#library-media-edit-cancel")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_edit_save_persists_and_exits_edit_mode():
+    """Saving the edit form calls ``update_media_item`` and refreshes the viewer."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit")
+
+        screen.query_one("#library-media-edit").press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+
+        screen.query_one("#library-media-edit-title", Input).value = (
+            "Interview Recording (Revised)"
+        )
+
+        screen.query_one("#library-media-edit-save").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.update_calls and not screen._library_media_editing:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Save never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+
+        assert service.update_calls, "update_media_item was never called"
+        call = service.update_calls[-1]
+        assert call["media_id"] == "media-1"
+        assert call["title"] == "Interview Recording (Revised)"
+        assert call["author"] == "Jordan Lee"
+        assert call["url"] == ""
+        assert call["keywords"] == ["interview", "audio"]
+        # `version` is NOT a supported local metadata field (see
+        # LocalMediaReadingService._SUPPORTED_METADATA_FIELDS) -- sending it
+        # makes every real save raise ValueError. Assert it is absent so a
+        # future regression trips this test instead of silently failing in
+        # production.
+        assert "version" not in call
+
+        assert screen._library_media_editing is False
+        assert not screen.query("#library-media-edit-title")
+        title = str(screen.query_one("#library-media-viewer-title").renderable)
+        assert title == "Interview Recording (Revised)"
+
+
+async def _open_media_edit_and_save_title(screen, pilot, new_title):
+    """Open media-1's edit form, set the title, save, and wait for completion."""
+    screen.query_one("#library-row-browse-media").press()
+    await _wait_for_selector(screen, pilot, "#library-media-row-1")
+    screen.query_one("#library-media-row-1").press()
+    await _wait_for_selector(screen, pilot, "#library-media-edit")
+
+    screen.query_one("#library-media-edit").press()
+    await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+    screen.query_one("#library-media-edit-title", Input).value = new_title
+    screen.query_one("#library-media-edit-save").press()
+
+    service = screen.app_instance.media_reading_scope_service
+    for _ in range(150):
+        if service.update_calls and not screen._library_media_editing:
+            break
+        await pilot.pause(0.02)
+    else:
+        raise AssertionError(f"Save never completed. Visible: {_visible_text(screen)}")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_edit_save_updates_list_snapshot_cache():
+    """Saving a metadata edit updates the cached list snapshot, so the media
+    list shows the new title immediately instead of the pre-edit value."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_edit_and_save_title(screen, pilot, "Renamed In List")
+
+        # The cached list snapshot record now carries the new title.
+        cached = {
+            screen._source_record_id(r): r
+            for r in screen._local_source_records.get("media", ())
+        }
+        assert cached["media-1"]["title"] == "Renamed In List"
+
+        # ...and the list view reflects it after navigating back.
+        screen.query_one("#library-media-back").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        assert "Renamed In List" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_edit_save_sanitizes_user_input():
+    """User-entered edit fields are sanitized at the UI boundary, so HTML/script
+    markup never reaches the persistence service."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_edit_and_save_title(
+            screen, pilot, "Clean<script>alert(1)</script>Title"
+        )
+
+        sent_title = screen.app_instance.media_reading_scope_service.update_calls[-1]["title"]
+        assert "<script" not in sent_title.lower()
+        assert "</script" not in sent_title.lower()
+        # ...but the surrounding legitimate text is preserved.
+        assert "Clean" in sent_title
+        assert "Title" in sent_title
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_detail_race_discards_stale_fetch():
+    """A detail fetch that completes for a no-longer-selected media id must be
+    discarded instead of overwriting the currently-open viewer."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+        for _ in range(150):
+            detail = screen._library_media_detail
+            if isinstance(detail, dict) and str(detail.get("id")) == "media-1":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("media-1 detail never loaded.")
+        assert screen._selected_media_id == "media-1"
+
+        # Simulate a slower in-flight fetch for the previously-selected media-2
+        # completing now: it must not overwrite media-1's detail.
+        await screen._refresh_library_media_detail("media-2")
+
+        detail = screen._library_media_detail
+        assert isinstance(detail, dict)
+        assert str(detail.get("id")) == "media-1"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_edit_cancel_discards():
+    """Cancelling the edit form discards changes without calling the service."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit")
+
+        screen.query_one("#library-media-edit").press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit-title")
+
+        screen.query_one("#library-media-edit-title", Input).value = "Should not persist"
+
+        screen.query_one("#library-media-edit-cancel").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_editing is False
+        assert not screen.query("#library-media-edit-title")
+        title = str(screen.query_one("#library-media-viewer-title").renderable)
+        assert title == "Interview Recording"
+
+        service = app.media_reading_scope_service
+        assert service.update_calls == []
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_delete_shows_inline_confirm_without_deleting():
+    """Pressing ``Delete`` shows the inline confirm affordance, not an immediate delete."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete")
+
+        screen.query_one("#library-media-delete").press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete-confirm")
+
+        assert screen._library_media_confirming_delete is True
+        assert screen.query_one("#library-media-delete-cancel")
+
+        service = app.media_reading_scope_service
+        assert service.delete_calls == []
+        assert screen._library_media_view == "viewer"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_delete_confirm_removes_item_and_returns_to_list():
+    """Confirming the delete trashes the item and drops it from the list view."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete")
+
+        screen.query_one("#library-media-delete").press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete-confirm")
+
+        screen.query_one("#library-media-delete-confirm").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.delete_calls and screen._library_media_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Delete never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+
+        assert service.delete_calls, "delete_media_item was never called"
+        assert service.delete_calls[-1]["media_id"] == "media-1"
+        assert screen._library_media_confirming_delete is False
+        assert screen._library_media_view == "list"
+        assert not screen.query("#library-media-viewer")
+        # media-1 ("Interview Recording") is deleted; only media-2 ("Product
+        # Demo Video") remains, re-indexed to row-0 by the sorted rebuild.
+        assert not any(
+            "Interview Recording" in str(getattr(button, "label", ""))
+            for button in screen.query(".library-media-row")
+        )
+        assert screen.query_one("#library-media-row-0")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_delete_cancel_leaves_item_intact():
+    """Cancelling the inline confirm discards it without calling the service."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete")
+
+        screen.query_one("#library-media-delete").press()
+        await _wait_for_selector(screen, pilot, "#library-media-delete-confirm")
+
+        screen.query_one("#library-media-delete-cancel").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_confirming_delete is False
+        assert not screen.query("#library-media-delete-confirm")
+        assert screen.query_one("#library-media-delete")
+        title = str(screen.query_one("#library-media-viewer-title").renderable)
+        assert title == "Interview Recording"
+
+        service = app.media_reading_scope_service
+        assert service.delete_calls == []
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_renders_seeded_highlight():
+    """A seeded highlight's quote renders in the viewer's highlights section."""
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        media=_two_media_items(),
+        highlights=[("media-1", "Important sentence", "Check this", "yellow")],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-highlight-0")
+
+        visible = _visible_text(screen)
+        assert "Important sentence" in visible
+        assert "Check this" in visible
+        # A renderable color is conveyed by a tinted "●" swatch on the quote,
+        # not by the literal word "yellow".
+        quote = screen.query_one("#library-media-highlight-0").renderable
+        assert "●" in quote.plain
+        assert any("yellow" in str(span.style).lower() for span in quote.spans)
+        assert screen.query_one("#library-media-highlight-delete-0")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_highlight_non_rich_color_does_not_crash_render():
+    """A Textual-valid but Rich-invalid color (e.g. 'transparent') must not crash.
+
+    The swatch color is consumed as a Rich style; validating with Textual's
+    (superset) parser let 'transparent'/'hsl(...)'/'ansi_*' through and then
+    crashed at render (rich.errors.MissingStyle). Such colors must fall back
+    to plain text instead.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        media=_two_media_items(),
+        highlights=[("media-1", "Fragile quote", None, "transparent")],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        # Reaching this selector means the viewer rendered without raising.
+        await _wait_for_selector(screen, pilot, "#library-media-highlight-0")
+
+        quote = screen.query_one("#library-media-highlight-0").renderable
+        # No swatch marker (color not renderable); it survives as plain text.
+        assert "●" not in quote.plain
+        assert "transparent" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_highlight_add_creates_and_renders_new_highlight():
+    """Filling the quote input and pressing Add calls ``create_highlight`` and renders it."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-highlight-add-collapsible")
+
+        assert not screen.query(".library-media-highlight-delete")
+
+        # The add-highlight form starts collapsed; expand it before typing
+        # into its inputs, mirroring how a real user would reveal the form.
+        collapsible = screen.query_one(
+            "#library-media-highlight-add-collapsible", Collapsible
+        )
+        assert collapsible.collapsed
+        collapsible.collapsed = False
+        await pilot.pause()
+
+        screen.query_one("#library-media-highlight-quote", Input).value = "New highlight quote"
+        screen.query_one("#library-media-highlight-add").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.create_highlight_calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Add never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert service.create_highlight_calls[-1]["item_id"] == "media-1"
+        assert service.create_highlight_calls[-1]["quote"] == "New highlight quote"
+        await _wait_for_selector(screen, pilot, "#library-media-highlight-0")
+        assert "New highlight quote" in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_highlight_delete_removes_it():
+    """Pressing a highlight's delete button calls ``delete_highlight`` and removes the row."""
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        media=_two_media_items(),
+        highlights=[("media-1", "Doomed highlight", None, None)],
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-highlight-delete-0")
+
+        screen.query_one("#library-media-highlight-delete-0").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.delete_highlight_calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Delete never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert service.delete_highlight_calls[-1]["highlight_id"] == "1"
+        assert "Doomed highlight" not in _visible_text(screen)
+        assert not screen.query(".library-media-highlight-delete")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_read_later_saves_and_flips_button_label():
+    """Pressing "Read it later" calls save_to_read_it_later and flips the label."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-read-later")
+
+        assert str(screen.query_one("#library-media-read-later", Button).label) == "Read it later"
+
+        screen.query_one("#library-media-read-later").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.read_it_later_calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Toggle never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert service.read_it_later_calls[-1] == {"action": "save", "media_id": "media-1"}
+        assert screen._library_media_detail["is_read_it_later"] is True
+        assert (
+            str(screen.query_one("#library-media-read-later", Button).label)
+            == "Remove from read-it-later"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_read_later_removes_when_already_saved():
+    """Pressing the toggle on an already-saved item calls remove_from_read_it_later."""
+    app = _build_test_app()
+    media_items = _two_media_items()
+    media_items[0]["is_read_it_later"] = True
+    _seed_conversations(app, _two_conversations(), media=media_items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-read-later")
+
+        assert (
+            str(screen.query_one("#library-media-read-later", Button).label)
+            == "Remove from read-it-later"
+        )
+
+        screen.query_one("#library-media-read-later").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.read_it_later_calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Toggle never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert service.read_it_later_calls[-1] == {"action": "remove", "media_id": "media-1"}
+        assert "is_read_it_later" not in screen._library_media_detail
+        assert str(screen.query_one("#library-media-read-later", Button).label) == "Read it later"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_viewer_shows_analysis_from_latest_version():
+    """Analysis text from the newest DocumentVersions row renders in the viewer.
+
+    Local media details never carry top-level analysis_content (it lives on
+    DocumentVersions only) -- this proves the viewer surfaces it from the
+    ``versions`` list returned by ``get_media_item``.
+    """
+    app = _build_test_app()
+    media_items = _two_media_items()
+    media_items[0]["versions"] = [
+        {"version_number": 2, "analysis_content": "Roadmap analysis"},
+        {"version_number": 1, "analysis_content": None},
+    ]
+    _seed_conversations(app, _two_conversations(), media=media_items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-analysis-text")
+
+        analysis_text = str(screen.query_one("#library-media-viewer-analysis-text").renderable)
+        assert analysis_text == "Roadmap analysis"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_analysis_edit_shows_prefilled_textarea():
+    """Pressing "Edit analysis" swaps the analysis text for a prefilled TextArea."""
+    app = _build_test_app()
+    media_items = _two_media_items()
+    media_items[0]["versions"] = [{"version_number": 1, "analysis_content": "Existing analysis"}]
+    _seed_conversations(app, _two_conversations(), media=media_items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+
+        screen.query_one("#library-media-analysis-edit").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit-text")
+
+        assert screen._library_media_editing_analysis is True
+        text_area = screen.query_one("#library-media-analysis-edit-text", TextArea)
+        assert text_area.text == "Existing analysis"
+        assert screen.query_one("#library-media-analysis-save")
+        assert screen.query_one("#library-media-analysis-cancel")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_analysis_save_persists_and_exits_edit_mode():
+    """Saving the analysis edit form calls save_analysis_version and refreshes the viewer."""
+    app = _build_test_app()
+    media_items = _two_media_items()
+    media_items[0]["versions"] = [{"version_number": 1, "analysis_content": "Existing analysis"}]
+    _seed_conversations(app, _two_conversations(), media=media_items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+
+        screen.query_one("#library-media-analysis-edit").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit-text")
+
+        screen.query_one("#library-media-analysis-edit-text", TextArea).text = (
+            "Revised analysis"
+        )
+
+        screen.query_one("#library-media-analysis-save").press()
+
+        service = app.media_reading_scope_service
+        for _ in range(150):
+            if service.analysis_calls and not screen._library_media_editing_analysis:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Save never completed. Visible text: {_visible_text(screen)}"
+            )
+        await pilot.pause()
+
+        assert service.analysis_calls, "save_analysis_version was never called"
+        call = service.analysis_calls[-1]
+        assert call["media_id"] == "media-1"
+        assert call["analysis_content"] == "Revised analysis"
+        assert call["content"] == "Full transcript: the interview recording covers the quarterly roadmap."
+
+        assert screen._library_media_editing_analysis is False
+        assert not screen.query("#library-media-analysis-edit-text")
+        analysis_text = str(screen.query_one("#library-media-viewer-analysis-text").renderable)
+        assert analysis_text == "Revised analysis"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_analysis_cancel_discards():
+    """Cancelling the analysis edit form discards changes without calling the service."""
+    app = _build_test_app()
+    media_items = _two_media_items()
+    media_items[0]["versions"] = [{"version_number": 1, "analysis_content": "Existing analysis"}]
+    _seed_conversations(app, _two_conversations(), media=media_items)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-1")
+        screen.query_one("#library-media-row-1").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit")
+
+        screen.query_one("#library-media-analysis-edit").press()
+        await _wait_for_selector(screen, pilot, "#library-media-analysis-edit-text")
+
+        screen.query_one("#library-media-analysis-edit-text", TextArea).text = "Should not persist"
+
+        screen.query_one("#library-media-analysis-cancel").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_editing_analysis is False
+        assert not screen.query("#library-media-analysis-edit-text")
+        analysis_text = str(screen.query_one("#library-media-viewer-analysis-text").renderable)
+        assert analysis_text == "Existing analysis"
+
+        service = app.media_reading_scope_service
+        assert service.analysis_calls == []
+
+
+def _media_item_with_multiline_content():
+    """A media item whose content has two lines containing "budget"."""
+    items = _two_media_items()
+    items[0]["content"] = "\n".join(
+        [
+            "Intro paragraph about the roadmap.",
+            "The budget forecast is discussed here.",
+            "Another neutral line.",
+            "Second budget line appears here too.",
+        ]
+    )
+    return items
+
+
+def _media_item_with_two_hits_on_one_line():
+    """A media item whose only matching line contains "budget" twice."""
+    items = _two_media_items()
+    items[0]["content"] = "The budget and the budget again on one single line."
+    return items
+
+
+async def _open_media_viewer(screen, pilot):
+    """Navigate to the media list and open the first row's viewer."""
+    screen.query_one("#library-row-browse-media").press()
+    await _wait_for_selector(screen, pilot, "#library-media-row-1")
+    screen.query_one("#library-media-row-1").press()
+    await _wait_for_selector(screen, pilot, "#library-media-content-search")
+
+
+async def _submit_content_search_query(screen, pilot, query):
+    """Type ``query`` into the open viewer's content search box and press Enter."""
+    search_input = screen.query_one("#library-media-content-search", Input)
+    search_input.value = query
+    search_input.focus()
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
+    await pilot.pause()
+
+
+async def _open_media_viewer_and_submit_content_search(screen, pilot, query):
+    """Open the first media row's viewer and submit a content-search query."""
+    await _open_media_viewer(screen, pilot)
+    await _submit_content_search_query(screen, pilot, query)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_no_query_hides_status_and_nav():
+    """With no active search, only the search box renders -- no orphaned status/prev/next."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer(screen, pilot)
+
+        assert screen.query_one("#library-media-content-search")
+        assert not screen.query("#library-media-content-search-status")
+        assert not screen.query("#library-media-content-search-prev")
+        assert not screen.query("#library-media-content-search-next")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_shows_match_count():
+    """Submitting a query shows the match count and starts at the first match."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == "Match 1 of 2 matches"
+        assert screen._library_media_content_query == "budget"
+        assert screen._library_media_content_match_index == 0
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_highlights_matches_in_body():
+    """While searching, each query occurrence in the content body is styled."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+
+        content = screen.query_one("#library-media-viewer-content-text").renderable
+        # Rendered as a Rich Text with a styled span over each "budget".
+        highlighted = [
+            content.plain[span.start : span.end]
+            for span in content.spans
+            if str(span.style)
+        ]
+        assert highlighted.count("budget") == 2
+        assert all(part.lower() == "budget" for part in highlighted)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_one_mark_per_matching_line():
+    """A line with two hits is one match and gets one mark (count == visible marks)."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_two_hits_on_one_line())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+
+        # One matching line -> "Match 1 of 1", even though "budget" appears twice.
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == "Match 1 of 1 matches"
+        # ...and exactly one styled mark in the body, so count == visible marks.
+        content = screen.query_one("#library-media-viewer-content-text").renderable
+        marks = [span for span in content.spans if str(span.style)]
+        assert len(marks) == 1
+        assert content.plain[marks[0].start : marks[0].end] == "budget"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_no_matches_shows_status():
+    """A query with no hits in the content shows a "No matches" status."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "nonexistent-term")
+
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == "No matches"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_empty_query_hides_status_and_nav():
+    """Submitting a blank query clears the query and hides the status/prev/next row."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+        assert screen.query_one("#library-media-content-search-status")
+
+        await _submit_content_search_query(screen, pilot, "")
+
+        # With no active query, the status line and prev/next toolbar are not
+        # rendered at all -- they aren't just blank, they're gone -- so the
+        # orphaned nav doesn't linger under the search box.
+        assert not screen.query("#library-media-content-search-status")
+        assert not screen.query("#library-media-content-search-prev")
+        assert not screen.query("#library-media-content-search-next")
+        assert screen._library_media_content_query == ""
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_next_prev_advances_match_index():
+    """Next/Prev cycle the match index (wrapping) and update the status line."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+        assert screen._library_media_content_match_index == 0
+
+        screen.query_one("#library-media-content-search-next").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_content_match_index == 1
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == "Match 2 of 2 matches"
+
+        # Next wraps back around to the first match.
+        screen.query_one("#library-media-content-search-next").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_content_match_index == 0
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == "Match 1 of 2 matches"
+
+        # Prev wraps backwards to the last match.
+        screen.query_one("#library-media-content-search-prev").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_content_match_index == 1
+        status = str(screen.query_one("#library-media-content-search-status").renderable)
+        assert status == "Match 2 of 2 matches"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_content_search_resets_on_back():
+    """Returning to the media list clears the in-content search state."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_media_item_with_multiline_content())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        await _open_media_viewer_and_submit_content_search(screen, pilot, "budget")
+        assert screen._library_media_content_query == "budget"
+
+        screen.query_one("#library-media-back").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._library_media_content_query == ""
+        assert screen._library_media_content_match_index == 0
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_canvas_shows_loading_before_snapshot_loads(monkeypatch):
+    """Mirrors the conversations loading-gate contract for the media canvas."""
+    app = _build_test_app()
+    _seed_conversations(app, [])
+
+    monkeypatch.setattr(LibraryScreen, "_refresh_local_source_snapshot", _never_loads)
+
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = "browse-media"
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert active_screen._library_loaded is False
+        assert active_screen.query_one("#library-canvas-loading")
+        assert not active_screen.query("#library-media-canvas")
 
 
 @pytest.mark.asyncio
@@ -570,6 +1948,21 @@ def test_generated_stylesheet_includes_library_shell_rules():
         assert stale not in component_css, stale
 
 
+def test_generated_stylesheet_includes_library_media_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for selector in (
+        "#library-media-title",
+        ".library-media-row",
+        ".library-media-row-selected",
+        "#library-media-type-filter",
+    ):
+        assert selector in component_css, selector
+        assert selector in generated_css, selector
+    assert "#library-media-header" not in component_css
+
+
 def _css_rule_body(css_text: str, selector: str) -> str:
     """Return the declaration body of the first ``selector { ... }`` rule.
 
@@ -674,3 +2067,112 @@ async def test_library_shell_details_body_has_no_duplicate_collapse_control():
             tooltip = button.tooltip or ""
             assert "Collapse Details" not in label
             assert "Collapse Details" not in tooltip
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_use_in_chat_body_truncated_for_long_content():
+    """``body_truncated`` is True when media content exceeds 500 chars.
+
+    The handoff excerpt is capped at LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS (500),
+    so long content must set body_truncated=True. This test seeds media with
+    600 chars and asserts both the flag and that the excerpt is bounded.
+    """
+    app = _build_test_app()
+    media_items = _two_media_items()[:1]
+    # Seed with content > 500 chars: use a marker string repeated to exceed 500.
+    long_content = "This is long content. " * 35  # ~770 chars
+    media_items[0]["content"] = long_content
+    _seed_conversations(app, [], media=media_items)
+    app.open_chat_with_handoff = Mock()
+    _link_library_items_to_active_workspace(
+        app,
+        (("media", "media-1", "Interview Recording"),),
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        screen.query_one("#library-media-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-media-use-in-chat")
+
+        screen.query_one("#library-media-use-in-chat").press()
+        await pilot.pause()
+        await pilot.pause()
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert payload.source == "library"
+    assert payload.item_type == "media"
+    assert payload.source_id == "media-1"
+    assert payload.title == "Interview Recording"
+    assert payload.body_truncated is True
+    # The payload.body includes metadata headers plus the excerpt.
+    # Verify the excerpt is bounded: a marker string only in the first
+    # 500 chars should appear, but content after position 500 should not.
+    assert "This is long content." in payload.body
+    # Verify truncation: content after char 500 should not be present.
+    # The full content string repeated would produce a pattern that continues,
+    # so if truncated, it will end mid-word or mid-pattern.
+    assert "Content excerpt:" in payload.body
+    # Count the actual content after "Content excerpt:" header
+    excerpt_start = payload.body.find("Content excerpt:")
+    content_part = payload.body[excerpt_start:]
+    # The excerpt part should be much shorter than the original content
+    assert len(content_part) < len(long_content)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_use_in_chat_body_not_truncated_for_short_content():
+    """``body_truncated`` is False when media content is <= 500 chars.
+
+    Short content does not set the truncated flag. This test seeds media with
+    300 chars and asserts body_truncated=False and that the full content
+    is included in the excerpt.
+    """
+    app = _build_test_app()
+    media_items = _two_media_items()[:1]
+    # Seed with content < 500 chars: a 300-char realistic string
+    short_content = (
+        "This is a medium-length transcript excerpt that stays well under "
+        "the 500-character limit. It contains enough text to be substantial "
+        "but short enough to pass through without truncation. This demonstrates "
+        "that the body_truncated flag correctly handles content that fits "
+        "entirely within the handoff excerpt boundary."
+    )
+    media_items[0]["content"] = short_content
+    _seed_conversations(app, [], media=media_items)
+    app.open_chat_with_handoff = Mock()
+    _link_library_items_to_active_workspace(
+        app,
+        (("media", "media-1", "Interview Recording"),),
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        screen.query_one("#library-media-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-media-use-in-chat")
+
+        screen.query_one("#library-media-use-in-chat").press()
+        await pilot.pause()
+        await pilot.pause()
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert payload.source == "library"
+    assert payload.item_type == "media"
+    assert payload.source_id == "media-1"
+    assert payload.title == "Interview Recording"
+    assert payload.body_truncated is False
+    # Full content should be present (not truncated) in the body payload.
+    assert short_content in payload.body
+    # Verify the structure includes the excerpt section.
+    assert "Content excerpt:" in payload.body

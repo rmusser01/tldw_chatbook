@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tldw_chatbook.Constants import TAB_INGEST, TAB_MEDIA, TAB_NOTES
+from tldw_chatbook.Constants import TAB_INGEST, TAB_NOTES
 
 LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something new."
 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
+LIBRARY_ROW_BROWSE_MEDIA = "browse-media"
 
 
 @dataclass(frozen=True)
@@ -80,11 +81,11 @@ def build_library_shell_state(
     # Build the fixed row table
     browse_rows = (
         LibraryRailRow(
-            row_id="browse-media",
+            row_id=LIBRARY_ROW_BROWSE_MEDIA,
             section_id="browse",
             title="Media",
-            target_kind="screen",
-            target_id=TAB_MEDIA,
+            target_kind="canvas",
+            target_id="media",
             count=state.media_count,
             count_known=state.media_known,
         ),
@@ -210,8 +211,8 @@ def build_library_shell_state(
         canvas_target = ""
         canvas_empty_copy = LIBRARY_CANVAS_LANDING_COPY
     elif selected_row.target_kind == "canvas":
-        # Canvas rows resolve to conversations canvas
-        canvas_kind = "conversations"
+        # Canvas rows resolve to their target canvas
+        canvas_kind = selected_row.target_id
         canvas_target = ""
         canvas_empty_copy = LIBRARY_CANVAS_LANDING_COPY
     elif selected_row.target_kind == "mode":

@@ -13,9 +13,9 @@ from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...config import save_setting_to_cli_config
@@ -27,6 +27,15 @@ from ...Constants import (
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_conversations_state import build_library_conversations_state
+from ...Library.library_media_state import (
+    LibraryMediaCanvasState,
+    build_library_media_state,
+)
+from ...Library.library_media_viewer_state import (
+    build_library_media_highlight_rows,
+    build_library_media_viewer_state,
+    find_content_matches,
+)
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -40,6 +49,7 @@ from ...Library.library_rail_state import (
 )
 from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
+    LIBRARY_ROW_BROWSE_MEDIA,
     LibraryShellInput,
     build_library_shell_state,
 )
@@ -56,6 +66,8 @@ from ...Widgets.Console.console_rail_section import (
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
     LibraryConversationsCanvas,
+    LibraryMediaCanvas,
+    LibraryMediaViewer,
     LibraryRail,
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
@@ -98,6 +110,7 @@ LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH = 14
 LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH = 16
 LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH = 22
 LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH = 18
+LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
 LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset(
     {
         "library-rag-results-section-rule",
@@ -488,6 +501,16 @@ class LibraryScreen(BaseAppScreen):
         self._selected_conversation_id = ""
         self._library_selected_row_id: str = ""
         self._library_conversation_query: str = ""
+        self._library_media_type_filter: str = "All"
+        self._selected_media_id: str = ""
+        self._library_media_view: str = "list"
+        self._library_media_detail: Mapping[str, Any] | None = None
+        self._library_media_editing: bool = False
+        self._library_media_confirming_delete: bool = False
+        self._library_media_highlights: list[dict[str, Any]] = []
+        self._library_media_editing_analysis: bool = False
+        self._library_media_content_query: str = ""
+        self._library_media_content_match_index: int = 0
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -625,6 +648,35 @@ class LibraryScreen(BaseAppScreen):
         if validate_text_input(text, max_length=max_length, allow_html=False):
             return text
         return fallback
+
+    @staticmethod
+    def _sanitize_media_field(value: Any, *, max_length: int) -> str:
+        """Sanitize a user-entered media field at the UI boundary.
+
+        Runs the shared ``input_validation`` helpers before the value is
+        handed to a persistence service (``update_media_item`` /
+        ``create_highlight`` / ``save_analysis_version``), so over-long
+        input is truncated and control characters are stripped, and any
+        HTML/script markup that trips ``validate_text_input`` is neutralized
+        -- keeping unsafe or oversized content from reaching storage. Normal
+        text (including a lone ``<``/``>`` in prose) is returned unchanged.
+
+        Args:
+            value: The raw widget value to sanitize.
+            max_length: Maximum length to allow before truncation.
+
+        Returns:
+            The sanitized field value.
+        """
+        text = sanitize_string(str(value or ""), max_length=max_length)
+        if not validate_text_input(text, max_length=max_length, allow_html=False):
+            # A dangerous HTML/script pattern was detected: break it up
+            # (drop the angle brackets and inline handlers) but keep the
+            # rest of the field rather than discarding user content.
+            text = text.replace("<", "").replace(">", "")
+            for pattern in ("javascript:", "onclick=", "onerror="):
+                text = text.replace(pattern, "")
+        return text
 
     @staticmethod
     def _safe_sync_scope_text(value: Any, *, max_length: int = 200) -> str | None:
@@ -1040,6 +1092,67 @@ class LibraryScreen(BaseAppScreen):
                 "workspace_label": workspace_label,
                 "updated_label": updated_label,
                 "source_authority": "local",
+            },
+        )
+
+    def _selected_media_handoff_payload(self) -> ChatHandoffPayload | None:
+        """Build the Console handoff payload for the open Library media item.
+
+        Mirrors ``_selected_conversation_handoff_payload``, but reads the
+        currently loaded media detail (``_library_media_detail``) instead of
+        a selected browser row -- the media viewer's "Use in Chat" action
+        stages whatever item is open in the in-canvas viewer, not a row
+        selection from the list.
+
+        Returns:
+            A ``ChatHandoffPayload`` staging the open media item as Console
+            context, or None when no media item is currently loaded.
+        """
+        detail = self._library_media_detail
+        if not isinstance(detail, Mapping):
+            return None
+        viewer = build_library_media_viewer_state(detail)
+        media_id = viewer.media_id or self._safe_text(self._selected_media_id)
+        if not media_id:
+            return None
+        title = viewer.title or "Untitled source"
+        media_type = (
+            self._safe_text(detail.get("type"))
+            or self._safe_text(detail.get("media_type"))
+            or "unknown"
+        )
+        content = viewer.content
+        excerpt = content[:LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS]
+        body_truncated = len(content) > LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS
+        body_lines = [f"Media: {title}", f"Media ID: {media_id}"]
+        body_lines.extend(
+            line
+            for line in viewer.metadata_lines
+            if line.startswith(("Type:", "Author:", "Keywords:"))
+        )
+        body_lines.append("Source authority: local")
+        body_lines.append("")
+        body_lines.append("Content excerpt:")
+        body_lines.append(excerpt if excerpt else "No stored content.")
+        body = "\n".join(body_lines)
+        return ChatHandoffPayload(
+            source="library",
+            item_type="media",
+            title=title,
+            body=body,
+            body_truncated=body_truncated,
+            source_id=media_id,
+            display_summary=f"Media staged: {title}",
+            suggested_prompt="Use this media as source context for my next question.",
+            runtime_backend="local",
+            source_owner="local",
+            source_selector_state="local",
+            discovery_owner="media",
+            discovery_entity_id=media_id,
+            metadata={
+                "media_id": media_id,
+                "media_title": title,
+                "media_type": media_type,
             },
         )
 
@@ -2466,6 +2579,7 @@ class LibraryScreen(BaseAppScreen):
                 shell,
                 preferences,
                 query=self._library_conversation_query,
+                search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 id="library-rail",
                 classes="destination-workbench-pane",
@@ -2479,15 +2593,19 @@ class LibraryScreen(BaseAppScreen):
             canvas_host.styles.min_width = 40
             canvas_host.styles.height = "100%"
             with canvas_host:
-                # Only the conversations canvas reads the local source
-                # snapshot directly, so only it can show a false "no
-                # conversations" empty state while that snapshot is still
-                # loading. "mode" canvases (Collections, Flashcards,
-                # Search/RAG, ...) and the landing/empty canvas are unaffected
-                # and must not be replaced by this loading/error copy.
-                is_conversations_canvas = shell.canvas_kind == "conversations"
+                # Only the conversations and media canvases read the local
+                # source snapshot directly, so only they can show a false
+                # "no conversations"/"no media" empty state while that
+                # snapshot is still loading. "mode" canvases (Collections,
+                # Flashcards, Search/RAG, ...) and the landing/empty canvas
+                # are unaffected and must not be replaced by this
+                # loading/error copy.
+                is_local_snapshot_canvas = shell.canvas_kind in (
+                    "conversations",
+                    "media",
+                )
                 if (
-                    is_conversations_canvas
+                    is_local_snapshot_canvas
                     and not self._library_loaded
                     and not self._library_lookup_error
                 ):
@@ -2497,7 +2615,7 @@ class LibraryScreen(BaseAppScreen):
                         classes="destination-purpose",
                         markup=False,
                     )
-                elif is_conversations_canvas and self._library_lookup_error:
+                elif is_local_snapshot_canvas and self._library_lookup_error:
                     yield Static(
                         self._library_lookup_error,
                         id="library-canvas-error",
@@ -2510,6 +2628,34 @@ class LibraryScreen(BaseAppScreen):
                     yield LibraryConversationsCanvas(
                         conversations_state,
                         id="library-conversations-canvas",
+                    )
+                elif shell.canvas_kind == "media" and self._library_media_view == "viewer":
+                    if self._library_media_detail is None:
+                        yield Static(
+                            "Loading media…",
+                            id="library-media-viewer-loading",
+                            classes="destination-purpose",
+                            markup=False,
+                        )
+                    else:
+                        yield LibraryMediaViewer(
+                            build_library_media_viewer_state(self._library_media_detail),
+                            editing=self._library_media_editing,
+                            confirming_delete=self._library_media_confirming_delete,
+                            highlights=build_library_media_highlight_rows(
+                                self._library_media_highlights
+                            ),
+                            editing_analysis=self._library_media_editing_analysis,
+                            content_query=self._library_media_content_query,
+                            content_match_index=self._library_media_content_match_index,
+                            id="library-media-viewer",
+                        )
+                elif shell.canvas_kind == "media":
+                    media_state = self._build_library_media_state()
+                    self._selected_media_id = media_state.selected_id
+                    yield LibraryMediaCanvas(
+                        media_state,
+                        id="library-media-canvas",
                     )
                 elif shell.canvas_kind == "mode":
                     yield from self._compose_mode_canvas(shell.canvas_target)
@@ -2599,6 +2745,112 @@ class LibraryScreen(BaseAppScreen):
             query=self._library_conversation_query,
             selected_id=self._selected_conversation_id,
         )
+
+    def _build_library_media_state(self) -> LibraryMediaCanvasState:
+        """Build the media canvas display state from local records."""
+        return build_library_media_state(
+            self._local_source_records.get("media", ()),
+            active_type=self._library_media_type_filter,
+            selected_id=self._selected_media_id,
+        )
+
+    async def _refresh_library_media_detail(self, media_id: str) -> None:
+        """Fetch and store the full detail for a selected Library media item.
+
+        Mirrors ``_refresh_library_collections_snapshot``: guards against an
+        unavailable media service, offloads the (possibly blocking) service
+        call via ``_run_library_service_call``, and recomposes once the
+        fetched detail (or a cleared/failed state) has been stored.
+
+        Also fetches the item's reading highlights (see
+        ``_fetch_library_media_highlights``) so both the detail and the
+        highlights section are ready by the single recompose at the end,
+        rather than the highlights section popping in on a second refresh.
+
+        Triggered by ``handle_library_media_row`` on media-row selection;
+        ``compose_content`` renders the stored ``_library_media_detail`` via
+        ``build_library_media_viewer_state`` once this worker completes.
+
+        Args:
+            media_id: The Library media item id to fetch full detail for.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        get_media_item = getattr(service, "get_media_item", None)
+        if not callable(get_media_item):
+            self._library_media_detail = None
+            self._library_media_highlights = []
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        try:
+            detail = await self._run_library_service_call(
+                get_media_item,
+                mode="local",
+                media_id=media_id,
+                include_content=True,
+                include_versions=True,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.warning(f"Failed to load Library media detail for {media_id!r}.", exc_info=True)
+            detail = None
+        # Discard out-of-order results: if the user has since selected a
+        # different media row (or left the viewer), a slower in-flight fetch
+        # for the previous selection must not overwrite the current one. The
+        # highlights fetch is a second await point, so re-check after it too
+        # and store detail + highlights together only when still current.
+        if media_id != self._selected_media_id or self._library_media_view != "viewer":
+            return
+        highlights = await self._fetch_library_media_highlights(media_id)
+        if media_id != self._selected_media_id or self._library_media_view != "viewer":
+            return
+        self._library_media_detail = detail if isinstance(detail, Mapping) else None
+        self._library_media_highlights = highlights
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    async def _fetch_library_media_highlights(self, media_id: str) -> list[dict[str, Any]]:
+        """Fetch reading highlights for a Library media item from the local scope service.
+
+        Guards against an unavailable ``list_highlights`` service or a failed
+        call the same way ``_refresh_library_media_detail`` guards the detail
+        fetch: any failure yields an empty list rather than raising, so a
+        highlights outage never blocks the rest of the viewer from loading.
+
+        Args:
+            media_id: The Library media item id to fetch highlights for.
+
+        Returns:
+            The fetched highlights list, or an empty list when the service
+            is unavailable or the fetch fails.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        list_highlights = getattr(service, "list_highlights", None)
+        if not callable(list_highlights):
+            return []
+        try:
+            highlights = await self._run_library_service_call(
+                list_highlights,
+                mode="local",
+                item_id=media_id,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.warning(
+                f"Failed to load Library media highlights for {media_id!r}.", exc_info=True
+            )
+            return []
+        return list(highlights) if isinstance(highlights, list) else []
+
+    async def _reload_library_media_highlights(self, media_id: str) -> None:
+        """Re-fetch and store highlights after a highlight mutation, then recompose.
+
+        Args:
+            media_id: The Library media item id whose highlights changed.
+        """
+        self._library_media_highlights = await self._fetch_library_media_highlights(media_id)
+        if self.is_mounted:
+            self.refresh(recompose=True)
 
     def _compose_mode_canvas(self, mode: str) -> ComposeResult:
         """Render the canvas body for a mode row (moved middle-pane content)."""
@@ -2708,8 +2960,9 @@ class LibraryScreen(BaseAppScreen):
                 self.post_message(NavigateToScreen(target_id))
             return
         if target_kind == "canvas":
-            self._library_conversation_query = ""
-            await self._select_library_rail_row(row_id, "conversations")
+            if target_id == "conversations":
+                self._library_conversation_query = ""
+            await self._select_library_rail_row(row_id, target_id or "conversations")
             return
         if target_kind == "mode":
             await self._select_library_rail_row(row_id, target_id)
@@ -2727,6 +2980,18 @@ class LibraryScreen(BaseAppScreen):
         """
         self._library_selected_row_id = row_id
         self._active_mode = active_mode
+        # A rail-row press is always a fresh entry into a content type, so
+        # the media canvas must never resume a previously opened viewer
+        # (e.g. Browse Media -> open item -> Browse Conversations -> Browse
+        # Media again must show the list, not the stale viewer).
+        self._library_media_view = "list"
+        self._library_media_detail = None
+        self._library_media_editing = False
+        self._library_media_confirming_delete = False
+        self._library_media_highlights = []
+        self._library_media_editing_analysis = False
+        self._library_media_content_query = ""
+        self._library_media_content_match_index = 0
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -2769,6 +3034,839 @@ class LibraryScreen(BaseAppScreen):
         self._active_mode = "conversations"
         self.refresh(recompose=True)
 
+    @on(Button.Pressed, "#library-media-type-filter")
+    def handle_library_media_type_filter_pressed(self, event: Button.Pressed) -> None:
+        """Cycle the Library media canvas filter to the next available type.
+
+        Advances through the authoritative ``type_options`` tuple built by
+        ``_build_library_media_state`` (e.g. ``("All", "audio", "video")``),
+        wrapping back to the first option after the last. Replaces the
+        previous ``Select``-based filter, which did not render reliably in
+        the deployed TUI; a ``Button.Pressed`` handler only fires on real
+        user presses, so no mount-time-loop guard is needed here.
+
+        Args:
+            event: Button press event emitted by the media type filter.
+        """
+        event.stop()
+        type_options = self._build_library_media_state().type_options
+        if not type_options:
+            return
+        try:
+            current_index = type_options.index(self._library_media_type_filter)
+        except ValueError:
+            current_index = 0
+        next_index = (current_index + 1) % len(type_options)
+        self._library_media_type_filter = type_options[next_index]
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-media-row")
+    def handle_library_media_row(self, event: Button.Pressed) -> None:
+        """Select a media row and open the full Library media viewer.
+
+        Switches the media canvas from its list view to the in-canvas
+        viewer, clears any stale detail, and kicks the async detail fetch
+        (``_refresh_library_media_detail``); the viewer renders a loading
+        line until that worker stores the fetched detail and recomposes.
+
+        Args:
+            event: Button press event emitted by a media row button.
+        """
+        event.stop()
+        media_id = str(getattr(event.button, "media_id", "") or "")
+        if media_id:
+            self._selected_media_id = media_id
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+        self._active_mode = "media"
+        self._library_media_view = "viewer"
+        self._library_media_detail = None
+        self._library_media_editing = False
+        self._library_media_confirming_delete = False
+        self._library_media_highlights = []
+        self._library_media_editing_analysis = False
+        self._library_media_content_query = ""
+        self._library_media_content_match_index = 0
+        if media_id:
+            # Exclusive in its own group so rapidly switching rows cancels the
+            # previous in-flight detail fetch instead of letting a slower older
+            # fetch finish and overwrite the newer selection's viewer.
+            self.run_worker(
+                self._refresh_library_media_detail(media_id),
+                exclusive=True,
+                group="library_media_detail",
+            )
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-back")
+    def handle_library_media_back(self, event: Button.Pressed) -> None:
+        """Return the Library media canvas from the viewer to its list view.
+
+        Args:
+            event: Button press event emitted by the "‹ Back to list" action.
+        """
+        event.stop()
+        self._library_media_view = "list"
+        self._library_media_editing = False
+        self._library_media_confirming_delete = False
+        self._library_media_editing_analysis = False
+        self._library_media_content_query = ""
+        self._library_media_content_match_index = 0
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-edit")
+    def handle_library_media_edit(self, event: Button.Pressed) -> None:
+        """Enter metadata edit mode for the open Library media viewer.
+
+        Args:
+            event: Button press event emitted by the viewer's "Edit" action.
+        """
+        event.stop()
+        self._library_media_editing = True
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-edit-cancel")
+    def handle_library_media_edit_cancel(self, event: Button.Pressed) -> None:
+        """Discard in-progress metadata edits and return to the read-only viewer.
+
+        Args:
+            event: Button press event emitted by the edit form's "Cancel" action.
+        """
+        event.stop()
+        self._library_media_editing = False
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-edit-save")
+    def handle_library_media_edit_save(self, event: Button.Pressed) -> None:
+        """Read the edit form's field values and hand the write off to a worker.
+
+        Reads the four edit inputs directly (before any recompose removes
+        them), splits the keywords input on commas, and defers the actual
+        persistence to ``_save_library_media_edit`` -- a worker that mirrors
+        how ``handle_library_media_row`` kicks off
+        ``_refresh_library_media_detail`` for the initial detail fetch.
+
+        Args:
+            event: Button press event emitted by the edit form's "Save" action.
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        if not media_id:
+            self._library_media_editing = False
+            self.refresh(recompose=True)
+            return
+        try:
+            title = self.query_one("#library-media-edit-title", Input).value
+            author = self.query_one("#library-media-edit-author", Input).value
+            url = self.query_one("#library-media-edit-url", Input).value
+            keywords_raw = self.query_one("#library-media-edit-keywords", Input).value
+        except (NoMatches, QueryError):
+            self._library_media_editing = False
+            self.refresh(recompose=True)
+            return
+        # Validate/sanitize each user-entered field at the UI boundary before
+        # it reaches the persistence service.
+        title = self._sanitize_media_field(title, max_length=1000)
+        author = self._sanitize_media_field(author, max_length=1000)
+        url = self._sanitize_media_field(url, max_length=2000)
+        keywords = [
+            cleaned
+            for item in keywords_raw.split(",")
+            if (cleaned := self._sanitize_media_field(item, max_length=200).strip())
+        ]
+        self.run_worker(
+            self._save_library_media_edit(
+                media_id,
+                title=title,
+                author=author,
+                url=url,
+                keywords=keywords,
+            )
+        )
+
+    async def _save_library_media_edit(
+        self,
+        media_id: str,
+        *,
+        title: str,
+        author: str,
+        url: str,
+        keywords: list[str],
+    ) -> None:
+        """Persist metadata edits, then re-fetch detail and exit edit mode.
+
+        Guards against a missing ``update_media_item`` service or a failed
+        write by logging the failure and surfacing a quiet notice, but
+        always re-fetches the current detail afterwards so the viewer never
+        shows a stale/half-applied edit.
+
+        Only the local backend's supported metadata fields (title, author,
+        url, keywords) are sent -- notably ``version`` is NOT included.
+        ``Client_Media_DB_v2.update_media_metadata`` performs its own
+        optimistic-version check internally from the row it reads and takes
+        no caller-supplied ``version`` argument, so omitting it here loses
+        no locking guarantees while avoiding the local backend's metadata
+        field allowlist rejecting the write outright.
+
+        Args:
+            media_id: The Library media item id being edited.
+            title: New title field value.
+            author: New author field value.
+            url: New URL field value.
+            keywords: New keywords, already split from the comma-separated
+                edit input.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        update_media_item = getattr(service, "update_media_item", None)
+        if callable(update_media_item):
+            try:
+                await self._run_library_service_call(
+                    update_media_item,
+                    mode="local",
+                    media_id=media_id,
+                    title=title,
+                    author=author,
+                    url=url,
+                    keywords=keywords,
+                    isolate_in_worker=True,
+                )
+                # Keep the media list's local snapshot in step with the write
+                # so navigating back shows the new title/author/url/keywords
+                # immediately, not the pre-edit values until a full refetch.
+                self._patch_local_media_record(
+                    media_id, title=title, author=author, url=url, keywords=keywords
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to save Library media edit for {media_id!r}.", exc_info=True
+                )
+                self._notify_library_media_edit_warning(
+                    "Could not save media changes; showing the latest saved version."
+                )
+        else:
+            self._notify_library_media_edit_warning("Media editing is unavailable.")
+        self._library_media_editing = False
+        await self._refresh_library_media_detail(media_id)
+
+    def _patch_local_media_record(
+        self,
+        media_id: str,
+        *,
+        title: str,
+        author: str,
+        url: str,
+        keywords: list[str],
+    ) -> None:
+        """Update the cached media snapshot record after a saved metadata edit.
+
+        The viewer re-fetches its detail from the backend, but the media
+        *list* is rendered from ``_local_source_records['media']`` (seeded
+        once at load), so without this the list keeps showing the pre-edit
+        fields until a full snapshot refresh. Only the record whose id
+        matches ``media_id`` is replaced; all others are passed through
+        unchanged.
+
+        Args:
+            media_id: The edited media item's id.
+            title: Saved title value.
+            author: Saved author value.
+            url: Saved URL value.
+            keywords: Saved keywords list.
+        """
+        self._local_source_records["media"] = tuple(
+            dict(record, title=title, author=author, url=url, keywords=list(keywords))
+            if self._source_record_id(record) == media_id
+            else record
+            for record in self._local_source_records.get("media", ())
+        )
+
+    def _notify_library_media_edit_warning(self, message: str) -> None:
+        """Surface a quiet warning notice for a failed media-edit save.
+
+        Args:
+            message: Human-readable warning text to notify with.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-media-delete")
+    def handle_library_media_delete(self, event: Button.Pressed) -> None:
+        """Enter the inline delete-confirmation state for the open media viewer.
+
+        Deleting is destructive (it trashes the item), so the first press
+        only swaps the normal action row for a "Delete" / "Cancel" confirm
+        affordance; the actual service call only happens once the confirm
+        button (``#library-media-delete-confirm``) is pressed.
+
+        Args:
+            event: Button press event emitted by the viewer's "Delete" action.
+        """
+        event.stop()
+        self._library_media_confirming_delete = True
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-delete-cancel")
+    def handle_library_media_delete_cancel(self, event: Button.Pressed) -> None:
+        """Discard the pending delete confirmation and restore the normal action row.
+
+        Args:
+            event: Button press event emitted by the confirm affordance's
+                "Cancel" action.
+        """
+        event.stop()
+        self._library_media_confirming_delete = False
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-delete-confirm")
+    def handle_library_media_delete_confirm(self, event: Button.Pressed) -> None:
+        """Hand the confirmed delete off to a worker that trashes the item.
+
+        Reads the currently selected media id synchronously (before any
+        recompose can clear it) and defers the actual service call and list
+        mutation to ``_delete_library_media_item`` -- mirroring how
+        ``handle_library_media_edit_save`` defers to
+        ``_save_library_media_edit``.
+
+        Args:
+            event: Button press event emitted by the confirm affordance's
+                "Delete" action.
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        if not media_id:
+            self._library_media_confirming_delete = False
+            self.refresh(recompose=True)
+            return
+        self.run_worker(self._delete_library_media_item(media_id))
+
+    async def _delete_library_media_item(self, media_id: str) -> None:
+        """Trash the selected Library media item, then return to the list view.
+
+        Guards against a missing ``delete_media_item`` service or a failed
+        write by logging the failure and surfacing a quiet notice; either
+        way the pending confirmation is dismissed afterwards so a failed
+        delete never strands the viewer in the confirm state.
+
+        On success, the deleted item is dropped from the cached
+        ``_local_source_records["media"]`` snapshot (matched via
+        ``_source_record_id``, the same id-key precedence ``_study_source_items``
+        uses) so the list view reflects the trash immediately, without
+        waiting on a full snapshot re-fetch, and the canvas returns to its
+        list view.
+
+        Args:
+            media_id: The Library media item id to delete.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        delete_media_item = getattr(service, "delete_media_item", None)
+        deleted = False
+        if callable(delete_media_item):
+            try:
+                await self._run_library_service_call(
+                    delete_media_item,
+                    mode="local",
+                    media_id=media_id,
+                    isolate_in_worker=True,
+                )
+                deleted = True
+            except Exception:
+                logger.warning(
+                    f"Failed to delete Library media item {media_id!r}.", exc_info=True
+                )
+                self._notify_library_media_delete_warning(
+                    "Could not delete this media item."
+                )
+        else:
+            self._notify_library_media_delete_warning("Media deletion is unavailable.")
+
+        self._library_media_confirming_delete = False
+        if deleted:
+            self._local_source_records["media"] = tuple(
+                record
+                for record in self._local_source_records.get("media", ())
+                if self._source_record_id(record) != media_id
+            )
+            self._library_media_view = "list"
+            self._library_media_detail = None
+            self._library_media_highlights = []
+            self._library_media_editing_analysis = False
+            self._library_media_content_query = ""
+            self._library_media_content_match_index = 0
+            self._selected_media_id = ""
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    def _notify_library_media_delete_warning(self, message: str) -> None:
+        """Surface a quiet warning notice for a failed media-delete attempt.
+
+        Args:
+            message: Human-readable warning text to notify with.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-media-highlight-add")
+    def handle_library_media_highlight_add(self, event: Button.Pressed) -> None:
+        """Read the add-highlight form and hand the write off to a worker.
+
+        Reads the three highlight inputs directly (before any recompose
+        removes them) and silently ignores the press when the quote is
+        blank -- mirroring how ``handle_library_media_edit_save`` reads its
+        form inputs synchronously before deferring to a worker.
+
+        Args:
+            event: Button press event emitted by the highlights form's "Add
+                highlight" action.
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        if not media_id:
+            return
+        try:
+            quote = self.query_one("#library-media-highlight-quote", Input).value
+            note = self.query_one("#library-media-highlight-note", Input).value
+            color = self.query_one("#library-media-highlight-color", Input).value
+        except (NoMatches, QueryError):
+            return
+        # Validate/sanitize each user-entered field at the UI boundary before
+        # it reaches the persistence service.
+        quote = self._sanitize_media_field(quote, max_length=10000).strip()
+        if not quote:
+            return
+        note = self._sanitize_media_field(note, max_length=10000).strip() or None
+        color = self._sanitize_media_field(color, max_length=100).strip() or None
+        # Exclusive in its own group so a rapid double-press cancels the first
+        # add instead of inserting the same highlight twice (the add write is
+        # not idempotent, unlike delete).
+        self.run_worker(
+            self._add_library_media_highlight(
+                media_id,
+                quote=quote,
+                note=note,
+                color=color,
+            ),
+            exclusive=True,
+            group="library_media_highlight_add",
+        )
+
+    async def _add_library_media_highlight(
+        self,
+        media_id: str,
+        *,
+        quote: str,
+        note: str | None,
+        color: str | None,
+    ) -> None:
+        """Create a new reading highlight, then re-fetch the highlights list.
+
+        Guards against a missing ``create_highlight`` service or a failed
+        write by logging the failure and surfacing a quiet notice, but
+        always re-fetches highlights afterwards so the section never shows a
+        stale list.
+
+        Args:
+            media_id: The Library media item id to attach the highlight to.
+            quote: The highlighted quote text.
+            note: Optional note text, or None.
+            color: Optional highlight color, or None.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        create_highlight = getattr(service, "create_highlight", None)
+        if callable(create_highlight):
+            try:
+                await self._run_library_service_call(
+                    create_highlight,
+                    mode="local",
+                    item_id=media_id,
+                    quote=quote,
+                    note=note,
+                    color=color,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to add Library media highlight for {media_id!r}.", exc_info=True
+                )
+                self._notify_library_media_highlight_warning("Could not add this highlight.")
+        else:
+            self._notify_library_media_highlight_warning("Highlights are unavailable.")
+        await self._reload_library_media_highlights(media_id)
+
+    @on(Button.Pressed, ".library-media-highlight-delete")
+    def handle_library_media_highlight_delete(self, event: Button.Pressed) -> None:
+        """Read the pressed row's highlight id and hand the delete off to a worker.
+
+        Args:
+            event: Button press event emitted by a highlight row's delete
+                action.
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        highlight_id = getattr(event.button, "highlight_id", "")
+        if not media_id or not highlight_id:
+            return
+        self.run_worker(self._delete_library_media_highlight(media_id, highlight_id))
+
+    async def _delete_library_media_highlight(self, media_id: str, highlight_id: Any) -> None:
+        """Delete a reading highlight, then re-fetch the highlights list.
+
+        Guards against a missing ``delete_highlight`` service or a failed
+        write by logging the failure and surfacing a quiet notice, but
+        always re-fetches highlights afterwards so the section never shows a
+        stale list.
+
+        Args:
+            media_id: The Library media item id the highlight belongs to.
+            highlight_id: The highlight id to delete.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        delete_highlight = getattr(service, "delete_highlight", None)
+        if callable(delete_highlight):
+            try:
+                await self._run_library_service_call(
+                    delete_highlight,
+                    mode="local",
+                    highlight_id=highlight_id,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to delete Library media highlight {highlight_id!r}.", exc_info=True
+                )
+                self._notify_library_media_highlight_warning("Could not delete this highlight.")
+        else:
+            self._notify_library_media_highlight_warning("Highlights are unavailable.")
+        await self._reload_library_media_highlights(media_id)
+
+    def _notify_library_media_highlight_warning(self, message: str) -> None:
+        """Surface a quiet warning notice for a failed highlight mutation.
+
+        Args:
+            message: Human-readable warning text to notify with.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    @on(Input.Submitted, "#library-media-content-search")
+    def handle_library_media_content_search_submitted(self, event: Input.Submitted) -> None:
+        """Set the in-content search query and jump to the first match.
+
+        Submitted (rather than Changed) is used deliberately: recomposing
+        the whole screen on every keystroke would remount
+        ``#library-media-content-search`` and drop focus/cursor position
+        mid-typing, so the query only takes effect on Enter -- mirroring
+        ``handle_library_search_submitted``'s rail search box. A no-op
+        guard (mirroring ``update_library_rag_query``) skips the recompose
+        entirely when the submitted text matches the current query.
+
+        Args:
+            event: Input submit event emitted by the content search box.
+        """
+        event.stop()
+        # Strip once at the source so the status count, the body highlighting,
+        # and prev/next navigation all search the exact same needle.
+        submitted = event.value.strip()
+        if submitted == self._library_media_content_query:
+            return
+        self._library_media_content_query = submitted
+        self._library_media_content_match_index = 0
+        self.refresh(recompose=True)
+        self.call_after_refresh(self._focus_library_media_content_search_input)
+        # Bring the first match into view on submit; otherwise the status line
+        # claims "Match 1 of N" while the hit stays below the fold until the
+        # user cycles Next all the way around.
+        detail = self._library_media_detail if isinstance(self._library_media_detail, Mapping) else None
+        content = build_library_media_viewer_state(detail).content if detail else ""
+        matches = find_content_matches(content, self._library_media_content_query)
+        if matches:
+            self.call_after_refresh(self._scroll_library_media_content_to_line, matches[0])
+
+    def _focus_library_media_content_search_input(self) -> None:
+        """Re-focus the content search box after a submit-triggered recompose.
+
+        Mirrors ``_focus_library_search_input``: the Submitted-driven
+        recompose above remounts a brand-new
+        ``#library-media-content-search``, so without this, focus falls
+        back to the screen after every search.
+        """
+        try:
+            self.query_one("#library-media-content-search", Input).focus()
+        except (NoMatches, QueryError):
+            pass
+
+    @on(Button.Pressed, "#library-media-content-search-next")
+    def handle_library_media_content_search_next(self, event: Button.Pressed) -> None:
+        """Advance to the next in-content search match and scroll it into view.
+
+        Args:
+            event: Button press event emitted by the "Next" search action.
+        """
+        event.stop()
+        self._advance_library_media_content_match(1)
+
+    @on(Button.Pressed, "#library-media-content-search-prev")
+    def handle_library_media_content_search_prev(self, event: Button.Pressed) -> None:
+        """Return to the previous in-content search match and scroll it into view.
+
+        Args:
+            event: Button press event emitted by the "Prev" search action.
+        """
+        event.stop()
+        self._advance_library_media_content_match(-1)
+
+    def _advance_library_media_content_match(self, step: int) -> None:
+        """Move the current content-search match index and scroll to it.
+
+        No-ops when there is no open item or the query has no matches
+        (the status line already reads "No matches" in that case).
+
+        Args:
+            step: ``1`` to move to the next match, ``-1`` for the previous
+                one; wraps around the match count either direction.
+        """
+        detail = self._library_media_detail if isinstance(self._library_media_detail, Mapping) else None
+        content = build_library_media_viewer_state(detail).content if detail else ""
+        matches = find_content_matches(content, self._library_media_content_query)
+        if not matches:
+            return
+        self._library_media_content_match_index = (
+            self._library_media_content_match_index + step
+        ) % len(matches)
+        line_index = matches[self._library_media_content_match_index]
+        self.refresh(recompose=True)
+        self.call_after_refresh(self._scroll_library_media_content_to_line, line_index)
+
+    def _scroll_library_media_content_to_line(self, line_index: int) -> None:
+        """Scroll the content region so the given line index is visible.
+
+        Uses the content ``VerticalScroll``'s ``scroll_to`` on the Y axis
+        as an approximation of "the matched line" -- the content renders
+        as a single ``Static``, so this is not pixel-perfect line
+        targeting, but it reliably brings the matched line into (or near)
+        view, which is the required bar for this feature.
+
+        Args:
+            line_index: 0-based line index within the content text to
+                reveal.
+        """
+        try:
+            content_scroll = self.query_one("#library-media-viewer-content", VerticalScroll)
+        except (NoMatches, QueryError):
+            return
+        content_scroll.scroll_to(y=line_index, animate=False)
+
+    @on(Button.Pressed, "#library-media-read-later")
+    def handle_library_media_read_later(self, event: Button.Pressed) -> None:
+        """Toggle the open media item's read-it-later state via a worker.
+
+        Reads the currently known saved state from ``_library_media_detail``
+        (already reflecting ``is_read_it_later`` from the last fetch) to
+        decide whether to save or remove, mirroring how
+        ``handle_library_media_delete_confirm`` reads state synchronously
+        before deferring to a worker.
+
+        Args:
+            event: Button press event emitted by the viewer's "Read it
+                later" / "Remove from read-it-later" action.
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        if not media_id:
+            return
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else {}
+        )
+        currently_saved = bool(detail.get("is_read_it_later"))
+        self.run_worker(
+            self._toggle_library_media_read_later(media_id, currently_saved=currently_saved)
+        )
+
+    async def _toggle_library_media_read_later(
+        self, media_id: str, *, currently_saved: bool
+    ) -> None:
+        """Save or remove the read-it-later state, then re-fetch detail.
+
+        Guards against a missing ``save_to_read_it_later``/
+        ``remove_from_read_it_later`` service or a failed write by logging
+        the failure and surfacing a quiet notice, but always re-fetches
+        detail afterwards so the button's label never shows a stale state.
+
+        Args:
+            media_id: The Library media item id to toggle.
+            currently_saved: Whether the item is currently saved for
+                read-it-later (determines whether to save or remove).
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        method_name = "remove_from_read_it_later" if currently_saved else "save_to_read_it_later"
+        method = getattr(service, method_name, None)
+        if callable(method):
+            try:
+                await self._run_library_service_call(
+                    method,
+                    mode="local",
+                    media_id=media_id,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to toggle Library media read-it-later state for {media_id!r}.",
+                    exc_info=True,
+                )
+                self._notify_library_media_read_later_warning(
+                    "Could not update read-it-later status."
+                )
+        else:
+            self._notify_library_media_read_later_warning("Read-it-later is unavailable.")
+        await self._refresh_library_media_detail(media_id)
+
+    def _notify_library_media_read_later_warning(self, message: str) -> None:
+        """Surface a quiet warning notice for a failed read-it-later toggle.
+
+        Args:
+            message: Human-readable warning text to notify with.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-media-analysis-edit")
+    def handle_library_media_analysis_edit(self, event: Button.Pressed) -> None:
+        """Enter analysis edit mode for the open Library media viewer.
+
+        Args:
+            event: Button press event emitted by the analysis section's
+                "Edit analysis" action.
+        """
+        event.stop()
+        self._library_media_editing_analysis = True
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-analysis-cancel")
+    def handle_library_media_analysis_cancel(self, event: Button.Pressed) -> None:
+        """Discard in-progress analysis edits and return to the read-only view.
+
+        Args:
+            event: Button press event emitted by the analysis edit form's
+                "Cancel" action.
+        """
+        event.stop()
+        self._library_media_editing_analysis = False
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-media-analysis-save")
+    def handle_library_media_analysis_save(self, event: Button.Pressed) -> None:
+        """Read the analysis edit TextArea and hand the write off to a worker.
+
+        Reads the edited analysis text directly (before any recompose
+        removes the TextArea) and the current document content from the
+        loaded detail -- ``save_analysis_version`` requires both, since it
+        creates a new ``DocumentVersions`` row carrying the (unchanged)
+        content alongside the edited analysis. Mirrors how
+        ``handle_library_media_edit_save`` reads its form inputs
+        synchronously before deferring to a worker.
+
+        Args:
+            event: Button press event emitted by the analysis edit form's
+                "Save" action.
+        """
+        event.stop()
+        media_id = self._selected_media_id
+        if not media_id:
+            self._library_media_editing_analysis = False
+            self.refresh(recompose=True)
+            return
+        try:
+            analysis_content = self.query_one(
+                "#library-media-analysis-edit-text", TextArea
+            ).text
+        except (NoMatches, QueryError):
+            self._library_media_editing_analysis = False
+            self.refresh(recompose=True)
+            return
+        # Validate/sanitize the user-entered analysis at the UI boundary
+        # before it reaches the persistence service.
+        analysis_content = self._sanitize_media_field(
+            analysis_content, max_length=100000
+        )
+        detail = (
+            self._library_media_detail
+            if isinstance(self._library_media_detail, Mapping)
+            else {}
+        )
+        content = str(detail.get("content") or "")
+        self.run_worker(
+            self._save_library_media_analysis(
+                media_id,
+                content=content,
+                analysis_content=analysis_content,
+            )
+        )
+
+    async def _save_library_media_analysis(
+        self, media_id: str, *, content: str, analysis_content: str
+    ) -> None:
+        """Persist an analysis edit as a new document version, then re-fetch detail.
+
+        Guards against a missing ``save_analysis_version`` service or a
+        failed write by logging the failure and surfacing a quiet notice,
+        but always re-fetches detail afterwards so the viewer never shows a
+        stale/half-applied edit. Analysis (re)generation via an LLM is
+        explicitly out of scope -- this only persists caller-supplied text.
+
+        Args:
+            media_id: The Library media item id being edited.
+            content: The current document content, sent unchanged alongside
+                the edited analysis (``save_analysis_version`` requires it).
+            analysis_content: The edited analysis text to persist.
+        """
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        save_analysis_version = getattr(service, "save_analysis_version", None)
+        if callable(save_analysis_version):
+            try:
+                await self._run_library_service_call(
+                    save_analysis_version,
+                    mode="local",
+                    media_id=media_id,
+                    content=content,
+                    analysis_content=analysis_content,
+                    isolate_in_worker=True,
+                )
+            except Exception:
+                logger.warning(
+                    f"Failed to save Library media analysis for {media_id!r}.", exc_info=True
+                )
+                self._notify_library_media_analysis_warning(
+                    "Could not save analysis changes; showing the latest saved version."
+                )
+        else:
+            self._notify_library_media_analysis_warning("Analysis editing is unavailable.")
+        self._library_media_editing_analysis = False
+        await self._refresh_library_media_detail(media_id)
+
+    def _notify_library_media_analysis_warning(self, message: str) -> None:
+        """Surface a quiet warning notice for a failed analysis-edit save.
+
+        Args:
+            message: Human-readable warning text to notify with.
+        """
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-media-open")
+    def handle_library_media_open(self, event: Button.Pressed) -> None:
+        """Hand off the selected media item to the Media screen.
+
+        Args:
+            event: Button press event emitted by the "Open in Media" action.
+        """
+        event.stop()
+        self.post_message(NavigateToScreen("media"))
+
     @on(Input.Submitted, "#library-search-input")
     def handle_library_search_submitted(self, event: Input.Submitted) -> None:
         """Filter the conversations canvas from the rail search box.
@@ -2794,6 +3892,23 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-search-input", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    def _library_rail_search_placeholder(self) -> str:
+        """Placeholder for the rail search box, reflecting the active browse.
+
+        The rail search only filters conversations (see
+        ``handle_library_search_submitted``), so it is precise when the
+        Conversations browse is active and a generic "Search Library…"
+        otherwise -- it should not claim "conversations" while the user is
+        browsing Media or another source. Making it actually search the
+        active source is a tracked follow-up.
+
+        Returns:
+            The context-appropriate search placeholder text.
+        """
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+            return "Search conversations…"
+        return "Search Library…"
 
     @on(Button.Pressed, ".library-mode-chip")
     async def switch_library_mode(self, event: Button.Pressed) -> None:
@@ -3950,6 +5065,48 @@ class LibraryScreen(BaseAppScreen):
     def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
         event.stop()
         self._open_selected_conversation_handoff()
+
+    def _open_selected_media_handoff(self) -> None:
+        """Stage the media item open in the viewer into Console via the shared handoff.
+
+        Mirrors ``_open_selected_conversation_handoff``: builds the payload,
+        then guards on having an open media item, the workspace
+        context-handoff gate, and the app exposing ``open_chat_with_handoff``
+        at all. The workspace gate is not conversation-specific --
+        ``build_library_workspace_depth_state`` computes
+        ``context_handoff_enabled`` across every visible Library source
+        (notes, media, and conversations together), and the Library hub's
+        own per-source-type readiness rows (``_hub_console_status``) already
+        treat Media under that same gate -- so media handoff eligibility
+        follows the identical workspace-staging policy as conversations.
+        """
+        workspace_state = self._library_workspace_depth_state()
+        payload = self._selected_media_handoff_payload()
+        notify = getattr(self.app_instance, "notify", None)
+        if payload is None:
+            if callable(notify):
+                notify("Open a media item before using it in Console.", severity="warning")
+            return
+        if not workspace_state.context_handoff_enabled:
+            if callable(notify):
+                notify(workspace_state.context_handoff_tooltip, severity="warning")
+            return
+        open_chat_with_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not callable(open_chat_with_handoff):
+            if callable(notify):
+                notify("Console handoff is unavailable for Library Media.", severity="warning")
+            return
+        open_chat_with_handoff(payload)
+
+    @on(Button.Pressed, "#library-media-use-in-chat")
+    def use_media_in_chat(self, event: Button.Pressed) -> None:
+        """Handle the media viewer's "Use in Chat" action.
+
+        Args:
+            event: Button press event emitted by the viewer's "Use in Chat" action.
+        """
+        event.stop()
+        self._open_selected_media_handoff()
 
     @on(Button.Pressed, "#library-open-import-export")
     async def open_import_export(self, event: Button.Pressed) -> None:
