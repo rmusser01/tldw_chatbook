@@ -1180,21 +1180,22 @@ async def test_library_destination_lists_local_source_snapshot_from_services():
         assert "Conversations (1)" in text
         assert button.disabled is False
 
+    library_page_sizes = getattr(library_screen_module, "LIBRARY_SOURCE_PAGE_SIZES", {})
     assert app.notes_scope_service.calls[0] == {
         "scope": "local_note",
-        "limit": getattr(library_screen_module, "LIBRARY_SOURCE_PAGE_SIZE", None),
+        "limit": library_page_sizes.get("notes"),
         "offset": 0,
         "user_id": "unit-user",
     }
     assert app.media_reading_scope_service.calls[0] == {
         "mode": "local",
         "page": 1,
-        "results_per_page": getattr(library_screen_module, "LIBRARY_SOURCE_PAGE_SIZE", None),
+        "results_per_page": library_page_sizes.get("media"),
         "include_keywords": False,
     }
     assert app.chat_conversation_scope_service.calls[0] == {
         "mode": "local",
-        "limit": getattr(library_screen_module, "LIBRARY_SOURCE_PAGE_SIZE", None),
+        "limit": library_page_sizes.get("conversations"),
         "offset": 0,
     }
 
@@ -1229,17 +1230,24 @@ async def test_library_destination_empty_state_disables_console_handoff():
 @pytest.mark.asyncio
 async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
     app = _build_test_app()
+    # Seed more notes than the per-source Library page size (100) so the
+    # plain-list service (no pagination metadata) genuinely truncates,
+    # exercising the "sample capped below actual" labeling.
     app.notes_scope_service = StaticLibraryNotesListScopeService(
-        [{"title": f"Research Note {index}", "id": f"note-{index}"} for index in range(1, 7)]
+        [{"title": f"Research Note {index}", "id": f"note-{index}"} for index in range(1, 106)]
     )
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     app.open_chat_with_handoff = Mock()
+    # Console/RAG handoff requires every *fetched* source row to be linked to
+    # the active workspace (see build_library_workspace_depth_state); link
+    # all 100 notes the page-size cap will actually fetch (note-1..note-100),
+    # not just the unlinked overflow (note-101..note-105).
     _link_library_items_to_active_workspace(
         app,
         tuple(
             ("note", f"note-{index}", f"Research Note {index}")
-            for index in range(1, 6)
+            for index in range(1, 101)
         ),
     )
     host = DestinationHarness(app, "library")
@@ -1247,33 +1255,32 @@ async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await _wait_for_visible_text(screen, pilot, "Notes (5+)")
+        await _wait_for_visible_text(screen, pilot, "Notes (100+)")
         text = _visible_text(screen)
 
-        # The retired hub's "Notes: 5+" line has no successor as standalone
+        # The retired hub's "Notes: 100+" line has no successor as standalone
         # canvas text; the rail row count suffix is the surviving surface
-        # that distinguishes a capped sample ("(5+)") from an exact count
+        # that distinguishes a capped sample ("(100+)") from an exact count
         # ("(n)"). The sample-vs-exact contract itself is asserted below via
         # the Console handoff payload, which still carries the exact titles.
-        assert "Notes (5+)" in text
-        assert "Notes (5)" not in text
+        assert "Notes (100+)" in text
+        assert "Notes (100)" not in text
 
         screen.query_one("#library-use-in-console", Button).press()
-        await pilot.pause(0.1)
+        # 100 sample notes take longer to format into the handoff payload
+        # than the old 5-note sample; wait for the async handoff to land
+        # instead of a fixed sleep tuned for the smaller dataset.
+        await _wait_for_mock_call(app.open_chat_with_handoff, pilot)
 
     app.open_chat_with_handoff.assert_called_once()
     payload = app.open_chat_with_handoff.call_args.args[0]
-    assert "Notes (showing up to 5): 5" in payload.body
-    assert "Notes: 5" not in payload.body
-    assert payload.metadata["notes_sample_count"] == 5
+    assert "Notes (showing up to 100): 100" in payload.body
+    assert "Notes: 100" not in payload.body
+    assert payload.metadata["notes_sample_count"] == 100
     assert payload.metadata["notes_total_count"] is None
     assert "notes_count" not in payload.metadata
     assert payload.metadata["note_titles"] == [
-        "Research Note 1",
-        "Research Note 2",
-        "Research Note 3",
-        "Research Note 4",
-        "Research Note 5",
+        f"Research Note {index}" for index in range(1, 101)
     ]
 
 
@@ -1416,14 +1423,12 @@ async def test_library_use_in_console_uses_source_snapshot_context():
 @pytest.mark.parametrize(
     ("route", "selector", "target_route"),
     [
-        # The retired hub's #library-open-notes button is dead; the Browse ▸
-        # Notes rail row is the surviving surface that still emits the same
-        # NavigateToScreen compatibility route. Browse ▸ Media is no longer
-        # a screen-route row -- it is a canvas row like Conversations now
-        # (see test_library_media_action_switches_to_native_mode_without_route_handoff
-        # below); the media SCREEN route lives behind the canvas's own
-        # "Open in Media" action.
-        ("library", "#library-row-browse-notes", "notes"),
+        # Browse ▸ Notes and Browse ▸ Media are no longer screen-route rows
+        # -- they are canvas rows like Conversations now (see
+        # test_library_notes_action_switches_to_canvas_without_route_handoff
+        # and test_library_media_action_switches_to_native_mode_without_route_handoff
+        # below); no Library rail row emits the legacy NavigateToScreen
+        # compatibility route any more.
         ("artifacts", "#artifacts-open-chatbooks", "chatbooks"),
         # The Personas destination is now a native workbench and no longer
         # hands off to the legacy CCP route via #personas-open-profiles.
@@ -1467,6 +1472,31 @@ async def test_library_media_action_switches_to_native_mode_without_route_handof
 
         assert getattr(screen, "_active_mode") == "media"
         assert screen.query_one("#library-media-canvas")
+
+    assert seen_routes == []
+
+
+@pytest.mark.asyncio
+async def test_library_notes_action_switches_to_canvas_without_route_handoff():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    seen_routes = []
+    host = DestinationHarness(app, "library", seen_routes)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        # Browse ▸ Notes used to emit a NavigateToScreen("notes") compatibility
+        # route to the legacy Notes screen; it now selects the (still-empty
+        # pending Task 3) in-canvas "notes" target and stays on the Library
+        # screen, matching how Media/Conversations already stopped routing.
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await pilot.pause(0.1)
+
+        assert getattr(screen, "_library_selected_row_id") == "browse-notes"
+        assert screen.query_one("#library-canvas-landing")
 
     assert seen_routes == []
 

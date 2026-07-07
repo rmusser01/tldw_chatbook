@@ -86,7 +86,7 @@ from .study_scope_models import (
 
 
 logger = logger.bind(module="LibraryScreen")
-LIBRARY_SOURCE_PAGE_SIZE = 5
+LIBRARY_SOURCE_PAGE_SIZES = {"notes": 100, "media": 50, "conversations": 50}
 LIBRARY_SERVICE_ERROR_COPY = "Library source services unavailable; retry Library later."
 LIBRARY_SERVICE_UNAVAILABLE_COPY = "Library source services are unavailable in this runtime."
 LIBRARY_EMPTY_COPY = "No local Library content yet."
@@ -758,7 +758,7 @@ class LibraryScreen(BaseAppScreen):
                     self._run_library_service_call(
                         list_notes,
                         scope="local_note",
-                        limit=LIBRARY_SOURCE_PAGE_SIZE,
+                        limit=LIBRARY_SOURCE_PAGE_SIZES["notes"],
                         offset=0,
                         user_id=getattr(self.app_instance, "notes_user_id", None) or "default_user",
                         isolate_in_worker=True,
@@ -767,14 +767,14 @@ class LibraryScreen(BaseAppScreen):
                         list_media,
                         mode="local",
                         page=1,
-                        results_per_page=LIBRARY_SOURCE_PAGE_SIZE,
+                        results_per_page=LIBRARY_SOURCE_PAGE_SIZES["media"],
                         include_keywords=False,
                         isolate_in_worker=True,
                     ),
                     self._run_library_service_call(
                         list_conversations,
                         mode="local",
-                        limit=LIBRARY_SOURCE_PAGE_SIZE,
+                        limit=LIBRARY_SOURCE_PAGE_SIZES["conversations"],
                         offset=0,
                         isolate_in_worker=True,
                     ),
@@ -850,7 +850,7 @@ class LibraryScreen(BaseAppScreen):
         count = self._local_source_counts[source_type]
         if self._local_source_total_known[source_type]:
             return f"{label}: {count}"
-        return f"{label} (showing up to {LIBRARY_SOURCE_PAGE_SIZE}): {count}"
+        return f"{label} (showing up to {LIBRARY_SOURCE_PAGE_SIZES[source_type]}): {count}"
 
     def _hub_source_count_label(self, source_type: str, label: str) -> str:
         count = self._local_source_counts[source_type]
