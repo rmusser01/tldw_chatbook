@@ -710,9 +710,21 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-muted;
 }
 
+#library-media-viewer {
+    height: 100%;
+    overflow-y: auto;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 #library-media-viewer-content {
-    height: 1fr;
-    min-height: 10;
+    /* Bounded so short content stays compact and long content scrolls inside
+       this region; height:1fr here ballooned the pane and split the sections. */
+    height: auto;
+    max-height: 14;
+    min-height: 3;
     margin: 0 0 1 0;
     border: solid $ds-grid-line;
     padding: 0 1;
