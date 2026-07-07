@@ -16,7 +16,7 @@ NOW = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
 
 
 def test_full_detail_builds_all_metadata_lines_in_order():
-    """All metadata sources present -> ordered Type/Author/URL/Keywords/Ingested lines."""
+    """All metadata sources present -> ordered Type/Author/URL/Keywords/Updated lines."""
     detail = {
         "media_id": "media-1",
         "title": "Alpha Video",
@@ -41,7 +41,7 @@ def test_full_detail_builds_all_metadata_lines_in_order():
         "Author: A. Author",
         "URL: http://example.com/alpha",
         "Keywords: a, b",
-        "Ingested: 2h",
+        "Updated: 2h",
     )
     assert state.content == "full transcript text"
     assert state.analysis == "summary text"
@@ -110,22 +110,22 @@ def test_empty_keywords_list_omits_keywords_line():
     assert state.edit_fields["keywords"] == ""
 
 
-def test_ingested_age_falls_back_to_last_modified():
-    """When ingestion_date is absent, Ingested age is derived from last_modified."""
+def test_updated_age_from_ingestion_date_when_last_modified_absent():
+    """When last_modified is absent, the Updated age falls back to ingestion_date."""
     detail = {
         "media_id": "1",
         "title": "T",
         "type": "video",
-        "last_modified": "2026-07-06T11:57:00+00:00",  # 3m old
+        "ingestion_date": "2026-07-06T11:57:00+00:00",  # 3m old
     }
 
     state = build_library_media_viewer_state(detail, now=NOW)
 
-    assert "Ingested: 3m" in state.metadata_lines
+    assert "Updated: 3m" in state.metadata_lines
 
 
-def test_ingested_date_takes_priority_over_last_modified():
-    """When both timestamps are present, ingestion_date is preferred."""
+def test_updated_prefers_last_modified_over_ingestion_date():
+    """When both timestamps are present, last_modified is preferred (matches the list)."""
     detail = {
         "media_id": "1",
         "title": "T",
@@ -136,31 +136,31 @@ def test_ingested_date_takes_priority_over_last_modified():
 
     state = build_library_media_viewer_state(detail, now=NOW)
 
-    assert "Ingested: 2h" in state.metadata_lines
-    assert "Ingested: 3m" not in state.metadata_lines
+    assert "Updated: 3m" in state.metadata_lines
+    assert "Updated: 2h" not in state.metadata_lines
 
 
-def test_ingested_line_omitted_when_both_timestamps_missing():
-    """Ingested line is omitted entirely when no timestamp source is present."""
+def test_updated_line_omitted_when_both_timestamps_missing():
+    """Updated line is omitted entirely when no timestamp source is present."""
     detail = {"media_id": "1", "title": "T", "type": "video"}
 
     state = build_library_media_viewer_state(detail, now=NOW)
 
-    assert all(not line.startswith("Ingested:") for line in state.metadata_lines)
+    assert all(not line.startswith("Updated:") for line in state.metadata_lines)
 
 
-def test_ingested_line_omitted_when_timestamp_unparseable():
+def test_updated_line_omitted_when_timestamp_unparseable():
     """An unparseable timestamp yields a blank age, so the line is omitted."""
     detail = {
         "media_id": "1",
         "title": "T",
         "type": "video",
-        "ingestion_date": "not-a-timestamp",
+        "last_modified": "not-a-timestamp",
     }
 
     state = build_library_media_viewer_state(detail, now=NOW)
 
-    assert all(not line.startswith("Ingested:") for line in state.metadata_lines)
+    assert all(not line.startswith("Updated:") for line in state.metadata_lines)
 
 
 def test_content_and_analysis_absent_yields_false_flags_and_empty_strings():
@@ -419,7 +419,7 @@ def test_default_now_uses_current_time_when_not_supplied():
 
     assert state.media_id == "1"
     # Some plausible age line should be present (years old relative to real "now").
-    assert any(line.startswith("Ingested:") for line in state.metadata_lines)
+    assert any(line.startswith("Updated:") for line in state.metadata_lines)
 
 
 def test_find_content_matches_returns_matching_line_indices_in_order():

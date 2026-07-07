@@ -81,6 +81,7 @@ class LibraryRail(Vertical):
         preferences: LibraryRailPreferences,
         *,
         query: str = "",
+        search_placeholder: str = "Search conversations…",
         workspaces_body_factory: Callable[[], Iterable[Widget]] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -88,6 +89,7 @@ class LibraryRail(Vertical):
         self.shell = shell
         self.preferences = preferences
         self.query = query
+        self.search_placeholder = search_placeholder
         self.workspaces_body_factory = workspaces_body_factory
         self.styles.width = "3fr"
         self.styles.min_width = 24
@@ -98,6 +100,7 @@ class LibraryRail(Vertical):
         preferences: LibraryRailPreferences,
         *,
         query: str = "",
+        search_placeholder: str | None = None,
     ) -> None:
         """Refresh the rail from new state.
 
@@ -105,6 +108,8 @@ class LibraryRail(Vertical):
             shell: Latest Library shell display state.
             preferences: Latest section preferences.
             query: Latest search box text.
+            search_placeholder: Latest search-box placeholder; keeps the
+                current one when None.
 
         Returns:
             None.
@@ -112,6 +117,8 @@ class LibraryRail(Vertical):
         self.shell = shell
         self.preferences = preferences
         self.query = query
+        if search_placeholder is not None:
+            self.search_placeholder = search_placeholder
         self.refresh(recompose=True)
 
     def _section_open(self, section_id: str) -> bool:
@@ -134,7 +141,7 @@ class LibraryRail(Vertical):
         """
         yield Input(
             value=self.query,
-            placeholder="Search conversations…",
+            placeholder=self.search_placeholder,
             id="library-search-input",
         )
         for section in self.shell.sections:

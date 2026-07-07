@@ -82,7 +82,7 @@ class LibraryMediaViewer(Vertical):
             compact=True,
         )
         yield Static(
-            self.viewer.title,
+            "Edit media details" if self.editing else self.viewer.title,
             id="library-media-viewer-title",
             markup=False,
         )
@@ -150,21 +150,13 @@ class LibraryMediaViewer(Vertical):
                     compact=True,
                 )
             else:
+                # Object/primary actions first, then the escape hatch to the
+                # legacy screen, then the destructive Delete pushed to the far
+                # end (CSS margin) so it is not adjacent to Edit -- avoids the
+                # classic Edit/Delete misclick trap.
                 yield Button(
                     "Edit",
                     id="library-media-edit",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Delete",
-                    id="library-media-delete",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Remove from read-it-later" if self.viewer.read_later else "Read it later",
-                    id="library-media-read-later",
                     classes="library-canvas-action",
                     compact=True,
                 )
@@ -175,9 +167,21 @@ class LibraryMediaViewer(Vertical):
                     compact=True,
                 )
                 yield Button(
+                    "Remove from read-it-later" if self.viewer.read_later else "Read it later",
+                    id="library-media-read-later",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
                     "Open in Media",
                     id="library-media-open",
                     classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Delete",
+                    id="library-media-delete",
+                    classes="library-canvas-action library-media-action-danger",
                     compact=True,
                 )
 
@@ -258,26 +262,30 @@ class LibraryMediaViewer(Vertical):
             ComposeResult for the metadata edit form.
         """
         with Vertical(id="library-media-edit-form"):
-            yield Input(
-                value=self.viewer.edit_fields.get("title", ""),
-                placeholder="Title",
-                id="library-media-edit-title",
-            )
-            yield Input(
-                value=self.viewer.edit_fields.get("author", ""),
-                placeholder="Author",
-                id="library-media-edit-author",
-            )
-            yield Input(
-                value=self.viewer.edit_fields.get("url", ""),
-                placeholder="URL",
-                id="library-media-edit-url",
-            )
-            yield Input(
-                value=self.viewer.edit_fields.get("keywords", ""),
-                placeholder="Keywords (comma-separated)",
-                id="library-media-edit-keywords",
-            )
+            for label, field, placeholder, field_id in (
+                ("Title", "title", "Title", "library-media-edit-title"),
+                ("Author", "author", "Author", "library-media-edit-author"),
+                ("URL", "url", "URL", "library-media-edit-url"),
+                (
+                    "Keywords",
+                    "keywords",
+                    "Keywords (comma-separated)",
+                    "library-media-edit-keywords",
+                ),
+            ):
+                # Persistent field label so each input stays identifiable even
+                # when its value is cleared (a bare prefilled input is only
+                # readable by its current text).
+                yield Static(
+                    label,
+                    classes="library-media-edit-label",
+                    markup=False,
+                )
+                yield Input(
+                    value=self.viewer.edit_fields.get(field, ""),
+                    placeholder=placeholder,
+                    id=field_id,
+                )
 
     def _compose_analysis(self) -> ComposeResult:
         """Render the Analysis section: read-only text + Edit toggle, or the edit form.

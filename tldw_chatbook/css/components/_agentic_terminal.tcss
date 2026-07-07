@@ -753,6 +753,22 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     margin: 0 0 1 0;
 }
 
+/* Persistent per-field label: muted, bold, hugging its input above the row. */
+.library-media-edit-label {
+    width: 100%;
+    height: 1;
+    color: $ds-text-muted;
+    text-style: bold;
+    margin: 0;
+}
+
+/* Destructive Delete: pushed off the primary actions (a gap) and de-emphasized
+   so it is neither adjacent to Edit nor visually competing with it. */
+.library-media-action-danger {
+    margin: 0 0 0 4;
+    color: $ds-text-muted;
+}
+
 #library-media-edit-form Input {
     width: 100%;
     height: 3;

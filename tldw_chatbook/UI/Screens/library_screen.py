@@ -2550,6 +2550,7 @@ class LibraryScreen(BaseAppScreen):
                 shell,
                 preferences,
                 query=self._library_conversation_query,
+                search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 id="library-rail",
                 classes="destination-workbench-pane",
@@ -3786,6 +3787,23 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-search-input", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    def _library_rail_search_placeholder(self) -> str:
+        """Placeholder for the rail search box, reflecting the active browse.
+
+        The rail search only filters conversations (see
+        ``handle_library_search_submitted``), so it is precise when the
+        Conversations browse is active and a generic "Search Library…"
+        otherwise -- it should not claim "conversations" while the user is
+        browsing Media or another source. Making it actually search the
+        active source is a tracked follow-up.
+
+        Returns:
+            The context-appropriate search placeholder text.
+        """
+        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+            return "Search conversations…"
+        return "Search Library…"
 
     @on(Button.Pressed, ".library-mode-chip")
     async def switch_library_mode(self, event: Button.Pressed) -> None:

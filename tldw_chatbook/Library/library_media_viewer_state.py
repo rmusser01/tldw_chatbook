@@ -10,7 +10,9 @@ from tldw_chatbook.Workspaces.conversation_browser_state import format_console_r
 
 _ID_KEYS = ("id", "media_id", "uuid")
 _TYPE_KEYS = ("type", "media_type")
-_INGESTED_KEYS = ("ingestion_date", "last_modified")
+# Match the media list's temporal field + label (library_media_state._UPDATED_KEYS)
+# so the same item reads the same "Updated: <age>" in the list and the viewer.
+_UPDATED_KEYS = ("last_modified", "ingestion_date", "date", "updated_at")
 
 _EMPTY_EDIT_FIELDS: dict[str, str] = {"title": "", "author": "", "url": "", "keywords": ""}
 
@@ -44,7 +46,7 @@ class LibraryMediaViewerState:
         media_id: Stable id of the viewed media item, or "" when empty.
         title: Media title, or "" when absent.
         metadata_lines: Ordered, ready-to-render metadata lines (Type is
-            always present; Author/URL/Keywords/Ingested appear only when
+            always present; Author/URL/Keywords/Updated appear only when
             their source data is present).
         content: Full content/transcript text, or "" when none.
         analysis: Analysis content text, or "" when none.
@@ -163,7 +165,7 @@ def build_library_media_viewer_state(
         detail: A ``get_media_item`` detail mapping (the Media row plus a
             ``keywords`` list and ``content``), or None/non-mapping when no
             media item is loaded yet. Tolerated to have missing/None fields.
-        now: Reference time for the "Ingested" relative-age label; defaults
+        now: Reference time for the "Updated" relative-age label; defaults
             to the current UTC time.
 
     Returns:
@@ -181,9 +183,9 @@ def build_library_media_viewer_state(
     author = _text(detail.get("author"))
     url = _text(detail.get("url"))
     keywords_text = _keywords_text(detail)
-    ingested_raw = _first_present_text(detail, _INGESTED_KEYS)
-    ingested_age = (
-        format_console_relative_age(ingested_raw, now=reference_now) if ingested_raw else ""
+    updated_raw = _first_present_text(detail, _UPDATED_KEYS)
+    updated_age = (
+        format_console_relative_age(updated_raw, now=reference_now) if updated_raw else ""
     )
 
     lines: list[str] = [f"Type: {media_type}"]
@@ -193,8 +195,8 @@ def build_library_media_viewer_state(
         lines.append(f"URL: {url}")
     if keywords_text:
         lines.append(f"Keywords: {keywords_text}")
-    if ingested_age:
-        lines.append(f"Ingested: {ingested_age}")
+    if updated_age:
+        lines.append(f"Updated: {updated_age}")
 
     content = _text(detail.get("content"))
     analysis = _text(detail.get("analysis_content")) or _latest_version_analysis_text(detail)
