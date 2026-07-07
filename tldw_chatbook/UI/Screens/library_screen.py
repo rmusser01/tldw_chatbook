@@ -110,6 +110,7 @@ LIBRARY_HUB_INVENTORY_SOURCE_COLUMN_WIDTH = 14
 LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH = 16
 LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH = 22
 LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH = 18
+LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
 LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset(
     {
         "library-rag-results-section-rule",
@@ -1062,6 +1063,67 @@ class LibraryScreen(BaseAppScreen):
                 "workspace_label": workspace_label,
                 "updated_label": updated_label,
                 "source_authority": "local",
+            },
+        )
+
+    def _selected_media_handoff_payload(self) -> ChatHandoffPayload | None:
+        """Build the Console handoff payload for the open Library media item.
+
+        Mirrors ``_selected_conversation_handoff_payload``, but reads the
+        currently loaded media detail (``_library_media_detail``) instead of
+        a selected browser row -- the media viewer's "Use in Chat" action
+        stages whatever item is open in the in-canvas viewer, not a row
+        selection from the list.
+
+        Returns:
+            A ``ChatHandoffPayload`` staging the open media item as Console
+            context, or None when no media item is currently loaded.
+        """
+        detail = self._library_media_detail
+        if not isinstance(detail, Mapping):
+            return None
+        viewer = build_library_media_viewer_state(detail)
+        media_id = viewer.media_id or self._safe_text(self._selected_media_id)
+        if not media_id:
+            return None
+        title = viewer.title or "Untitled source"
+        media_type = (
+            self._safe_text(detail.get("type"))
+            or self._safe_text(detail.get("media_type"))
+            or "unknown"
+        )
+        content = viewer.content
+        excerpt = content[:LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS]
+        body_truncated = len(content) > LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS
+        body_lines = [f"Media: {title}", f"Media ID: {media_id}"]
+        body_lines.extend(
+            line
+            for line in viewer.metadata_lines
+            if line.startswith(("Type:", "Author:", "Keywords:"))
+        )
+        body_lines.append("Source authority: local")
+        body_lines.append("")
+        body_lines.append("Content excerpt:")
+        body_lines.append(excerpt if excerpt else "No stored content.")
+        body = "\n".join(body_lines)
+        return ChatHandoffPayload(
+            source="library",
+            item_type="media",
+            title=title,
+            body=body,
+            body_truncated=body_truncated,
+            source_id=media_id,
+            display_summary=f"Media staged: {title}",
+            suggested_prompt="Use this media as source context for my next question.",
+            runtime_backend="local",
+            source_owner="local",
+            source_selector_state="local",
+            discovery_owner="media",
+            discovery_entity_id=media_id,
+            metadata={
+                "media_id": media_id,
+                "media_title": title,
+                "media_type": media_type,
             },
         )
 
@@ -4875,6 +4937,48 @@ class LibraryScreen(BaseAppScreen):
     def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
         event.stop()
         self._open_selected_conversation_handoff()
+
+    def _open_selected_media_handoff(self) -> None:
+        """Stage the media item open in the viewer into Console via the shared handoff.
+
+        Mirrors ``_open_selected_conversation_handoff``: builds the payload,
+        then guards on having an open media item, the workspace
+        context-handoff gate, and the app exposing ``open_chat_with_handoff``
+        at all. The workspace gate is not conversation-specific --
+        ``build_library_workspace_depth_state`` computes
+        ``context_handoff_enabled`` across every visible Library source
+        (notes, media, and conversations together), and the Library hub's
+        own per-source-type readiness rows (``_hub_console_status``) already
+        treat Media under that same gate -- so media handoff eligibility
+        follows the identical workspace-staging policy as conversations.
+        """
+        workspace_state = self._library_workspace_depth_state()
+        payload = self._selected_media_handoff_payload()
+        notify = getattr(self.app_instance, "notify", None)
+        if payload is None:
+            if callable(notify):
+                notify("Open a media item before using it in Console.", severity="warning")
+            return
+        if not workspace_state.context_handoff_enabled:
+            if callable(notify):
+                notify(workspace_state.context_handoff_tooltip, severity="warning")
+            return
+        open_chat_with_handoff = getattr(self.app_instance, "open_chat_with_handoff", None)
+        if not callable(open_chat_with_handoff):
+            if callable(notify):
+                notify("Console handoff is unavailable for Library Media.", severity="warning")
+            return
+        open_chat_with_handoff(payload)
+
+    @on(Button.Pressed, "#library-media-use-in-chat")
+    def use_media_in_chat(self, event: Button.Pressed) -> None:
+        """Handle the media viewer's "Use in Chat" action.
+
+        Args:
+            event: Button press event emitted by the viewer's "Use in Chat" action.
+        """
+        event.stop()
+        self._open_selected_media_handoff()
 
     @on(Button.Pressed, "#library-open-import-export")
     async def open_import_export(self, event: Button.Pressed) -> None:

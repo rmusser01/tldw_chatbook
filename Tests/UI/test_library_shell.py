@@ -500,6 +500,78 @@ async def test_library_shell_media_row_opens_full_viewer_with_content():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_media_use_in_chat_triggers_handoff():
+    """``#library-media-use-in-chat`` stages the open media item as Console context.
+
+    Uses the same clean ``ChatHandoffPayload`` + ``open_chat_with_handoff``
+    handoff the Library conversation "Use in Console" action already uses.
+    Seeds a single media item (rather than the usual two-item fixture) so
+    the workspace context-handoff gate -- which is computed across *every*
+    visible Library source, not just the one item under test -- isn't
+    tripped up by an unlinked sibling row.
+    """
+    app = _build_test_app()
+    media_items = _two_media_items()[:1]
+    _seed_conversations(app, [], media=media_items)
+    app.open_chat_with_handoff = Mock()
+    _link_library_items_to_active_workspace(
+        app,
+        (("media", "media-1", "Interview Recording"),),
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+        screen.query_one("#library-media-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-media-use-in-chat")
+
+        screen.query_one("#library-media-use-in-chat").press()
+        await pilot.pause()
+        await pilot.pause()
+
+    app.open_chat_with_handoff.assert_called_once()
+    payload = app.open_chat_with_handoff.call_args.args[0]
+    assert payload.source == "library"
+    assert payload.item_type == "media"
+    assert payload.source_id == "media-1"
+    assert payload.title == "Interview Recording"
+    assert "Full transcript: the interview recording" in payload.body
+
+
+@pytest.mark.asyncio
+async def test_library_shell_media_use_in_chat_without_open_item_notifies():
+    """No handoff fires when no media item is currently loaded in the viewer.
+
+    The "Use in Chat" button only mounts once a media item's detail has
+    loaded into the viewer, so this exercises the same guard directly:
+    calling the handler with ``_library_media_detail`` still at its
+    freshly-mounted ``None`` must notify instead of staging anything.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    app.open_chat_with_handoff = Mock()
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert screen._library_media_detail is None
+        screen._open_selected_media_handoff()
+        await pilot.pause()
+
+    app.open_chat_with_handoff.assert_not_called()
+    app.notify.assert_called_once()
+    message = app.notify.call_args.args[0]
+    assert "Open a media item" in message
+
+
+@pytest.mark.asyncio
 async def test_library_shell_media_back_returns_to_list():
     """``#library-media-back`` returns the media canvas to its list view."""
     app = _build_test_app()
