@@ -37,6 +37,7 @@ from ...Library.library_media_viewer_state import (
     find_content_matches,
 )
 from ...Library.library_notes_state import (
+    build_library_note_editor_state,
     build_library_notes_list_state,
     next_notes_sort_mode,
     sort_notes_records,
@@ -521,6 +522,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sort: str = "newest"
         self._library_notes_filter: str = ""
         self._library_notes_filter_records: list | None = None
+        self._library_note_detail: Mapping[str, Any] | None = None
+        self._selected_note_id: str = ""
+        self._library_note_version: int | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2668,6 +2672,22 @@ class LibraryScreen(BaseAppScreen):
                         media_state,
                         id="library-media-canvas",
                     )
+                elif shell.canvas_kind == "notes" and self._library_notes_view == "editor":
+                    if self._library_note_detail is None:
+                        yield Static(
+                            "Loading note…",
+                            id="library-note-loading",
+                            classes="destination-purpose",
+                            markup=False,
+                        )
+                    else:
+                        yield LibraryNotesCanvas(
+                            mode="editor",
+                            editor_state=build_library_note_editor_state(
+                                self._library_note_detail
+                            ),
+                            id="library-notes-canvas",
+                        )
                 elif shell.canvas_kind == "notes":
                     source_records = (
                         self._library_notes_filter_records
@@ -2879,6 +2899,52 @@ class LibraryScreen(BaseAppScreen):
         if self.is_mounted:
             self.refresh(recompose=True)
 
+    async def _refresh_library_note_detail(self, note_id: str) -> None:
+        """Fetch and store the full detail for a selected Library note.
+
+        Mirrors ``_refresh_library_media_detail``: offloads the (possibly
+        blocking) ``get_note_detail`` service call via
+        ``_run_library_service_call`` and recomposes once the fetched detail
+        (or a cleared/failed state) has been stored.
+
+        Triggered by ``handle_library_notes_row`` on note-row selection;
+        ``compose_content`` renders the stored ``_library_note_detail`` via
+        ``build_library_note_editor_state`` once this worker completes.
+
+        Args:
+            note_id: The Library note id to fetch full detail for.
+        """
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        get_note_detail = getattr(service, "get_note_detail", None)
+        if not callable(get_note_detail):
+            self._library_note_detail = None
+            self._library_note_version = None
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        try:
+            detail = await self._run_library_service_call(
+                get_note_detail,
+                scope="local_note",
+                note_id=note_id,
+                user_id=getattr(self.app_instance, "notes_user_id", None) or "default_user",
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.warning(f"Failed to load Library note detail for {note_id!r}.", exc_info=True)
+            detail = None
+        # Discard out-of-order results: if the user has since selected a
+        # different note (or left the editor), a slower in-flight fetch for
+        # the previous selection must not overwrite the current one -- the
+        # same stale-race guard as ``_refresh_library_media_detail``.
+        if note_id != self._selected_note_id or self._library_notes_view != "editor":
+            return
+        self._library_note_detail = detail if isinstance(detail, Mapping) else None
+        editor_state = build_library_note_editor_state(self._library_note_detail)
+        self._library_note_version = editor_state.version
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
     def _compose_mode_canvas(self, mode: str) -> ComposeResult:
         """Render the canvas body for a mode row (moved middle-pane content)."""
         self._active_mode = mode
@@ -3022,6 +3088,9 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_view = "list"
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
+        self._library_note_detail = None
+        self._selected_note_id = ""
+        self._library_note_version = None
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -3191,6 +3260,53 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-notes-filter", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    @on(Button.Pressed, ".library-notes-row")
+    def handle_library_notes_row(self, event: Button.Pressed) -> None:
+        """Select a note row and open the in-canvas Library note editor.
+
+        Switches the notes canvas from its list view to the editor, clears
+        any stale detail, and kicks the async detail fetch
+        (``_refresh_library_note_detail``); ``compose_content`` renders a
+        loading line until that worker stores the fetched detail and
+        recomposes. Mirrors ``handle_library_media_row``.
+
+        Args:
+            event: Button press event emitted by a note row button.
+        """
+        event.stop()
+        note_id = str(getattr(event.button, "note_id", "") or "")
+        if note_id:
+            self._selected_note_id = note_id
+        self._library_selected_row_id = "browse-notes"
+        self._active_mode = "notes"
+        self._library_notes_view = "editor"
+        self._library_note_detail = None
+        self._library_note_version = None
+        if note_id:
+            # Exclusive in its own group so rapidly switching rows cancels the
+            # previous in-flight detail fetch instead of letting a slower older
+            # fetch finish and overwrite the newer selection's editor.
+            self.run_worker(
+                self._refresh_library_note_detail(note_id),
+                exclusive=True,
+                group="library_note_detail",
+            )
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-note-back")
+    def handle_library_note_back(self, event: Button.Pressed) -> None:
+        """Return the Library notes canvas from the editor to its list view.
+
+        Args:
+            event: Button press event emitted by the "‹ Back to list" action.
+        """
+        event.stop()
+        self._library_notes_view = "list"
+        self._library_note_detail = None
+        self._selected_note_id = ""
+        self._library_note_version = None
+        self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-media-back")
     def handle_library_media_back(self, event: Button.Pressed) -> None:

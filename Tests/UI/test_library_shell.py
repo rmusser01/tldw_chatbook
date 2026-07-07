@@ -2238,3 +2238,121 @@ async def test_library_shell_notes_filter_queries_search_seam():
         service = app.notes_scope_service
         assert service.search_calls[-1]["query"] == "retro"
         assert screen._library_notes_filter == "retro"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_row_opens_editor_with_detail():
+    """Pressing a note row fetches the full detail and renders the in-canvas
+    editor prefilled with the note's title, body, and version."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        screen.query_one("#library-notes-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+
+        title = screen.query_one("#library-note-title", Input)
+        assert title.value == "Q3 retro"
+        body = screen.query_one("#library-note-body", TextArea)
+        assert body.text == "alpha budget line"
+        meta = str(screen.query_one("#library-note-meta").renderable)
+        assert "v2" in meta
+        assert screen._library_notes_view == "editor"
+        assert screen._selected_note_id == "n-1"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_back_returns_to_list():
+    """The editor's Back action returns to the notes list and clears the
+    selected note/detail state."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        screen.query_one("#library-notes-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+
+        screen.query_one("#library-note-back").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+
+        assert screen._library_notes_view == "list"
+        assert screen._selected_note_id == ""
+        assert screen._library_note_detail is None
+        assert not screen.query("#library-note-title")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_rail_reentry_resets_to_list():
+    """Leaving the notes editor for another rail row and returning to
+    Browse > Notes must land on the list, not the previously-open editor."""
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=_two_notes(), media=_two_media_items()
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        screen.query_one("#library-notes-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+
+        screen.query_one("#library-row-browse-media").press()
+        await _wait_for_selector(screen, pilot, "#library-media-row-0")
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+
+        assert not screen.query("#library-note-title")
+        assert screen._library_notes_view == "list"
+        assert screen._selected_note_id == ""
+        assert screen._library_note_detail is None
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_detail_race_discards_stale_fetch():
+    """A detail fetch that completes for a no-longer-selected note id must be
+    discarded instead of overwriting the currently-open editor."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-row-0")
+        screen.query_one("#library-notes-row-0").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        for _ in range(150):
+            detail = screen._library_note_detail
+            if isinstance(detail, dict) and str(detail.get("id")) == "n-1":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("n-1 detail never loaded.")
+        assert screen._selected_note_id == "n-1"
+
+        # Simulate a slower in-flight fetch for the previously-selected n-2
+        # completing now: it must not overwrite n-1's detail.
+        await screen._refresh_library_note_detail("n-2")
+
+        detail = screen._library_note_detail
+        assert isinstance(detail, dict)
+        assert str(detail.get("id")) == "n-1"
