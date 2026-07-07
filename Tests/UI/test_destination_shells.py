@@ -170,10 +170,16 @@ class StaticLibraryNotesScopeService:
     ):
         """Create (append, version=1) or update (version-checked) a note.
 
-        Mirrors ``NotesScopeService.save_note``'s local-scope contract: an
-        update whose ``version`` does not match the stored version returns
-        ``False`` instead of raising, and a successful update bumps the
-        stored version by one.
+        Mirrors the real ``NotesScopeService.save_note`` local-scope
+        contract exactly (verified against the real service + a real
+        ChaChaNotes DB in ``Tests/Notes/test_notes_scope_service_library_canvas.py``):
+        an update whose ``version`` does not match the stored version
+        returns ``False`` without mutating the note, and a successful
+        update bumps the stored version by one. When ``keywords`` is
+        omitted (``None``) a successful update returns the plain ``True``
+        the real local backend returns; only when ``keywords`` is passed
+        does a successful update return a dict carrying the bumped
+        ``version``.
         """
         self.save_calls.append(
             {
@@ -204,7 +210,7 @@ class StaticLibraryNotesScopeService:
                     updated["keywords"] = list(keywords)
                 notes[index] = updated
                 self.notes = tuple(notes)
-                return updated
+                return updated if keywords is not None else True
             return False
         new_id = f"note-{self._next_note_id}"
         self._next_note_id += 1

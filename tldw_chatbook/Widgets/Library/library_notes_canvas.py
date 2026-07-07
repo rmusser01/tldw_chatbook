@@ -33,6 +33,11 @@ class LibraryNotesCanvas(Vertical):
         preview: Reserved for the Markdown preview toggle (a later task);
             accepted now so callers can start passing it, but it has no
             effect on rendering yet.
+        conflict: When ``True`` (editor mode only), renders the save
+            conflict banner -- a quiet explanatory line plus Overwrite/
+            Reload actions -- in addition to the normal editor fields.
+            ``editor_state`` must already reflect the user's kept text
+            (never the server's stale detail) when this is set.
     """
 
     def __init__(
@@ -44,6 +49,7 @@ class LibraryNotesCanvas(Vertical):
         mode: str = "list",
         editor_state: LibraryNoteEditorState | None = None,
         preview: bool = False,
+        conflict: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -53,6 +59,7 @@ class LibraryNotesCanvas(Vertical):
         self.mode = mode
         self.editor_state = editor_state
         self.preview = preview
+        self.conflict = conflict
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -129,9 +136,30 @@ class LibraryNotesCanvas(Vertical):
             id="library-note-meta",
             markup=False,
         )
+        if self.conflict:
+            yield Static(
+                "This note changed elsewhere — Overwrite saves your text; "
+                "Reload discards it.",
+                id="library-note-conflict-copy",
+                classes="destination-purpose",
+                markup=False,
+            )
         toolbar = Horizontal(classes="ds-toolbar")
         toolbar.styles.height = "auto"
         with toolbar:
+            if self.conflict:
+                yield Button(
+                    "Overwrite",
+                    id="library-note-conflict-overwrite",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Reload",
+                    id="library-note-conflict-reload",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
             yield Button(
                 "Save",
                 id="library-note-save",
