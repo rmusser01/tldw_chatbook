@@ -2889,6 +2889,60 @@ async def test_library_shell_note_delete_cancel_leaves_note_intact():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_note_delete_confirm_does_not_arm_autosave(monkeypatch):
+    """Entering (and leaving) the delete-confirmation state recomposes the
+    editor, which remounts the Input/TextArea and re-fires their mount-time
+    ``Changed`` events. Those must never be mistaken for a real edit and
+    fire a background autosave while a destructive-action confirmation is
+    on screen -- the same armed-flag discipline every other note-editor
+    recompose site already follows (see ``_refresh_library_note_detail``,
+    ``_save_library_note``'s conflict branch, and
+    ``_resolve_library_note_conflict``).
+    """
+    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.05)
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        service = app.notes_scope_service
+        calls_before_delete = len(service.save_calls)
+
+        screen.query_one("#library-note-delete").press()
+        await _wait_for_selector(screen, pilot, "#library-note-delete-confirm-copy")
+
+        # Wait well past the (monkeypatched) debounce window -- long enough
+        # for a spurious autosave timer to have fired if the armed flag
+        # were left set across the recompose.
+        for _ in range(150):
+            await pilot.pause(0.02)
+
+        assert len(service.save_calls) == calls_before_delete, (
+            "Entering delete-confirm must not trigger an autosave."
+        )
+        assert screen._library_note_confirming_delete is True
+        assert screen.query_one("#library-note-delete-confirm")
+        assert screen.query_one("#library-note-delete-cancel")
+
+        screen.query_one("#library-note-delete-cancel").press()
+        await pilot.pause()
+
+        for _ in range(150):
+            await pilot.pause(0.02)
+
+        assert len(service.save_calls) == calls_before_delete, (
+            "Cancelling delete-confirm must not trigger an autosave either."
+        )
+        assert screen._library_note_confirming_delete is False
+        assert not screen.query("#library-note-delete-confirm")
+        assert screen.query_one("#library-note-delete")
+
+
+@pytest.mark.asyncio
 async def test_library_shell_create_note_row_renders_blank_and_template_rows():
     """Selecting the rail's Create > New note row renders the Blank note
     action plus at least one template row, carrying a ``template_key``."""

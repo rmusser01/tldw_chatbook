@@ -3841,7 +3841,9 @@ class LibraryScreen(BaseAppScreen):
         if self._library_note_autosave_state == "conflict":
             return
         self._library_note_confirming_delete = True
+        self._library_note_editor_armed = False
         self.refresh(recompose=True)
+        self.call_after_refresh(self._arm_library_note_editor)
 
     @on(Button.Pressed, "#library-note-delete-cancel")
     def handle_library_note_delete_cancel(self, event: Button.Pressed) -> None:
@@ -3853,7 +3855,9 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._library_note_confirming_delete = False
+        self._library_note_editor_armed = False
         self.refresh(recompose=True)
+        self.call_after_refresh(self._arm_library_note_editor)
 
     @on(Button.Pressed, "#library-note-delete-confirm")
     def handle_library_note_delete_confirm(self, event: Button.Pressed) -> None:
