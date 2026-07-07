@@ -57,6 +57,36 @@ populated Analysis / Highlights / search states are genuine, not fixtures.
   `Tests/UI/test_library_shell.py` + `Tests/UI/test_destination_shells.py`
   = 262 passed, 1 pre-existing skip.
 
+## UX/HCI design pass (2026-07-06, follow-up)
+
+A senior-designer review of the viewer surfaced nine items; all were addressed
+(commits `a864ce3c`, `34147154`). New evidence:
+
+- `design-pass-viewer-2026-07-06.png` — bold/bright title, muted metadata, and
+  Content/Analysis/Highlights section headers with thin top-rule dividers;
+  highlights lead with a color-tinted swatch (amber ● / green ●) instead of the
+  word "Color: yellow", each in its own indented card with a compact `✕ Delete`;
+  rail search reads `Search Library…` (was `Search conversations…`) while
+  browsing Media; the temporal line reads `Updated: 3h` (matches the list).
+- `design-pass-search-highlighted-2026-07-06.png` — searching `milestone`
+  reverse-highlights every occurrence in the body, so `Match 1 of 6` points at
+  hits the reader can actually see.
+- `design-pass-metadata-edit-2026-07-06.png` — the edit form heading reads
+  `Edit media details` (no title duplication) and every field carries a
+  persistent label (Title / Author / URL / Keywords) so a cleared field stays
+  identifiable; the destructive Delete is separated to the far end of the
+  action row and de-emphasized.
+
+Items and resolutions: (1) edit-field labels + no duplicate title; (2) search
+term highlighting in the body; (3) context-aware rail placeholder; (4) Delete
+separated from Edit + per-row highlight delete; (5) title/metadata/section
+hierarchy + dividers; (6) color swatches; (7) action-row grouping; (8) content
+region loosened; (9) `Updated:` label + key priority aligned to the list.
+Full affected suites green: 263 passed, 1 pre-existing skip. Follow-up tracked:
+make the rail search actually search the active source (today it only searches
+conversations); primary action row can fall below the fold in a content-rich
+viewer (scroll to reach).
+
 ## Notes to weigh at approval
 
 - `[Open in Media]` remains in the action row as an escape hatch to the legacy
