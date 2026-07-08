@@ -3013,7 +3013,7 @@ async def test_library_shell_note_conflict_overwrite_resaves_with_fresh_version(
         else:
             raise AssertionError("The version conflict was never reached.")
 
-        screen.query_one("#library-note-conflict-overwrite").press()
+        (await _wait_for_selector(screen, pilot, "#library-note-conflict-overwrite")).press()
         for _ in range(150):
             if screen._library_note_autosave_state == "saved":
                 break
@@ -3058,7 +3058,7 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
         else:
             raise AssertionError("The version conflict was never reached.")
 
-        screen.query_one("#library-note-conflict-reload").press()
+        (await _wait_for_selector(screen, pilot, "#library-note-conflict-reload")).press()
         for _ in range(150):
             if (
                 screen._library_note_autosave_state == "idle"
@@ -3109,7 +3109,7 @@ async def test_library_shell_note_conflict_reload_falls_back_to_list_when_note_m
         # Reload's silent re-fetch runs.
         _remove_note_externally(service, "n-1")
 
-        screen.query_one("#library-note-conflict-reload").press()
+        (await _wait_for_selector(screen, pilot, "#library-note-conflict-reload")).press()
         for _ in range(150):
             if screen._library_notes_view == "list":
                 break
@@ -3159,7 +3159,7 @@ async def test_library_shell_note_conflict_overwrite_falls_back_to_list_when_not
 
         _remove_note_externally(service, "n-1")
 
-        screen.query_one("#library-note-conflict-overwrite").press()
+        (await _wait_for_selector(screen, pilot, "#library-note-conflict-overwrite")).press()
         for _ in range(150):
             if screen._library_notes_view == "list":
                 break

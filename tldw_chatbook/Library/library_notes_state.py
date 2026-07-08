@@ -209,6 +209,21 @@ def build_library_note_editor_state(
     *,
     now: datetime | None = None,
 ) -> LibraryNoteEditorState:
+    """Build the note editor's display state from a note detail mapping.
+
+    Args:
+        detail: A note detail mapping (the raw notes row, optionally
+            enriched with a ``keywords`` list of keyword dicts/strings), or
+            None/non-mapping when no note is loaded. Tolerated to have
+            missing/None fields.
+        now: Reference time for the Created/Modified relative ages;
+            defaults to the current UTC time.
+
+    Returns:
+        Immutable editor state: field values, optimistic-locking version,
+        the muted meta line, and ``has_note`` (False for empty input, which
+        yields an all-blank state).
+    """
     if not isinstance(detail, Mapping) or not _text(detail.get("id")):
         return LibraryNoteEditorState(
             note_id="", title="", content="", keywords_text="",
