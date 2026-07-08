@@ -627,6 +627,47 @@ class LibraryScreen(BaseAppScreen):
         """
         if not isinstance(context, Mapping):
             return
+        if self.is_mounted and self._library_note_dirty:
+            # A cached, already-mounted Library screen can still hold a dirty
+            # note editor: _get_or_create_navigation_screen hands back the same
+            # instance, so a palette "new note"/note_id deep link fired mid-edit
+            # runs this on a live editor. Applying it synchronously would
+            # recompose the canvas out from under the pending debounced
+            # autosave, destroying the #library-note-body it reads and dropping
+            # the last edits. Flush first (awaited, off this sync nav path),
+            # mirroring _select_library_rail_row; an unresolved conflict aborts.
+            self.run_worker(
+                self._apply_navigation_context_after_flush(context),
+                exclusive=True,
+                group="library_nav_context",
+            )
+            return
+        self._apply_navigation_context_state(context)
+
+    async def _apply_navigation_context_after_flush(
+        self, context: Mapping[str, Any]
+    ) -> None:
+        """Flush a dirty note editor, then apply nav context on the UI loop.
+
+        The mounted dirty-editor branch of ``apply_navigation_context`` routes
+        here so the pending save is awaited before the recompose that tears the
+        editor down. An unresolved save conflict aborts the switch, leaving the
+        editor and its conflict banner in place for the user to resolve -- the
+        same guard ``_select_library_rail_row`` applies.
+        """
+        await self._flush_library_note_save()
+        if self._library_note_autosave_state == "conflict":
+            return
+        self._apply_navigation_context_state(context)
+
+    def _apply_navigation_context_state(self, context: Mapping[str, Any]) -> None:
+        """Apply validated navigation context to canvas state and recompose.
+
+        Split from ``apply_navigation_context`` so its mounted dirty-editor
+        path can flush the pending save first (see
+        ``_apply_navigation_context_after_flush``) while the pre-mount and
+        clean-editor paths apply directly.
+        """
         requested_mode = self._safe_text(
             context.get(LIBRARY_NAV_CONTEXT_MODE),
             max_length=64,
@@ -660,12 +701,19 @@ class LibraryScreen(BaseAppScreen):
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         if notes_create:
             # Mirrors _select_library_rail_row(LIBRARY_ROW_CREATE_NOTE,
-            # "notes-create") -- the create-note rail row's own target_id --
-            # applied directly since the async flush/reset it also performs
-            # is meaningless before this screen has ever been mounted.
+            # "notes-create") -- the create-note rail row's own target_id.
+            # The rail row's flush of a dirty editor is handled upstream by
+            # apply_navigation_context's mounted dirty-editor branch; here we
+            # only apply the mode + selection the recompose reads.
             self._active_mode = "notes-create"
             self._library_selected_row_id = LIBRARY_ROW_CREATE_NOTE
         if note_id:
+            # Forward-compat entry point: the retired Notes tab's chat-sidebar
+            # deep link carried a note id, and this rebuilds the editor for it.
+            # No caller in the tree emits a note_id context today (the surviving
+            # open_notes_workspace route carries none, landing on the list), so
+            # this is exercised only by tests until such a producer is wired --
+            # not orphaned wiring.
             self._active_mode = "notes"
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
             self._selected_note_id = note_id

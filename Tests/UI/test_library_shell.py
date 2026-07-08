@@ -2939,6 +2939,59 @@ async def test_library_shell_note_flush_on_rail_switch_saves_before_switching():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_note_flush_on_notes_create_deeplink_saves_before_switching():
+    """A ``notes_create`` deep link arriving on an already-mounted Library
+    screen that holds a dirty note editor must flush the pending save before
+    tearing the editor down -- the same flush-then-apply contract the Back
+    and rail-switch exits honour.
+
+    ``apply_navigation_context`` is the retired Notes tab's re-pointed entry;
+    unlike its before-mount callers, ``_get_or_create_navigation_screen``
+    hands back the *cached* screen, so a palette "new note" fired mid-edit
+    runs it on a mounted, dirty editor. Without the flush the recompose to
+    the create view destroys the ``#library-note-body`` the debounced
+    autosave would have read, silently dropping the last edits. Proven by
+    the (deliberately slow) save being in flight while the mode is still
+    ``notes`` and only becoming ``notes-create`` once it resolves.
+    """
+    app = _build_test_app()
+    service = _DelayedSaveLibraryNotesScopeService(_two_notes())
+    app.notes_scope_service = service
+    app.media_reading_scope_service = StaticLibraryMediaScopeService(_two_media_items())
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(_two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-body", TextArea).text = "alpha budget line, deeplink-flushed"
+        await pilot.pause()
+
+        screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_NOTES_CREATE: True})
+        for _ in range(50):
+            if service.save_started:
+                break
+            await pilot.pause(0.01)
+        else:
+            raise AssertionError("notes_create deep link never triggered the flush save.")
+
+        # The save is still sleeping: the create view must not have applied yet.
+        assert screen._active_mode == "notes"
+
+        for _ in range(150):
+            if screen._active_mode == "notes-create":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("notes_create deep link never applied once the flush resolved.")
+
+        assert service.save_calls, "The flushed save never actually completed."
+        assert service.save_calls[-1]["content"] == "alpha budget line, deeplink-flushed"
+
+
+@pytest.mark.asyncio
 async def test_library_shell_flush_waits_for_inflight_autosave(monkeypatch):
     """Back's exit-flush must wait for an in-flight autosave save instead of
     racing its own inline save against it with the same stale version.
