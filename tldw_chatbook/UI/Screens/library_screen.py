@@ -3462,15 +3462,35 @@ class LibraryScreen(BaseAppScreen):
 
         Called at the top of the Back handler, note-row selection, and
         rail-row selection so a dirty edit is never silently discarded by
-        navigating away. Cancels the pending autosave timer first (it
-        would otherwise race this flush) and awaits the save inline so the
-        caller's navigation only proceeds once the seam call has returned.
+        navigating away.
+
+        Cancels the pending autosave timer, then WAITS for any save already
+        running in the ``library_note_save`` worker group (an autosave that
+        fired just before this navigation) before deciding whether an inline
+        save is still needed. Without the wait, this inline flush and the
+        in-flight autosave both call ``save_note`` with the same
+        not-yet-bumped version -- an optimistic-lock conflict that fires
+        against the note's *own* autosave and pops a spurious "changed
+        elsewhere" banner, aborting the navigation. After the in-flight save
+        finishes it has already persisted the text and cleared the dirty
+        flag, so the re-check below usually short-circuits; the inline save
+        only runs when edits genuinely remain, and then against the bumped
+        version.
         """
-        if not self._library_note_dirty:
-            return
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
+        for worker in list(self.workers):
+            if worker.group == "library_note_save" and not worker.is_finished:
+                try:
+                    await worker.wait()
+                except Exception:
+                    logger.debug(
+                        "In-flight note-save worker errored while flushing; continuing.",
+                        exc_info=True,
+                    )
+        if not self._library_note_dirty:
+            return
         await self._save_library_note(explicit=False)
 
     async def _resolve_library_note_conflict(self, *, overwrite: bool) -> None:

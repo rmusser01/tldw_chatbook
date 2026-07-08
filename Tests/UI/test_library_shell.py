@@ -2595,16 +2595,32 @@ class _DelayedSaveLibraryNotesScopeService(StaticLibraryNotesScopeService):
     "the seam call started" as an event distinct from "the save resolved" --
     proving the caller actually awaited the save before doing anything
     else, rather than merely calling it eventually.
+
+    Two stall mechanisms are supported: a fixed ``delay`` (the default --
+    good enough when a test only needs "this save takes a moment"), or an
+    explicit ``release_event`` (a ``threading.Event``) when a test needs to
+    hold a save open indefinitely and release multiple concurrent calls
+    together on demand -- e.g. proving an autosave and a flush's save don't
+    race each other. The blocking ``.wait()`` is dispatched via
+    ``asyncio.to_thread``, mirroring ``_GatedSearchLibraryNotesScopeService``:
+    ``save_note`` runs with ``isolate_in_worker=True``, i.e. inside its own
+    thread with its own event loop, so an ``asyncio.Event`` set from the
+    test's thread/loop would not safely wake a waiter parked on that other
+    loop.
     """
 
-    def __init__(self, notes, *, delay: float = 0.15):
+    def __init__(self, notes, *, delay: float = 0.15, release_event: threading.Event | None = None):
         super().__init__(notes)
         self.delay = delay
+        self.release_event = release_event
         self.save_started: list[str] = []
 
     async def save_note(self, **kwargs):
         self.save_started.append(str(kwargs.get("note_id") or ""))
-        await asyncio.sleep(self.delay)
+        if self.release_event is not None:
+            await asyncio.to_thread(self.release_event.wait)
+        else:
+            await asyncio.sleep(self.delay)
         return await super().save_note(**kwargs)
 
 
@@ -2856,6 +2872,93 @@ async def test_library_shell_note_flush_on_rail_switch_saves_before_switching():
 
         assert service.save_calls, "The flushed save never actually completed."
         assert service.save_calls[-1]["content"] == "alpha budget line, rail-flushed"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_flush_waits_for_inflight_autosave(monkeypatch):
+    """Back's exit-flush must wait for an in-flight autosave save instead of
+    racing its own inline save against it with the same stale version.
+
+    Without the wait, the debounced autosave's ``save_note`` call and the
+    flush's inline ``save_note`` call both carry the same
+    (not-yet-bumped) version -- an optimistic-lock version conflict that
+    the local backend would only ever raise for *another* writer now fires
+    against nobody but the note's own autosave, popping a spurious
+    "changed elsewhere" conflict banner and aborting the Back navigation.
+
+    Uses ``_DelayedSaveLibraryNotesScopeService``'s ``release_event`` gate
+    so the autosave's ``save_note`` call can be held open indefinitely:
+    Back is pressed while it is still in flight, proving the flush does
+    not issue a second concurrent ``save_note`` call while waiting, then
+    the event is released and the flush is proven to complete cleanly.
+    """
+    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.05)
+    app = _build_test_app()
+    release_event = threading.Event()
+    service = _DelayedSaveLibraryNotesScopeService(_two_notes(), release_event=release_event)
+    app.notes_scope_service = service
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(_two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-body", TextArea).text = "alpha budget line, autosave-inflight"
+        await pilot.pause()
+
+        # Let the autosave debounce fire; its save_note blocks on
+        # release_event (in its own worker thread) so it is genuinely
+        # in-flight when Back is pressed.
+        for _ in range(150):
+            if service.save_started:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Autosave never called save_note.")
+        assert len(service.save_started) == 1
+
+        # The Back handler's flush awaits the in-flight save worker, which
+        # blocks the message pump -- so ``pilot.pause`` cannot observe the
+        # intermediate "flush is waiting" state (it waits for an idle pump
+        # that only arrives once the wait completes). Release the gate from
+        # a separate thread, independent of the loop, so the in-flight save
+        # can finish and the whole Back->flush->navigate sequence settles;
+        # then assert on the OUTCOME.
+        threading.Timer(0.2, release_event.set).start()
+        screen.query_one("#library-note-back").press()
+
+        for _ in range(300):
+            if screen._library_notes_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Back never completed after the in-flight autosave resolved "
+                f"(view={screen._library_notes_view!r}, "
+                f"autosave_state={screen._library_note_autosave_state!r}, "
+                f"save_started={service.save_started!r})."
+            )
+
+        # No spurious self-conflict: nobody else touched the note, so the
+        # flush must not have raced its own save against the autosave with a
+        # stale version.
+        assert not screen.query("#library-note-conflict-overwrite"), (
+            "A spurious self-conflict was raised even though nobody else "
+            "touched the note."
+        )
+        assert screen._library_note_autosave_state != "conflict"
+        # The autosave's save completed; the flush then saw dirty cleared and
+        # skipped its own redundant save -> exactly one save_note call, at the
+        # note's actual stored version (2), never a stale-version second call.
+        assert service.save_calls, "The in-flight autosave's save never completed."
+        assert len(service.save_started) == 1, (
+            "The flush raced a second concurrent save_note against the "
+            f"in-flight autosave (save_started={service.save_started!r})."
+        )
+        assert service.save_calls[0]["version"] == 2
 
 
 @pytest.mark.asyncio
