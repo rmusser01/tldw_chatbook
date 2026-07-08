@@ -300,3 +300,42 @@ async def test_create_with_keywords_returns_dict_and_persists_keywords(
         str(k.get("keyword") if isinstance(k, dict) else k) for k in stored
     }
     assert {"meeting", "notes"} <= stored_texts
+
+
+@pytest.mark.asyncio
+async def test_get_note_detail_enriched_with_keywords_round_trips_through_editor_state(
+    notes_scope_service,
+):
+    """``get_note_detail``'s local-scope shape omits ``keywords`` (pinned by
+    ``test_save_with_keywords_returns_dict_with_bumped_version_and_persists``
+    above); the Library screen's ``_refresh_library_note_detail`` enriches
+    the fetched detail with ``notes_service.get_keywords_for_note`` (the
+    same ``local_notes_service`` seam used here) before building editor
+    state. This simulates that enrichment against the real seam and
+    confirms the enriched detail round-trips through
+    ``build_library_note_editor_state`` the way the screen renders it.
+    """
+    from tldw_chatbook.Library.library_notes_state import build_library_note_editor_state
+
+    created = await notes_scope_service.save_note(
+        scope="local_note",
+        title="Keyworded",
+        content="body",
+        user_id=USER_ID,
+        keywords=["alpha", "beta"],
+    )
+    note_id = created["id"] if isinstance(created, dict) else created
+
+    detail = await notes_scope_service.get_note_detail(
+        scope="local_note", note_id=note_id, user_id=USER_ID
+    )
+    assert "keywords" not in detail
+
+    keyword_rows = notes_scope_service.local_notes_service.get_keywords_for_note(
+        USER_ID, note_id
+    )
+    enriched = dict(detail)
+    enriched["keywords"] = keyword_rows
+
+    editor_state = build_library_note_editor_state(enriched)
+    assert editor_state.keywords_text == "alpha, beta"

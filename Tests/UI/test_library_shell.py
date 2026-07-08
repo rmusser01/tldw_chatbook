@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import threading
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -2243,6 +2244,94 @@ async def test_library_shell_notes_filter_queries_search_seam():
         assert screen._library_notes_filter == "retro"
 
 
+class _GatedSearchLibraryNotesScopeService(StaticLibraryNotesScopeService):
+    """A ``search_notes`` that blocks until the test releases it, so a
+    filter test can submit, observe the seam call start, mutate screen
+    state while that call is still in flight, and only then let the stale
+    response resolve on demand.
+
+    Uses a ``threading.Event`` rather than an ``asyncio.Event``:
+    ``_run_library_service_call`` runs this seam with
+    ``isolate_in_worker=True``, which executes it in a *different* thread
+    under a freshly-created event loop (``asyncio.run`` inside
+    ``asyncio.to_thread``) -- an ``asyncio.Event`` set from the test's own
+    thread/loop would not safely wake a waiter parked on that other loop.
+    """
+
+    def __init__(self, notes):
+        super().__init__(notes)
+        self.release_event = threading.Event()
+
+    async def search_notes(self, **kwargs):
+        self.search_calls.append(kwargs)
+        await asyncio.to_thread(self.release_event.wait)
+        return await super().search_notes(
+            scope=kwargs.get("scope"),
+            query=kwargs.get("query"),
+            limit=kwargs.get("limit"),
+            user_id=kwargs.get("user_id"),
+            offset=kwargs.get("offset", 0),
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_filter_clears_before_stale_response_lands():
+    """Clearing the filter while a slower ``search_notes`` call is still in
+    flight must not let that stale response overwrite the cleared filter
+    state once it resolves -- the same stale-result discipline the note
+    detail fetch and save already apply to their own out-of-order results.
+    """
+    app = _build_test_app()
+    service = _GatedSearchLibraryNotesScopeService(_two_notes())
+    app.notes_scope_service = service
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(_two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-filter")
+
+        box = screen.query_one("#library-notes-filter", Input)
+        box.value = "retro"
+        box.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+
+        for _ in range(150):
+            if service.search_calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Filter submit never called search_notes.")
+
+        assert screen._library_notes_filter == "retro"
+
+        # Clear the filter while the "retro" search is still gated in flight.
+        clear_box = screen.query_one("#library-notes-filter", Input)
+        clear_box.value = ""
+        clear_box.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert screen._library_notes_filter == ""
+        assert screen._library_notes_filter_records is None
+
+        # Now release the stale "retro" response.
+        service.release_event.set()
+        for _ in range(20):
+            await pilot.pause(0.02)
+
+        assert screen._library_notes_filter_records is None, (
+            "The stale in-flight filter response overwrote the cleared filter state."
+        )
+        header = str(screen.query_one("#library-notes-header").renderable)
+        assert header == "Notes (2)"
+
+
 @pytest.mark.asyncio
 async def test_library_shell_notes_row_opens_editor_with_detail():
     """Pressing a note row fetches the full detail and renders the in-canvas
@@ -2268,6 +2357,82 @@ async def test_library_shell_notes_row_opens_editor_with_detail():
         assert "v2" in meta
         assert screen._library_notes_view == "editor"
         assert screen._selected_note_id == "n-1"
+
+
+class StaticLibraryNotesKeywordsService:
+    """Fake ``app.notes_service`` stand-in for the keywords-enrichment seam
+    ``_refresh_library_note_detail`` uses (mirroring
+    ``NotesInteropService.get_keywords_for_note``'s real
+    ``(user_id, note_id) -> list[{"keyword": ...}]`` shape -- see
+    ``ChaChaNotes_DB.get_keywords_for_note``, whose rows always carry a
+    ``keyword`` column).
+    """
+
+    def __init__(self, keywords_by_note_id):
+        self.keywords_by_note_id = dict(keywords_by_note_id)
+        self.calls = []
+
+    def get_keywords_for_note(self, user_id, note_id):
+        self.calls.append({"user_id": user_id, "note_id": note_id})
+        return [
+            {"id": index, "keyword": keyword}
+            for index, keyword in enumerate(
+                self.keywords_by_note_id.get(str(note_id), []), start=1
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_editor_shows_enriched_keywords():
+    """``notes_scope_service.get_note_detail``'s local-scope shape is the
+    raw ``notes`` table row and never carries a ``keywords`` field (see
+    ``NotesInteropService.get_note_by_id``), so the in-canvas editor's
+    Keywords input would otherwise always render empty even for a note
+    with persisted keywords. ``_refresh_library_note_detail`` must enrich
+    the fetched detail via the ``app.notes_service.get_keywords_for_note``
+    seam before building editor state.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notes_service = StaticLibraryNotesKeywordsService({"n-1": ["kw1", "kw2"]})
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        keywords_input = screen.query_one("#library-note-keywords", Input)
+        for _ in range(150):
+            if keywords_input.value == "kw1, kw2":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"Keywords input never showed enriched keywords: {keywords_input.value!r}"
+            )
+
+        assert app.notes_service.calls
+        assert app.notes_service.calls[-1]["note_id"] == "n-1"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_editor_keywords_empty_without_notes_service():
+    """Absent ``app.notes_service`` (or a service missing the method), the
+    editor still opens normally with an empty Keywords input -- the
+    enrichment is quiet-best-effort, never a hard requirement to open a
+    note (matches the current/pre-enrichment behavior).
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        assert screen.query_one("#library-note-keywords", Input).value == ""
 
 
 @pytest.mark.asyncio
@@ -2404,6 +2569,14 @@ def _bump_note_version_externally(service, note_id: str, **field_overrides) -> N
     )
 
 
+def _remove_note_externally(service, note_id: str) -> None:
+    """Simulate the note being deleted elsewhere entirely (not just a
+    version bump): a subsequent ``get_note_detail`` for it resolves to
+    ``None`` on the fake, mirroring a real deleted/never-existed note.
+    """
+    service.notes = tuple(note for note in service.notes if note.get("id") != note_id)
+
+
 @pytest.mark.asyncio
 async def test_library_shell_note_explicit_save_calls_seam_and_bumps_version():
     """Pressing Save calls the seam with the sanitized fields/keywords list,
@@ -2453,6 +2626,48 @@ async def test_library_shell_note_explicit_save_calls_seam_and_bumps_version():
         assert screen.query_one("#library-note-body", TextArea) is body_before_save
         meta = str(screen.query_one("#library-note-meta").renderable)
         assert "saved" in meta
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_save_patches_detail_title_and_content_for_later_recompose():
+    """A save only ever updates the ``#library-note-meta`` ``Static`` in
+    place -- it never recomposes the editor itself. But a *later*
+    recompose (entering the delete-confirm state, in this test) rebuilds
+    the editor's ``TextArea``/``Input`` values fresh from
+    ``_library_note_detail``. If Save only patched the cached ``version``
+    there and left ``title``/``content`` stale, that later recompose would
+    silently revert the just-saved edit back to the pre-save text on
+    screen.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-body", TextArea).text = "edited body text"
+        await pilot.pause()
+
+        screen.query_one("#library-note-save").press()
+        for _ in range(150):
+            if screen._library_note_autosave_state == "saved":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Save never completed.")
+
+        screen.query_one("#library-note-delete").press()
+        await _wait_for_selector(screen, pilot, "#library-note-delete-confirm-copy")
+        screen.query_one("#library-note-delete-cancel").press()
+        await pilot.pause()
+
+        assert screen.query_one("#library-note-body", TextArea).text == "edited body text", (
+            "A later recompose reverted the saved edit -- the detail mirror "
+            "wasn't patched with the saved title/content."
+        )
 
 
 @pytest.mark.asyncio
@@ -2857,6 +3072,109 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
         assert not screen.query("#library-note-conflict-reload")
         assert screen.query_one("#library-note-body", TextArea).text == "Server-side content"
         assert screen.query_one("#library-note-title", Input).value == "Server-side title"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_conflict_reload_falls_back_to_list_when_note_missing():
+    """A Reload from the conflict UI whose silent re-fetch discovers the
+    note was deleted elsewhere entirely (not just version-bumped again)
+    must fall back to the list view with a warning -- not strand the
+    canvas on a permanent "Loading note…" placeholder, mirroring the
+    missing-note fallback ``_refresh_library_note_detail`` already applies.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        service = app.notes_scope_service
+        _bump_note_version_externally(service, "n-1")  # now stored at v3; screen still has v2
+
+        screen.query_one("#library-note-body", TextArea).text = "kept text"
+        await pilot.pause()
+
+        screen.query_one("#library-note-save").press()
+        for _ in range(150):
+            if screen._library_note_autosave_state == "conflict":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("The version conflict was never reached.")
+
+        # The note is now gone entirely (not just bumped again) before
+        # Reload's silent re-fetch runs.
+        _remove_note_externally(service, "n-1")
+
+        screen.query_one("#library-note-conflict-reload").press()
+        for _ in range(150):
+            if screen._library_notes_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Reload never fell back to the list view for a missing note "
+                f"(stuck: view={screen._library_notes_view!r}, "
+                f"autosave_state={screen._library_note_autosave_state!r})."
+            )
+
+        assert screen._selected_note_id == ""
+        assert screen._library_note_detail is None
+        assert screen._library_note_autosave_state == "idle"
+        assert not screen.query("#library-note-conflict-reload")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_conflict_overwrite_falls_back_to_list_when_note_missing():
+    """Same fallback as the Reload case above, but for Overwrite: it also
+    runs the same silent re-fetch first, so a note deleted elsewhere must
+    not leave Overwrite stuck silently no-op-ing against a conflict UI that
+    can never be resolved.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        service = app.notes_scope_service
+        _bump_note_version_externally(service, "n-1")  # now stored at v3; screen still has v2
+
+        screen.query_one("#library-note-body", TextArea).text = "kept text"
+        await pilot.pause()
+
+        screen.query_one("#library-note-save").press()
+        for _ in range(150):
+            if screen._library_note_autosave_state == "conflict":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("The version conflict was never reached.")
+
+        _remove_note_externally(service, "n-1")
+
+        screen.query_one("#library-note-conflict-overwrite").press()
+        for _ in range(150):
+            if screen._library_notes_view == "list":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Overwrite never fell back to the list view for a missing note "
+                f"(stuck: view={screen._library_notes_view!r}, "
+                f"autosave_state={screen._library_note_autosave_state!r})."
+            )
+
+        assert screen._selected_note_id == ""
+        assert screen._library_note_detail is None
+        assert screen._library_note_autosave_state == "idle"
+        assert not screen.query("#library-note-conflict-overwrite")
 
 
 @pytest.mark.asyncio
@@ -3403,6 +3721,9 @@ async def test_library_shell_note_write_export_file_writes_expected_content(tmp_
     separately above) writes the same content ``build_note_export_content``
     produces and notifies on success -- the "pure part" the brief calls out
     as pilot-testable independent of driving the real file dialog.
+
+    ``_write_library_note_export_file`` is a plain (non-async) method --
+    it awaits nothing -- so this calls it directly rather than awaiting it.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -3415,7 +3736,7 @@ async def test_library_shell_note_write_export_file_writes_expected_content(tmp_
         await _open_note_editor(screen, pilot)
 
         destination = tmp_path / "export.md"
-        await screen._write_library_note_export_file(
+        screen._write_library_note_export_file(
             destination, "markdown", "Q3 retro", "alpha budget line", "alpha, beta", "n-1"
         )
 
@@ -3426,6 +3747,39 @@ async def test_library_shell_note_write_export_file_writes_expected_content(tmp_
         assert written.endswith("alpha budget line")
         app.notify.assert_called_once()
         assert "exported successfully" in app.notify.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_write_export_file_rejects_invalid_path(tmp_path, monkeypatch):
+    """A ``FileSave``-returned path that fails ``validate_path_simple``
+    must be rejected with a quiet warning notice -- no write, no crash --
+    rather than trusting the dialog's returned path unconditionally.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    def _reject_path(*_args, **_kwargs):
+        raise ValueError("rejected for test")
+
+    monkeypatch.setattr(library_screen_module, "validate_path_simple", _reject_path)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        destination = tmp_path / "export.md"
+        screen._write_library_note_export_file(
+            destination, "markdown", "Q3 retro", "alpha budget line", "alpha, beta", "n-1"
+        )
+
+        assert not destination.exists()
+        app.notify.assert_called_once()
+        args, kwargs = app.notify.call_args
+        assert "Rejected export path" in args[0]
+        assert kwargs.get("severity") == "warning"
 
 
 @pytest.mark.asyncio

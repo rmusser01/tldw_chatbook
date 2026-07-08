@@ -21,6 +21,16 @@ _BLANK_TEMPLATE_KEY = "blank"
 
 @dataclass(frozen=True)
 class LibraryNotesListRow:
+    """One row in the Library notes canvas's list view.
+
+    Attributes:
+        note_id: The note's id.
+        title: Display title (``"Untitled"`` when blank).
+        age_label: Relative-age label (e.g. ``"3m"``, ``"1d"``) derived
+            from the note's most recent modified/created timestamp, or
+            ``""`` when no timestamp is available.
+    """
+
     note_id: str
     title: str
     age_label: str
@@ -28,6 +38,17 @@ class LibraryNotesListRow:
 
 @dataclass(frozen=True)
 class LibraryNotesListState:
+    """Display state for the Library notes canvas's list view.
+
+    Attributes:
+        rows: The notes to render, already sorted/filtered by the caller.
+        header_copy: The list header text (``"Notes (N)"``).
+        status_copy: Filter-result status text (e.g. ``"filter: x · N
+            results"``), or ``""`` when no filter is active.
+        empty_copy: Empty-state copy shown when ``rows`` is empty, or
+            ``""`` when there are rows to render.
+    """
+
     rows: tuple[LibraryNotesListRow, ...]
     header_copy: str
     status_copy: str
@@ -36,6 +57,22 @@ class LibraryNotesListState:
 
 @dataclass(frozen=True)
 class LibraryNoteEditorState:
+    """Display state for the Library notes canvas's in-canvas editor.
+
+    Attributes:
+        note_id: The open note's id, or ``""`` when there is no note.
+        title: The note's title.
+        content: The note's body text.
+        keywords_text: The note's keywords as a single comma-separated
+            string (the editor's keywords ``Input`` value).
+        version: The note's optimistic-lock version, or ``None`` when
+            unknown/not yet saved.
+        meta_line: The rendered Created/Modified/version (and, while
+            saving, autosave-status) line.
+        has_note: ``False`` for the placeholder "no note open" state;
+            ``True`` once a real note has been loaded.
+    """
+
     note_id: str
     title: str
     content: str
@@ -72,6 +109,23 @@ def build_library_notes_list_state(
     filter_note: str = "",
     now: datetime | None = None,
 ) -> LibraryNotesListState:
+    """Build the Library notes canvas's list-view display state.
+
+    Records missing a mapping shape or an ``id`` are silently dropped
+    rather than raising, matching the rest of this module's
+    degrade-don't-crash behavior for malformed source records.
+
+    Args:
+        records: The notes to render (already sorted/filtered by the
+            caller), or ``None``.
+        filter_note: The active filter text, used only to render the
+            result-count status copy; ``""`` when no filter is active.
+        now: Reference time for relative-age labels; defaults to the
+            current UTC time.
+
+    Returns:
+        The list view's display state.
+    """
     reference_now = now if now is not None else datetime.now(timezone.utc)
     rows = tuple(
         _row(record, now=reference_now)
@@ -91,6 +145,18 @@ def build_library_notes_list_state(
 
 
 def next_notes_sort_mode(mode: str) -> str:
+    """Cycle to the next notes sort mode in ``NOTES_SORT_MODES`` order.
+
+    An unknown ``mode`` wraps around to the first mode rather than
+    raising, so a stale/corrupt persisted sort preference degrades
+    gracefully instead of crashing the sort button.
+
+    Args:
+        mode: The current sort mode.
+
+    Returns:
+        The next mode in ``NOTES_SORT_MODES`` (wrapping past the end).
+    """
     try:
         index = NOTES_SORT_MODES.index(mode)
     except ValueError:
@@ -101,6 +167,20 @@ def next_notes_sort_mode(mode: str) -> str:
 def sort_notes_records(
     records: Sequence[Mapping[str, Any]], mode: str
 ) -> list[Mapping[str, Any]]:
+    """Sort note records for the list view per ``mode``.
+
+    Non-mapping records are dropped rather than raising. ``"title"`` sorts
+    case-insensitively ascending; any other mode (``"newest"``/``"oldest"``)
+    sorts by the record's most recent updated/created timestamp, newest
+    first unless ``mode == "oldest"``.
+
+    Args:
+        records: The note records to sort.
+        mode: One of ``NOTES_SORT_MODES``.
+
+    Returns:
+        A new, sorted list of the mapping records.
+    """
     items = [r for r in records if isinstance(r, Mapping)]
     if mode == "title":
         return sorted(items, key=lambda r: _text(r.get("title")).lower())
@@ -212,6 +292,17 @@ def build_note_export_content(
 
 
 def notes_autosave_status_text(state: str, *, word_count: int) -> str:
+    """Render the note editor meta line's word-count + autosave-status suffix.
+
+    Args:
+        state: The autosave state (``"idle"``/``"saving"``/``"saved"``/
+            ``"conflict"``/``"error"``). Unrecognized values render no
+            suffix.
+        word_count: The note body's current word count.
+
+    Returns:
+        Text like ``"12 words · saved"`` (``"1 word"`` singular).
+    """
     base = f"{word_count} words" if word_count != 1 else "1 word"
     suffix = {
         "saving": " · saving…",
@@ -226,9 +317,12 @@ def resolve_note_template_placeholders(text: str, *, now: datetime | None = None
     """Resolve ``{date}``/``{time}``/``{datetime}`` placeholders in template text.
 
     Mirrors the standalone Notes screen's substitution (same placeholder
-    names, same ``strftime`` formats). A template containing an unknown
-    ``{placeholder}`` or a stray brace degrades to the raw text rather
-    than raising, so one malformed template can never break the callers.
+    names, same ``strftime`` formats). Resolution is per-key (a plain
+    ``str.replace`` for each of the three known placeholders), so a
+    template that also contains an unknown ``{placeholder}`` or a stray
+    brace still gets every *known* placeholder substituted -- only the
+    unrecognized text is left literal, rather than the whole template
+    degrading to raw, unsubstituted text.
 
     Args:
         text: Template title or content text.
@@ -236,8 +330,8 @@ def resolve_note_template_placeholders(text: str, *, now: datetime | None = None
             the standalone screen's naive-local timestamps).
 
     Returns:
-        The text with known placeholders substituted, or the raw text when
-        substitution fails.
+        The text with every known placeholder substituted; any unknown
+        ``{placeholder}`` or stray brace is left unchanged.
     """
     reference_now = now if now is not None else datetime.now()
     values = {
@@ -245,10 +339,10 @@ def resolve_note_template_placeholders(text: str, *, now: datetime | None = None
         "time": reference_now.strftime("%H:%M"),
         "datetime": reference_now.strftime("%Y-%m-%d %H:%M"),
     }
-    try:
-        return text.format(**values)
-    except (KeyError, ValueError, IndexError):
-        return text
+    resolved = text
+    for key, value in values.items():
+        resolved = resolved.replace(f"{{{key}}}", value)
+    return resolved
 
 
 def note_template_keywords(template: Any) -> tuple[str, ...]:

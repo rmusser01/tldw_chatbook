@@ -75,6 +75,7 @@ from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
 from ...Third_Party.textual_fspicker import FileSave
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import LibraryWorkspaceDepthState, build_library_workspace_depth_state
 from ...Widgets.Console.console_rail_section import (
     CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
@@ -117,6 +118,7 @@ LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
 )
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
+LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
 LIBRARY_HANDOFF_LABEL_PREFIX = "Console/RAG handoff: "
 LIBRARY_LOCAL_SNAPSHOT_MODES = frozenset({"sources", "conversations", "import-export"})
@@ -745,6 +747,23 @@ class LibraryScreen(BaseAppScreen):
         if len(text) > max_length:
             text = text[:max_length]
         return text
+
+    @staticmethod
+    def _note_word_count(content: str) -> int:
+        """Count words in a Library note body for the meta line's status text.
+
+        Counts whitespace-delimited runs via a regex scan instead of
+        ``len(content.split())``, which would materialize a full list of
+        every word just to throw it away -- wasteful for the very large
+        note bodies this editor allows (see ``LIBRARY_NOTE_CONTENT_MAX_CHARS``).
+
+        Args:
+            content: The note body text to count words in.
+
+        Returns:
+            The number of whitespace-delimited words.
+        """
+        return sum(1 for _ in re.finditer(r"\S+", content))
 
     def _library_note_keywords_from_input(self, raw_value: str) -> list[str] | None:
         """Parse and sanitize the Library note editor's keywords Input.
@@ -3059,6 +3078,17 @@ class LibraryScreen(BaseAppScreen):
                 self.refresh(recompose=True)
             return
         self._library_note_detail = detail
+        keywords = await self._fetch_library_note_keywords(note_id)
+        # Fetching keywords is a second await point: re-check freshness the
+        # same way ``_refresh_library_media_detail`` re-checks after its own
+        # second (highlights) fetch, so a switch that happened during that
+        # fetch cannot land keywords for the wrong note.
+        if note_id != self._selected_note_id or self._library_notes_view != "editor":
+            return
+        if keywords is not None and isinstance(self._library_note_detail, Mapping):
+            enriched_detail = dict(self._library_note_detail)
+            enriched_detail["keywords"] = keywords
+            self._library_note_detail = enriched_detail
         editor_state = build_library_note_editor_state(self._library_note_detail)
         self._library_note_version = editor_state.version
         self._library_note_dirty = False
@@ -3070,6 +3100,47 @@ class LibraryScreen(BaseAppScreen):
         if self.is_mounted:
             self.refresh(recompose=True)
             self.call_after_refresh(self._arm_library_note_editor)
+
+    async def _fetch_library_note_keywords(self, note_id: str) -> list[Any] | None:
+        """Fetch a Library note's keywords for the in-canvas editor.
+
+        ``notes_scope_service.get_note_detail``'s local-scope shape is the
+        raw ``notes`` table row and never carries a ``keywords`` field (see
+        ``NotesInteropService.get_note_by_id``) -- keywords live in a
+        separate join table. This fetches them through the standalone
+        Notes screen's own seam, ``app.notes_service.get_keywords_for_note``
+        (``NotesInteropService.get_keywords_for_note(user_id, note_id)``,
+        which returns the ``ChaChaNotes_DB.get_keywords_for_note`` row
+        shape -- each item a mapping with a ``keyword`` key), offloaded off
+        the UI loop the same way every other Library service call is.
+
+        Args:
+            note_id: The Library note id to fetch keywords for.
+
+        Returns:
+            The fetched keyword records, or ``None`` when
+            ``app.notes_service`` (or the method) is unavailable or the
+            fetch fails -- callers should leave the detail's keywords field
+            untouched in that case, the same quiet-absent behavior as
+            before this enrichment existed.
+        """
+        notes_service = getattr(self.app_instance, "notes_service", None)
+        get_keywords_for_note = getattr(notes_service, "get_keywords_for_note", None)
+        if not callable(get_keywords_for_note):
+            return None
+        try:
+            keywords = await self._run_library_service_call(
+                get_keywords_for_note,
+                self._library_notes_user_id(),
+                note_id,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.warning(
+                f"Failed to load keywords for Library note {note_id!r}.", exc_info=True
+            )
+            return None
+        return list(keywords) if isinstance(keywords, list) else None
 
     def _arm_library_note_editor(self) -> None:
         """Enable dirty-tracking once the notes editor's mount-time
@@ -3125,14 +3196,29 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Changed, "#library-note-title")
     def handle_library_note_title_changed(self, event: Input.Changed) -> None:
+        """Mark the open note dirty and (re)arm the autosave debounce.
+
+        Args:
+            event: Input change event emitted by the editor's title field.
+        """
         self._mark_library_note_dirty()
 
     @on(TextArea.Changed, "#library-note-body")
     def handle_library_note_body_changed(self, event: TextArea.Changed) -> None:
+        """Mark the open note dirty and (re)arm the autosave debounce.
+
+        Args:
+            event: Text change event emitted by the editor's body ``TextArea``.
+        """
         self._mark_library_note_dirty()
 
     @on(Input.Changed, "#library-note-keywords")
     def handle_library_note_keywords_changed(self, event: Input.Changed) -> None:
+        """Mark the open note dirty and (re)arm the autosave debounce.
+
+        Args:
+            event: Input change event emitted by the editor's keywords field.
+        """
         self._mark_library_note_dirty()
 
     def _fire_library_note_autosave(self) -> None:
@@ -3180,7 +3266,7 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         status_text = notes_autosave_status_text(
-            self._library_note_autosave_state, word_count=len(content.split())
+            self._library_note_autosave_state, word_count=self._note_word_count(content)
         )
         base_meta_line = self._library_note_meta_base_line()
         meta_static.update(f"{base_meta_line} · {status_text}" if base_meta_line else status_text)
@@ -3226,7 +3312,7 @@ class LibraryScreen(BaseAppScreen):
         raw_title, raw_content, raw_keywords_text = fields
 
         title = self._sanitize_media_field(raw_title, max_length=300)
-        content = self._sanitize_note_content(raw_content, max_length=2_000_000)
+        content = self._sanitize_note_content(raw_content, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS)
         keywords = self._library_note_keywords_from_input(raw_keywords_text)
 
         service = getattr(self.app_instance, "notes_scope_service", None)
@@ -3274,7 +3360,21 @@ class LibraryScreen(BaseAppScreen):
             else:
                 self._library_note_version = (self._library_note_version or 0) + 1
             if isinstance(self._library_note_detail, dict):
+                # Patch the just-saved fields into the cached detail mirror
+                # too, not just ``version`` -- a save never recomposes the
+                # editor itself, but a *later* recompose (entering the
+                # delete-confirm state, toggling Preview, ...) rebuilds the
+                # editor's widgets fresh from this detail. Leaving
+                # title/content stale here would silently revert the
+                # just-saved edit back to its pre-save text on that
+                # recompose.
                 self._library_note_detail["version"] = self._library_note_version
+                self._library_note_detail["title"] = title
+                self._library_note_detail["content"] = content
+                if isinstance(result, Mapping) and "keywords" in result:
+                    self._library_note_detail["keywords"] = result["keywords"]
+                elif keywords is not None:
+                    self._library_note_detail["keywords"] = keywords
             self._library_note_dirty = False
             self._library_note_autosave_state = "saved"
             self._update_library_note_meta_static(content=raw_content)
@@ -3290,7 +3390,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_autosave_timer = None
         base_meta_line = self._library_note_meta_base_line()
         conflict_status = notes_autosave_status_text(
-            "conflict", word_count=len(raw_content.split())
+            "conflict", word_count=self._note_word_count(raw_content)
         )
         self._library_note_conflict_snapshot = LibraryNoteEditorState(
             note_id=note_id,
@@ -3343,6 +3443,13 @@ class LibraryScreen(BaseAppScreen):
         * ``overwrite=False``: discard the local edits and recompose the
           editor from the freshly fetched detail.
 
+        Either path falls back to the list view (with the same "no longer
+        available" warning ``_refresh_library_note_detail`` shows) when the
+        re-fetch discovers the note was deleted elsewhere entirely -- not
+        just version-bumped again -- so neither action can strand the
+        canvas on a permanent "Loading…" placeholder (Reload) or a
+        conflict UI that can never be resolved (Overwrite).
+
         Args:
             overwrite: ``True`` for Overwrite, ``False`` for Reload.
         """
@@ -3370,8 +3477,25 @@ class LibraryScreen(BaseAppScreen):
         if note_id != self._selected_note_id:
             return  # The user navigated away while the re-fetch was in flight.
 
+        if not isinstance(detail, Mapping):
+            # The note is gone entirely (deleted elsewhere) rather than
+            # merely changed again -- neither Reload nor Overwrite has
+            # anything left to reconcile against. Mirrors
+            # ``_refresh_library_note_detail``'s missing-note fallback so
+            # this never leaves the canvas stuck in the conflict UI or on
+            # an unresolvable "Loading…" placeholder.
+            logger.info(
+                f"Library note {note_id!r} is no longer available; returning to list."
+            )
+            self._reset_library_note_editor_state()
+            self._notify_library_note_missing_warning()
+            self._refresh_local_source_snapshot()
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+
         if not overwrite:
-            self._library_note_detail = detail if isinstance(detail, Mapping) else None
+            self._library_note_detail = detail
             editor_state = build_library_note_editor_state(self._library_note_detail)
             self._library_note_version = editor_state.version
             self._library_note_conflict_snapshot = None
@@ -3385,9 +3509,7 @@ class LibraryScreen(BaseAppScreen):
                 self.call_after_refresh(self._arm_library_note_editor)
             return
 
-        fresh_version = build_library_note_editor_state(
-            detail if isinstance(detail, Mapping) else None
-        ).version
+        fresh_version = build_library_note_editor_state(detail).version
         if fresh_version is None:
             return
         try:
@@ -3397,7 +3519,7 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             return
         title = self._sanitize_media_field(title_widget.value, max_length=300)
-        content = self._sanitize_note_content(body_widget.text, max_length=2_000_000)
+        content = self._sanitize_note_content(body_widget.text, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS)
         keywords = self._library_note_keywords_from_input(keywords_widget.value)
 
         save_note = getattr(service, "save_note", None)
@@ -3462,6 +3584,12 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-note-conflict-overwrite")
     def handle_library_note_conflict_overwrite(self, event: Button.Pressed) -> None:
+        """Resolve a shown save conflict by re-saving the kept local edits.
+
+        Args:
+            event: Button press event emitted by the conflict UI's
+                "Overwrite" action.
+        """
         event.stop()
         self.run_worker(
             self._resolve_library_note_conflict(overwrite=True),
@@ -3471,6 +3599,12 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-note-conflict-reload")
     def handle_library_note_conflict_reload(self, event: Button.Pressed) -> None:
+        """Resolve a shown save conflict by discarding local edits and reloading.
+
+        Args:
+            event: Button press event emitted by the conflict UI's
+                "Reload" action.
+        """
         event.stop()
         self.run_worker(
             self._resolve_library_note_conflict(overwrite=False),
@@ -3601,7 +3735,7 @@ class LibraryScreen(BaseAppScreen):
             ),
         )
 
-    async def _write_library_note_export_file(
+    def _write_library_note_export_file(
         self,
         selected_path: Path | None,
         export_format: str,
@@ -3611,6 +3745,22 @@ class LibraryScreen(BaseAppScreen):
         note_id: str,
     ) -> None:
         """Write the exported note content to the path chosen via ``FileSave``.
+
+        Runs the dialog-returned path through ``validate_path_simple``
+        before writing: ``FileSave`` lets the user pick any absolute
+        destination, so there is no fixed base directory to constrain it
+        to the way ``validate_path``/``safe_join_path`` require -- this is
+        the same base-directory-free validator the rest of this codebase
+        already uses for user-chosen save/output paths (e.g.
+        ``notes_screen._import_note_from_path``, ``settings_screen``'s
+        storage-location fields). It rejects null bytes and other
+        shell-metacharacter/traversal patterns; a rejected path is a quiet
+        warning notice with no write and no crash, same as any other
+        failure in this method. This method awaits nothing (the write is a
+        plain synchronous ``Path.write_text``), so it is a plain method
+        rather than a coroutine -- Textual's ``call_after_refresh`` (its
+        only caller, via ``_export_library_note``'s ``FileSave`` callback)
+        accepts either.
 
         Args:
             selected_path: The chosen destination, or ``None`` if the
@@ -3628,27 +3778,46 @@ class LibraryScreen(BaseAppScreen):
                 notify("Note export cancelled.", severity="information")
             return
         try:
-            selected_path.write_text(
+            validated_path = validate_path_simple(selected_path, require_exists=False)
+        except ValueError as exc:
+            logger.warning(
+                f"Rejected Library note export path {selected_path!r} for {note_id!r}: {exc}"
+            )
+            if callable(notify):
+                notify(f"Rejected export path: {exc}", severity="warning")
+            return
+        try:
+            validated_path.write_text(
                 build_note_export_content(title, content, keywords_text, note_id, export_format),
                 encoding="utf-8",
             )
         except Exception as exc:
             logger.warning(
-                f"Error exporting Library note {note_id!r} to '{selected_path}'.", exc_info=True
+                f"Error exporting Library note {note_id!r} to '{validated_path}'.", exc_info=True
             )
             if callable(notify):
                 notify(f"Error exporting note: {type(exc).__name__}", severity="error")
             return
         if callable(notify):
-            notify(f"Note exported successfully to {selected_path.name}", severity="information")
+            notify(f"Note exported successfully to {validated_path.name}", severity="information")
 
     @on(Button.Pressed, "#library-note-export-md")
     async def handle_library_note_export_markdown(self, event: Button.Pressed) -> None:
+        """Export the open note as Markdown via a ``FileSave`` dialog.
+
+        Args:
+            event: Button press event emitted by the editor's "Export .md" action.
+        """
         event.stop()
         await self._export_library_note("markdown")
 
     @on(Button.Pressed, "#library-note-export-txt")
     async def handle_library_note_export_text(self, event: Button.Pressed) -> None:
+        """Export the open note as plain text via a ``FileSave`` dialog.
+
+        Args:
+            event: Button press event emitted by the editor's "Export .txt" action.
+        """
         event.stop()
         await self._export_library_note("text")
 
@@ -3758,6 +3927,12 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-note-use-in-console")
     def handle_library_note_use_in_console(self, event: Button.Pressed) -> None:
+        """Hand the open note off to Console as chat context.
+
+        Args:
+            event: Button press event emitted by the editor's
+                "Use in Console" action.
+        """
         event.stop()
         self._open_selected_library_note_handoff()
 
@@ -4052,6 +4227,16 @@ class LibraryScreen(BaseAppScreen):
     async def _run_library_notes_filter(self, query: str) -> None:
         """Fetch filtered notes from the ``search_notes`` seam and recompose.
 
+        Clearing the filter (an empty submit) is handled synchronously by
+        ``handle_library_notes_filter`` and never starts this worker, so it
+        cannot cancel a slower, still-in-flight call for a *previous*
+        non-empty query the ordinary way ``run_worker(exclusive=True)``
+        would. Re-checking ``query`` against the current
+        ``_library_notes_filter`` after the await closes that gap: a
+        mismatch means the filter was cleared (or changed again) while
+        this call was in flight, so the now-stale result is discarded
+        instead of overwriting the cleared/changed state.
+
         Args:
             query: The submitted filter text.
         """
@@ -4069,6 +4254,8 @@ class LibraryScreen(BaseAppScreen):
             )
         except Exception:
             logger.warning("Library notes filter failed.", exc_info=True)
+            return
+        if query != self._library_notes_filter:
             return
         self._library_notes_filter_records = list(records or [])
         self.refresh(recompose=True)
@@ -4385,9 +4572,11 @@ class LibraryScreen(BaseAppScreen):
         ``notes_screen._create_local_note_from_template`` substitution
         (same placeholder names, same ``strftime`` formats). Unlike that
         flow -- which notifies and aborts the create on a malformed
-        placeholder -- a template with an unknown ``{placeholder}`` or a
-        stray brace degrades to the raw (unsubstituted) text here, so one
-        broken template can never crash the create view for the others.
+        placeholder -- resolution here is per-key: an unknown
+        ``{placeholder}`` or a stray brace is left literal in the result,
+        while every other *known* placeholder in the same template still
+        gets substituted, so one broken template can never crash (or blank
+        out) the create view for the others.
 
         Args:
             template: The raw ``NOTE_TEMPLATES[key]`` value, or ``None``
@@ -4453,7 +4642,7 @@ class LibraryScreen(BaseAppScreen):
             content: The note's body (already resolved; not yet sanitized).
         """
         sanitized_title = self._sanitize_media_field(title, max_length=300)
-        sanitized_content = self._sanitize_note_content(content, max_length=2_000_000)
+        sanitized_content = self._sanitize_note_content(content, max_length=LIBRARY_NOTE_CONTENT_MAX_CHARS)
         sanitized_keywords = [
             sanitized
             for keyword in (keywords or [])

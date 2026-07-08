@@ -151,6 +151,17 @@ def test_resolve_note_template_placeholders_degrades_on_malformed():
     assert resolve_note_template_placeholders("stray { brace") == "stray { brace"
 
 
+def test_resolve_note_template_placeholders_resolves_known_keys_leaves_unknown_literal():
+    """A per-key resolution: an unknown placeholder sitting alongside a
+    known one must not block the known one from being substituted."""
+    from tldw_chatbook.Library.library_notes_state import resolve_note_template_placeholders
+
+    resolved = resolve_note_template_placeholders(
+        "X {date} {unknown}", now=datetime(2026, 7, 8, 9, 30)
+    )
+    assert resolved == "X 2026-07-08 {unknown}"
+
+
 def test_note_template_keywords_parses_comma_string_and_sequences():
     from tldw_chatbook.Library.library_notes_state import note_template_keywords
 
