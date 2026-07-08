@@ -49,3 +49,24 @@ with 4 REAL notes seeded via `CharactersRAGDB.add_note` (no fixtures).
   (FileSave kwargs) — tracked follow-up, moot once L2b.2 deprecates it.
 - Sync + Templates management + Import Note arrive in L2b.2 per the spec's
   parity split.
+
+## Create-view design pass (2026-07-08, post-approval)
+
+A sr UX/HCI review of the create screen surfaced five items; all addressed
+(commit `2d261847`, reviewer-approved) and `create-templates-2026-07-08.png`
+recaptured:
+
+1. The redundant "Empty note" template row is gone — Blank note is the one
+   canonical empty path (the two also produced different default titles).
+2. PARITY BUG fixed: template keywords ("meeting, notes" …) were silently
+   dropped on create while the standalone screen applies them — now passed
+   through the seam and pinned against the real DB.
+3. Template rows show the resolved title the note will get (date/time
+   substituted) as a muted secondary line.
+4. A "From a template" group label (media-viewer section-rule grammar)
+   separates the primary Blank action from the template list.
+5. Spacing tightened naturally by the two-line rows.
+
+Follow-ups logged: `project`/`research` bundled templates end in dangling
+separators ("Project: ") — pre-existing data quirk newly visible; polish the
+JSON titles in a later pass.
