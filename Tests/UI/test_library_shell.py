@@ -4227,3 +4227,342 @@ def test_library_note_template_fields_malformed_placeholder_degrades_to_raw_text
 
     assert title == "Notes - {unknown_key}"
     assert content == "Stray brace ahead: { oops"
+
+
+# ----- Notes sync panel --------------------------------------------------
+
+class _RecordingSyncResults:
+    def __init__(self):
+        self.created_notes = []
+        self.updated_notes = []
+        self.created_files = []
+        self.updated_files = []
+        self.conflicts = []
+        self.errors = []
+
+
+class _RecordingNotesSyncService:
+    """Records the exact args ``sync_folder`` was called with, and lets the
+    test control the returned (session_id, results) tuple. The progress
+    callback is fired from a real background thread (mirroring the real
+    engine's worker-thread callback) and gated on a ``threading.Event`` so
+    the test can observe the mid-run targeted status update before letting
+    the run complete -- proving the update lands without a recompose.
+    """
+
+    instances = []
+
+    def __init__(self, notes_service, db):
+        self.notes_service = notes_service
+        self.db = db
+        self.calls = []
+        self.progress_fired = threading.Event()
+        self.release_event = threading.Event()
+        _RecordingNotesSyncService.instances.append(self)
+
+    async def sync_folder(self, *, root_folder, user_id, direction,
+                           conflict_resolution, progress_callback=None, extensions=None):
+        self.calls.append({
+            "root_folder": root_folder,
+            "user_id": user_id,
+            "direction": direction,
+            "conflict_resolution": conflict_resolution,
+        })
+        if progress_callback is not None:
+            from tldw_chatbook.Notes.sync_engine import SyncProgress
+            progress_callback(SyncProgress(total_files=2, processed_files=1))
+            self.progress_fired.set()
+        # ``_run_library_service_call(..., isolate_in_worker=True)`` already
+        # runs this coroutine on a worker thread with no event loop of its
+        # own (see library_screen.py); blocking here on a plain
+        # threading.Event (not asyncio.sleep) is what actually holds up
+        # that worker thread until the test lets it proceed.
+        await asyncio.to_thread(self.release_event.wait)
+        results = _RecordingSyncResults()
+        results.created_notes = ["n-new"]
+        return ("session-1", results)
+
+
+def _prepare_library_notes_sync_app(app, *, notes=None):
+    _seed_conversations(app, _two_conversations(), notes=notes or _two_notes())
+    app.notes_service = Mock()
+    app.chachanotes_db = Mock()
+    # The sync direction/conflict/auto-sync config keys live in the real,
+    # session-shared CLI config file (under the isolated test HOME) -- a
+    # previous test in this same session may have persisted a non-default
+    # value there. Reset to known starting values so every sync test's
+    # cycling assertions are deterministic regardless of run order.
+    from tldw_chatbook.config import save_setting_to_cli_config
+
+    save_setting_to_cli_config("notes", "sync_direction", "bidirectional")
+    save_setting_to_cli_config("notes", "sync_conflict_resolution", "newer_wins")
+    save_setting_to_cli_config("notes", "auto_sync", False)
+
+
+async def _open_library_notes_sync_panel(screen, pilot):
+    screen.query_one("#library-row-browse-notes").press()
+    await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
+    screen.query_one("#library-notes-sync-open").press()
+    await _wait_for_selector(screen, pilot, "#library-notes-sync-back")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sync_button_opens_sync_mode():
+    """Pressing Sync on the notes list header opens the sync panel with all
+    of its widgets present, and Back returns to the notes list."""
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        assert screen._library_notes_view == "sync"
+        for selector in (
+            "#library-notes-sync-back",
+            "#library-notes-sync-header",
+            "#library-notes-sync-folder",
+            "#library-notes-sync-browse",
+            "#library-notes-sync-direction",
+            "#library-notes-sync-conflict",
+            "#library-notes-sync-auto",
+            "#library-notes-sync-run",
+            "#library-notes-sync-status",
+            "#library-notes-sync-activity",
+        ):
+            assert screen.query_one(selector), f"{selector} missing from sync panel"
+
+        screen.query_one("#library-notes-sync-back").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
+        assert screen._library_notes_view == "list"
+        assert not screen.query("#library-notes-sync-back")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sync_direction_cycles_and_persists():
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        assert screen._library_notes_sync_direction == "bidirectional"
+        button = screen.query_one("#library-notes-sync-direction", Button)
+        assert "Bidirectional" in str(button.label)
+
+        button.press()
+        await pilot.pause()
+        assert screen._library_notes_sync_direction == "disk_to_db"
+        from tldw_chatbook.config import get_cli_setting
+        assert get_cli_setting("notes", "sync_direction", None) == "disk_to_db"
+        button = screen.query_one("#library-notes-sync-direction", Button)
+        assert "Disk" in str(button.label)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sync_conflict_cycles_and_persists():
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        assert screen._library_notes_sync_conflict == "newer_wins"
+        screen.query_one("#library-notes-sync-conflict").press()
+        await pilot.pause()
+        assert screen._library_notes_sync_conflict == "disk_wins"
+        from tldw_chatbook.config import get_cli_setting
+        assert get_cli_setting("notes", "sync_conflict_resolution", None) == "disk_wins"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sync_auto_toggle_flips_and_persists():
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        assert screen._library_notes_sync_auto is False
+        toggle = screen.query_one("#library-notes-sync-auto", Button)
+        assert "○" in str(toggle.label)
+
+        toggle.press()
+        await pilot.pause()
+        assert screen._library_notes_sync_auto is True
+        assert screen._library_notes_auto_sync_timer is not None
+        from tldw_chatbook.config import get_cli_setting
+        assert get_cli_setting("notes", "auto_sync", None) is True
+        toggle = screen.query_one("#library-notes-sync-auto", Button)
+        assert "✓" in str(toggle.label)
+
+        toggle.press()
+        await pilot.pause()
+        assert screen._library_notes_sync_auto is False
+        assert screen._library_notes_auto_sync_timer is None
+        assert get_cli_setting("notes", "auto_sync", None) is False
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_enums(
+    monkeypatch, tmp_path
+):
+    """Sync-now with a valid folder must call the sync seam with the chosen
+    direction/conflict enums, and update status/activity without ever
+    recomposing (same Static widget instance) mid-run."""
+    from tldw_chatbook.Notes.sync_engine import ConflictResolution, SyncDirection
+    from tldw_chatbook.Notes import sync_service as sync_service_module
+
+    _RecordingNotesSyncService.instances.clear()
+    monkeypatch.setattr(sync_service_module, "NotesSyncService", _RecordingNotesSyncService)
+
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        folder_input = screen.query_one("#library-notes-sync-folder", Input)
+        folder_input.value = str(tmp_path)
+        folder_input.focus()
+        await pilot.pause()
+
+        # Cycle direction/conflict once each so the recorded call proves the
+        # *chosen* enums (not just the defaults) are threaded through.
+        screen.query_one("#library-notes-sync-direction").press()
+        await pilot.pause()
+        screen.query_one("#library-notes-sync-conflict").press()
+        await pilot.pause()
+
+        screen.query_one("#library-notes-sync-run").press()
+        for _ in range(150):
+            if screen._library_notes_sync_running:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Sync-now never started.")
+
+        # Captured only once the start-of-sync recompose has already
+        # happened, so this is the one-and-only Static instance the
+        # progress callback's targeted update (and the finish handler)
+        # must reuse -- proving no recompose happens mid-run.
+        status_widget_before = screen.query_one("#library-notes-sync-status", Static)
+
+        for _ in range(150):
+            if _RecordingNotesSyncService.instances and _RecordingNotesSyncService.instances[0].calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Sync-now never reached the recording service.")
+
+        service = _RecordingNotesSyncService.instances[0]
+        call = service.calls[0]
+        assert call["root_folder"] == tmp_path
+        assert call["direction"] == SyncDirection.DISK_TO_DB
+        assert call["conflict_resolution"] == ConflictResolution.DISK_WINS
+
+        for _ in range(150):
+            if service.progress_fired.is_set():
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Progress callback never fired.")
+        for _ in range(150):
+            if "syncing" in str(
+                screen.query_one("#library-notes-sync-status", Static).renderable
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Progress callback never landed on the status widget.")
+
+        # The mid-run progress update must have landed on the very same
+        # Static instance captured before the callback fired -- no
+        # recompose happened in between.
+        status_widget_mid_run = screen.query_one("#library-notes-sync-status", Static)
+        assert status_widget_before is status_widget_mid_run
+        assert "1/2" in str(status_widget_mid_run.renderable)
+
+        # Now let the gated fake service return so the run completes.
+        service.release_event.set()
+        for _ in range(150):
+            if not screen._library_notes_sync_running:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Sync run never completed.")
+
+        status_widget_after = screen.query_one("#library-notes-sync-status", Static)
+        assert "done" in str(status_widget_after.renderable)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sync_invalid_folder_notifies_quietly_no_run(monkeypatch):
+    from tldw_chatbook.Notes import sync_service as sync_service_module
+
+    _RecordingNotesSyncService.instances.clear()
+    monkeypatch.setattr(sync_service_module, "NotesSyncService", _RecordingNotesSyncService)
+
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    notifications = []
+    app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        folder_input = screen.query_one("#library-notes-sync-folder", Input)
+        folder_input.value = "/definitely/does/not/exist/anywhere"
+        folder_input.focus()
+        await pilot.pause()
+
+        screen.query_one("#library-notes-sync-run").press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert not _RecordingNotesSyncService.instances or not _RecordingNotesSyncService.instances[0].calls
+        assert notifications
+        assert notifications[-1][1].get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sync_rail_reentry_resets_transient_state():
+    """Leaving the sync panel for another rail row and returning to Browse >
+    Notes must clear stale status/activity from the previous visit."""
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        screen._library_notes_sync_status = "failed · disk full"
+        screen._library_notes_sync_activity = ("some previous line",)
+
+        screen.query_one("#library-row-browse-media").press()
+        await pilot.pause()
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
+
+        assert screen._library_notes_sync_status == "idle"
+        assert screen._library_notes_sync_activity == ()
+        assert screen._library_notes_view == "list"

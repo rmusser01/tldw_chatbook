@@ -113,6 +113,22 @@ class NotesSyncEngine:
     def _calculate_hash(self, content: str) -> str:
         """Calculate SHA256 hash of content."""
         return hashlib.sha256(content.encode('utf-8')).hexdigest()
+
+    @staticmethod
+    def _coerce_aware_datetime(value: Any) -> datetime:
+        """Coerce a DB ``last_modified`` value to a tz-aware ``datetime``.
+
+        The value is normally the raw TEXT column (an ISO-8601 string),
+        but ``sqlite3.PARSE_DECLTYPES`` (set on every ``CharactersRAGDB``
+        connection) can auto-convert a TIMESTAMP-declared column to a real
+        ``datetime`` depending on the call path -- accepting both here
+        avoids a ``TypeError`` from ``datetime.fromisoformat`` when a
+        ``datetime`` is already given. A naive result (no tzinfo, from
+        either path) is assumed UTC, matching this module's other
+        timestamps, so comparisons against tz-aware values never raise.
+        """
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
     
     def _get_file_info(self, file_path: Path, root_path: Path) -> Optional[SyncFileInfo]:
         """Get file information for syncing."""
@@ -702,8 +718,14 @@ class NotesSyncEngine:
                         
                         # Auto-resolve if not asking
                         if conflict_resolution == ConflictResolution.NEWER_WINS:
-                            # Compare timestamps
-                            db_modified = datetime.fromisoformat(db_note['last_modified'])
+                            # Compare timestamps. ``last_modified`` normally
+                            # comes back as the raw TEXT column, but
+                            # sqlite3.PARSE_DECLTYPES (set on every
+                            # CharactersRAGDB connection) auto-converts a
+                            # TIMESTAMP-declared column to a real
+                            # ``datetime`` for some call paths -- accept
+                            # both instead of assuming a string.
+                            db_modified = self._coerce_aware_datetime(db_note['last_modified'])
                             disk_modified = datetime.fromtimestamp(disk_file.mtime, tz=timezone.utc)
                             
                             if db_modified > disk_modified:

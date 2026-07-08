@@ -21,7 +21,7 @@ from textual.timer import Timer
 from textual.widgets import Button, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
-from ...config import save_setting_to_cli_config
+from ...config import get_cli_setting, save_setting_to_cli_config
 from ...Constants import (
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
@@ -50,6 +50,13 @@ from ...Library.library_notes_state import (
     notes_autosave_status_text,
     resolve_note_template_placeholders,
     sort_notes_records,
+)
+from ...Library.library_notes_sync_state import (
+    LibraryNotesSyncState,
+    append_activity,
+    next_sync_conflict,
+    next_sync_direction,
+    sync_status_line,
 )
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
@@ -118,6 +125,9 @@ LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
 )
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
+# Matches the standalone NotesSyncPane.AUTO_SYNC_INTERVAL_SECONDS -- same
+# 5-minute cadence, same "while this screen instance lives" scope.
+LIBRARY_NOTES_AUTO_SYNC_INTERVAL_SECONDS = 300
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
 LIBRARY_HANDOFF_LABEL_PREFIX = "Console/RAG handoff: "
@@ -557,6 +567,18 @@ class LibraryScreen(BaseAppScreen):
         # autosave even though the user never typed anything. Re-armed via
         # ``call_after_refresh`` after every notes-editor (re)compose.
         self._library_note_editor_armed: bool = False
+        # Notes sync panel state. Seeded from config lazily on first entry
+        # into sync mode (``_ensure_library_notes_sync_config_loaded``), not
+        # here in __init__, so tests/screens that never open the sync panel
+        # never pay for a config read.
+        self._library_notes_sync_config_loaded: bool = False
+        self._library_notes_sync_direction: str = "bidirectional"
+        self._library_notes_sync_conflict: str = "newer_wins"
+        self._library_notes_sync_auto: bool = False
+        self._library_notes_sync_status: str = "idle"
+        self._library_notes_sync_activity: tuple[str, ...] = ()
+        self._library_notes_sync_running: bool = False
+        self._library_notes_auto_sync_timer: Timer | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -2851,6 +2873,12 @@ class LibraryScreen(BaseAppScreen):
                             preview=self._library_note_preview,
                             id="library-notes-canvas",
                         )
+                elif shell.canvas_kind == "notes" and self._library_notes_view == "sync":
+                    yield LibraryNotesCanvas(
+                        mode="sync",
+                        sync_state=self._build_library_notes_sync_state(),
+                        id="library-notes-canvas",
+                    )
                 elif shell.canvas_kind == "notes":
                     source_records = (
                         self._library_notes_filter_records
@@ -3217,6 +3245,112 @@ class LibraryScreen(BaseAppScreen):
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
+
+    def _reset_library_notes_sync_transient_state(self) -> None:
+        """Clear the sync panel's run-scoped (non-persisted) state.
+
+        Called on rail re-entry into Notes (extends the existing reset) so
+        stale status/activity from a previous visit never reappears; the
+        persisted direction/conflict/auto-sync preferences and the
+        auto-sync timer are left untouched here -- the timer's lifetime is
+        the whole Library screen's, not a single sync-panel visit (see
+        ``handle_library_notes_sync_auto_toggle``).
+        """
+        self._library_notes_sync_status = "idle"
+        self._library_notes_sync_activity = ()
+        self._library_notes_sync_running = False
+
+    def _ensure_library_notes_sync_config_loaded(self) -> None:
+        """Seed sync direction/conflict/auto-sync from config on first entry.
+
+        Idempotent: only reads config once per screen lifetime
+        (``_library_notes_sync_config_loaded`` guards re-entry), so
+        in-session cycling/toggling is never clobbered by a later sync-mode
+        re-entry re-reading stale config.
+        """
+        if self._library_notes_sync_config_loaded:
+            return
+        self._library_notes_sync_config_loaded = True
+        self._library_notes_sync_direction = str(
+            get_cli_setting("notes", "sync_direction", "bidirectional")
+            or "bidirectional"
+        )
+        self._library_notes_sync_conflict = str(
+            get_cli_setting("notes", "sync_conflict_resolution", "newer_wins")
+            or "newer_wins"
+        )
+        self._library_notes_sync_auto = bool(get_cli_setting("notes", "auto_sync", False))
+        if self._library_notes_sync_auto:
+            self._arm_library_notes_auto_sync_timer()
+
+    def _library_notes_sync_folder(self) -> str:
+        """Return the configured sync folder as text (unexpanded)."""
+        return str(get_cli_setting("notes", "sync_directory", "~/Documents/Notes"))
+
+    def _build_library_notes_sync_state(self) -> LibraryNotesSyncState:
+        """Build the sync panel's display state from screen fields."""
+        return LibraryNotesSyncState(
+            folder=self._library_notes_sync_folder(),
+            direction=self._library_notes_sync_direction,
+            conflict=self._library_notes_sync_conflict,
+            auto_sync=self._library_notes_sync_auto,
+            status_line=self._library_notes_sync_status,
+            activity_lines=self._library_notes_sync_activity,
+        )
+
+    def _resolve_library_notes_sync_db(self) -> Any:
+        """Resolve the per-user ChaChaNotes DB the sync service writes to.
+
+        Mirrors ``NotesSyncPane.on_mount`` (notes_workbench_panes.py) EXACTLY:
+        prefer the app's ``chachanotes_db``, falling back to the notes
+        service's own ``db`` attribute when that is unset.
+        """
+        notes_service = getattr(self.app_instance, "notes_service", None)
+        return getattr(self.app_instance, "chachanotes_db", None) or getattr(
+            notes_service, "db", None
+        )
+
+    def _arm_library_notes_auto_sync_timer(self) -> None:
+        """Start the 300s auto-sync repeating timer if not already running.
+
+        Scoped to this Library screen instance's lifetime (like the
+        standalone ``NotesSyncPane``'s timer) -- it is never persisted or
+        resumed across screen instances; only the ``auto_sync`` boolean
+        preference is persisted, and is re-armed on the next sync-mode
+        entry via ``_ensure_library_notes_sync_config_loaded``.
+        """
+        if self._library_notes_auto_sync_timer is not None:
+            return
+        self._library_notes_auto_sync_timer = self.set_interval(
+            LIBRARY_NOTES_AUTO_SYNC_INTERVAL_SECONDS,
+            self._library_notes_auto_sync_tick,
+        )
+
+    def _cancel_library_notes_auto_sync_timer(self) -> None:
+        if self._library_notes_auto_sync_timer is not None:
+            self._library_notes_auto_sync_timer.stop()
+            self._library_notes_auto_sync_timer = None
+
+    def _library_notes_auto_sync_tick(self) -> None:
+        """Auto-sync timer callback: skip quietly when busy or misconfigured."""
+        if self._library_notes_sync_running:
+            return
+        folder_value = self._library_notes_sync_folder()
+        if not folder_value:
+            return
+        try:
+            folder = validate_path_simple(
+                Path(folder_value).expanduser(), require_exists=True
+            )
+        except ValueError:
+            return
+        if not folder.is_dir():
+            return
+        self.run_worker(
+            self._run_library_notes_sync(folder),
+            exclusive=True,
+            group="library_notes_sync",
+        )
 
     # ----- Notes editor: save, autosave, conflict policy -----------------
 
@@ -4153,6 +4287,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
         self._reset_library_note_editor_state()
+        self._reset_library_notes_sync_transient_state()
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -4334,6 +4469,302 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-notes-filter", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    # ----- Notes sync panel ------------------------------------------------
+
+    @on(Button.Pressed, "#library-notes-sync-open")
+    async def handle_library_notes_sync_open(self, event: Button.Pressed) -> None:
+        """Enter the in-canvas notes sync panel from the notes list header.
+
+        Flushes any pending editor save first (mirrors every other exit
+        from the notes list/editor) and seeds direction/conflict/auto-sync
+        from config on first entry only.
+
+        Args:
+            event: Button press event emitted by the "Sync" action.
+        """
+        event.stop()
+        await self._flush_library_note_save()
+        if self._library_note_autosave_state == "conflict":
+            return
+        self._ensure_library_notes_sync_config_loaded()
+        self._library_notes_view = "sync"
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-sync-back")
+    async def handle_library_notes_sync_back(self, event: Button.Pressed) -> None:
+        """Return the Library notes canvas from the sync panel to its list view.
+
+        Args:
+            event: Button press event emitted by the "‹ Back to notes" action.
+        """
+        event.stop()
+        await self._flush_library_note_save()
+        self._library_notes_view = "list"
+        self._reset_library_notes_sync_transient_state()
+        self.refresh(recompose=True)
+
+    @on(Input.Changed, "#library-notes-sync-folder")
+    def handle_library_notes_sync_folder_changed(self, event: Input.Changed) -> None:
+        """Persist the sync folder as the user edits it.
+
+        Args:
+            event: Input change event emitted by the sync folder box.
+        """
+        event.stop()
+        save_setting_to_cli_config("notes", "sync_directory", event.value)
+
+    @on(Button.Pressed, "#library-notes-sync-browse")
+    async def handle_library_notes_sync_browse(self, event: Button.Pressed) -> None:
+        """Open a directory picker and adopt the chosen folder.
+
+        Args:
+            event: Button press event emitted by the "Browse…" action.
+        """
+        event.stop()
+        from ...Third_Party.textual_fspicker import SelectDirectory
+
+        current = Path(self._library_notes_sync_folder()).expanduser()
+        if not current.exists():
+            current = Path.home()
+        await self.app.push_screen(
+            SelectDirectory(str(current), title="Select Notes Sync Folder"),
+            callback=self._apply_library_notes_sync_folder,
+        )
+
+    def _apply_library_notes_sync_folder(self, path: Path | None) -> None:
+        """Persist and render the folder chosen via ``SelectDirectory``."""
+        if not path:
+            return
+        save_setting_to_cli_config("notes", "sync_directory", str(path))
+        if self._library_notes_view == "sync":
+            self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-sync-direction")
+    def handle_library_notes_sync_direction(self, event: Button.Pressed) -> None:
+        """Cycle the sync direction and persist the new value.
+
+        Args:
+            event: Button press event emitted by the direction cycler.
+        """
+        event.stop()
+        self._library_notes_sync_direction = next_sync_direction(
+            self._library_notes_sync_direction
+        )
+        save_setting_to_cli_config(
+            "notes", "sync_direction", self._library_notes_sync_direction
+        )
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-sync-conflict")
+    def handle_library_notes_sync_conflict(self, event: Button.Pressed) -> None:
+        """Cycle the conflict-resolution mode and persist the new value.
+
+        Args:
+            event: Button press event emitted by the conflict cycler.
+        """
+        event.stop()
+        self._library_notes_sync_conflict = next_sync_conflict(
+            self._library_notes_sync_conflict
+        )
+        save_setting_to_cli_config(
+            "notes", "sync_conflict_resolution", self._library_notes_sync_conflict
+        )
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-sync-auto")
+    def handle_library_notes_sync_auto_toggle(self, event: Button.Pressed) -> None:
+        """Toggle auto-sync, persist it, and arm/cancel the repeating timer.
+
+        The timer is scoped to this Library screen instance's lifetime --
+        the same scope the standalone ``NotesSyncPane``'s timer had -- not
+        persisted/resumed across screen instances; only the boolean
+        preference persists, and is re-armed the next time sync mode is
+        entered (``_ensure_library_notes_sync_config_loaded``).
+
+        Args:
+            event: Button press event emitted by the auto-sync toggle.
+        """
+        event.stop()
+        self._library_notes_sync_auto = not self._library_notes_sync_auto
+        save_setting_to_cli_config("notes", "auto_sync", self._library_notes_sync_auto)
+        if self._library_notes_sync_auto:
+            self._arm_library_notes_auto_sync_timer()
+        else:
+            self._cancel_library_notes_auto_sync_timer()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-sync-run")
+    def handle_library_notes_sync_run(self, event: Button.Pressed) -> None:
+        """Validate the folder and kick off a sync run as an exclusive worker.
+
+        Args:
+            event: Button press event emitted by the "Sync now" action.
+        """
+        event.stop()
+        if self._library_notes_sync_running:
+            return
+        folder_value = self._library_notes_sync_folder()
+        if not folder_value:
+            self._notify_library_notes_sync_warning("Please select a folder to sync.")
+            return
+        try:
+            folder = validate_path_simple(
+                Path(folder_value).expanduser(), require_exists=True
+            )
+        except ValueError:
+            self._notify_library_notes_sync_warning(
+                "That sync folder does not exist."
+            )
+            return
+        if not folder.is_dir():
+            self._notify_library_notes_sync_warning(
+                "Selected path is a file; choose a folder to sync."
+            )
+            return
+        self.run_worker(
+            self._run_library_notes_sync(folder),
+            exclusive=True,
+            group="library_notes_sync",
+        )
+
+    def _notify_library_notes_sync_warning(self, message: str) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    async def _run_library_notes_sync(self, folder: Path) -> None:
+        """Run one notes sync pass against ``folder`` and report the outcome.
+
+        Builds a fresh ``NotesSyncService`` per run (mirroring
+        ``NotesSyncPane.on_mount`` -- see ``_resolve_library_notes_sync_db``)
+        and calls ``sync_folder`` offloaded onto a worker thread via
+        ``_run_library_service_call(..., isolate_in_worker=True)``, since
+        the sync engine walks the filesystem and touches the DB
+        synchronously in places.
+
+        The engine's ``progress_callback`` fires from that worker thread
+        (a plain function call, not a coroutine -- see
+        ``NotesSyncEngine``), so it is never called directly here; it is
+        marshaled onto the UI thread via ``self.app.call_from_thread``
+        (Textual's own running-App property -- the same object as
+        ``self.app_instance`` in production, but the one that actually
+        matters for ``call_from_thread``'s event-loop lookup) and only
+        ever performs targeted ``query_one(...).update(...)`` calls,
+        guarded against the user having navigated away mid-run. Only the
+        start and the final outcome trigger a recompose (also
+        freshness-guarded).
+        """
+        from ...Notes.sync_engine import ConflictResolution, SyncDirection
+        from ...Notes.sync_service import NotesSyncService
+
+        notes_service = getattr(self.app_instance, "notes_service", None)
+        db = self._resolve_library_notes_sync_db()
+        if notes_service is None or db is None:
+            self._notify_library_notes_sync_warning(
+                "Sync service is unavailable in this runtime."
+            )
+            return
+
+        try:
+            direction = SyncDirection(self._library_notes_sync_direction)
+        except ValueError:
+            direction = SyncDirection.BIDIRECTIONAL
+        try:
+            resolution = ConflictResolution(self._library_notes_sync_conflict)
+        except ValueError:
+            resolution = ConflictResolution.NEWER_WINS
+
+        self._library_notes_sync_running = True
+        self._library_notes_sync_status = sync_status_line("syncing", processed=0, total=0)
+        self._library_notes_sync_activity = append_activity(
+            self._library_notes_sync_activity, f"Starting sync: {folder.name}"
+        )
+        self.refresh(recompose=True)
+
+        def progress_callback(sync_progress: Any) -> None:
+            def apply() -> None:
+                if self._library_notes_view != "sync" or not self.is_mounted:
+                    return
+                total = getattr(sync_progress, "total_files", 0)
+                processed = getattr(sync_progress, "processed_files", 0)
+                self._library_notes_sync_status = sync_status_line(
+                    "syncing", processed=processed, total=total
+                )
+                try:
+                    self.query_one("#library-notes-sync-status", Static).update(
+                        self._library_notes_sync_status
+                    )
+                except (NoMatches, QueryError):
+                    pass
+
+            # ``self.app`` (Textual's own running-App property), not
+            # ``self.app_instance`` -- in production the two are the same
+            # object (``screen_class(self)`` in app.py), but
+            # ``call_from_thread`` needs the App whose event loop is
+            # actually running this screen, which is what ``self.app``
+            # always resolves to even where a test harness's ``app_instance``
+            # is a separate, non-running object.
+            try:
+                self.app.call_from_thread(apply)
+            except RuntimeError:
+                # The app already finished shutting down mid-sync (or this
+                # is being invoked outside a running app entirely) --
+                # a missed progress tick must never surface as a sync
+                # error for an otherwise-successful file.
+                pass
+
+        try:
+            service = NotesSyncService(notes_service=notes_service, db=db)
+            _session_id, results = await self._run_library_service_call(
+                service.sync_folder,
+                root_folder=folder,
+                user_id=self._library_notes_user_id(),
+                direction=direction,
+                conflict_resolution=resolution,
+                progress_callback=progress_callback,
+                isolate_in_worker=True,
+            )
+            processed = len(results.created_notes) + len(results.updated_notes) + (
+                len(results.created_files) + len(results.updated_files)
+            )
+            conflicts = len(results.conflicts)
+            self._library_notes_sync_status = sync_status_line(
+                "done", processed=processed, total=processed, conflicts=conflicts
+            )
+            summary_parts = []
+            if results.created_notes:
+                summary_parts.append(f"{len(results.created_notes)} notes created")
+            if results.updated_notes:
+                summary_parts.append(f"{len(results.updated_notes)} notes updated")
+            if results.created_files:
+                summary_parts.append(f"{len(results.created_files)} files created")
+            if results.updated_files:
+                summary_parts.append(f"{len(results.updated_files)} files updated")
+            summary = ", ".join(summary_parts) if summary_parts else "No changes"
+            self._library_notes_sync_activity = append_activity(
+                self._library_notes_sync_activity, f"Sync complete: {summary}"
+            )
+            if conflicts:
+                self._library_notes_sync_activity = append_activity(
+                    self._library_notes_sync_activity,
+                    f"{conflicts} conflicts recorded for review",
+                )
+            if results.errors:
+                self._library_notes_sync_activity = append_activity(
+                    self._library_notes_sync_activity,
+                    f"{len(results.errors)} errors during sync",
+                )
+        except Exception as exc:
+            logger.error(f"Library notes sync failed (folder={folder}): {exc}", exc_info=True)
+            self._library_notes_sync_status = sync_status_line("failed", error=str(exc))
+            self._library_notes_sync_activity = append_activity(
+                self._library_notes_sync_activity, f"Sync failed: {exc}"
+            )
+        finally:
+            self._library_notes_sync_running = False
+            if self._library_notes_view == "sync" and self.is_mounted:
+                self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-notes-row")
     async def handle_library_notes_row(self, event: Button.Pressed) -> None:
