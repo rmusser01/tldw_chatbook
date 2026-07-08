@@ -19,7 +19,7 @@
       "description": "Daily journal entry template"
     },
     "project": {
-      "title": "Project: ",
+      "title": "Project Plan - {date}",
       "content": "## Project Overview\n\n**Project Name:** \n**Start Date:** {date}\n**Status:** Planning\n\n### Objectives\n- \n\n### Scope\n- \n\n### Timeline\n- \n\n### Resources Needed\n- \n\n### Risks\n- \n\n### Notes\n",
       "keywords": "project, planning",
       "description": "Project planning template"
@@ -37,7 +37,7 @@
       "description": "Brainstorming session template"
     },
     "research": {
-      "title": "Research Notes - ",
+      "title": "Research Notes - {date}",
       "content": "## Research Notes\n\n**Topic:** \n**Date Started:** {date}\n\n### Research Question\n- \n\n### Key Findings\n- \n\n### Sources\n1. \n2. \n\n### Quotes\n> \n\n### Analysis\n- \n\n### Conclusions\n- \n\n### Further Reading\n- \n",
       "keywords": "research, notes",
       "description": "Research notes template"

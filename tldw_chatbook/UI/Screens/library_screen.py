@@ -80,7 +80,7 @@ from ...runtime_policy.server_event_scope import event_principal_id_from_active_
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
-from ...Third_Party.textual_fspicker import FileSave
+from ...Third_Party.textual_fspicker import FileOpen, FileSave
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import LibraryWorkspaceDepthState, build_library_workspace_depth_state
@@ -4469,6 +4469,86 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-notes-filter", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    _LIBRARY_NOTE_IMPORT_TITLE_MAX_CHARS = 300
+
+    @on(Button.Pressed, "#library-notes-import")
+    def handle_library_notes_import(self, event: Button.Pressed) -> None:
+        """Push a ``FileOpen`` dialog to import a local file as a new note.
+
+        Mirrors ``notes_screen.handle_import_button``'s dialog flow exactly
+        (the working ``FileOpen`` reference -- unlike ``FileSave``, whose
+        constructor only accepts ``location``/``title``/``default_file``,
+        ``FileOpen`` here is invoked the same simple ``title=``-only way the
+        standalone screen already relies on). The callback resolves the
+        chosen path (or ``None`` on cancel) through
+        ``_import_library_note_from_path``, which validates, reads, parses,
+        and hands off to the existing ``_create_library_note`` seam -- so a
+        successful import lands in the editor with the snapshot/count
+        refresh that seam already performs.
+
+        Args:
+            event: Button press event emitted by the "Import note" action.
+        """
+        event.stop()
+
+        async def import_callback(selected_path: Path | None) -> None:
+            await self._import_library_note_from_path(selected_path)
+
+        self.app.push_screen(
+            FileOpen(title="Import Note (TXT, MD, JSON, YAML)"),
+            import_callback,
+        )
+
+    async def _import_library_note_from_path(self, selected_path: Path | None) -> None:
+        """Validate, read, and parse a chosen file, then create a note from it.
+
+        Cancelling the dialog (``selected_path is None``) is a silent no-op.
+        Every other failure mode -- a path ``validate_path_simple`` rejects,
+        a file that cannot be read/decoded, or one larger than
+        ``LIBRARY_NOTE_CONTENT_MAX_CHARS`` -- is a quiet warning notice with
+        no note created, matching every other Library note failure path in
+        this screen. The file read is offloaded to a thread (mirroring
+        ``notes_screen._import_note_from_path``); it is bounded by the same
+        size cap enforced right after, so it can never block the UI loop on
+        an unbounded read.
+
+        Args:
+            selected_path: The path chosen via the ``FileOpen`` dialog, or
+                ``None`` if the dialog was cancelled.
+        """
+        if selected_path is None:
+            return
+
+        from tldw_chatbook.Event_Handlers.notes_events import _parse_note_from_file_content
+
+        try:
+            note_path = validate_path_simple(str(selected_path), require_exists=True)
+        except ValueError:
+            logger.warning(f"Rejected Library note import path {selected_path!r}.", exc_info=True)
+            self._notify_library_note_create_warning("Could not import that file.")
+            return
+
+        try:
+            file_content = await asyncio.to_thread(
+                note_path.read_text, encoding="utf-8", errors="strict"
+            )
+        except (OSError, UnicodeDecodeError):
+            logger.warning(f"Could not read Library note import file '{note_path}'.", exc_info=True)
+            self._notify_library_note_create_warning("Could not import that file.")
+            return
+
+        if len(file_content) > LIBRARY_NOTE_CONTENT_MAX_CHARS:
+            self._notify_library_note_create_warning("Could not import that file.")
+            return
+
+        title, content = _parse_note_from_file_content(note_path, file_content)
+        title = sanitize_string(title or "", max_length=self._LIBRARY_NOTE_IMPORT_TITLE_MAX_CHARS)
+        if not title:
+            title = note_path.stem or "Imported note"
+        content = (content or "").replace("\x00", "")
+
+        await self._create_library_note(title=title, content=content)
 
     # ----- Notes sync panel ------------------------------------------------
 

@@ -1,6 +1,7 @@
 """Library shell (L1) rail + conversations canvas pilot contracts."""
 
 import asyncio
+import json
 import re
 import threading
 from pathlib import Path
@@ -10,7 +11,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
 
-from tldw_chatbook.Third_Party.textual_fspicker import FileSave
+from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_destination_shells import (
@@ -4170,6 +4171,161 @@ async def test_library_shell_create_from_template_uses_template_fields():
         # applies them, so Library parity requires them at the seam too.
         assert call["keywords"] == ["meeting", "notes"]
         assert screen._library_notes_view == "editor"
+
+
+def _fake_import_dialog_result(screen, selected_path):
+    """Monkeypatch ``screen.app.push_screen`` so the Import note dialog's
+    callback fires immediately with ``selected_path`` instead of driving
+    the real ``FileOpen`` file-browser UI (which needs keystrokes into a
+    path input and is unrelated to what this handler contract tests: that
+    a *resolved* dialog result reaches ``_import_library_note_from_path``).
+    """
+    calls = []
+
+    def _fake_push_screen(dialog, callback=None):
+        calls.append(dialog)
+        if callback is not None:
+            screen.run_worker(callback(selected_path))
+        return None
+
+    screen.app.push_screen = _fake_push_screen
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_library_shell_import_note_lands_in_editor(tmp_path):
+    """Pressing Import note, with the dialog resolving to a real file, reads
+    that file's title/content and creates a note through the same
+    ``_create_library_note`` seam the Blank note/template rows use --
+    landing in the editor with the snapshot/count refresh that seam already
+    performs."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    note_file = tmp_path / "imported.json"
+    note_file.write_text(
+        json.dumps({"title": "Imported from disk", "content": "body from disk"}),
+        encoding="utf-8",
+    )
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+
+        push_calls = _fake_import_dialog_result(screen, note_file)
+
+        screen.query_one("#library-notes-import").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+
+        assert push_calls and isinstance(push_calls[0], FileOpen)
+
+        service = app.notes_scope_service
+        assert service.save_calls, "Import never called the create seam."
+        call = service.save_calls[-1]
+        assert call["note_id"] is None
+        assert call["title"] == "Imported from disk"
+        assert call["content"] == "body from disk"
+
+        assert screen._library_notes_view == "editor"
+        created_note = next(n for n in service.notes if n["title"] == "Imported from disk")
+        assert screen._selected_note_id == created_note["id"]
+
+        for _ in range(150):
+            if screen._local_source_counts.get("notes") == 3:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("The notes snapshot/rail count never refreshed after import.")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_import_note_oversize_file_rejected(tmp_path, monkeypatch):
+    """A file larger than ``LIBRARY_NOTE_CONTENT_MAX_CHARS`` is rejected with
+    a quiet warning notice -- no note is created."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTE_CONTENT_MAX_CHARS", 10)
+    note_file = tmp_path / "too_big.txt"
+    note_file.write_text("x" * 50, encoding="utf-8")
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+
+        _fake_import_dialog_result(screen, note_file)
+
+        service = app.notes_scope_service
+        screen.query_one("#library-notes-import").press()
+        for _ in range(60):
+            await pilot.pause(0.02)
+
+        assert not service.save_calls, "Oversize import must not create a note."
+        assert screen._library_notes_view != "editor"
+        app.notify.assert_called()
+        args, kwargs = app.notify.call_args
+        assert "import" in args[0].lower()
+        assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_import_note_md_without_title_uses_filename_stem(tmp_path):
+    """A ``.md`` file (which never carries a JSON/YAML "title" key in this
+    parser's contract) falls back to the filename stem as the note title."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    note_file = tmp_path / "My Great Notes.md"
+    note_file.write_text("# Just a heading\n\nSome body text.", encoding="utf-8")
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+
+        _fake_import_dialog_result(screen, note_file)
+
+        screen.query_one("#library-notes-import").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+
+        service = app.notes_scope_service
+        call = service.save_calls[-1]
+        assert call["title"] == "My Great Notes"
+        assert call["content"] == "# Just a heading\n\nSome body text."
+
+
+@pytest.mark.asyncio
+async def test_library_shell_import_note_cancelled_dialog_is_noop():
+    """Cancelling the ``FileOpen`` dialog (callback fired with ``None``)
+    creates no note and does not crash."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+
+        _fake_import_dialog_result(screen, None)
+
+        service = app.notes_scope_service
+        screen.query_one("#library-notes-import").press()
+        for _ in range(30):
+            await pilot.pause(0.02)
+
+        assert not service.save_calls
+        assert screen._library_notes_view != "editor"
 
 
 @pytest.mark.asyncio
