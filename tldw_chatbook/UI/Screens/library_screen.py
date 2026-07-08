@@ -26,6 +26,8 @@ from ...Constants import (
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_MODE,
+    LIBRARY_NAV_CONTEXT_NOTE_ID,
+    LIBRARY_NAV_CONTEXT_NOTES_CREATE,
 )
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...Library.library_collections_service import LibraryCollectionsServiceError
@@ -73,6 +75,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_CREATE_NOTE,
     LibraryShellInput,
     build_library_shell_state,
 )
@@ -593,6 +596,19 @@ class LibraryScreen(BaseAppScreen):
             # so the is_mounted-guarded load there never fires. Kick the same
             # snapshot load here once the canvas has actually been composed.
             self.run_worker(self._sync_collections_panel(refresh_snapshot=True))
+        if (
+            self._library_notes_view == "editor"
+            and self._selected_note_id
+            and self._library_note_detail is None
+        ):
+            # Mirrors the collections case above: a note_id deep-link applied
+            # before mount cannot run_worker yet, so the detail fetch is
+            # deferred to here once the canvas has actually been composed.
+            self.run_worker(
+                self._refresh_library_note_detail(self._selected_note_id),
+                exclusive=True,
+                group="library_note_detail",
+            )
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.
@@ -602,7 +618,12 @@ class LibraryScreen(BaseAppScreen):
                 Library mode switches the active mode. A ``conversation_id``
                 selects that conversation when the local source snapshot
                 arrives, defaulting the mode to Conversations when no valid
-                mode is supplied.
+                mode is supplied. A ``notes_create`` flag lands on the
+                in-canvas Create > New note view (the retired Notes tab's
+                "new note" deep link). A ``note_id`` opens that note's
+                in-canvas editor directly (the retired Notes tab's
+                chat-sidebar deep link); ``mode="notes"`` alone (no
+                ``note_id``) lands on the Notes list instead.
         """
         if not isinstance(context, Mapping):
             return
@@ -614,6 +635,11 @@ class LibraryScreen(BaseAppScreen):
             context.get(LIBRARY_NAV_CONTEXT_CONVERSATION_ID),
             max_length=200,
         )
+        note_id = self._safe_text(
+            context.get(LIBRARY_NAV_CONTEXT_NOTE_ID),
+            max_length=200,
+        )
+        notes_create = bool(context.get(LIBRARY_NAV_CONTEXT_NOTES_CREATE))
         target_mode = requested_mode if requested_mode in LIBRARY_MODES else ""
         if conversation_id and not target_mode:
             target_mode = LIBRARY_MODE_CONVERSATIONS
@@ -626,6 +652,39 @@ class LibraryScreen(BaseAppScreen):
         if conversation_id:
             self._selected_conversation_id = conversation_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
+        if requested_mode == "notes" and not note_id:
+            # "notes" is a canvas row, not a LIBRARY_MODES entry (see
+            # target_mode above), so it needs its own selection here --
+            # mirrors handle_library_notes_row's list-view entry state.
+            self._active_mode = "notes"
+            self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+        if notes_create:
+            # Mirrors _select_library_rail_row(LIBRARY_ROW_CREATE_NOTE,
+            # "notes-create") -- the create-note rail row's own target_id --
+            # applied directly since the async flush/reset it also performs
+            # is meaningless before this screen has ever been mounted.
+            self._active_mode = "notes-create"
+            self._library_selected_row_id = LIBRARY_ROW_CREATE_NOTE
+        if note_id:
+            self._active_mode = "notes"
+            self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+            self._selected_note_id = note_id
+            self._library_notes_view = "editor"
+            self._library_note_detail = None
+            self._library_note_version = None
+            self._library_note_dirty = False
+            self._library_note_autosave_state = "idle"
+            self._library_note_conflict_snapshot = None
+            self._library_note_confirming_delete = False
+            self._library_note_preview = False
+            self._library_note_preview_snapshot = None
+            self._library_note_editor_armed = False
+            if self.is_mounted:
+                self.run_worker(
+                    self._refresh_library_note_detail(note_id),
+                    exclusive=True,
+                    group="library_note_detail",
+                )
         if self.is_mounted:
             if self._active_mode == "collections" and not self._library_collections_loaded:
                 # Deep-link into Collections must load the snapshot the retired
@@ -7198,8 +7257,20 @@ class LibraryScreen(BaseAppScreen):
         )
 
     @on(Button.Pressed, "#library-open-notes")
-    def open_notes(self) -> None:
-        self.post_message(NavigateToScreen("notes"))
+    async def open_notes(self, event: Button.Pressed) -> None:
+        """Switch to the Notes canvas in-place.
+
+        Part of the retired 3-pane workbench chrome (see
+        ``_legacy_workbench_present``): ``#library-open-notes`` is no
+        longer composed by the current rail + canvas shell, so this
+        handler is unreachable in practice, mirroring ``open_media``/
+        ``open_conversations``. Kept in sync with the shell's native
+        (non-route) mode-switch pattern regardless, since the standalone
+        Notes screen this used to hand off to via
+        ``NavigateToScreen("notes")`` has been retired.
+        """
+        event.stop()
+        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES, "notes")
 
     @on(Button.Pressed, "#library-open-media")
     def open_media(self) -> None:

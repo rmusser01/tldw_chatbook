@@ -76,10 +76,11 @@ from .config import (
     get_writing_db_path,
 )
 from .Logging_Config import configure_application_logging
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
+from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_LOGS, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, TAB_LIBRARY, TAB_ARTIFACTS, TAB_PERSONAS, TAB_WATCHLISTS_COLLECTIONS, \
     TAB_SCHEDULES, TAB_WORKFLOWS, TAB_MCP, TAB_ACP, TAB_SKILLS, TAB_SETTINGS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
+    LIBRARY_NAV_CONTEXT_MODE, LIBRARY_NAV_CONTEXT_NOTE_ID, LIBRARY_NAV_CONTEXT_NOTES_CREATE, \
     get_tab_display_label
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
@@ -144,7 +145,6 @@ from .Event_Handlers import (
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
     search_events, subscription_events,
 )
-from .Event_Handlers.tab_initializers.notes_tab_initializer import NotesTabInitializer
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks, \
     chat_events_dictionaries
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
@@ -204,7 +204,6 @@ from .LLM_Calls.LLM_API_Calls_Local import (
 from tldw_chatbook.config import get_chachanotes_db_path, settings, get_chachanotes_db_lazy
 from .UI.Navigation.main_navigation import NavigateToScreen
 from .UI.Navigation.screen_registry import resolve_screen_target
-from .UI.Screens.notes_scope_models import WorkspaceSubview
 from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
@@ -356,7 +355,6 @@ SEARCH_NAV_EMBEDDINGS_MANAGE = "search-nav-embeddings-manage"
 CACHEABLE_SCREEN_ROUTES = {
     TAB_CHAT,
     TAB_LIBRARY,
-    TAB_NOTES,
     TAB_MEDIA,
     TAB_SEARCH,
     TAB_SETTINGS,
@@ -479,9 +477,14 @@ class ThemeProvider(Provider):
             self.app.notify(f"Failed to apply theme: {e}", severity="error")
 
 
-def _navigate_via_screen(app: App, route: str, success_message: str) -> None:
+def _navigate_via_screen(
+    app: App,
+    route: str,
+    success_message: str,
+    screen_context: dict[str, object] | None = None,
+) -> None:
     """Navigate through the screen router so palette commands work in shell mode."""
-    app.post_message(NavigateToScreen(route))
+    app.post_message(NavigateToScreen(route, screen_context))
     app.notify(success_message, severity="information")
 
 
@@ -502,7 +505,6 @@ class TabNavigationProvider(Provider):
         TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
         TAB_SETTINGS: "Open global preferences, appearance, accounts, storage, and app behavior",
         TAB_CCP: "Switch to Personas for characters, personas, prompts, dictionaries, and world books",
-        TAB_NOTES: "Switch to notes management",
         TAB_MEDIA: "Switch to media library",
         TAB_SEARCH: "Switch to search and RAG",
         TAB_INGEST: "Switch to content ingestion",
@@ -757,7 +759,12 @@ class QuickActionsProvider(Provider):
             elif action_id == "new_character":
                 _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas for character setup")
             elif action_id == "new_note":
-                _navigate_via_screen(self.app, TAB_NOTES, "Opened Notes for a new note")
+                _navigate_via_screen(
+                    self.app,
+                    TAB_LIBRARY,
+                    "Opened Library for a new note",
+                    {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True},
+                )
             elif action_id == "search_all":
                 _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG")
             elif action_id == "import_media":
@@ -1608,7 +1615,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self._wire_research_services()
         self._wire_character_persona_services()
         self._wire_chat_conversation_services()
-        self._notes_tab_initializer = NotesTabInitializer(self)
 
         # --- Create the master handler map ---
         # This one-time setup makes the dispatcher clean and fast.
@@ -1664,14 +1670,19 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def open_notes_workspace(
         self,
         workspace_id: str,
-        subview: WorkspaceSubview = WorkspaceSubview.DETAILS,
+        subview: Any = None,
     ) -> None:
+        """Return to Library's Notes list after leaving it for another screen.
+
+        The standalone Notes tab's per-workspace scope (``workspace_id`` /
+        ``subview``) has no equivalent in Library, which browses notes as a
+        flat list; both parameters are accepted for backward compatibility
+        with existing callers (e.g. Study's "back to workspace" action) but
+        are no longer applied. This always re-opens the shared Library
+        Notes list rather than any specific workspace-scoped view.
+        """
         self.invalidate_screen_cache()
-        self.pending_notes_workspace_context = {
-            "workspace_id": workspace_id,
-            "subview": subview,
-        }
-        self.post_message(NavigateToScreen(TAB_NOTES))
+        self.post_message(NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "notes"}))
 
     def open_chat_with_handoff(self, payload: ChatHandoffPayload) -> None:
         if not get_cli_setting("chat_defaults", "enable_tabs", True):
@@ -3358,7 +3369,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             destination.destination_id
             for destination in SHELL_DESTINATION_ORDER
         }
-        legacy_aliases = {"conversation", "llm", "subscription", "subscriptions", "tools_settings"}
+        legacy_aliases = {"conversation", "llm", "subscription", "subscriptions", "tools_settings", "notes"}
         return set(ALL_TABS) | shell_routes | legacy_aliases
 
     def _normalize_initial_tab_from_config(self, configured_route: str | None) -> str:
@@ -3387,8 +3398,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         requested_screen = message.screen_name
         screen_name, current_tab_value, screen_class = self._resolve_screen_navigation_target(requested_screen)
         logger.info(f"Navigating to screen: {requested_screen}")
-        previous_tab = self.current_tab
-        
+
         # Save state of current screen before switching
         current_screen = self.screen
         if current_screen and hasattr(current_screen, 'save_state'):
@@ -3406,9 +3416,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 logger.error(f"Error saving screen state: {e}")
         
         if screen_class:
-            if previous_tab == TAB_NOTES and previous_tab != current_tab_value:
-                await self._notes_tab_initializer.on_tab_hidden()
-
             new_screen = self._get_or_create_navigation_screen(screen_name, screen_class)
             
             # Restore state if available
@@ -5142,9 +5149,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Hide Old Tab ---
         if old_tab and old_tab != new_tab:
-            if old_tab == TAB_NOTES:
-                self.call_after_refresh(self._notes_tab_initializer.on_tab_hidden)
-
             # Update navigation UI to remove active state from old tab
             use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
             use_links = get_cli_setting("general", "use_link_navigation", True)
@@ -5211,18 +5215,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Update word count and token count in footer based on tab
             try:
                 footer = self.query_one("AppFooterStatus")
-                if new_tab == "notes":
-                    # Get current word count from notes editor
-                    try:
-                        notes_editor = self.query_one("#notes-editor-area", TextArea)
-                        text = notes_editor.text
-                        word_count = len(text.split()) if text else 0
-                        footer.update_word_count(word_count)
-                    except QueryError:
-                        footer.update_word_count(0)
-                    # Clear token count when on notes tab
-                    footer.update_token_count("")
-                elif new_tab == TAB_CHAT:
+                if new_tab == TAB_CHAT:
                     # Clear word count when on chat tab
                     footer.update_word_count(0)
                     # Update token count immediately
@@ -5286,8 +5279,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
             # Call immediately after refresh
             self.call_after_refresh(populate_ccp_widgets)
-        elif new_tab == TAB_NOTES:
-            self.call_after_refresh(self._notes_tab_initializer.on_tab_shown)
         elif new_tab == TAB_MEDIA:
             def activate_media_initial_view():
                 try:
@@ -6025,7 +6016,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             window_id_map = {
                 TAB_CHAT: "chat-window",
                 TAB_CCP: "conversations_characters_prompts-window",
-                TAB_NOTES: "notes-window",
                 TAB_MEDIA: "media-window",
                 TAB_SEARCH: "search-window",
                 TAB_INGEST: "ingest-window",

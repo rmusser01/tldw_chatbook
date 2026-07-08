@@ -19,7 +19,6 @@ from tldw_chatbook.UI.Screens.notes_scope_models import (
     WorkspaceSubview,
 )
 from tldw_chatbook.UI.Screens.study_scope_models import StudyScopeContext, StudyScopeType
-from tldw_chatbook.Event_Handlers.tab_initializers.notes_tab_initializer import NotesTabInitializer
 from tldw_chatbook.UI.Screens.notes_screen import NotesScreen
 from tldw_chatbook.Widgets.Note_Widgets.workspace_context_panel import WorkspaceContextPanel
 
@@ -928,17 +927,6 @@ class TestNotesScreenMethods:
         assert screen.state.selected_workspace_source_version is None
         assert screen.state.selected_workspace_artifact_id is None
         assert screen.state.selected_workspace_artifact_version is None
-
-    @pytest.mark.asyncio
-    async def test_notes_tab_hidden_uses_screen_finalization_hook(self, mock_app_instance):
-        screen = NotesScreen(mock_app_instance)
-        screen.finalize_for_hide = AsyncMock(return_value=True)  # type: ignore[attr-defined]
-        mock_app_instance.screen = screen
-        initializer = NotesTabInitializer(mock_app_instance)
-
-        await initializer.on_tab_hidden()
-
-        screen.finalize_for_hide.assert_awaited_once_with()
 
     @pytest.mark.asyncio
     async def test_refresh_current_scope_uses_local_scope_by_default(self, mock_app_instance):

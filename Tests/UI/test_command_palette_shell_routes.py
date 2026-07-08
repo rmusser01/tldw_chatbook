@@ -10,7 +10,6 @@ from tldw_chatbook.Constants import (
     TAB_LOGS,
     TAB_MCP,
     TAB_MEDIA,
-    TAB_NOTES,
     TAB_RESEARCH,
     TAB_SEARCH,
     TAB_SETTINGS,
@@ -49,7 +48,6 @@ def test_tab_navigation_provider_preserves_all_legacy_direct_commands():
     representative_direct_tabs = [
         TAB_CCP,
         TAB_LLM,
-        TAB_NOTES,
         TAB_MEDIA,
         TAB_SEARCH,
         TAB_INGEST,
@@ -70,6 +68,7 @@ def test_tab_navigation_provider_preserves_all_legacy_direct_commands():
         assert TabNavigationProvider.route_for_tab(tab_id) == tab_id
     assert TabNavigationProvider.route_for_tab(TAB_TOOLS_SETTINGS) == "mcp"
     assert TabNavigationProvider.route_for_tab("llm") == TAB_LLM
+    assert "notes" not in command_tab_ids
 
 
 def test_tab_navigation_provider_copy_uses_shell_vocabulary():

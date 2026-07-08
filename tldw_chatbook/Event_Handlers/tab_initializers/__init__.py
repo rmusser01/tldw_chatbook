@@ -7,7 +7,6 @@ initialization when tabs are shown or hidden in the application.
 
 from .base_initializer import BaseTabInitializer, TabInitializerRegistry
 from .chat_tab_initializer import ChatTabInitializer
-from .notes_tab_initializer import NotesTabInitializer
 from .misc_tab_initializers import (
     CCPTabInitializer,
     MediaTabInitializer,
@@ -22,7 +21,6 @@ __all__ = [
     'BaseTabInitializer',
     'TabInitializerRegistry',
     'ChatTabInitializer',
-    'NotesTabInitializer',
     'CCPTabInitializer',
     'MediaTabInitializer',
     'SearchTabInitializer',

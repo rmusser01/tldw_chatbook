@@ -68,6 +68,10 @@ def test_shell_legacy_aliases_have_workbench_migration_owner():
 def test_route_coverage_exposes_future_destination_owners():
     coverage = build_workbench_route_coverage()
 
+    # Notes is retired as a standalone screen -- "notes" is now purely a
+    # compatibility alias that resolves to Library (see screen_registry's
+    # _SCREEN_ALIASES), so it keeps its "library" owner rather than
+    # disappearing from the route inventory.
     assert coverage.owner_for_route["notes"] == "library"
     assert coverage.owner_for_route["console"] == "console"
     assert coverage.owner_for_route["tools_settings"] == "mcp"

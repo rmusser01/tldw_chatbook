@@ -77,7 +77,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     ),
     "ccp": ScreenRoute("ccp", "personas", "tldw_chatbook.UI.Screens.personas_screen", "PersonasScreen"),
     "media": ScreenRoute("media", "media", "tldw_chatbook.UI.Screens.media_screen", "MediaScreen"),
-    "notes": ScreenRoute("notes", "notes", "tldw_chatbook.UI.Screens.notes_screen", "NotesScreen"),
     "search": ScreenRoute("search", "search", "tldw_chatbook.UI.Screens.search_screen", "SearchScreen"),
     "evals": ScreenRoute("evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"),
     "tools_settings": ScreenRoute("tools_settings", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"),
@@ -103,6 +102,11 @@ _SCREEN_ALIASES = {
     TAB_CCP: "ccp",
     TAB_LLM: "llm",
     "subscription": "subscriptions",
+    # The standalone Notes tab is retired: Notes now lives entirely inside
+    # Library. Existing startup configs / callers using the legacy "notes"
+    # route id still resolve to a real screen (Library) instead of erroring
+    # or silently falling back to Chat.
+    "notes": "library",
 }
 
 

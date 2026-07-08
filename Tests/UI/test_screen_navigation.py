@@ -116,7 +116,7 @@ from tldw_chatbook.Subscriptions import (
 )
 from tldw_chatbook.Translation_Interop import ServerTranslationService, TranslationScopeService
 from tldw_chatbook.Voice_Assistant_Interop import ServerVoiceAssistantService, VoiceAssistantScopeService
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_NOTES, TAB_SUBSCRIPTIONS
+from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_SUBSCRIPTIONS
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -284,36 +284,42 @@ async def test_chat_select_change_before_ui_ready_skips_token_counter(monkeypatc
     assert calls == []
 
 
-@pytest.mark.asyncio
-async def test_notes_screen_navigation_refreshes_scope_once_per_entry(monkeypatch):
-    from tldw_chatbook.UI.Screens.notes_screen import NotesScreen
+def test_notes_is_not_a_navigable_tab():
+    """The standalone Notes tab is retired: Notes now lives entirely inside
+    Library, so "notes" must not appear as a top-level tab id, and the
+    underlying ``NotesScreen`` must no longer be reachable. The legacy
+    ``"notes"`` route id stays valid for backward compatibility (e.g. an
+    existing user's saved startup config) but now resolves to
+    ``LibraryScreen`` via a compatibility alias instead of ``NotesScreen``.
+    """
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_target
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    assert "notes" not in ALL_TABS
+    assert not hasattr(__import__("tldw_chatbook.Constants", fromlist=["TAB_NOTES"]), "TAB_NOTES")
+
+    _screen_name, _canonical_tab, screen_class = resolve_screen_target("notes")
+    assert screen_class is LibraryScreen
+
+
+def test_open_notes_workspace_routes_to_library_notes_list():
+    """``open_notes_workspace`` (Study's "return to workspace" action) used
+    to route to the standalone Notes tab; it must now re-point into Library
+    with a ``mode=notes`` navigation context that lands on the Notes list,
+    since Library has no equivalent to the retired per-workspace scope.
+    """
+    from tldw_chatbook.Constants import TAB_LIBRARY
 
     app = _build_test_app()
-    refresh_calls = []
+    posted = []
+    app.post_message = posted.append
 
-    async def fake_refresh_current_scope(self):
-        refresh_calls.append(self)
+    app.open_notes_workspace("ws-1", subview="details")
 
-    monkeypatch.setattr(NotesScreen, "refresh_current_scope", fake_refresh_current_scope)
-    monkeypatch.setattr(
-        "tldw_chatbook.app.get_cli_setting",
-        lambda section, key=None, default=None: False
-        if section == "splash_screen" and key == "enabled"
-        else default,
-    )
-
-    async with app.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
-
-        await app.handle_screen_navigation(NavigateToScreen(TAB_NOTES))
-        await pilot.pause(0.1)
-        assert len(refresh_calls) == 1
-
-        await app.handle_screen_navigation(NavigateToScreen(TAB_CHAT))
-        await pilot.pause(0.1)
-        await app.handle_screen_navigation(NavigateToScreen(TAB_NOTES))
-        await pilot.pause(0.1)
-        assert len(refresh_calls) == 2
+    assert len(posted) == 1
+    message = posted[0]
+    assert message.screen_name == TAB_LIBRARY
+    assert message.screen_context == {"mode": "notes"}
 
 
 def test_all_master_shell_primary_routes_resolve_before_nav_exposure():
@@ -740,10 +746,10 @@ async def test_tab_links_emit_navigation_messages():
 
     async with app.run_test() as pilot:
         tab_links = pilot.app.query_one(TabLinks)
-        notes_link = tab_links.query_one("#tab-link-notes")
+        media_link = tab_links.query_one("#tab-link-media")
 
         original_get_widget_at = tab_links.app.get_widget_at
-        tab_links.app.get_widget_at = lambda _x, _y: (notes_link, None)
+        tab_links.app.get_widget_at = lambda _x, _y: (media_link, None)
         try:
             await tab_links.on_click(SimpleNamespace(screen_x=0, screen_y=0))
             await pilot.pause(0.05)
@@ -751,7 +757,7 @@ async def test_tab_links_emit_navigation_messages():
             tab_links.app.get_widget_at = original_get_widget_at
 
     assert len(messages_received) == 1
-    assert messages_received[0].screen_name == "notes"
+    assert messages_received[0].screen_name == "media"
 
 
 @pytest.mark.asyncio

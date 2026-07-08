@@ -11,6 +11,14 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
 
+from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_NOTE_ID,
+    LIBRARY_NAV_CONTEXT_NOTES_CREATE,
+)
+from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_CREATE_NOTE,
+)
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -1909,6 +1917,61 @@ async def test_library_shell_collections_deeplink_loads_before_mount():
         canvas = screen.query_one("#library-canvas")
         assert canvas in select_button.ancestors
         assert "Launch Evidence" in str(select_button.label)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_create_deeplink_lands_on_create_view():
+    """The retired Notes tab's "new note" deep link now re-points into
+    Library: a ``notes_create`` navigation context must land the shell on
+    the in-canvas Create > New note view, mirroring how pressing the
+    "New note" rail row does (``LIBRARY_ROW_CREATE_NOTE`` / canvas kind
+    ``notes-create``).
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    screen = LibraryScreen(app)
+
+    # Mirrors the real app.py ordering: handle_screen_navigation calls
+    # apply_navigation_context BEFORE switch_screen mounts the destination
+    # screen (see test_library_shell_collections_deeplink_loads_before_mount).
+    assert screen.is_mounted is False
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_NOTES_CREATE: True})
+
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+        assert screen.query_one("#library-notes-create-blank")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_note_id_deeplink_opens_note_editor():
+    """The retired Notes tab's chat-sidebar deep link now re-points into
+    Library: a ``note_id`` navigation context must open that note's
+    in-canvas editor directly, without requiring a prior rail-row press.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    screen = LibraryScreen(app)
+
+    assert screen.is_mounted is False
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_NOTE_ID: "n-1"})
+
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert screen._selected_note_id == "n-1"
+        title = screen.query_one("#library-note-title", Input)
+        assert title.value == "Q3 retro"
 
 
 @pytest.mark.asyncio
