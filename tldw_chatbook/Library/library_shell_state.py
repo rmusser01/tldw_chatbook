@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tldw_chatbook.Constants import TAB_INGEST, TAB_NOTES
+from tldw_chatbook.Constants import TAB_INGEST
 
 LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something new."
 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
 LIBRARY_ROW_BROWSE_MEDIA = "browse-media"
+LIBRARY_ROW_BROWSE_NOTES = "browse-notes"
 
 
 @dataclass(frozen=True)
@@ -99,11 +100,11 @@ def build_library_shell_state(
             count_known=state.conversations_known,
         ),
         LibraryRailRow(
-            row_id="browse-notes",
+            row_id=LIBRARY_ROW_BROWSE_NOTES,
             section_id="browse",
             title="Notes",
-            target_kind="screen",
-            target_id=TAB_NOTES,
+            target_kind="canvas",
+            target_id="notes",
             count=state.notes_count,
             count_known=state.notes_known,
         ),
@@ -132,8 +133,8 @@ def build_library_shell_state(
             row_id="create-note",
             section_id="create",
             title="New note",
-            target_kind="screen",
-            target_id=TAB_NOTES,
+            target_kind="canvas",
+            target_id="notes-create",
             count=None,
             count_known=True,
         ),

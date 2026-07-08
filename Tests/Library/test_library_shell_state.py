@@ -1,4 +1,4 @@
-from tldw_chatbook.Constants import TAB_INGEST, TAB_NOTES
+from tldw_chatbook.Constants import TAB_INGEST
 from tldw_chatbook.Library.library_shell_state import (
     LibraryShellInput,
     build_library_shell_state,
@@ -26,12 +26,16 @@ def test_shell_sections_rows_and_targets_are_fixed():
     assert (conv.target_kind, conv.target_id, conv.count) == ("canvas", "conversations", 128)
     media = browse.rows[0]
     assert (media.target_kind, media.target_id) == ("canvas", "media")
+    notes = browse.rows[2]
+    assert (notes.target_kind, notes.target_id, notes.count) == ("canvas", "notes", 42)
     create_ids = [r.row_id for r in shell.sections[1].rows]
     assert create_ids == ["create-note", "create-study", "create-flashcards", "create-quizzes"]
     assert [r.title for r in shell.sections[1].rows] == [
         "New note", "Study decks", "Flashcards", "Quizzes"
     ]
-    assert shell.sections[1].rows[0].target_id == TAB_NOTES
+    assert (shell.sections[1].rows[0].target_kind, shell.sections[1].rows[0].target_id) == (
+        "canvas", "notes-create",
+    )
     ingest = shell.sections[2]
     assert [r.title for r in ingest.rows] == ["Import media", "Import / Export"]
     assert ingest.rows[0].target_id == TAB_INGEST
@@ -66,8 +70,35 @@ def test_mode_selection_yields_mode_canvas():
     assert (shell.canvas_kind, shell.canvas_target) == ("mode", "flashcards")
 
 
+def test_browse_notes_row_targets_notes_canvas():
+    shell = build_library_shell_state(
+        LibraryShellInput(notes_count=42), selected_row_id="browse-notes"
+    )
+    notes_row = next(
+        r for section in shell.sections for r in section.rows if r.row_id == "browse-notes"
+    )
+    assert notes_row.target_kind == "canvas"
+    assert notes_row.target_id == "notes"
+    assert (shell.canvas_kind, shell.canvas_target) == ("notes", "")
+    assert shell.selected_row_id == "browse-notes"
+
+
+def test_create_note_row_targets_notes_create_canvas():
+    shell = build_library_shell_state(LibraryShellInput(), selected_row_id="create-note")
+    row = next(
+        r for section in shell.sections for r in section.rows if r.row_id == "create-note"
+    )
+    assert row.target_kind == "canvas"
+    assert row.target_id == "notes-create"
+    assert (shell.canvas_kind, shell.canvas_target) == ("notes-create", "")
+    assert shell.selected_row_id == "create-note"
+
+
 def test_screen_and_unknown_rows_resolve_to_empty_canvas():
-    for row_id in ("create-note", "nope", ""):
+    # browse-notes and create-note used to be "screen" rows resolving to an
+    # empty canvas; they now target real canvases (see the two tests above).
+    # ingest-import-media remains the surviving "screen" row.
+    for row_id in ("ingest-import-media", "nope", ""):
         shell = build_library_shell_state(LibraryShellInput(), selected_row_id=row_id)
         assert shell.canvas_kind == "empty", row_id
 
