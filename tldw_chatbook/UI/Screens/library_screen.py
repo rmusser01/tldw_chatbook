@@ -54,10 +54,15 @@ from ...Library.library_notes_state import (
     sort_notes_records,
 )
 from ...Library.library_notes_sync_state import (
+    AUTO_SYNC_INTERVAL_SECONDS,
+    SYNC_CONFLICTS,
+    SYNC_DIRECTIONS,
     LibraryNotesSyncState,
     append_activity,
+    count_noun,
     next_sync_conflict,
     next_sync_direction,
+    sync_conflict_label,
     sync_status_line,
 )
 from ...Library.library_rag_service import (
@@ -128,9 +133,6 @@ LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY = (
 )
 LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS = 5.0
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
-# Matches the standalone NotesSyncPane.AUTO_SYNC_INTERVAL_SECONDS -- same
-# 5-minute cadence, same "while this screen instance lives" scope.
-LIBRARY_NOTES_AUTO_SYNC_INTERVAL_SECONDS = 300
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
 LIBRARY_HANDOFF_LABEL_PREFIX = "Console/RAG handoff: "
@@ -3374,17 +3376,29 @@ class LibraryScreen(BaseAppScreen):
         (``_library_notes_sync_config_loaded`` guards re-entry), so
         in-session cycling/toggling is never clobbered by a later sync-mode
         re-entry re-reading stale config.
+
+        A stale persisted conflict value not in ``SYNC_CONFLICTS`` (e.g. an
+        old config still holding ``"ask"``, which this panel no longer
+        offers) coerces to ``"newer_wins"``; likewise an unrecognized
+        direction coerces to ``"bidirectional"``. This guarantees ``"ask"``
+        can neither render nor reach the sync engine from this panel.
         """
         if self._library_notes_sync_config_loaded:
             return
         self._library_notes_sync_config_loaded = True
-        self._library_notes_sync_direction = str(
+        direction = str(
             get_cli_setting("notes", "sync_direction", "bidirectional")
             or "bidirectional"
         )
-        self._library_notes_sync_conflict = str(
+        self._library_notes_sync_direction = (
+            direction if direction in SYNC_DIRECTIONS else "bidirectional"
+        )
+        conflict = str(
             get_cli_setting("notes", "sync_conflict_resolution", "newer_wins")
             or "newer_wins"
+        )
+        self._library_notes_sync_conflict = (
+            conflict if conflict in SYNC_CONFLICTS else "newer_wins"
         )
         self._library_notes_sync_auto = bool(get_cli_setting("notes", "auto_sync", False))
         if self._library_notes_sync_auto:
@@ -3403,6 +3417,7 @@ class LibraryScreen(BaseAppScreen):
             auto_sync=self._library_notes_sync_auto,
             status_line=self._library_notes_sync_status,
             activity_lines=self._library_notes_sync_activity,
+            running=self._library_notes_sync_running,
         )
 
     def _resolve_library_notes_sync_db(self) -> Any:
@@ -3429,7 +3444,7 @@ class LibraryScreen(BaseAppScreen):
         if self._library_notes_auto_sync_timer is not None:
             return
         self._library_notes_auto_sync_timer = self.set_interval(
-            LIBRARY_NOTES_AUTO_SYNC_INTERVAL_SECONDS,
+            AUTO_SYNC_INTERVAL_SECONDS,
             self._library_notes_auto_sync_tick,
         )
 
@@ -4921,26 +4936,30 @@ class LibraryScreen(BaseAppScreen):
             )
             summary_parts = []
             if results.created_notes:
-                summary_parts.append(f"{len(results.created_notes)} notes created")
+                summary_parts.append(f"{count_noun(len(results.created_notes), 'note')} created")
             if results.updated_notes:
-                summary_parts.append(f"{len(results.updated_notes)} notes updated")
+                summary_parts.append(f"{count_noun(len(results.updated_notes), 'note')} updated")
             if results.created_files:
-                summary_parts.append(f"{len(results.created_files)} files created")
+                summary_parts.append(f"{count_noun(len(results.created_files), 'file')} created")
             if results.updated_files:
-                summary_parts.append(f"{len(results.updated_files)} files updated")
+                summary_parts.append(f"{count_noun(len(results.updated_files), 'file')} updated")
             summary = ", ".join(summary_parts) if summary_parts else "No changes"
             self._library_notes_sync_activity = append_activity(
                 self._library_notes_sync_activity, f"Sync complete: {summary}"
             )
             if conflicts:
+                # Honest-copy fix: this used to promise a "review" surface
+                # that doesn't exist in this panel. State the resolved
+                # policy instead -- what actually happened to the conflict.
                 self._library_notes_sync_activity = append_activity(
                     self._library_notes_sync_activity,
-                    f"{conflicts} conflicts recorded for review",
+                    f"{count_noun(conflicts, 'conflict')} resolved "
+                    f"({sync_conflict_label(resolution.value)})",
                 )
             if results.errors:
                 self._library_notes_sync_activity = append_activity(
                     self._library_notes_sync_activity,
-                    f"{len(results.errors)} errors during sync",
+                    f"{count_noun(len(results.errors), 'error')} during sync",
                 )
         except Exception as exc:
             logger.error(f"Library notes sync failed (folder={folder}): {exc}", exc_info=True)

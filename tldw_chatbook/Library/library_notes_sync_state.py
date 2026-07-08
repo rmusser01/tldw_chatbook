@@ -4,18 +4,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 SYNC_DIRECTIONS = ("bidirectional", "disk_to_db", "db_to_disk")
-SYNC_CONFLICTS = ("newer_wins", "disk_wins", "db_wins", "ask")
+# "ask" is intentionally excluded: the engine keeps its own
+# ``ConflictResolution.ASK`` member, but nothing in the Library ever prompts
+# on a conflict, so offering it here would be a dead affordance. This panel
+# simply never cycles to or renders it (see ``next_sync_conflict``).
+SYNC_CONFLICTS = ("newer_wins", "disk_wins", "db_wins")
 _DIRECTION_LABELS = {
     "bidirectional": "Bidirectional",
-    "disk_to_db": "Disk → DB",
-    "db_to_disk": "DB → Disk",
+    "disk_to_db": "Disk → Library",
+    "db_to_disk": "Library → Disk",
 }
 _CONFLICT_LABELS = {
     "newer_wins": "Newer wins",
     "disk_wins": "Disk wins",
-    "db_wins": "DB wins",
-    "ask": "Ask",
+    "db_wins": "Library wins",
 }
+
+# Auto-sync cadence: single source of truth for both the timer
+# (``library_screen.py``'s ``set_interval``) and the label text
+# (``auto_sync_label``) so the displayed cadence can never drift from the
+# actual one.
+AUTO_SYNC_INTERVAL_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -31,6 +40,9 @@ class LibraryNotesSyncState:
             ``"syncing · 3/12"``, ``"done · 12 files · 2 conflicts"``, or
             ``"failed · <reason>"``.
         activity_lines: Most-recent-first activity log lines, capped at 20.
+        running: Whether a sync pass is currently in flight. Defaults to
+            ``False`` via a keyword default so existing positional/keyword
+            constructor calls built before this field existed keep working.
     """
 
     folder: str
@@ -39,6 +51,7 @@ class LibraryNotesSyncState:
     auto_sync: bool
     status_line: str
     activity_lines: tuple[str, ...]
+    running: bool = False
 
 
 def next_sync_direction(value: str) -> str:
@@ -106,6 +119,32 @@ def sync_conflict_label(value: str) -> str:
     return _CONFLICT_LABELS.get(value, value)
 
 
+def count_noun(count: int, noun: str) -> str:
+    """Return ``"<count> <noun>"`` with a trailing ``s`` unless count == 1.
+
+    Args:
+        count: The quantity being described.
+        noun: The singular noun (never pre-pluralized by the caller).
+
+    Returns:
+        ``"1 file"``, ``"2 files"``, ``"0 files"``, etc.
+    """
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def auto_sync_label(enabled: bool) -> str:
+    """Return the auto-sync toggle button's label, cadence included.
+
+    Args:
+        enabled: Whether auto-sync is currently enabled.
+
+    Returns:
+        e.g. ``"auto-sync: every 5m ✓"`` or ``"auto-sync: every 5m ○"``.
+    """
+    minutes = AUTO_SYNC_INTERVAL_SECONDS // 60
+    return f"auto-sync: every {minutes}m {'✓' if enabled else '○'}"
+
+
 def sync_status_line(
     status: str,
     *,
@@ -128,15 +167,15 @@ def sync_status_line(
 
     Returns:
         The rendered status line, e.g. ``"syncing · 3/12"``,
-        ``"done · 12 files · 2 conflicts"``, ``"done · 12 files"``,
+        ``"done · 12 files · 2 conflicts"``, ``"done · 1 file"``,
         ``"failed · <reason>"``, ``"failed"``, or ``"idle"``.
     """
     if status == "syncing":
         return f"syncing · {processed}/{total}"
     if status == "done":
-        line = f"done · {processed} files"
+        line = f"done · {count_noun(processed, 'file')}"
         if conflicts:
-            line += f" · {conflicts} conflicts"
+            line += f" · {count_noun(conflicts, 'conflict')}"
         return line
     if status == "failed":
         return f"failed · {error}" if error else "failed"

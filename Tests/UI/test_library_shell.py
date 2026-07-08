@@ -4595,6 +4595,8 @@ async def test_library_shell_notes_sync_button_opens_sync_mode():
         for selector in (
             "#library-notes-sync-back",
             "#library-notes-sync-header",
+            "#library-notes-sync-purpose",
+            "#library-notes-sync-folder-label",
             "#library-notes-sync-folder",
             "#library-notes-sync-browse",
             "#library-notes-sync-direction",
@@ -4605,6 +4607,15 @@ async def test_library_shell_notes_sync_button_opens_sync_mode():
             "#library-notes-sync-activity",
         ):
             assert screen.query_one(selector), f"{selector} missing from sync panel"
+
+        # C4: auto-sync cadence is spelled out in the toggle's own label.
+        auto_toggle = screen.query_one("#library-notes-sync-auto", Button)
+        assert "every 5m" in str(auto_toggle.label)
+
+        # A3: Sync now starts out enabled with the idle "Sync now" label.
+        run_button = screen.query_one("#library-notes-sync-run", Button)
+        assert "Sync now" in str(run_button.label)
+        assert not run_button.disabled
 
         screen.query_one("#library-notes-sync-back").press()
         await _wait_for_selector(screen, pilot, "#library-notes-sync-open")
@@ -4654,6 +4665,23 @@ async def test_library_shell_notes_sync_conflict_cycles_and_persists():
         from tldw_chatbook.config import get_cli_setting
         assert get_cli_setting("notes", "sync_conflict_resolution", None) == "disk_wins"
 
+        # A1: the cycle is 3 modes long with "ask" removed entirely -- one
+        # more press reaches "Library wins" (B2's de-jargoned "db_wins"
+        # label), and a third press wraps back to "newer_wins" rather than
+        # ever landing on "ask". Each press recomposes the panel (see
+        # handle_library_notes_sync_conflict), so the Button must be
+        # re-queried after every press rather than reusing a stale
+        # reference to the pre-recompose instance.
+        screen.query_one("#library-notes-sync-conflict").press()
+        await pilot.pause()
+        assert screen._library_notes_sync_conflict == "db_wins"
+        button = screen.query_one("#library-notes-sync-conflict", Button)
+        assert "Library wins" in str(button.label)
+
+        screen.query_one("#library-notes-sync-conflict").press()
+        await pilot.pause()
+        assert screen._library_notes_sync_conflict == "newer_wins"
+
 
 @pytest.mark.asyncio
 async def test_library_shell_notes_sync_auto_toggle_flips_and_persists():
@@ -4668,7 +4696,9 @@ async def test_library_shell_notes_sync_auto_toggle_flips_and_persists():
 
         assert screen._library_notes_sync_auto is False
         toggle = screen.query_one("#library-notes-sync-auto", Button)
-        assert "○" in str(toggle.label)
+        # C4: the cadence is spelled out in the label itself, not just left
+        # implicit behind a bare toggle glyph.
+        assert "auto-sync: every 5m ○" in str(toggle.label)
 
         toggle.press()
         await pilot.pause()
@@ -4677,7 +4707,7 @@ async def test_library_shell_notes_sync_auto_toggle_flips_and_persists():
         from tldw_chatbook.config import get_cli_setting
         assert get_cli_setting("notes", "auto_sync", None) is True
         toggle = screen.query_one("#library-notes-sync-auto", Button)
-        assert "✓" in str(toggle.label)
+        assert "auto-sync: every 5m ✓" in str(toggle.label)
 
         toggle.press()
         await pilot.pause()
@@ -4727,6 +4757,12 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
             await pilot.pause(0.02)
         else:
             raise AssertionError("Sync-now never started.")
+
+        # A3: the run handler recomposes at start, so the button must now
+        # read "Syncing…" and be disabled -- no double-triggering a run.
+        run_button_mid_run = screen.query_one("#library-notes-sync-run", Button)
+        assert "Syncing…" in str(run_button_mid_run.label)
+        assert run_button_mid_run.disabled
 
         # Captured only once the start-of-sync recompose has already
         # happened, so this is the one-and-only Static instance the
@@ -4780,6 +4816,11 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
 
         status_widget_after = screen.query_one("#library-notes-sync-status", Static)
         assert "done" in str(status_widget_after.renderable)
+
+        # A3: the finish-of-run recompose restores "Sync now", re-enabled.
+        run_button_after = screen.query_one("#library-notes-sync-run", Button)
+        assert "Sync now" in str(run_button_after.label)
+        assert not run_button_after.disabled
 
 
 @pytest.mark.asyncio
@@ -4838,3 +4879,108 @@ async def test_library_shell_notes_sync_rail_reentry_resets_transient_state():
         assert screen._library_notes_sync_status == "idle"
         assert screen._library_notes_sync_activity == ()
         assert screen._library_notes_view == "list"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sync_stale_ask_conflict_coerces_to_newer_wins():
+    """A1: an old config still holding the removed "ask" conflict value must
+    coerce to "newer_wins" on panel entry -- "ask" can never render or reach
+    the sync engine from this panel."""
+    from tldw_chatbook.config import save_setting_to_cli_config
+
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    # Seed a stale "ask" value the same way _prepare_library_notes_sync_app
+    # seeds its known-good defaults, simulating a config written before
+    # "ask" was removed from this panel's cycle.
+    save_setting_to_cli_config("notes", "sync_conflict_resolution", "ask")
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        assert screen._library_notes_sync_conflict == "newer_wins"
+        button = screen.query_one("#library-notes-sync-conflict", Button)
+        assert "Newer wins" in str(button.label)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sync_stale_direction_coerces_to_bidirectional():
+    """A1: an unrecognized persisted direction must coerce to
+    "bidirectional" on panel entry, mirroring the conflict coercion."""
+    from tldw_chatbook.config import save_setting_to_cli_config
+
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    save_setting_to_cli_config("notes", "sync_direction", "some_removed_mode")
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        assert screen._library_notes_sync_direction == "bidirectional"
+        button = screen.query_one("#library-notes-sync-direction", Button)
+        assert "Bidirectional" in str(button.label)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sync_conflicts_get_honest_resolved_copy(monkeypatch, tmp_path):
+    """A2/B1: the activity line for recorded conflicts must state the
+    resolved policy (truthful: this panel never offers a review surface)
+    and pluralize correctly."""
+    from tldw_chatbook.Notes import sync_service as sync_service_module
+
+    class _ConflictResults:
+        def __init__(self):
+            self.created_notes = []
+            self.updated_notes = []
+            self.created_files = []
+            self.updated_files = []
+            self.conflicts = ["c-1"]
+            self.errors = []
+
+    class _ConflictSyncService:
+        def __init__(self, notes_service, db):
+            pass
+
+        async def sync_folder(self, *, root_folder, user_id, direction,
+                               conflict_resolution, progress_callback=None, extensions=None):
+            return ("session-conflict", _ConflictResults())
+
+    monkeypatch.setattr(sync_service_module, "NotesSyncService", _ConflictSyncService)
+
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        folder_input = screen.query_one("#library-notes-sync-folder", Input)
+        folder_input.value = str(tmp_path)
+        folder_input.focus()
+        await pilot.pause()
+
+        screen.query_one("#library-notes-sync-run").press()
+        for _ in range(150):
+            if not screen._library_notes_sync_running and screen._library_notes_sync_status != "idle":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Sync run never completed.")
+
+        # Honest copy: names the resolved policy instead of promising a
+        # "review" surface that doesn't exist in this panel.
+        assert any(
+            "1 conflict resolved (Newer wins)" in line
+            for line in screen._library_notes_sync_activity
+        ), screen._library_notes_sync_activity
+        assert not any(
+            "recorded for review" in line for line in screen._library_notes_sync_activity
+        )

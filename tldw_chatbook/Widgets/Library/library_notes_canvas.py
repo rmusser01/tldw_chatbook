@@ -16,6 +16,7 @@ from tldw_chatbook.Library.library_notes_state import (
 )
 from tldw_chatbook.Library.library_notes_sync_state import (
     LibraryNotesSyncState,
+    auto_sync_label,
     sync_conflict_label,
     sync_direction_label,
 )
@@ -364,6 +365,12 @@ class LibraryNotesCanvas(Vertical):
             classes="destination-section",
             markup=False,
         )
+        yield Static(
+            "Mirror notes between a folder on disk and the Library.",
+            id="library-notes-sync-purpose",
+            markup=False,
+        )
+        yield Static("folder", id="library-notes-sync-folder-label", markup=False)
         yield Input(
             value=sync_state.folder,
             placeholder="Folder to sync…",
@@ -388,20 +395,29 @@ class LibraryNotesCanvas(Vertical):
             compact=True,
         )
         yield Button(
-            f"auto-sync: {'✓' if sync_state.auto_sync else '○'}",
+            auto_sync_label(sync_state.auto_sync),
             id="library-notes-sync-auto",
             classes="library-canvas-action",
             compact=True,
         )
         yield Button(
-            "Sync now",
+            "Syncing…" if sync_state.running else "Sync now",
             id="library-notes-sync-run",
             classes="library-canvas-action",
             compact=True,
+            disabled=sync_state.running,
         )
+        # ``sync_status_line``'s own tested contract is that a failed status
+        # always starts with the literal prefix "failed" -- safe to key the
+        # error styling off that prefix here.
         yield Static(
             sync_state.status_line,
             id="library-notes-sync-status",
+            classes=(
+                "library-notes-sync-status-failed"
+                if sync_state.status_line.startswith("failed")
+                else ""
+            ),
             markup=False,
         )
         yield Static(
