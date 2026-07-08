@@ -835,6 +835,35 @@ class LibraryScreen(BaseAppScreen):
             total_known = False
         return records, max(count, 0), total_known
 
+    async def _notes_true_count_or_none(self, count_notes: Any, **kwargs: Any) -> int | None:
+        """Fetch the authoritative local notes total, degrading quietly on failure.
+
+        Runs inside the same ``asyncio.gather`` as the paginated ``list_notes``
+        fetch (see ``_list_local_source_snapshot``). ``list_notes`` on the
+        real local backend returns a plain list with no total, so the rail
+        badge would otherwise always show the "showing up to N" sample-cap
+        suffix. When the seam is missing entirely, the caller never invokes
+        this method (guarded by ``callable(count_notes)``); when it *is*
+        present but raises here, the failure is swallowed and ``None`` is
+        returned so the caller falls back to the paginated response's own
+        record count instead of surfacing an error or failing the whole
+        snapshot fetch.
+
+        Args:
+            count_notes: The bound ``count_notes`` callable to invoke.
+            **kwargs: Forwarded to ``count_notes`` (``scope``, ``user_id``).
+
+        Returns:
+            The exact notes count, or ``None`` if the call failed or
+            returned something other than an ``int``.
+        """
+        try:
+            result = await self._run_library_service_call(count_notes, isolate_in_worker=True, **kwargs)
+        except Exception:
+            logger.warning("Failed to fetch exact local notes count; using sample count.", exc_info=True)
+            return None
+        return result if isinstance(result, int) else None
+
     async def _list_local_source_snapshot(
         self,
     ) -> tuple[
@@ -850,6 +879,9 @@ class LibraryScreen(BaseAppScreen):
         list_notes = getattr(notes_service, "list_notes", None)
         list_media = getattr(media_service, "list_media_items", None)
         list_conversations = getattr(conversation_service, "list_conversations", None)
+        count_notes = getattr(notes_service, "count_notes", None)
+        count_notes_available = callable(count_notes)
+        notes_user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
 
         empty_records: dict[str, tuple[Mapping[str, Any], ...]] = {
             "notes": (),
@@ -861,33 +893,39 @@ class LibraryScreen(BaseAppScreen):
         if not all(callable(call) for call in (list_notes, list_media, list_conversations)):
             return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_UNAVAILABLE_COPY, None
 
+        gathered_calls = [
+            self._run_library_service_call(
+                list_notes,
+                scope="local_note",
+                limit=LIBRARY_SOURCE_PAGE_SIZES["notes"],
+                offset=0,
+                user_id=notes_user_id,
+                isolate_in_worker=True,
+            ),
+            self._run_library_service_call(
+                list_media,
+                mode="local",
+                page=1,
+                results_per_page=LIBRARY_SOURCE_PAGE_SIZES["media"],
+                include_keywords=False,
+                isolate_in_worker=True,
+            ),
+            self._run_library_service_call(
+                list_conversations,
+                mode="local",
+                limit=LIBRARY_SOURCE_PAGE_SIZES["conversations"],
+                offset=0,
+                isolate_in_worker=True,
+            ),
+        ]
+        if count_notes_available:
+            gathered_calls.append(
+                self._notes_true_count_or_none(count_notes, scope="local_note", user_id=notes_user_id)
+            )
+
         try:
-            notes_result, media_result, conversation_result = await asyncio.wait_for(
-                asyncio.gather(
-                    self._run_library_service_call(
-                        list_notes,
-                        scope="local_note",
-                        limit=LIBRARY_SOURCE_PAGE_SIZES["notes"],
-                        offset=0,
-                        user_id=getattr(self.app_instance, "notes_user_id", None) or "default_user",
-                        isolate_in_worker=True,
-                    ),
-                    self._run_library_service_call(
-                        list_media,
-                        mode="local",
-                        page=1,
-                        results_per_page=LIBRARY_SOURCE_PAGE_SIZES["media"],
-                        include_keywords=False,
-                        isolate_in_worker=True,
-                    ),
-                    self._run_library_service_call(
-                        list_conversations,
-                        mode="local",
-                        limit=LIBRARY_SOURCE_PAGE_SIZES["conversations"],
-                        offset=0,
-                        isolate_in_worker=True,
-                    ),
-                ),
+            gathered_results = await asyncio.wait_for(
+                asyncio.gather(*gathered_calls),
                 timeout=LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             )
         except PolicyDeniedError as exc:
@@ -912,7 +950,16 @@ class LibraryScreen(BaseAppScreen):
             )
             return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_ERROR_COPY, None
 
+        if count_notes_available:
+            notes_result, media_result, conversation_result, notes_true_count = gathered_results
+        else:
+            notes_result, media_result, conversation_result = gathered_results
+            notes_true_count = None
+
         notes, notes_count, notes_total_known = self._response_records_and_count(notes_result)
+        if notes_true_count is not None:
+            notes_count = notes_true_count
+            notes_total_known = True
         media, media_count, media_total_known = self._response_records_and_count(media_result)
         (
             conversations,

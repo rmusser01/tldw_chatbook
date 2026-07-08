@@ -190,6 +190,20 @@ class NotesInteropService:
         
         return results
 
+    def count_notes(self, user_id: str) -> int:
+        start_time = time.time()
+        log_counter("notes_library_count_notes_attempt")
+
+        db = self._get_db(user_id)
+        # Same "notes are global, not per-user-filtered" assumption as list_notes above.
+        result = db.count_notes()
+
+        duration = time.time() - start_time
+        log_histogram("notes_library_count_notes_duration", duration)
+        log_counter("notes_library_count_notes_success", labels={"count": str(result)})
+
+        return result
+
     def update_note(self, user_id: str, note_id: str, update_data: Dict[str, Any], expected_version: int) -> bool:
         start_time = time.time()
         log_counter("notes_library_update_note_attempt", labels={

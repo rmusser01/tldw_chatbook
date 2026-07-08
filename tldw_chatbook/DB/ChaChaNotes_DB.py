@@ -6657,6 +6657,12 @@ UPDATE db_schema_version
         # Using _list_generic_items but ensuring table name and order_by_col are correct for notes
         return self._list_generic_items("notes", "last_modified DESC", limit, offset)
 
+    def count_notes(self) -> int:
+        query = "SELECT COUNT(*) AS cnt FROM notes WHERE deleted = 0"
+        cursor = self.execute_query(query)
+        row = cursor.fetchone()
+        return int(row["cnt"] if row else 0)
+
     def update_note(self, note_id: str, update_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
         if not update_data:
             raise InputError("No data provided for note update.")

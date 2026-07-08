@@ -16,6 +16,7 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
+    StaticLibraryNotesListScopeService,
     StaticLibraryNotesScopeService,
     _link_library_items_to_active_workspace,
 )
@@ -2189,6 +2190,69 @@ def _two_notes():
         {"id": "n-2", "title": "Reading list", "content": "bravo",
          "last_modified": "2026-07-06T12:00:00+00:00", "version": 1},
     ]
+
+
+class _CountSeamLibraryNotesScopeService(StaticLibraryNotesListScopeService):
+    """Local notes fake mirroring the real production shape: ``list_notes``
+    returns a bare list with no total (like ``NotesInteropService.list_notes``),
+    but ``count_notes`` (the new seam under test) gives the exact total.
+
+    Used to prove the Library screen's rail badge renders an exact count
+    even though the paginated ``list_notes`` response alone cannot supply
+    one -- unlike ``StaticLibraryNotesScopeService``, whose ``list_notes``
+    already carries a ``pagination.total`` and so cannot distinguish
+    "badge is exact because of ``count_notes``" from "badge is exact
+    because ``list_notes`` said so".
+    """
+
+    def __init__(self, notes):
+        super().__init__(notes)
+        self.count_calls = []
+
+    async def count_notes(self, *, scope, user_id=None, **kwargs):
+        self.count_calls.append({"scope": scope, "user_id": user_id, **kwargs})
+        return len(self.notes)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_rail_badge_shows_exact_count_via_count_seam():
+    """The rail badge renders an exact ``(2)`` -- no "+" sample-cap suffix
+    -- once ``count_notes`` is wired into the Library screen's local-source
+    snapshot fetch, even though the underlying ``list_notes`` response
+    carries no total of its own (the real production shape)."""
+    app = _build_test_app()
+    app.notes_scope_service = _CountSeamLibraryNotesScopeService(_two_notes())
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        rail_label = str(screen.query_one("#library-row-browse-notes").label)
+        assert "(2)" in rail_label
+        assert "(2+)" not in rail_label
+    assert app.notes_scope_service.count_calls
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_rail_badge_degrades_without_count_seam():
+    """When the local notes service exposes no ``count_notes`` seam (the
+    plain-list fake never defines one, mirroring a backend that hasn't
+    adopted the new seam), the rail badge keeps today's "showing up to N"
+    sample-cap contract (``(N+)``) instead of claiming an exact total it
+    cannot verify -- and the snapshot fetch does not error out."""
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesListScopeService(_two_notes())
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        rail_label = str(screen.query_one("#library-row-browse-notes").label)
+        assert "(2+)" in rail_label
 
 
 @pytest.mark.asyncio
