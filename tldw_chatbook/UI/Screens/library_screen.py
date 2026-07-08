@@ -46,7 +46,9 @@ from ...Library.library_notes_state import (
     build_library_notes_list_state,
     build_note_export_content,
     next_notes_sort_mode,
+    note_template_keywords,
     notes_autosave_status_text,
+    resolve_note_template_placeholders,
     sort_notes_records,
 )
 from ...Library.library_rag_service import (
@@ -4353,9 +4355,13 @@ class LibraryScreen(BaseAppScreen):
         template_key = str(getattr(event.button, "template_key", "") or "")
         from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
 
-        title, content = self._library_note_template_fields(NOTE_TEMPLATES.get(template_key))
+        template = NOTE_TEMPLATES.get(template_key)
+        title, content = self._library_note_template_fields(template)
+        # Templates carry keywords ("meeting, notes") that the standalone
+        # screen applies on create -- parity requires passing them through.
+        keywords = list(note_template_keywords(template))
         self.run_worker(
-            self._create_library_note(title=title, content=content),
+            self._create_library_note(title=title, content=content, keywords=keywords),
             exclusive=True,
             group="library_note_create",
         )
@@ -4411,23 +4417,16 @@ class LibraryScreen(BaseAppScreen):
             except Exception:
                 content = ""
 
-        now = datetime.now()
-        placeholder_values = {
-            "date": now.strftime("%Y-%m-%d"),
-            "time": now.strftime("%H:%M"),
-            "datetime": now.strftime("%Y-%m-%d %H:%M"),
-        }
-        try:
-            title = title.format(**placeholder_values)
-        except (KeyError, ValueError, IndexError):
-            pass
-        try:
-            content = content.format(**placeholder_values)
-        except (KeyError, ValueError, IndexError):
-            pass
+        # Shared pure resolver (also drives the create view's row secondary
+        # lines) -- per-field, so a title-only malformation still gets the
+        # content substituted.
+        title = resolve_note_template_placeholders(title)
+        content = resolve_note_template_placeholders(content)
         return title, content
 
-    async def _create_library_note(self, *, title: str, content: str) -> None:
+    async def _create_library_note(
+        self, *, title: str, content: str, keywords: list[str] | None = None
+    ) -> None:
         """Create a new local note from the in-canvas Create view and open it.
 
         Shared by the Blank note button and every template row: both
@@ -4455,6 +4454,11 @@ class LibraryScreen(BaseAppScreen):
         """
         sanitized_title = self._sanitize_media_field(title, max_length=300)
         sanitized_content = self._sanitize_note_content(content, max_length=2_000_000)
+        sanitized_keywords = [
+            sanitized
+            for keyword in (keywords or [])
+            if (sanitized := self._sanitize_media_field(keyword, max_length=100))
+        ] or None
 
         service = getattr(self.app_instance, "notes_scope_service", None)
         save_note = getattr(service, "save_note", None)
@@ -4469,6 +4473,7 @@ class LibraryScreen(BaseAppScreen):
                 content=sanitized_content,
                 note_id=None,
                 user_id=self._library_notes_user_id(),
+                keywords=sanitized_keywords,
                 isolate_in_worker=True,
             )
         except Exception:

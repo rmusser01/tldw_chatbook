@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
@@ -11,6 +12,11 @@ from tldw_chatbook.Workspaces.conversation_browser_state import format_console_r
 NOTES_SORT_MODES = ("newest", "oldest", "title")
 _UPDATED_KEYS = ("last_modified", "updated_at", "created_at")
 _EMPTY_NOTES_COPY = "No notes yet. Create one to see it here."
+
+# The "blank" template duplicates the dedicated Blank note action (with a
+# confusingly different default title), so the create view's template list
+# excludes it -- the button is the one canonical empty path.
+_BLANK_TEMPLATE_KEY = "blank"
 
 
 @dataclass(frozen=True)
@@ -214,3 +220,137 @@ def notes_autosave_status_text(state: str, *, word_count: int) -> str:
         "error": " · save failed",
     }.get(state, "")
     return f"{base}{suffix}"
+
+
+def resolve_note_template_placeholders(text: str, *, now: datetime | None = None) -> str:
+    """Resolve ``{date}``/``{time}``/``{datetime}`` placeholders in template text.
+
+    Mirrors the standalone Notes screen's substitution (same placeholder
+    names, same ``strftime`` formats). A template containing an unknown
+    ``{placeholder}`` or a stray brace degrades to the raw text rather
+    than raising, so one malformed template can never break the callers.
+
+    Args:
+        text: Template title or content text.
+        now: Reference time; defaults to the current local time (matching
+            the standalone screen's naive-local timestamps).
+
+    Returns:
+        The text with known placeholders substituted, or the raw text when
+        substitution fails.
+    """
+    reference_now = now if now is not None else datetime.now()
+    values = {
+        "date": reference_now.strftime("%Y-%m-%d"),
+        "time": reference_now.strftime("%H:%M"),
+        "datetime": reference_now.strftime("%Y-%m-%d %H:%M"),
+    }
+    try:
+        return text.format(**values)
+    except (KeyError, ValueError, IndexError):
+        return text
+
+
+def note_template_keywords(template: Any) -> tuple[str, ...]:
+    """Parse a note template's ``keywords`` field into a clean tuple.
+
+    The bundled templates carry comma-separated strings ("meeting, notes");
+    a list/tuple value is tolerated too. Anything else yields no keywords.
+
+    Args:
+        template: The raw ``NOTE_TEMPLATES[key]`` value.
+
+    Returns:
+        Stripped, non-empty keyword strings in template order.
+    """
+    if not isinstance(template, Mapping):
+        return ()
+    raw = template.get("keywords")
+    if isinstance(raw, str):
+        parts = raw.split(",")
+    elif isinstance(raw, Sequence):
+        parts = [str(item) for item in raw]
+    else:
+        return ()
+    return tuple(part.strip() for part in parts if part and str(part).strip())
+
+
+def _note_template_label(key: str, template: Any) -> str:
+    """Human label for a template row (pure mirror of the workbench helper).
+
+    Strips the redundant "template" wording from descriptions ("Template
+    for meeting notes" -> "Meeting notes") exactly like
+    ``notes_workbench_panes.template_display_label`` -- replicated here so
+    the pure module stays Textual-free (the workbench module imports
+    Textual and is slated for deletion with the standalone screen).
+    """
+    raw = ""
+    if isinstance(template, Mapping):
+        raw = str(template.get("description") or template.get("title") or "")
+    raw = raw or str(key).replace("_", " ")
+    label = re.sub(r"^\s*templates?\s+for\s+", "", raw, flags=re.IGNORECASE)
+    label = re.sub(r"\s*\btemplates?\b\s*$", "", label, flags=re.IGNORECASE)
+    label = label.strip(" -–:") or str(key).replace("_", " ")
+    return label[:1].upper() + label[1:]
+
+
+@dataclass(frozen=True)
+class LibraryNoteTemplateRow:
+    """One template row in the create view's "From a template" list.
+
+    Attributes:
+        template_key: The ``NOTE_TEMPLATES`` key the row creates from.
+        label: Cleaned human label ("Meeting notes").
+        resolved_title: The title the created note will actually get, with
+            date/time placeholders already substituted -- shown as the
+            row's muted secondary line so the outcome is visible before
+            pressing. Empty when it would just repeat the label.
+    """
+
+    template_key: str
+    label: str
+    resolved_title: str
+
+
+def build_library_note_template_rows(
+    templates: Mapping[str, Any] | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[LibraryNoteTemplateRow, ...]:
+    """Build the create view's template rows from ``NOTE_TEMPLATES``.
+
+    Excludes the ``blank`` template (it duplicates the dedicated Blank
+    note action). Rows are sorted by key for a stable order. Malformed
+    (non-mapping) template values degrade to a key-derived label with no
+    secondary line rather than being dropped -- the screen-side field
+    resolver already degrades their creation to a blank note.
+
+    Args:
+        templates: The ``NOTE_TEMPLATES`` mapping (or None).
+        now: Reference time for resolving title placeholders.
+
+    Returns:
+        Immutable, ready-to-render template rows.
+    """
+    rows: list[LibraryNoteTemplateRow] = []
+    for key, template in sorted((templates or {}).items()):
+        if str(key) == _BLANK_TEMPLATE_KEY:
+            continue
+        label = _note_template_label(str(key), template)
+        resolved_title = ""
+        if isinstance(template, Mapping):
+            raw_title = template.get("title")
+            if isinstance(raw_title, str) and raw_title.strip():
+                resolved_title = resolve_note_template_placeholders(
+                    raw_title, now=now
+                ).strip()
+        if resolved_title.lower() == label.lower():
+            resolved_title = ""
+        rows.append(
+            LibraryNoteTemplateRow(
+                template_key=str(key),
+                label=label,
+                resolved_title=resolved_title,
+            )
+        )
+    return tuple(rows)

@@ -3,7 +3,6 @@ create mode (Blank note + template rows)."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
 from textual.app import ComposeResult
@@ -13,6 +12,7 @@ from textual.widgets import Button, Input, Markdown, Static, TextArea
 from tldw_chatbook.Library.library_notes_state import (
     LibraryNoteEditorState,
     LibraryNotesListState,
+    build_library_note_template_rows,
 )
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
@@ -286,15 +286,23 @@ class LibraryNotesCanvas(Vertical):
             compact=True,
         )
         from tldw_chatbook.Event_Handlers.notes_events import NOTE_TEMPLATES
-        from tldw_chatbook.Widgets.Note_Widgets.notes_workbench_panes import (
-            template_display_label,
-        )
 
-        for index, (key, template) in enumerate(sorted(NOTE_TEMPLATES.items())):
+        # The pure builder excludes the "blank" template (it duplicates the
+        # Blank note action above) and pre-resolves each template's title so
+        # the row's muted secondary line shows the exact title the created
+        # note will get (date placeholders already substituted).
+        rows = build_library_note_template_rows(NOTE_TEMPLATES)
+        yield Static(
+            "From a template",
+            id="library-notes-template-section",
+            classes="destination-section",
+            markup=False,
+        )
+        for index, row in enumerate(rows):
             label = (
-                template_display_label(key, template)
-                if isinstance(template, Mapping)
-                else str(key).replace("_", " ")
+                f"{row.label}\n{row.resolved_title}"
+                if row.resolved_title
+                else row.label
             )
             button = Button(
                 label,
@@ -302,5 +310,5 @@ class LibraryNotesCanvas(Vertical):
                 classes="library-notes-create-row library-notes-template-row",
                 compact=True,
             )
-            button.template_key = key
+            button.template_key = row.template_key
             yield button

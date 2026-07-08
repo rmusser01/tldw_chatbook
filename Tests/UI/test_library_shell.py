@@ -3580,6 +3580,7 @@ async def test_library_shell_create_blank_note_lands_in_editor():
         assert call["note_id"] is None
         assert call["title"] == "Untitled"
         assert call["content"] == ""
+        assert call["keywords"] is None
 
         assert screen._library_notes_view == "editor"
         assert screen._library_selected_row_id == "browse-notes"
@@ -3644,7 +3645,50 @@ async def test_library_shell_create_from_template_uses_template_fields():
         )
         assert re.search(r"\*\*Date:\*\* \d{4}-\d{2}-\d{2}", call["content"])
         assert re.search(r"\*\*Time:\*\* \d{2}:\d{2}", call["content"])
+        # Template keywords ride along on create -- the standalone screen
+        # applies them, so Library parity requires them at the seam too.
+        assert call["keywords"] == ["meeting", "notes"]
         assert screen._library_notes_view == "editor"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_view_groups_templates_without_blank_duplicate():
+    """The create view separates Blank note from a "From a template" group,
+    excludes the redundant blank template row, and shows each template's
+    resolved title as a secondary line."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-note").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+
+        # Group label between the Blank action and the template rows.
+        section = screen.query_one("#library-notes-template-section")
+        assert str(section.renderable) == "From a template"
+
+        template_rows = list(screen.query(".library-notes-template-row"))
+        assert template_rows, "No template rows rendered."
+        # The blank template row is excluded -- Blank note is the one
+        # canonical empty path (it also had a different default title).
+        assert all(
+            getattr(button, "template_key", "") != "blank" for button in template_rows
+        )
+        assert "Empty note" not in _visible_text(screen)
+        # Rows show the resolved title (date substituted) as a secondary line.
+        meeting = next(
+            button
+            for button in template_rows
+            if getattr(button, "template_key", None) == "meeting"
+        )
+        label = str(meeting.label)
+        assert "\n" in label
+        assert re.search(r"Meeting Notes - \d{4}-\d{2}-\d{2}", label)
+        assert "{date}" not in label
 
 
 def test_library_note_template_fields_malformed_placeholder_degrades_to_raw_text():

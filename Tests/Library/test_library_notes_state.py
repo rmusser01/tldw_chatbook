@@ -133,3 +133,67 @@ def test_export_content_now_defaults_when_omitted():
     # No fixed value to assert against, but the stamp must be well-formed.
     date_line = next(line for line in text.splitlines() if line.startswith("Date: "))
     datetime.strptime(date_line.removeprefix("Date: "), "%Y-%m-%d %H:%M:%S")
+
+
+def test_resolve_note_template_placeholders_substitutes_known_keys():
+    from tldw_chatbook.Library.library_notes_state import resolve_note_template_placeholders
+
+    resolved = resolve_note_template_placeholders(
+        "T - {date} {time} {datetime}", now=datetime(2026, 7, 8, 9, 30)
+    )
+    assert resolved == "T - 2026-07-08 09:30 2026-07-08 09:30"
+
+
+def test_resolve_note_template_placeholders_degrades_on_malformed():
+    from tldw_chatbook.Library.library_notes_state import resolve_note_template_placeholders
+
+    assert resolve_note_template_placeholders("{unknown_key}") == "{unknown_key}"
+    assert resolve_note_template_placeholders("stray { brace") == "stray { brace"
+
+
+def test_note_template_keywords_parses_comma_string_and_sequences():
+    from tldw_chatbook.Library.library_notes_state import note_template_keywords
+
+    assert note_template_keywords({"keywords": "meeting, notes"}) == ("meeting", "notes")
+    assert note_template_keywords({"keywords": ["a", " b ", ""]}) == ("a", "b")
+    assert note_template_keywords({"keywords": ""}) == ()
+    assert note_template_keywords({}) == ()
+    assert note_template_keywords(None) == ()
+
+
+def test_build_note_template_rows_excludes_blank_and_resolves_titles():
+    from tldw_chatbook.Library.library_notes_state import build_library_note_template_rows
+
+    templates = {
+        "blank": {"title": "New Note", "content": "", "description": "Empty note template"},
+        "meeting": {
+            "title": "Meeting Notes - {date}",
+            "content": "x",
+            "description": "Template for meeting notes",
+        },
+    }
+    rows = build_library_note_template_rows(templates, now=datetime(2026, 7, 8, 9, 30))
+
+    assert [row.template_key for row in rows] == ["meeting"]
+    assert rows[0].label == "Meeting notes"
+    assert rows[0].resolved_title == "Meeting Notes - 2026-07-08"
+
+
+def test_build_note_template_rows_malformed_value_degrades_to_key_label():
+    from tldw_chatbook.Library.library_notes_state import build_library_note_template_rows
+
+    rows = build_library_note_template_rows({"bug_report": "not-a-mapping"})
+
+    assert rows[0].template_key == "bug_report"
+    assert rows[0].label == "Bug report"
+    assert rows[0].resolved_title == ""
+
+
+def test_build_note_template_rows_drops_secondary_when_it_repeats_label():
+    from tldw_chatbook.Library.library_notes_state import build_library_note_template_rows
+
+    templates = {"todo": {"title": "Todo list", "description": "Todo list template"}}
+    rows = build_library_note_template_rows(templates)
+
+    assert rows[0].label == "Todo list"
+    assert rows[0].resolved_title == ""

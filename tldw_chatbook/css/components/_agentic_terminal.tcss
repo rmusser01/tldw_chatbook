@@ -693,6 +693,18 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-primary;
 }
 
+/* "From a template" group label: separates the primary Blank note action
+   from the template rows (same top-rule section grammar as the media
+   viewer's Content/Analysis/Highlights headers). */
+#library-notes-template-section {
+    width: 100%;
+    text-style: bold;
+    color: $ds-text-primary;
+    border-top: solid $ds-grid-line;
+    padding: 1 0 0 0;
+    margin: 1 0 1 0;
+}
+
 .library-canvas-action {
     height: $ds-home-control-button-height;
     min-height: $ds-home-control-button-height;

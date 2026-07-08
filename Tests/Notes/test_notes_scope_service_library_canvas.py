@@ -270,3 +270,33 @@ async def test_delete_with_stale_version_raises_conflict_and_does_not_remove(
     assert detail is not None
     assert detail["title"] == "Updated"
     assert detail["version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_create_with_keywords_returns_dict_and_persists_keywords(
+    notes_scope_service,
+):
+    """The CREATE path with ``keywords`` returns the real backend's dict
+    (``{"id": ..., "version": 1, ...}``) and persists the keywords -- the
+    shape the Library create-from-template flow depends on (templates carry
+    keywords, and the standalone screen applies them on create).
+    """
+    result = await notes_scope_service.save_note(
+        scope="local_note",
+        title="Meeting Notes - 2026-07-08",
+        content="body",
+        user_id=USER_ID,
+        keywords=["meeting", "notes"],
+    )
+    assert isinstance(result, dict)
+    created_id = str(result.get("id") or "")
+    assert created_id
+    assert result.get("version") == 1
+
+    stored = notes_scope_service.local_notes_service.get_keywords_for_note(
+        USER_ID, created_id
+    )
+    stored_texts = {
+        str(k.get("keyword") if isinstance(k, dict) else k) for k in stored
+    }
+    assert {"meeting", "notes"} <= stored_texts
