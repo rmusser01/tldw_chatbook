@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import html
 import re
 from types import MappingProxyType
@@ -25,6 +25,10 @@ LIBRARY_RAG_SOURCE_TYPES: tuple[tuple[str, str], ...] = (
     ("workspaces", "Workspaces"),
     ("collections", "Collections"),
 )
+# The subset of LIBRARY_RAG_SOURCE_TYPES with a real per-source toggle in the
+# Search canvas scope region (B2): workspaces/collections have no retrieval
+# seam of their own yet, so they get no toggle row.
+LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = ("notes", "media", "conversations")
 LIBRARY_RAG_DEFAULT_TOP_K = 5
 LIBRARY_RAG_RUN_ACTION_ID = "library-rag-run-query"
 LIBRARY_RAG_USE_IN_CONSOLE_ACTION_ID = "library-rag-use-in-console"
@@ -57,6 +61,14 @@ _SCRIPT_BLOCK_PATTERN = re.compile(
 )
 LIBRARY_SEARCH_HISTORY_LIMIT = 10
 LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS = 200
+# Disabled-reason text for the two run-gate blockers that render as a single
+# quiet line (A1) instead of the full callout + recovery-copy presentation.
+# Both strings are unique across the gate ladder in
+# `LibraryRagQueryState.from_values`, so `blocked_is_empty_query` /
+# `blocked_is_no_scope` below can key off them directly.
+_EMPTY_QUERY_DISABLED_REASON = "Enter a question or search query."
+_NO_SCOPE_DISABLED_REASON = "Select at least one Library source."
+LIBRARY_RAG_SEARCHING_LABEL = "Searching…"
 _OPEN_SOURCE_TYPE_MAP = {
     "note": "notes", "notes": "notes",
     "media": "media", "media_chunk": "media",
@@ -393,6 +405,25 @@ class LibraryRagQueryState:
     run_action: LibraryRagActionState
     recovery_copy: str = ""
 
+    @property
+    def blocked_is_empty_query(self) -> bool:
+        """True when the run gate's blocker is a missing query (A1).
+
+        The Search canvas renders a single muted line for this case instead
+        of the full callout + recovery-copy presentation.
+        """
+        return self.run_action.disabled_reason == _EMPTY_QUERY_DISABLED_REASON
+
+    @property
+    def blocked_is_no_scope(self) -> bool:
+        """True when the run gate's blocker is an empty source scope (A1/B2).
+
+        Reached when no Library source is selected -- either no sources are
+        available at all, or the user deselected every scope toggle. Like
+        `blocked_is_empty_query`, this renders as a single muted line.
+        """
+        return self.run_action.disabled_reason == _NO_SCOPE_DISABLED_REASON
+
     @classmethod
     def from_values(
         cls,
@@ -436,12 +467,12 @@ class LibraryRagQueryState:
             next_action = "Remove markup or script content before running Search/RAG"
             recovery_action = "Query input"
         elif not has_source_scope:
-            disabled_reason = "Select at least one Library source."
+            disabled_reason = _NO_SCOPE_DISABLED_REASON
             owner = "Library source scope"
             next_action = "Select or import a source before querying"
             recovery_action = "Library source scope"
         elif not normalized_query:
-            disabled_reason = "Enter a question or search query."
+            disabled_reason = _EMPTY_QUERY_DISABLED_REASON
             owner = "user"
             next_action = "Type a query before running Search/RAG"
             recovery_action = "Query input"
@@ -727,6 +758,7 @@ class LibraryRagPanelState:
     recovery_copy: str = ""
     recovery_selector: str = ""
     history: tuple[str, ...] = ()
+    history_collapsed: bool = False
 
     @classmethod
     def from_values(
@@ -745,6 +777,7 @@ class LibraryRagPanelState:
         provider_ready: bool = True,
         selected_source_types: Sequence[str] | None = None,
         history: Sequence[str] = (),
+        history_collapsed: bool = False,
     ) -> "LibraryRagPanelState":
         """Build full Library Search/RAG panel display state.
 
@@ -763,6 +796,10 @@ class LibraryRagPanelState:
             selected_source_types: Selected source type IDs. `None` selects all available
                 source types; an empty sequence represents no selected sources.
             history: Prior submitted queries, most recent first.
+            history_collapsed: Whether the `Recent searches` collapsible should
+                render collapsed (D1). The caller owns this decision -- it is
+                only forced on the results-arrival transition, not on every
+                render -- so this is a plain passthrough, not derived here.
 
         Returns:
             Display state for the destination-native Library Search/RAG panel.
@@ -860,6 +897,23 @@ class LibraryRagPanelState:
             recovery_copy = ""
             next_action = "Run Search/RAG over the selected Library sources."
 
+        if normalized_status == "searching":
+            # C2: the run action itself carries the in-flight state -- label
+            # "Searching…" (an ellipsis character, one unit), disabled, so
+            # the canvas never shows an enabled Run button while a query is
+            # already running. Only reachable when the run gate was open
+            # (query_state.status != "blocked"), so there is always a
+            # well-formed prior run_action to replace.
+            query_state = replace(
+                query_state,
+                run_action=LibraryRagActionState(
+                    label=LIBRARY_RAG_SEARCHING_LABEL,
+                    enabled=False,
+                    widget_id=LIBRARY_RAG_RUN_ACTION_ID,
+                    disabled_reason="Search in progress.",
+                ),
+            )
+
         can_use_console = normalized_status == "ready" and selected_result is not None
         return cls(
             scope=scope,
@@ -880,6 +934,7 @@ class LibraryRagPanelState:
             recovery_copy=recovery_copy,
             recovery_selector=active_recovery_selector,
             history=tuple(str(h) for h in history),
+            history_collapsed=bool(history_collapsed),
         )
 
 

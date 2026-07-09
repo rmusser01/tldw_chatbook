@@ -136,6 +136,14 @@ async def test_search_mode_returns_rows_from_all_three_sources(conversations_db)
     assert by_type["conversation"]["snippet"] == "Matched conversation · 1 messages"
     assert notes_service.calls[0]["user_id"] == "tester"
     assert notes_service.calls[0]["scope"] == "local_note"
+    # C1: keyword-mode rows uniformly show no score. The conversation row is
+    # the interesting case -- `search_conversations_by_content` populates a
+    # `relevance_score` derived from FTS `best_rank`, which is a ranking
+    # artifact, not a retrieval similarity score, so it must not surface
+    # here even though the raw data has it available.
+    assert by_type["note"]["score"] is None
+    assert by_type["media"]["score"] is None
+    assert by_type["conversation"]["score"] is None
 
 
 # (b) a missing media service quietly yields notes/conversations rows only.

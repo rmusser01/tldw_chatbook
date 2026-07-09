@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 from tldw_chatbook.Library.library_rag_service import (
@@ -246,15 +246,20 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
         assert run_button.disabled is True
         assert "Enter a question or search query" in str(run_button.tooltip)
         assert not screen.query(".library-rag-result-action")
-        # The blocked state now surfaces on the in-panel query callout
-        # (the retired 3-pane status row is gone; the header is fixed
-        # "Library | Local" regardless of mode).
-        assert "Blocked: enter a question or search query." in visible_text
-        assert "Blocked | Enter a question before running retrieval." in visible_text
+        # A1: the empty-query gate is a single quiet line now -- no summary
+        # Static, callout box, "Run disabled:" reason, or recovery dump.
+        assert screen.query_one("#library-rag-query-quiet-line", Static)
+        assert "Enter a question or search query." in visible_text
+        assert not screen.query("#library-rag-query-blocked-callout")
+        assert not screen.query("#library-rag-query-recovery")
+        assert not screen.query("#library-rag-run-disabled-reason")
+        assert "Blocked: enter a question or search query." not in visible_text
+        assert "Blocked | Enter a question before running retrieval." not in visible_text
         assert "Scope: all local | Notes 1 | Media 1 | Conversations 1" in visible_text
-        assert "Query" in visible_text
-        assert "Enter: run query | Tab: move panes | Enter on result: select | u: Use in Console" in visible_text
-        assert "Enter a question or search query" in visible_text
+        # A4: the retired-workbench shortcuts line is gone; Enter-to-run
+        # keeps working (covered by the keyboard-enter pilot below).
+        assert not screen.query("#library-rag-query-shortcuts")
+        assert "Tab: move panes" not in visible_text
 
 
 @pytest.mark.asyncio

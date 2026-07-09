@@ -431,6 +431,10 @@ async def _wait_for_library_rag_query_ready(screen, pilot, query, *, attempts=15
 async def test_library_shell_search_mode_toggle_cycles_mode():
     """Pressing the mode-cycle button flips Search <-> RAG Answer, and the
     default mode on a fresh canvas is ``search``.
+
+    A3: the toggle button label is the single mode surface now --
+    ``#library-rag-query-status`` (the old "Mode: {label} | Top {k}" Static)
+    is retired, so this asserts against the button label directly.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -446,33 +450,25 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         assert str(screen.query_one("#library-rag-mode-toggle", Button).label) == (
             "mode: Search ▸"
         )
-        assert "Mode: Search" in str(
-            screen.query_one("#library-rag-query-status").renderable
-        )
+        assert not screen.query("#library-rag-query-status")
 
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
-            status = str(screen.query_one("#library-rag-query-status").renderable)
-            if "Mode: RAG Answer" in status:
+            toggles = list(screen.query("#library-rag-mode-toggle"))
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
                 break
             await pilot.pause(0.02)
         else:
             raise AssertionError("Mode toggle never switched to RAG Answer.")
-        assert str(screen.query_one("#library-rag-mode-toggle", Button).label) == (
-            "mode: RAG Answer ▸"
-        )
 
         screen.query_one("#library-rag-mode-toggle", Button).press()
         for _ in range(120):
-            status = str(screen.query_one("#library-rag-query-status").renderable)
-            if "Mode: Search" in status:
+            toggles = list(screen.query("#library-rag-mode-toggle"))
+            if toggles and str(toggles[0].label) == "mode: Search ▸":
                 break
             await pilot.pause(0.02)
         else:
             raise AssertionError("Mode toggle never switched back to Search.")
-        assert str(screen.query_one("#library-rag-mode-toggle", Button).label) == (
-            "mode: Search ▸"
-        )
 
 
 @pytest.mark.asyncio
@@ -2750,6 +2746,227 @@ async def test_library_shell_rail_search_empty_submit_selects_without_service_ca
 
         assert screen._library_selected_row_id == "browse-search"
         assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_library_shell_scope_toggle_deselect_sends_only_selected_types():
+    """B2: deselecting a scope toggle removes that source type from the
+    retrieval request; deselecting every toggle blocks the run gate with
+    the A1 quiet line instead of running the query.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Research Note", "id": "note-1"}],
+        media=_two_media_items(),
+    )
+    service = _StaticLibraryRagSearchService(
+        {"results": [{"document_title": "Result", "snippet": "s", "source_id": "id-1"}]}
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-scope-toggle-media")
+
+        assert str(
+            screen.query_one("#library-rag-scope-toggle-media", Button).label
+        ).startswith("✓")
+
+        screen.query_one("#library-rag-scope-toggle-media", Button).press()
+        for _ in range(120):
+            toggles = list(screen.query("#library-rag-scope-toggle-media"))
+            if toggles and str(toggles[0].label).startswith("○"):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Media toggle never deselected.")
+
+        screen.query_one("#library-rag-query-input", Input).value = "policy"
+        await _wait_for_library_rag_query_ready(screen, pilot, "policy")
+        screen.query_one("#library-rag-run-query", Button).press()
+
+        for _ in range(150):
+            if service.calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Run never reached the search service.")
+
+        assert service.calls[-1]["scope"] == ("notes", "conversations")
+
+        # Deselect-all: the run gate blocks with the A1 quiet line, not the
+        # old scope-table recovery dump, and the service is not re-invoked.
+        screen.query_one("#library-rag-scope-toggle-notes", Button).press()
+        for _ in range(120):
+            toggles = list(screen.query("#library-rag-scope-toggle-notes"))
+            if toggles and str(toggles[0].label).startswith("○"):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Notes toggle never deselected.")
+
+        screen.query_one("#library-rag-scope-toggle-conversations", Button).press()
+        for _ in range(120):
+            run_buttons = list(screen.query("#library-rag-run-query"))
+            if run_buttons and run_buttons[0].disabled:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Deselect-all never blocked the run gate.")
+
+        assert screen.query_one("#library-rag-query-quiet-line", Static)
+        assert "Select at least one source." in _visible_text(screen)
+
+        calls_before = len(service.calls)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await pilot.pause()
+        assert len(service.calls) == calls_before
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_run_button_shows_searching_while_gated():
+    """C2: while a query is in flight, the Run button itself carries the
+    in-flight state -- label "Searching…", disabled -- and returns to the
+    normal enabled Run label once the search settles. Exercises the
+    incremental (non-recompose) refresh path, not just a fresh compose().
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _GatedLibraryRagSearchService({"results": []})
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        screen.query_one("#library-rag-query-input", Input).value = "policy"
+        await _wait_for_library_rag_query_ready(screen, pilot, "policy")
+        screen.query_one("#library-rag-run-query", Button).press()
+
+        try:
+            for _ in range(150):
+                run_buttons = list(screen.query("#library-rag-run-query"))
+                if (
+                    run_buttons
+                    and str(run_buttons[0].label) == "Searching…"
+                    and run_buttons[0].disabled is True
+                ):
+                    break
+                await pilot.pause(0.02)
+            else:
+                raise AssertionError(
+                    f"Run button never showed the Searching… label. Visible "
+                    f"text: {_visible_text(screen)}"
+                )
+        finally:
+            service.release_event.set()
+
+        for _ in range(150):
+            run_buttons = list(screen.query("#library-rag-run-query"))
+            if (
+                run_buttons
+                and str(run_buttons[0].label) == "Run Search/RAG"
+                and run_buttons[0].disabled is False
+            ):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Run button never returned to the enabled Run label.")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_history_clear_button_empties_history():
+    """D1: `Clear history` empties both in-memory and persisted history, and
+    (alongside the hint line) only renders once history is non-empty.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _StaticLibraryRagSearchService(
+        {"results": [{"document_title": "Result", "snippet": "s", "source_id": "id-1"}]}
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        assert not screen.query("#library-rag-history-clear")
+        assert not screen.query("#library-rag-history-hint")
+
+        screen.query_one("#library-rag-query-input", Input).value = "alpha"
+        await _wait_for_library_rag_query_ready(screen, pilot, "alpha")
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-history-clear")
+
+        assert screen.query_one("#library-rag-history-hint", Static)
+        assert "Select an entry to run it again." in _visible_text(screen)
+
+        screen.query_one("#library-rag-history-clear", Button).press()
+        for _ in range(150):
+            if screen._library_search_history == ():
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Clear history never emptied in-memory history.")
+
+        await _wait_for_selector(screen, pilot, "#library-rag-history-empty")
+        assert not screen.query("#library-rag-history-clear")
+        assert not screen.query("#library-rag-history-hint")
+        assert not screen.query(".library-rag-history-row")
+        assert app.app_config["library"]["search"]["history"] == []
+
+
+@pytest.mark.asyncio
+async def test_library_shell_history_manual_expand_survives_unrelated_refresh():
+    """D1: a manual expand of `Recent searches` must survive an unrelated
+    refresh (editing the query text) -- only the results-arrival transition
+    in `_apply_library_rag_search_outcome` is allowed to force it collapsed.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _StaticLibraryRagSearchService(
+        {"results": [{"document_title": "Result", "snippet": "s", "source_id": "id-1"}]}
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        screen.query_one("#library-rag-query-input", Input).value = "alpha"
+        await _wait_for_library_rag_query_ready(screen, pilot, "alpha")
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-history-0")
+
+        # Results just landed: the collapsible is force-collapsed.
+        assert screen.query_one("#library-rag-history", Collapsible).collapsed is True
+
+        # Mirror a user click on the collapsible header.
+        screen.query_one("#library-rag-history", Collapsible).collapsed = False
+
+        # An unrelated refresh (editing the query text) must not re-collapse it.
+        screen.query_one("#library-rag-query-input", Input).value = "alpha b"
+        await _wait_for_library_rag_query_ready(screen, pilot, "alpha b")
+
+        assert screen.query_one("#library-rag-history", Collapsible).collapsed is False
 
 
 def _never_loads(self) -> None:

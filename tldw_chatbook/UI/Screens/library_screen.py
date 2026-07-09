@@ -72,10 +72,10 @@ from ...Library.library_rag_service import (
 )
 from ...Library.library_rag_state import (
     LIBRARY_RAG_QUERY_MAX_LENGTH,
+    LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
     LIBRARY_SEARCH_HISTORY_LIMIT,
     LibraryRagPanelState,
-    searching_status_line,
     update_search_history,
 )
 from ...Library.library_rail_state import (
@@ -115,6 +115,11 @@ from ...Widgets.Library import (
     LibrarySearchRagPanel,
     library_dim_label_text,
     library_rag_history_children,
+    library_rag_query_shows_full_recovery,
+    library_rag_query_status_children,
+    library_rag_results_body_children,
+    library_rag_scope_recovery_children,
+    library_rag_scope_shows_recovery,
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -156,13 +161,7 @@ LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH = 16
 LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH = 22
 LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH = 18
 LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
-LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset(
-    {
-        "library-rag-results-section-rule",
-        "library-rag-results-heading",
-        "library-rag-attribution-placeholder",
-    }
-)
+LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"})
 LIBRARY_COLUMN_TITLES = {
     "sources": ("Source Map", "Active Workbench", "Inspector"),
     "conversations": ("Source Map", "Saved Conversations", "Conversation Inspector"),
@@ -546,6 +545,16 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = ""
         self._library_rag_recovery_state: DestinationRecoveryState | None = None
         self._library_rag_selected_result_id = ""
+        # B2: source types the user has toggled OFF (deselected) in the
+        # scope region. Empty = every available source is in scope (the
+        # default). Persists across rail switches within the session, same
+        # as mode, but is never written to config.
+        self._library_rag_scope_deselected: set[str] = set()
+        # D1: whether the `Recent searches` collapsible should render
+        # collapsed. Only `_apply_library_rag_search_outcome` (the
+        # results-arrival transition) is allowed to change this; every
+        # other refresh must leave the user's manual expand/collapse alone.
+        self._library_rag_history_collapsed: bool = False
         self._library_search_history: tuple[str, ...] = self._load_library_search_history()
         # Serializes history-collapsible content rebuilds: the "searching"
         # status refresh (called synchronously before the search worker is
@@ -2232,6 +2241,15 @@ class LibraryScreen(BaseAppScreen):
         return self._active_mode in LIBRARY_LOCAL_SNAPSHOT_MODES
 
     def _library_rag_panel_state(self) -> LibraryRagPanelState:
+        # B2: explicit selection is every real source type NOT toggled off;
+        # `LibraryRagScopeState.from_source_counts` intersects this with
+        # actual availability, so a deselected-but-empty source can't
+        # falsely count as "selected".
+        selected_source_types = tuple(
+            source_type
+            for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
+            if source_type not in self._library_rag_scope_deselected
+        )
         return LibraryRagPanelState.from_values(
             source_counts={
                 "notes": self._local_source_counts.get("notes", 0),
@@ -2261,7 +2279,9 @@ class LibraryScreen(BaseAppScreen):
             dependencies_ready=True,
             index_ready=True,
             provider_ready=(getattr(self.app_instance, "_rag_service", None) is not None),
+            selected_source_types=selected_source_types,
             history=self._library_search_history,
+            history_collapsed=self._library_rag_history_collapsed,
         )
 
     def _library_collections_panel_state(self) -> LibraryCollectionsPanelState:
@@ -4532,7 +4552,15 @@ class LibraryScreen(BaseAppScreen):
         self._library_search_history = update_search_history(
             self._library_search_history, query
         )
-        history_list = list(self._library_search_history)
+        self._persist_library_search_history(list(self._library_search_history))
+
+    def _persist_library_search_history(self, history_list: list[str]) -> None:
+        """Write `history_list` into the in-memory config and to disk.
+
+        Shared by `_record_library_search_history` (append a new query) and
+        `clear_library_search_history` (D1: empty the list) so both funnel
+        through one persistence path.
+        """
         app_config = getattr(self.app_instance, "app_config", None)
         if isinstance(app_config, dict):
             library_config = app_config.get("library")
@@ -7177,6 +7205,36 @@ class LibraryScreen(BaseAppScreen):
         self._reset_library_rag_retrieval_state()
         self.refresh(recompose=True)
 
+    @on(Button.Pressed, ".library-rag-scope-toggle")
+    def toggle_library_rag_scope_source(self, event: Button.Pressed) -> None:
+        """Toggle one source type in/out of the Search/RAG retrieval scope (B2).
+
+        Unlike the mode toggle, this deliberately does NOT reset in-flight
+        or already-landed retrieval state: scope only affects the NEXT run,
+        so existing results/history stay visible. Still a transition (like
+        the mode toggle), so the canvas recomposes to pick up the new
+        toggle labels, run-gate state, and (if the scope is now empty) the
+        A1 quiet line.
+        """
+        event.stop()
+        button_id = event.button.id or ""
+        source_type = button_id.removeprefix("library-rag-scope-toggle-")
+        if source_type not in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES:
+            return
+        if source_type in self._library_rag_scope_deselected:
+            self._library_rag_scope_deselected.discard(source_type)
+        else:
+            self._library_rag_scope_deselected.add(source_type)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-rag-history-clear")
+    async def clear_library_search_history(self, event: Button.Pressed) -> None:
+        """Clear all Library Search/RAG query history, in memory and on disk (D1)."""
+        event.stop()
+        self._library_search_history = ()
+        self._persist_library_search_history([])
+        await self._refresh_library_rag_history_widget(self._library_rag_panel_state())
+
     @on(Button.Pressed, ".library-rag-history-row")
     async def rerun_library_search_from_history(self, event: Button.Pressed) -> None:
         """Re-run a prior Library Search/RAG query selected from history."""
@@ -7593,11 +7651,21 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_retrieval_status = outcome.status
         self._library_rag_recovery_state = outcome.recovery_state
         self._library_rag_selected_result_id = ""
+        # D1: the results-arrival transition is the ONLY place allowed to
+        # force the `Recent searches` collapsible open/closed -- collapse it
+        # once evidence lands (results take visual priority), expand it
+        # when a search settles with nothing to show. Every other refresh
+        # path leaves the user's manual expand/collapse alone.
+        self._library_rag_history_collapsed = bool(self._library_rag_results)
         if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
             return
-        await self._refresh_search_rag_panel_state_widgets()
+        await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
 
-    async def _refresh_search_rag_panel_state_widgets(self) -> None:
+    async def _refresh_search_rag_panel_state_widgets(
+        self,
+        *,
+        force_history_collapse: bool = False,
+    ) -> None:
         if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
             return
 
@@ -7605,92 +7673,70 @@ class LibraryScreen(BaseAppScreen):
         status_rows = list(self.query("#library-status-row"))
         if status_rows:
             status_rows[0].update(self._status_row_copy())
-        self.query_one("#library-rag-query-status", Static).update(
-            f"Mode: {panel_state.query_state.mode_label} | Top {panel_state.query_state.top_k}"
-        )
-        self.query_one("#library-rag-query-blocked", Static).update(
-            self._library_rag_query_blocked_summary(panel_state)
-        )
-        run_action = panel_state.query_state.run_action
-        self.query_one("#library-rag-query-blocked-callout", Static).update(
-            self._library_rag_query_blocked_callout(panel_state)
-        )
-        self.query_one("#library-rag-query-blocked-callout", Static).set_class(
-            not run_action.enabled,
-            "is-blocked",
-        )
-        self.query_one("#library-rag-query-blocked-callout", Static).set_class(
-            run_action.enabled,
-            "is-ready",
-        )
-        run_button = self.query_one("#library-rag-run-query", Button)
-        run_button.disabled = not run_action.enabled
-        run_button.tooltip = run_action.tooltip
-        self.query_one("#library-rag-run-disabled-reason", Static).update(
-            self._library_rag_run_disabled_reason(panel_state)
-        )
 
-        query_controls = self.query_one("#library-rag-query-controls", Vertical)
-        recovery_widgets = list(self.query("#library-rag-query-recovery"))
-        show_query_recovery = (
-            bool(panel_state.query_state.recovery_copy)
-            and panel_state.scope.status != "blocked"
-        )
-        query_controls.set_class(show_query_recovery, "has-recovery")
-        if show_query_recovery:
-            if recovery_widgets:
-                recovery_widgets[0].update(panel_state.query_state.recovery_copy)
-            else:
-                await query_controls.mount(
-                    Static(
-                        panel_state.query_state.recovery_copy,
-                        id="library-rag-query-recovery",
-                    ),
-                    after="#library-rag-query-shortcuts",
-                )
-        else:
-            for widget in recovery_widgets:
-                await widget.remove()
+        await self._refresh_library_rag_query_status_widgets(panel_state)
 
         scope_container = self.query_one("#library-rag-source-scope", Vertical)
-        scope_container.set_class(bool(panel_state.scope.recovery_copy), "has-recovery")
+        scope_container.set_class(
+            library_rag_scope_shows_recovery(panel_state.scope), "has-recovery"
+        )
         self.query_one("#library-rag-scope-summary", Static).update(
             self._library_rag_scope_summary(panel_state)
         )
-        for widget_id, copy in self._library_rag_scope_rows(panel_state).items():
-            self.query_one(f"#{widget_id}", Static).update(copy)
         scope_recovery_widgets = list(self.query("#library-rag-scope-recovery"))
         import_buttons = list(self.query("#library-rag-open-import-export"))
-        if panel_state.scope.recovery_copy:
-            if scope_recovery_widgets:
-                scope_recovery_widgets[0].update(panel_state.scope.recovery_copy)
-            else:
-                await scope_container.mount(
-                    Static(
-                        panel_state.scope.recovery_copy,
-                        id="library-rag-scope-recovery",
-                    )
-                )
-            if not import_buttons:
-                await scope_container.mount(
-                    Button(
-                        "Open Import/Export",
-                        id="library-rag-open-import-export",
-                        classes="library-rag-recovery-action",
-                        tooltip="Open Library Import/Export to add sources.",
-                    )
-                )
-        else:
-            for widget in (*scope_recovery_widgets, *import_buttons):
-                await widget.remove()
+        for widget in (*scope_recovery_widgets, *import_buttons):
+            await widget.remove()
+        for child in library_rag_scope_recovery_children(panel_state):
+            await scope_container.mount(child)
 
         self._refresh_library_rag_inspector(panel_state)
         await self._refresh_library_rag_results_widgets(panel_state)
-        await self._refresh_library_rag_history_widget(panel_state)
+        await self._refresh_library_rag_history_widget(
+            panel_state,
+            force_collapsed=panel_state.history_collapsed if force_history_collapse else None,
+        )
+
+    async def _refresh_library_rag_query_status_widgets(
+        self,
+        panel_state: LibraryRagPanelState,
+    ) -> None:
+        """Sync the Run button and the query region's conditional status block.
+
+        The quiet line / callout+recovery block is torn down and rebuilt
+        from `library_rag_query_status_children` on every call -- it is at
+        most two `Static` widgets, so a full rebuild is cheap and (unlike
+        hand-written incremental mount/update/remove logic) can never drift
+        from what `compose()` renders on a fresh mount.
+        """
+        query_controls = self.query_one("#library-rag-query-controls", Vertical)
+        query_controls.set_class(
+            library_rag_query_shows_full_recovery(panel_state.query_state), "has-recovery"
+        )
+
+        run_action = panel_state.query_state.run_action
+        run_button = self.query_one("#library-rag-run-query", Button)
+        run_button.label = run_action.label
+        run_button.disabled = not run_action.enabled
+        run_button.tooltip = run_action.tooltip
+
+        for widget_id in (
+            "library-rag-query-quiet-line",
+            "library-rag-query-blocked-callout",
+            "library-rag-query-recovery",
+        ):
+            for widget in list(self.query(f"#{widget_id}")):
+                await widget.remove()
+        anchor = "#library-rag-query-input"
+        for child in library_rag_query_status_children(panel_state):
+            await query_controls.mount(child, after=anchor)
+            anchor = f"#{child.id}"
 
     async def _refresh_library_rag_history_widget(
         self,
         panel_state: LibraryRagPanelState,
+        *,
+        force_collapsed: bool | None = None,
     ) -> None:
         """Rebuild the `Recent searches` collapsible content from state.
 
@@ -7702,6 +7748,12 @@ class LibraryScreen(BaseAppScreen):
         from overlapping calls raises `DuplicateIds`. The lock serializes
         those calls so one full rebuild always finishes before the next
         starts.
+
+        `force_collapsed` (D1) is `None` for every caller except the
+        results-arrival transition in `_apply_library_rag_search_outcome`:
+        `None` leaves the live widget's `collapsed` reactive exactly as the
+        user left it (a manual expand/collapse must survive query edits,
+        evidence selection, and scope toggles); a `bool` overwrites it.
         """
         async with self._library_rag_history_refresh_lock:
             history_widgets = list(self.query("#library-rag-history"))
@@ -7710,8 +7762,20 @@ class LibraryScreen(BaseAppScreen):
             collapsible = history_widgets[0]
             if not isinstance(collapsible, Collapsible):
                 return
-            collapsible.collapsed = bool(panel_state.results)
-            contents = collapsible.query_one(Collapsible.Contents)
+            if force_collapsed is not None:
+                collapsible.collapsed = force_collapsed
+            try:
+                contents = collapsible.query_one(Collapsible.Contents)
+            except (NoMatches, QueryError):
+                # Defensive, mirroring the two guards above: an "exclusive"
+                # search worker can be cancelled mid-refresh by a newer one
+                # (e.g. re-running a history entry while a prior query is
+                # still settling), which can catch this specific
+                # `Collapsible` instance between un/remounting its own
+                # `Contents` child. The next refresh (there is always one --
+                # every query/scope/selection change triggers one) picks up
+                # the settled state; there is nothing to safely rebuild here.
+                return
             for child in list(contents.children):
                 await child.remove()
             for row in library_rag_history_children(panel_state):
@@ -7732,108 +7796,23 @@ class LibraryScreen(BaseAppScreen):
         self,
         panel_state: LibraryRagPanelState,
     ) -> None:
+        """Rebuild the Evidence region body from `library_rag_results_body_children`.
+
+        Shared with `LibrarySearchRagPanel.compose()` (C1): both build rows,
+        the searching line, recovery copy, and the empty state from the
+        same function, closing the compose-vs-refresh duplication that
+        previously let the two paths drift apart.
+        """
         results_container = self.query_one("#library-rag-results", Vertical)
-        self.query_one("#library-rag-attribution-placeholder", Static).update(
-            self._library_rag_attribution_placeholder(panel_state)
+        self.query_one("#library-rag-results-heading", Static).update(
+            f"Evidence · top {panel_state.query_state.top_k} per source"
         )
         for child in list(results_container.children):
             if child.id in LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS:
                 continue
             await child.remove()
-
-        if panel_state.results:
-            for index, result in enumerate(panel_state.results):
-                score = "" if result.score is None else f" | score {result.score:.3f}"
-                selected = result.result_id == panel_state.selected_result_id
-                await results_container.mount(
-                    Static(
-                        f"{index + 1}. {result.title}{score}",
-                        id=f"library-rag-result-{index}",
-                        classes=(
-                            "library-rag-result-row is-selected"
-                            if selected
-                            else "library-rag-result-row"
-                        ),
-                    )
-                )
-                await results_container.mount(
-                    Button(
-                        "Selected evidence" if selected else "Select evidence",
-                        id=f"library-rag-select-result-{index}",
-                        classes="library-rag-result-action",
-                        tooltip="Select this evidence result for Console handoff.",
-                    )
-                )
-                if result.can_open:
-                    await results_container.mount(
-                        Button(
-                            "Open",
-                            id=f"library-rag-open-result-{index}",
-                            classes="library-rag-result-open",
-                            tooltip="Open this result's source in its Library editor/viewer.",
-                        )
-                    )
-                await results_container.mount(
-                    Static(
-                        result.row_badge_label,
-                        id=f"library-rag-result-badges-{index}",
-                        classes="library-rag-result-badges",
-                    )
-                )
-                await results_container.mount(
-                    Static(
-                        result.snippet,
-                        id=f"library-rag-result-snippet-{index}",
-                    )
-                )
-                if result.citation_labels:
-                    await results_container.mount(
-                        Static(
-                            f"Citations: {', '.join(result.citation_labels)}",
-                            id=f"library-rag-result-citations-{index}",
-                        )
-                    )
-                if selected:
-                    await results_container.mount(
-                        Button(
-                            panel_state.use_in_console_action.label,
-                            id="library-rag-use-selected-in-console",
-                            classes=(
-                                "library-rag-console-action "
-                                "library-rag-center-console-action"
-                            ),
-                            disabled=not panel_state.use_in_console_action.enabled,
-                            tooltip=panel_state.use_in_console_action.tooltip,
-                        )
-                    )
-        elif panel_state.retrieval_status == "searching":
-            await results_container.mount(
-                Static(
-                    searching_status_line(panel_state.scope.selected_source_types),
-                    id="library-rag-searching-line",
-                )
-            )
-        elif panel_state.recovery_copy and panel_state.recovery_selector:
-            await results_container.mount(
-                Static(
-                    panel_state.recovery_copy,
-                    id=panel_state.recovery_selector,
-                )
-            )
-        else:
-            await results_container.mount(
-                Static(
-                    "No evidence yet. Run Search/RAG to populate results.",
-                    id="library-rag-results-empty",
-                )
-            )
-            await results_container.mount(
-                Static(
-                    "Add or import sources, run a query, then select evidence for Console.",
-                    id="library-rag-evidence-empty-guidance",
-                    classes="library-rag-empty-guidance",
-                )
-            )
+        for child in library_rag_results_body_children(panel_state):
+            await results_container.mount(child)
 
     @staticmethod
     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
@@ -7843,71 +7822,6 @@ class LibraryScreen(BaseAppScreen):
             f" | Notes {counts.get('notes', 0)}"
             f" | Media {counts.get('media', 0)}"
             f" | Conversations {counts.get('conversations', 0)}"
-        )
-
-    @staticmethod
-    def _library_rag_scope_rows(panel_state: LibraryRagPanelState) -> dict[str, str]:
-        counts = {option.source_type: option.count for option in panel_state.scope.options}
-        total = panel_state.scope.total_count
-        selected = len(panel_state.scope.selected_source_types)
-        return {
-            "library-rag-scope-row-all": (
-                f"All Library          | {total} sources    | Browse/search     | Add source"
-            ),
-            "library-rag-scope-row-workspace": (
-                f"Workspace eligible   | {selected} scopes     | Stage after pick  | Select evidence"
-            ),
-            "library-rag-scope-row-notes": (
-                f"Notes                | {counts.get('notes', 0)} sources    | Retrieval-ready   | Run query"
-            ),
-            "library-rag-scope-row-media": (
-                f"Media                | {counts.get('media', 0)} sources    | Retrieval-ready   | Run query"
-            ),
-            "library-rag-scope-row-conversations": (
-                "Conversations        | "
-                f"{counts.get('conversations', 0)} sources    | Retrieval-ready   | Run query"
-            ),
-            "library-rag-scope-row-collections": (
-                "Collections          | "
-                f"{counts.get('collections', 0)} records    | Read/review WIP   | Open collection"
-            ),
-            "library-rag-scope-row-import-export": (
-                "Import/Export recovery | add sources | Source intake      | Import source"
-            ),
-        }
-
-    @staticmethod
-    def _library_rag_query_blocked_summary(panel_state: LibraryRagPanelState) -> str:
-        reason = panel_state.query_state.run_action.disabled_reason
-        if not reason:
-            return "Ready: run Search/RAG over selected Library sources."
-        return f"Blocked: {reason[:1].lower()}{reason[1:]}"
-
-    @staticmethod
-    def _library_rag_query_blocked_callout(panel_state: LibraryRagPanelState) -> str:
-        reason = panel_state.query_state.run_action.disabled_reason
-        if not reason:
-            return "Ready | Run retrieval over selected Library sources."
-        if reason == "Enter a question or search query.":
-            reason = "Enter a question before running retrieval."
-        elif reason == "Select at least one Library source.":
-            reason = "Select at least one Library source before running retrieval."
-        return f"Blocked | {reason}"
-
-    @staticmethod
-    def _library_rag_run_disabled_reason(panel_state: LibraryRagPanelState) -> str:
-        reason = panel_state.query_state.run_action.disabled_reason
-        if not reason:
-            return "Run ready: selected Library sources are queryable."
-        return f"Run disabled: {reason[:1].lower()}{reason[1:]}"
-
-    @staticmethod
-    def _library_rag_attribution_placeholder(panel_state: LibraryRagPanelState) -> str:
-        if panel_state.selected_result is None:
-            return "Citation/snippet carry-through: reserved for selected evidence."
-        return (
-            "Citation/snippet carry-through placeholder: selected evidence preserves "
-            "source, chunk, snippet, and citations."
         )
 
     @on(Button.Pressed, "#library-open-notes")

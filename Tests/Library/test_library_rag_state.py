@@ -92,6 +92,32 @@ def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
     assert ready_query.run_action.enabled is True
 
 
+def test_query_state_blocked_is_empty_query_and_no_scope_properties() -> None:
+    """A1: `blocked_is_empty_query`/`blocked_is_no_scope` key the Search
+    canvas's single quiet line, distinct from real-failure blockers (which
+    keep the full callout + recovery-copy presentation).
+    """
+    empty_query = LibraryRagQueryState.from_values(query="")
+    assert empty_query.blocked_is_empty_query is True
+    assert empty_query.blocked_is_no_scope is False
+
+    no_scope = LibraryRagQueryState.from_values(query="find it", has_source_scope=False)
+    assert no_scope.blocked_is_empty_query is False
+    assert no_scope.blocked_is_no_scope is True
+
+    unsafe_query = LibraryRagQueryState.from_values(query="<script>alert(1)</script>")
+    assert unsafe_query.blocked_is_empty_query is False
+    assert unsafe_query.blocked_is_no_scope is False
+
+    missing_index = LibraryRagQueryState.from_values(query="find it", index_ready=False)
+    assert missing_index.blocked_is_empty_query is False
+    assert missing_index.blocked_is_no_scope is False
+
+    ready = LibraryRagQueryState.from_values(query="find it")
+    assert ready.blocked_is_empty_query is False
+    assert ready.blocked_is_no_scope is False
+
+
 def test_query_state_validates_and_sanitizes_external_values() -> None:
     unsafe_query = LibraryRagQueryState.from_values(
         query="<script>alert('x')</script>",
@@ -243,6 +269,34 @@ def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> N
 
     assert searching.retrieval_status == "searching"
     assert searching.next_action == "Wait for retrieval results."
+    # C2: the run action itself carries the in-flight state.
+    assert searching.query_state.run_action.label == "Searching…"
+    assert searching.query_state.run_action.enabled is False
+
+
+def test_panel_state_searching_status_overrides_run_action_only_when_reached() -> None:
+    """C2: "searching" only overrides an otherwise-open run gate -- a query
+    that's ALSO blocked (e.g. no source scope) keeps its real blocked label,
+    since the gate ladder never reaches the searching branch for it.
+    """
+    searching_ready = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Find policy evidence",
+        retrieval_status="searching",
+    )
+    assert searching_ready.retrieval_status == "searching"
+    assert searching_ready.query_state.run_action.label == "Searching…"
+    assert searching_ready.query_state.run_action.enabled is False
+    assert searching_ready.query_state.run_action.widget_id == "library-rag-run-query"
+
+    searching_blocked = LibraryRagPanelState.from_values(
+        source_counts={"notes": 0},
+        query="Find policy evidence",
+        retrieval_status="searching",
+    )
+    assert searching_blocked.retrieval_status == "blocked"
+    assert searching_blocked.query_state.run_action.label == "Run Search/RAG"
+    assert searching_blocked.query_state.run_action.enabled is False
 
 
 def test_panel_state_defaults_stable_selectors_for_recovery_paths() -> None:
@@ -353,3 +407,13 @@ class TestPanelStateHistory:
 
     def test_history_defaults_empty(self):
         assert LibraryRagPanelState.from_values().history == ()
+
+    def test_history_collapsed_defaults_false_and_passes_through(self):
+        """D1: `history_collapsed` is a plain passthrough -- the caller (the
+        screen) owns when it changes; the pure layer just carries it.
+        """
+        assert LibraryRagPanelState.from_values().history_collapsed is False
+        assert (
+            LibraryRagPanelState.from_values(history_collapsed=True).history_collapsed
+            is True
+        )

@@ -140,7 +140,14 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
     (``LibrarySearchRagInspectorPanel``, never mounted by the new canvas) and
     has no successor here; that Console-handoff decision is now covered by
     the in-panel per-result "Use in Console" button (see the sibling
-    selected-evidence test below)."""
+    selected-evidence test below).
+
+    Re-anchored for the L3a UX wave (A1/A3/A4/B1/B2/B3): the idle canvas is
+    now one quiet line instead of the ~9-line redundant blocked dump, ASCII
+    section rules and the pipe-drawn scope table are gone in favor of
+    Console-parity headings and real per-source toggles, and the carry-
+    through jargon line (B3) is retired.
+    """
     app = _build_test_app()
     _seed_library_content(app)
     host = DestinationHarness(app, "library")
@@ -153,46 +160,57 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
 
         visible = _visible_text(screen)
 
-        assert "Retrieval Query" in visible
-        assert screen.query_one("#library-rag-query-section-rule", Static)
+        # A1: exactly one quiet line for the empty-query gate; no callout,
+        # no summary Static, no "Run disabled:" reason, no recovery dump.
         assert screen.query_one("#library-rag-query-input")
         assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        assert "Blocked: enter a question or search query." in visible
-        assert screen.query_one("#library-rag-query-blocked-callout", Static)
-        assert "Blocked | Enter a question before running retrieval." in visible
-        assert screen.query_one("#library-rag-run-disabled-reason", Static)
-        assert "Run disabled: enter a question or search query." in visible
+        assert screen.query_one("#library-rag-query-quiet-line", Static)
+        assert "Enter a question or search query." in visible
+        assert not screen.query("#library-rag-query-blocked-callout")
+        assert not screen.query("#library-rag-query-recovery")
+        assert not screen.query("#library-rag-run-disabled-reason")
+        assert "Blocked: enter a question or search query." not in visible
+        assert "Blocked | Enter a question before running retrieval." not in visible
+        assert "Run disabled: enter a question or search query." not in visible
 
-        assert "Scope Controls" in visible
-        assert screen.query_one("#library-rag-scope-section-rule", Static)
-        scope_header = str(screen.query_one("#library-rag-scope-table-header", Static).renderable)
-        assert "Scope" in scope_header
-        assert "Count" in scope_header
-        assert "Eligibility" in scope_header
-        assert "Next action" in scope_header
-        for selector in (
-            "#library-rag-scope-row-all",
-            "#library-rag-scope-row-workspace",
-            "#library-rag-scope-row-notes",
-            "#library-rag-scope-row-media",
-            "#library-rag-scope-row-conversations",
-            "#library-rag-scope-row-collections",
-            "#library-rag-scope-row-import-export",
-        ):
-            assert screen.query_one(selector, Static)
+        # A4: the retired-workbench shortcuts line is gone.
+        assert not screen.query("#library-rag-query-shortcuts")
+        assert "Tab: move panes" not in visible
 
-        assert "All Library" in visible
-        assert "Browse/search" in visible
-        assert "Add source" in visible
-        assert "Workspace eligible" in visible
-        assert "Collections" in visible
-        assert "Import/Export recovery" in visible
-        assert screen.query_one("#library-rag-results-section-rule", Static)
-        assert "Evidence Results" in visible
+        # B1: Console-parity section headers, no ASCII rules or duplicated
+        # plain sub-headers.
+        assert not screen.query(".library-rag-section-rule")
+        assert "Retrieval Query" not in visible
+        assert "Scope Controls" not in visible
+        assert "Evidence Results" not in visible
+        assert screen.query_one("#library-rag-scope-heading", Static)
+        assert "Sources" in visible
+
+        # B2: real per-source toggles replace the pipe-drawn scope table;
+        # workspaces/collections/import-export rows are gone.
+        assert not screen.query("#library-rag-scope-table-header")
+        for source_type in ("notes", "media", "conversations"):
+            toggle = screen.query_one(f"#library-rag-scope-toggle-{source_type}", Button)
+            assert str(toggle.label).startswith("✓")
+            assert toggle.disabled is False
+        assert not screen.query("#library-rag-scope-row-all")
+        assert not screen.query("#library-rag-scope-row-workspace")
+        assert not screen.query("#library-rag-scope-row-collections")
+        assert not screen.query("#library-rag-scope-row-import-export")
+        assert "Workspace eligible" not in visible
+        assert "Import/Export recovery" not in visible
+
+        # A3: top-k surfaces on the Evidence heading, the single mode
+        # surface is the toggle button, not a separate status line.
+        assert "Evidence · top 5 per source" in visible
+        assert not screen.query("#library-rag-query-status")
         assert "No evidence yet. Run Search/RAG to populate results." in visible
         assert screen.query_one("#library-rag-evidence-empty-guidance", Static)
         assert "Add or import sources, run a query, then select evidence for Console." in visible
-        assert "Citation/snippet carry-through: reserved for selected evidence." in visible
+
+        # B3: the carry-through jargon line is retired outright.
+        assert not screen.query("#library-rag-attribution-placeholder")
+        assert "Citation/snippet carry-through" not in visible
         assert "tldw_server" not in visible
 
 
@@ -243,10 +261,10 @@ async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_co
         # selection, evidence, and Console eligibility directly.
         assert screen.query_one("#library-rag-result-0").has_class("is-selected")
         assert str(screen.query_one("#library-rag-select-result-0", Button).label) == "Selected evidence"
-        assert (
-            "Citation/snippet carry-through placeholder: selected evidence preserves "
-            "source, chunk, snippet, and citations."
-        ) in visible
+        # B3: the carry-through jargon line is retired outright -- selecting
+        # evidence needs no permanent caption.
+        assert not screen.query("#library-rag-attribution-placeholder")
+        assert "Citation/snippet carry-through" not in visible
         assert "Useful answer evidence from the selected note." in visible
         assert "Citations: Research Note #7" in visible
         assert screen.query_one("#library-rag-use-selected-in-console", Button).disabled is False

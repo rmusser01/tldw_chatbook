@@ -215,7 +215,11 @@ def _conversation_row(item: Mapping[str, Any]) -> dict[str, Any]:
         "chunk_id": "",
         "title": item.get("title") or "",
         "snippet": f"Matched conversation · {message_count} messages",
-        "score": _coerce_score(item.get("relevance_score")),
+        # C1: keyword-mode rows show no score, uniformly with notes/media --
+        # `relevance_score`/`best_rank` are an FTS ranking artifact, not a
+        # retrieval similarity score, so surfacing it here was misleading.
+        # RAG-mode rows (see `_semantic_row`) keep their real scores.
+        "score": None,
         "provenance": {"source_type": "conversation"},
     }
 
