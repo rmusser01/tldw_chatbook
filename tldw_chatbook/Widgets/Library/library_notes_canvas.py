@@ -14,6 +14,12 @@ from tldw_chatbook.Library.library_notes_state import (
     LibraryNotesListState,
     build_library_note_template_rows,
 )
+from tldw_chatbook.Library.library_notes_sync_state import (
+    LibraryNotesSyncState,
+    auto_sync_label,
+    sync_conflict_label,
+    sync_direction_label,
+)
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
 
@@ -31,9 +37,12 @@ class LibraryNotesCanvas(Vertical):
         mode: ``"list"`` renders the notes list; ``"editor"`` renders the
             in-canvas note editor for ``editor_state``; ``"create"`` renders
             the Blank note / template picker reached from the rail's
-            Create > New note row.
+            Create > New note row; ``"sync"`` renders the in-canvas notes
+            sync panel for ``sync_state``.
         editor_state: The note to render in editor mode. Required when
             ``mode == "editor"``.
+        sync_state: The sync panel's display state. Required when
+            ``mode == "sync"``.
         preview: When ``True`` (editor mode only), renders ``editor_state``'s
             content as read-only ``Markdown`` in place of the editable
             ``TextArea`` -- the screen is responsible for threading the
@@ -64,6 +73,7 @@ class LibraryNotesCanvas(Vertical):
         preview: bool = False,
         conflict: bool = False,
         confirming_delete: bool = False,
+        sync_state: LibraryNotesSyncState | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -75,6 +85,7 @@ class LibraryNotesCanvas(Vertical):
         self.preview = preview
         self.conflict = conflict
         self.confirming_delete = confirming_delete
+        self.sync_state = sync_state
         self.styles.width = "1fr"
         self.styles.min_width = 40
 
@@ -84,6 +95,9 @@ class LibraryNotesCanvas(Vertical):
             return
         if self.mode == "create":
             yield from self._compose_create()
+            return
+        if self.mode == "sync":
+            yield from self._compose_sync()
             return
         yield from self._compose_list()
 
@@ -101,6 +115,18 @@ class LibraryNotesCanvas(Vertical):
         yield Button(
             f"sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')} ▸",
             id="library-notes-sort", classes="library-canvas-action", compact=True,
+        )
+        # A separate toolbar row (stacked, not a Horizontal) under the sort
+        # button -- mixing a 1fr sibling with fixed-width action buttons in
+        # a Horizontal is the known non-rendering failure mode for this
+        # canvas, so every row here is bare, full-width-flowing Buttons.
+        yield Button(
+            "Sync", id="library-notes-sync-open",
+            classes="library-canvas-action", compact=True,
+        )
+        yield Button(
+            "Import note", id="library-notes-import",
+            classes="library-canvas-action", compact=True,
         )
         if list_state.status_copy:
             yield Static(list_state.status_copy, id="library-notes-status", markup=False)
@@ -312,3 +338,90 @@ class LibraryNotesCanvas(Vertical):
             )
             button.template_key = row.template_key
             yield button
+
+    def _compose_sync(self) -> ComposeResult:
+        """Render the notes sync panel: folder, direction, conflicts, activity.
+
+        Every control here is a plain, stacked, full-width Button/Input/
+        Static -- the render-safe shape already proven by list/editor/create
+        mode in this canvas. Notably absent: ``Select`` (the standalone
+        ``NotesSyncPane``'s Direction/Conflict dropdowns) and ``Switch``
+        (its auto-sync toggle) -- neither renders reliably in this canvas,
+        so both become cycling/toggle Buttons instead, matching the
+        pattern the media type filter and notes sort control already use.
+        """
+        sync_state = self.sync_state
+        if sync_state is None:
+            return
+        yield Button(
+            "‹ Back to notes",
+            id="library-notes-sync-back",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        yield Static(
+            "Notes sync",
+            id="library-notes-sync-header",
+            classes="destination-section",
+            markup=False,
+        )
+        yield Static(
+            "Mirror notes between a folder on disk and the Library.",
+            id="library-notes-sync-purpose",
+            markup=False,
+        )
+        yield Static("folder", id="library-notes-sync-folder-label", markup=False)
+        yield Input(
+            value=sync_state.folder,
+            placeholder="Folder to sync…",
+            id="library-notes-sync-folder",
+        )
+        yield Button(
+            "Browse…",
+            id="library-notes-sync-browse",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        yield Button(
+            f"direction: {sync_direction_label(sync_state.direction)} ▸",
+            id="library-notes-sync-direction",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        yield Button(
+            f"conflicts: {sync_conflict_label(sync_state.conflict)} ▸",
+            id="library-notes-sync-conflict",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        yield Button(
+            auto_sync_label(sync_state.auto_sync),
+            id="library-notes-sync-auto",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        yield Button(
+            "Syncing…" if sync_state.running else "Sync now",
+            id="library-notes-sync-run",
+            classes="library-canvas-action",
+            compact=True,
+            disabled=sync_state.running,
+        )
+        # ``sync_status_line``'s own tested contract is that a failed status
+        # always starts with the literal prefix "failed" -- safe to key the
+        # error styling off that prefix here.
+        yield Static(
+            sync_state.status_line,
+            id="library-notes-sync-status",
+            classes=(
+                "library-notes-sync-status-failed"
+                if sync_state.status_line.startswith("failed")
+                else ""
+            ),
+            markup=False,
+        )
+        yield Static(
+            "\n".join(sync_state.activity_lines),
+            id="library-notes-sync-activity",
+            markup=False,
+        )

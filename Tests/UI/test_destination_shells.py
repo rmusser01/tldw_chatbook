@@ -124,6 +124,7 @@ class StaticLibraryNotesScopeService:
     def __init__(self, notes):
         self.notes = tuple(notes)
         self.calls = []
+        self.count_calls = []
         self.search_calls = []
         self.detail_calls = []
         self.save_calls = []
@@ -133,6 +134,12 @@ class StaticLibraryNotesScopeService:
     async def list_notes(self, **kwargs):
         self.calls.append(kwargs)
         return {"items": list(self.notes), "pagination": {"total": len(self.notes)}}
+
+    async def count_notes(self, *, scope, user_id=None, **kwargs):
+        """Mirror ``NotesScopeService.count_notes``'s local-scope signature
+        and return value (an ``int``, not an envelope)."""
+        self.count_calls.append({"scope": scope, "user_id": user_id, **kwargs})
+        return len(self.notes)
 
     async def search_notes(self, *, scope, query, limit=None, user_id=None, offset=0, **kwargs):
         """Case-insensitive title/content substring search, matching the

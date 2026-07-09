@@ -196,15 +196,14 @@ class EventDispatcher:
         """
         # Import here to avoid circular imports
         from tldw_chatbook.Constants import (
-            TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH,
+            TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH,
             TAB_LLM, TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_EVALS
         )
-        
+
         # Map tabs to their window IDs
         window_id_map = {
             TAB_CHAT: "chat-window",
             TAB_CCP: "conversations_characters_prompts-window",
-            TAB_NOTES: "notes-window",
             TAB_MEDIA: "media-window",
             TAB_SEARCH: "search-window",
             TAB_LLM: "llm-window",

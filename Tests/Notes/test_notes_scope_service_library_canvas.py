@@ -273,6 +273,32 @@ async def test_delete_with_stale_version_raises_conflict_and_does_not_remove(
 
 
 @pytest.mark.asyncio
+async def test_count_notes_excludes_soft_deleted_notes(notes_scope_service):
+    """``count_notes`` gives the Library rail badge an exact total instead
+    of the "showing up to N" sample-cap suffix ``list_notes`` alone allows
+    for (the real local backend's ``list_notes`` returns a bare list with
+    no total -- see ``NotesInteropService.list_notes``). Soft-deleted notes
+    (``CharactersRAGDB.soft_delete_note``, ``deleted = 1``) must not be
+    counted, exactly like they're excluded from ``list_notes``/
+    ``get_note_detail`` above.
+    """
+    note_ids = [
+        await notes_scope_service.save_note(
+            scope="local_note", title=f"Note {index}", content=f"body {index}", user_id=USER_ID,
+        )
+        for index in range(3)
+    ]
+
+    deleted = await notes_scope_service.delete_note(
+        scope="local_note", note_id=note_ids[0], version=1, user_id=USER_ID,
+    )
+    assert deleted is True
+
+    count = await notes_scope_service.count_notes(scope="local_note", user_id=USER_ID)
+    assert count == 2
+
+
+@pytest.mark.asyncio
 async def test_create_with_keywords_returns_dict_and_persists_keywords(
     notes_scope_service,
 ):

@@ -724,6 +724,44 @@ class NotesScopeService:
             return await self.server_service.list_server_notes(limit=limit, offset=offset)
         raise ValueError("Workspace notes require a selected workspace context.")
 
+    async def count_notes(
+        self,
+        *,
+        scope: ScopeType | str,
+        user_id: Optional[str] = None,
+    ) -> int:
+        """Count all non-deleted notes in the given scope.
+
+        Args:
+            scope: The note scope to count in; only ``ScopeType.LOCAL_NOTE``
+                is supported (see Raises).
+            user_id: The local user whose database to count in. Required
+                for the local scope.
+
+        Returns:
+            The exact number of non-deleted local notes.
+
+        Raises:
+            ValueError: For server/workspace scopes (no count-only backend
+                seam exists; see the inline comment) or a missing
+                ``user_id``.
+        """
+        normalized_scope = self._normalize_scope(scope)
+        self._enforce_policy(self._note_action_id(normalized_scope, "list"))
+        if normalized_scope == ScopeType.LOCAL_NOTE:
+            return self.local_notes_service.count_notes(self._require_user_id(user_id))
+        # Neither the server nor workspace note backends expose a dedicated
+        # count-only seam today: ``server_service.list_server_notes`` only
+        # surfaces a total as a side effect of fetching a page of notes
+        # (see ``server_notes_workspace_service.list_server_notes``), which
+        # would mean issuing a full paginated fetch just to read a number.
+        # Rather than inventing that behavior, mirror the existing
+        # unsupported-combination contract (e.g. ``list_notes``'s workspace
+        # branch above) and make the gap explicit.
+        raise ValueError(
+            "Server and workspace note counts are not supported; use list_notes for a scoped total."
+        )
+
     async def list_workspaces(self) -> Any:
         self._enforce_policy(self._workspace_action_id("list"))
         return await self.server_service.list_workspaces()

@@ -15,6 +15,7 @@ class FakeLocalNotes:
         self.link_calls = []
         self.unlink_calls = []
         self.add_keyword_calls = []
+        self.count_calls = []
         self.keyword_rows = {
             "existing": {"id": 1, "keyword": "existing"},
             "stale": {"id": 2, "keyword": "stale"},
@@ -88,6 +89,10 @@ class FakeLocalNotes:
             {"id": "local-1", "title": "Local", "content": "Body", "version": 1},
             {"id": "local-2", "title": "Related", "content": "More", "version": 1},
         ][offset : offset + limit]
+
+    def count_notes(self, user_id):
+        self.count_calls.append({"user_id": user_id})
+        return 2
 
     def get_keywords_for_note(self, user_id, note_id):
         return list(self.note_keywords.get(note_id, []))
@@ -1086,3 +1091,34 @@ def test_notes_scope_service_routes_workspace_note_sync_mirror_report_to_sync_sc
     assert sync_scope.calls[0]["domain"] == "workspace_notes"
     assert sync_scope.calls[0]["entity_type"] == "workspace_note"
     assert sync_scope.calls[0]["workspace_scope"] == "workspace-1"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_note_count_to_local_service():
+    local = FakeLocalNotes()
+    scope_service = NotesScopeService(
+        local_notes_service=local,
+        server_service=FakeServerNotes(),
+    )
+
+    result = await scope_service.count_notes(scope=ScopeType.LOCAL_NOTE, user_id="user-1")
+
+    assert result == 2
+    assert local.count_calls == [{"user_id": "user-1"}]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_count_notes_rejects_server_and_workspace_scopes():
+    server = FakeServerNotes()
+    scope_service = NotesScopeService(
+        local_notes_service=FakeLocalNotes(),
+        server_service=server,
+    )
+
+    with pytest.raises(ValueError, match="not supported"):
+        await scope_service.count_notes(scope=ScopeType.SERVER_NOTE)
+    with pytest.raises(ValueError, match="not supported"):
+        await scope_service.count_notes(scope=ScopeType.WORKSPACE)
+
+    # Neither unsupported scope should have reached the server backend.
+    assert not hasattr(server, "count_calls") or server.count_calls == []

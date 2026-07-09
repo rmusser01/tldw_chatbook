@@ -208,3 +208,22 @@ def test_build_note_template_rows_drops_secondary_when_it_repeats_label():
 
     assert rows[0].label == "Todo list"
     assert rows[0].resolved_title == ""
+
+
+def test_build_note_template_rows_project_and_research_resolve_dateful_titles():
+    """L2b.2 task-4 rider: ``project``/``research`` used to end in a
+    dangling separator ("Project: ", "Research Notes - "), which rendered
+    as an empty/awkward secondary line. Both now carry a real ``{date}``
+    placeholder like every other non-blank template, so their resolved
+    title is a real secondary rather than a blank or truncated one."""
+    from tldw_chatbook.Library.library_notes_state import build_library_note_template_rows
+
+    templates = {
+        "project": {"title": "Project Plan - {date}", "description": "Project planning template"},
+        "research": {"title": "Research Notes - {date}", "description": "Research notes template"},
+    }
+    rows = build_library_note_template_rows(templates, now=datetime(2026, 7, 8, 9, 30))
+    rows_by_key = {row.template_key: row for row in rows}
+
+    assert rows_by_key["project"].resolved_title == "Project Plan - 2026-07-08"
+    assert rows_by_key["research"].resolved_title == "Research Notes - 2026-07-08"

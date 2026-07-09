@@ -38,10 +38,11 @@ try:
     )
     from tldw_chatbook.Constants import (
         ALL_TABS,
-        TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, 
-        TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS, 
+        TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH,
+        TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS,
         TAB_STATS, TAB_EVALS, TAB_CODING, TAB_STTS, TAB_MCP,
-        TAB_SETTINGS, TAB_STUDY, TAB_WATCHLISTS_COLLECTIONS, get_tab_display_label
+        TAB_SETTINGS, TAB_STUDY, TAB_WATCHLISTS_COLLECTIONS, TAB_LIBRARY,
+        LIBRARY_NAV_CONTEXT_NOTES_CREATE, get_tab_display_label
     )
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     IMPORTS_AVAILABLE = True
@@ -69,7 +70,6 @@ except ImportError as e:
     # Constants
     TAB_CHAT = "chat"
     TAB_CCP = "conversations_characters_prompts"
-    TAB_NOTES = "notes"
     TAB_MEDIA = "media"
     TAB_SEARCH = "search"
     TAB_INGEST = "ingest"
@@ -84,8 +84,10 @@ except ImportError as e:
     TAB_SETTINGS = "settings"
     TAB_STUDY = "study"
     TAB_WATCHLISTS_COLLECTIONS = "watchlists_collections"
+    TAB_LIBRARY = "library"
+    LIBRARY_NAV_CONTEXT_NOTES_CREATE = "notes_create"
     ALL_TABS = [
-        TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH,
+        TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH,
         TAB_INGEST, TAB_EVALS, TAB_LLM, TAB_STTS,
         TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_CODING, TAB_STATS,
     ]
@@ -358,11 +360,11 @@ class TestTabNavigationProvider:
     
     def test_switch_tab_success(self, tab_provider):
         """Test successful tab switching."""
-        tab_provider.switch_tab(TAB_NOTES)
-        
+        tab_provider.switch_tab(TAB_MEDIA)
+
         tab_provider.app.post_message.assert_called_once()
         message = tab_provider.app.post_message.call_args.args[0]
-        assert message.screen_name == TabNavigationProvider.route_for_tab(TAB_NOTES)
+        assert message.screen_name == TabNavigationProvider.route_for_tab(TAB_MEDIA)
         tab_provider.app.notify.assert_called_once()
         assert "Switched to" in tab_provider.app.notify.call_args.args[0]
     
@@ -381,6 +383,7 @@ class TestTabNavigationProvider:
     
     def test_all_command_palette_tabs_are_navigable(self, tab_provider):
         """Test that all command palette tabs can be routed."""
+        assert "notes" not in TabNavigationProvider.command_palette_tab_ids()
         for tab_id in TabNavigationProvider.command_palette_tab_ids():
             tab_provider.app.post_message.reset_mock()
             tab_provider.app.notify.reset_mock()
@@ -389,7 +392,7 @@ class TestTabNavigationProvider:
             assert message.screen_name == TabNavigationProvider.route_for_tab(tab_id)
 
     @pytest.mark.parametrize("tab_id", [
-        TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH,
+        TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH,
         TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS,
         TAB_STATS, TAB_EVALS, TAB_CODING
     ])
@@ -461,11 +464,17 @@ class TestQuickActionsProvider:
         assert "Console" in call_args[0]
     
     def test_execute_new_note_action(self, quick_actions_provider):
-        """Test new note action execution."""
+        """Test new note action execution.
+
+        Notes is retired as a standalone tab: "new note" now re-points into
+        Library with a notes_create navigation context that lands on the
+        in-canvas Create > New note view.
+        """
         quick_actions_provider.execute_quick_action("new_note")
 
         message = quick_actions_provider.app.post_message.call_args.args[0]
-        assert message.screen_name == TAB_NOTES
+        assert message.screen_name == TAB_LIBRARY
+        assert message.screen_context == {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True}
         quick_actions_provider.app.notify.assert_called_once()
     
     def test_execute_action_failure(self, quick_actions_provider):

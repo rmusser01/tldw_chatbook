@@ -21,11 +21,13 @@ from textual.timer import Timer
 from textual.widgets import Button, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
-from ...config import save_setting_to_cli_config
+from ...config import get_cli_setting, save_setting_to_cli_config
 from ...Constants import (
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
     LIBRARY_NAV_CONTEXT_MODE,
+    LIBRARY_NAV_CONTEXT_NOTE_ID,
+    LIBRARY_NAV_CONTEXT_NOTES_CREATE,
 )
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...Library.library_collections_service import LibraryCollectionsServiceError
@@ -51,6 +53,18 @@ from ...Library.library_notes_state import (
     resolve_note_template_placeholders,
     sort_notes_records,
 )
+from ...Library.library_notes_sync_state import (
+    AUTO_SYNC_INTERVAL_SECONDS,
+    SYNC_CONFLICTS,
+    SYNC_DIRECTIONS,
+    LibraryNotesSyncState,
+    append_activity,
+    count_noun,
+    next_sync_conflict,
+    next_sync_direction,
+    sync_conflict_label,
+    sync_status_line,
+)
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
@@ -66,6 +80,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_CREATE_NOTE,
     LibraryShellInput,
     build_library_shell_state,
 )
@@ -73,7 +88,7 @@ from ...runtime_policy.server_event_scope import event_principal_id_from_active_
 from ...runtime_policy.types import PolicyDeniedError, RuntimeSourceState
 from ...Sync_Interop.sync_promotion_state import build_sync_promotion_state
 from ...Sync_Interop.sync_readiness import DEFAULT_SYNC_ELIGIBILITY_REGISTRY, build_sync_readiness_report
-from ...Third_Party.textual_fspicker import FileSave
+from ...Third_Party.textual_fspicker import FileOpen, FileSave
 from ...Utils.input_validation import sanitize_string, validate_text_input
 from ...Utils.path_validation import validate_path_simple
 from ...Workspaces import LibraryWorkspaceDepthState, build_library_workspace_depth_state
@@ -557,6 +572,25 @@ class LibraryScreen(BaseAppScreen):
         # autosave even though the user never typed anything. Re-armed via
         # ``call_after_refresh`` after every notes-editor (re)compose.
         self._library_note_editor_armed: bool = False
+        # Notes sync panel state. Seeded from config lazily on first entry
+        # into sync mode (``_ensure_library_notes_sync_config_loaded``), not
+        # here in __init__, so tests/screens that never open the sync panel
+        # never pay for a config read.
+        self._library_notes_sync_config_loaded: bool = False
+        self._library_notes_sync_direction: str = "bidirectional"
+        self._library_notes_sync_conflict: str = "newer_wins"
+        self._library_notes_sync_auto: bool = False
+        self._library_notes_sync_status: str = "idle"
+        self._library_notes_sync_activity: tuple[str, ...] = ()
+        self._library_notes_sync_running: bool = False
+        self._library_notes_auto_sync_timer: Timer | None = None
+        # The folder box's live (possibly uncommitted) text. Typing updates
+        # only this field -- persisting to the TOML config on every
+        # Input.Changed meant a full config rewrite + cache reload per
+        # keystroke. It commits to config on Enter, Browse…, or a validated
+        # Sync now run. None = not edited this panel visit; fall back to the
+        # persisted config value.
+        self._library_notes_sync_folder_text: str | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -571,6 +605,19 @@ class LibraryScreen(BaseAppScreen):
             # so the is_mounted-guarded load there never fires. Kick the same
             # snapshot load here once the canvas has actually been composed.
             self.run_worker(self._sync_collections_panel(refresh_snapshot=True))
+        if (
+            self._library_notes_view == "editor"
+            and self._selected_note_id
+            and self._library_note_detail is None
+        ):
+            # Mirrors the collections case above: a note_id deep-link applied
+            # before mount cannot run_worker yet, so the detail fetch is
+            # deferred to here once the canvas has actually been composed.
+            self.run_worker(
+                self._refresh_library_note_detail(self._selected_note_id),
+                exclusive=True,
+                group="library_note_detail",
+            )
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.
@@ -580,10 +627,56 @@ class LibraryScreen(BaseAppScreen):
                 Library mode switches the active mode. A ``conversation_id``
                 selects that conversation when the local source snapshot
                 arrives, defaulting the mode to Conversations when no valid
-                mode is supplied.
+                mode is supplied. A ``notes_create`` flag lands on the
+                in-canvas Create > New note view (the retired Notes tab's
+                "new note" deep link). A ``note_id`` opens that note's
+                in-canvas editor directly (the retired Notes tab's
+                chat-sidebar deep link); ``mode="notes"`` alone (no
+                ``note_id``) lands on the Notes list instead.
         """
         if not isinstance(context, Mapping):
             return
+        if self.is_mounted and self._library_note_dirty:
+            # A cached, already-mounted Library screen can still hold a dirty
+            # note editor: _get_or_create_navigation_screen hands back the same
+            # instance, so a palette "new note"/note_id deep link fired mid-edit
+            # runs this on a live editor. Applying it synchronously would
+            # recompose the canvas out from under the pending debounced
+            # autosave, destroying the #library-note-body it reads and dropping
+            # the last edits. Flush first (awaited, off this sync nav path),
+            # mirroring _select_library_rail_row; an unresolved conflict aborts.
+            self.run_worker(
+                self._apply_navigation_context_after_flush(context),
+                exclusive=True,
+                group="library_nav_context",
+            )
+            return
+        self._apply_navigation_context_state(context)
+
+    async def _apply_navigation_context_after_flush(
+        self, context: Mapping[str, Any]
+    ) -> None:
+        """Flush a dirty note editor, then apply nav context on the UI loop.
+
+        The mounted dirty-editor branch of ``apply_navigation_context`` routes
+        here so the pending save is awaited before the recompose that tears the
+        editor down. An unresolved save conflict aborts the switch, leaving the
+        editor and its conflict banner in place for the user to resolve -- the
+        same guard ``_select_library_rail_row`` applies.
+        """
+        await self._flush_library_note_save()
+        if self._library_note_autosave_state == "conflict":
+            return
+        self._apply_navigation_context_state(context)
+
+    def _apply_navigation_context_state(self, context: Mapping[str, Any]) -> None:
+        """Apply validated navigation context to canvas state and recompose.
+
+        Split from ``apply_navigation_context`` so its mounted dirty-editor
+        path can flush the pending save first (see
+        ``_apply_navigation_context_after_flush``) while the pre-mount and
+        clean-editor paths apply directly.
+        """
         requested_mode = self._safe_text(
             context.get(LIBRARY_NAV_CONTEXT_MODE),
             max_length=64,
@@ -592,6 +685,11 @@ class LibraryScreen(BaseAppScreen):
             context.get(LIBRARY_NAV_CONTEXT_CONVERSATION_ID),
             max_length=200,
         )
+        note_id = self._safe_text(
+            context.get(LIBRARY_NAV_CONTEXT_NOTE_ID),
+            max_length=200,
+        )
+        notes_create = bool(context.get(LIBRARY_NAV_CONTEXT_NOTES_CREATE))
         target_mode = requested_mode if requested_mode in LIBRARY_MODES else ""
         if conversation_id and not target_mode:
             target_mode = LIBRARY_MODE_CONVERSATIONS
@@ -604,6 +702,46 @@ class LibraryScreen(BaseAppScreen):
         if conversation_id:
             self._selected_conversation_id = conversation_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
+        if requested_mode == "notes" and not note_id:
+            # "notes" is a canvas row, not a LIBRARY_MODES entry (see
+            # target_mode above), so it needs its own selection here --
+            # mirrors handle_library_notes_row's list-view entry state.
+            self._active_mode = "notes"
+            self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+        if notes_create:
+            # Mirrors _select_library_rail_row(LIBRARY_ROW_CREATE_NOTE,
+            # "notes-create") -- the create-note rail row's own target_id.
+            # The rail row's flush of a dirty editor is handled upstream by
+            # apply_navigation_context's mounted dirty-editor branch; here we
+            # only apply the mode + selection the recompose reads.
+            self._active_mode = "notes-create"
+            self._library_selected_row_id = LIBRARY_ROW_CREATE_NOTE
+        if note_id:
+            # Forward-compat entry point: the retired Notes tab's chat-sidebar
+            # deep link carried a note id, and this rebuilds the editor for it.
+            # No caller in the tree emits a note_id context today (the surviving
+            # open_notes_workspace route carries none, landing on the list), so
+            # this is exercised only by tests until such a producer is wired --
+            # not orphaned wiring.
+            self._active_mode = "notes"
+            self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+            self._selected_note_id = note_id
+            self._library_notes_view = "editor"
+            self._library_note_detail = None
+            self._library_note_version = None
+            self._library_note_dirty = False
+            self._library_note_autosave_state = "idle"
+            self._library_note_conflict_snapshot = None
+            self._library_note_confirming_delete = False
+            self._library_note_preview = False
+            self._library_note_preview_snapshot = None
+            self._library_note_editor_armed = False
+            if self.is_mounted:
+                self.run_worker(
+                    self._refresh_library_note_detail(note_id),
+                    exclusive=True,
+                    group="library_note_detail",
+                )
         if self.is_mounted:
             if self._active_mode == "collections" and not self._library_collections_loaded:
                 # Deep-link into Collections must load the snapshot the retired
@@ -835,6 +973,35 @@ class LibraryScreen(BaseAppScreen):
             total_known = False
         return records, max(count, 0), total_known
 
+    async def _notes_true_count_or_none(self, count_notes: Any, **kwargs: Any) -> int | None:
+        """Fetch the authoritative local notes total, degrading quietly on failure.
+
+        Runs inside the same ``asyncio.gather`` as the paginated ``list_notes``
+        fetch (see ``_list_local_source_snapshot``). ``list_notes`` on the
+        real local backend returns a plain list with no total, so the rail
+        badge would otherwise always show the "showing up to N" sample-cap
+        suffix. When the seam is missing entirely, the caller never invokes
+        this method (guarded by ``callable(count_notes)``); when it *is*
+        present but raises here, the failure is swallowed and ``None`` is
+        returned so the caller falls back to the paginated response's own
+        record count instead of surfacing an error or failing the whole
+        snapshot fetch.
+
+        Args:
+            count_notes: The bound ``count_notes`` callable to invoke.
+            **kwargs: Forwarded to ``count_notes`` (``scope``, ``user_id``).
+
+        Returns:
+            The exact notes count, or ``None`` if the call failed or
+            returned something other than an ``int``.
+        """
+        try:
+            result = await self._run_library_service_call(count_notes, isolate_in_worker=True, **kwargs)
+        except Exception:
+            logger.warning("Failed to fetch exact local notes count; using sample count.", exc_info=True)
+            return None
+        return result if isinstance(result, int) else None
+
     async def _list_local_source_snapshot(
         self,
     ) -> tuple[
@@ -850,6 +1017,9 @@ class LibraryScreen(BaseAppScreen):
         list_notes = getattr(notes_service, "list_notes", None)
         list_media = getattr(media_service, "list_media_items", None)
         list_conversations = getattr(conversation_service, "list_conversations", None)
+        count_notes = getattr(notes_service, "count_notes", None)
+        count_notes_available = callable(count_notes)
+        notes_user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
 
         empty_records: dict[str, tuple[Mapping[str, Any], ...]] = {
             "notes": (),
@@ -861,33 +1031,39 @@ class LibraryScreen(BaseAppScreen):
         if not all(callable(call) for call in (list_notes, list_media, list_conversations)):
             return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_UNAVAILABLE_COPY, None
 
+        gathered_calls = [
+            self._run_library_service_call(
+                list_notes,
+                scope="local_note",
+                limit=LIBRARY_SOURCE_PAGE_SIZES["notes"],
+                offset=0,
+                user_id=notes_user_id,
+                isolate_in_worker=True,
+            ),
+            self._run_library_service_call(
+                list_media,
+                mode="local",
+                page=1,
+                results_per_page=LIBRARY_SOURCE_PAGE_SIZES["media"],
+                include_keywords=False,
+                isolate_in_worker=True,
+            ),
+            self._run_library_service_call(
+                list_conversations,
+                mode="local",
+                limit=LIBRARY_SOURCE_PAGE_SIZES["conversations"],
+                offset=0,
+                isolate_in_worker=True,
+            ),
+        ]
+        if count_notes_available:
+            gathered_calls.append(
+                self._notes_true_count_or_none(count_notes, scope="local_note", user_id=notes_user_id)
+            )
+
         try:
-            notes_result, media_result, conversation_result = await asyncio.wait_for(
-                asyncio.gather(
-                    self._run_library_service_call(
-                        list_notes,
-                        scope="local_note",
-                        limit=LIBRARY_SOURCE_PAGE_SIZES["notes"],
-                        offset=0,
-                        user_id=getattr(self.app_instance, "notes_user_id", None) or "default_user",
-                        isolate_in_worker=True,
-                    ),
-                    self._run_library_service_call(
-                        list_media,
-                        mode="local",
-                        page=1,
-                        results_per_page=LIBRARY_SOURCE_PAGE_SIZES["media"],
-                        include_keywords=False,
-                        isolate_in_worker=True,
-                    ),
-                    self._run_library_service_call(
-                        list_conversations,
-                        mode="local",
-                        limit=LIBRARY_SOURCE_PAGE_SIZES["conversations"],
-                        offset=0,
-                        isolate_in_worker=True,
-                    ),
-                ),
+            gathered_results = await asyncio.wait_for(
+                asyncio.gather(*gathered_calls),
                 timeout=LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS,
             )
         except PolicyDeniedError as exc:
@@ -912,7 +1088,16 @@ class LibraryScreen(BaseAppScreen):
             )
             return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_ERROR_COPY, None
 
+        if count_notes_available:
+            notes_result, media_result, conversation_result, notes_true_count = gathered_results
+        else:
+            notes_result, media_result, conversation_result = gathered_results
+            notes_true_count = None
+
         notes, notes_count, notes_total_known = self._response_records_and_count(notes_result)
+        if notes_true_count is not None:
+            notes_count = notes_true_count
+            notes_total_known = True
         media, media_count, media_total_known = self._response_records_and_count(media_result)
         (
             conversations,
@@ -2804,6 +2989,12 @@ class LibraryScreen(BaseAppScreen):
                             preview=self._library_note_preview,
                             id="library-notes-canvas",
                         )
+                elif shell.canvas_kind == "notes" and self._library_notes_view == "sync":
+                    yield LibraryNotesCanvas(
+                        mode="sync",
+                        sync_state=self._build_library_notes_sync_state(),
+                        id="library-notes-canvas",
+                    )
                 elif shell.canvas_kind == "notes":
                     source_records = (
                         self._library_notes_filter_records
@@ -3171,6 +3362,137 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
 
+    def _reset_library_notes_sync_transient_state(self) -> None:
+        """Clear the sync panel's run-scoped (non-persisted) state.
+
+        Called on rail re-entry into Notes (extends the existing reset) so
+        stale status/activity from a previous visit never reappears; the
+        persisted direction/conflict/auto-sync preferences and the
+        auto-sync timer are left untouched here -- the timer's lifetime is
+        the whole Library screen's, not a single sync-panel visit (see
+        ``handle_library_notes_sync_auto_toggle``).
+        """
+        self._library_notes_sync_status = "idle"
+        self._library_notes_sync_activity = ()
+        self._library_notes_sync_running = False
+        # Typed-but-uncommitted folder text is visit-scoped, like the
+        # status/activity above: re-entering the panel re-reads the
+        # committed config value.
+        self._library_notes_sync_folder_text = None
+
+    def _ensure_library_notes_sync_config_loaded(self) -> None:
+        """Seed sync direction/conflict/auto-sync from config on first entry.
+
+        Idempotent: only reads config once per screen lifetime
+        (``_library_notes_sync_config_loaded`` guards re-entry), so
+        in-session cycling/toggling is never clobbered by a later sync-mode
+        re-entry re-reading stale config.
+
+        A stale persisted conflict value not in ``SYNC_CONFLICTS`` (e.g. an
+        old config still holding ``"ask"``, which this panel no longer
+        offers) coerces to ``"newer_wins"``; likewise an unrecognized
+        direction coerces to ``"bidirectional"``. This guarantees ``"ask"``
+        can neither render nor reach the sync engine from this panel.
+        """
+        if self._library_notes_sync_config_loaded:
+            return
+        self._library_notes_sync_config_loaded = True
+        direction = str(
+            get_cli_setting("notes", "sync_direction", "bidirectional")
+            or "bidirectional"
+        )
+        self._library_notes_sync_direction = (
+            direction if direction in SYNC_DIRECTIONS else "bidirectional"
+        )
+        conflict = str(
+            get_cli_setting("notes", "sync_conflict_resolution", "newer_wins")
+            or "newer_wins"
+        )
+        self._library_notes_sync_conflict = (
+            conflict if conflict in SYNC_CONFLICTS else "newer_wins"
+        )
+        self._library_notes_sync_auto = bool(get_cli_setting("notes", "auto_sync", False))
+        if self._library_notes_sync_auto:
+            self._arm_library_notes_auto_sync_timer()
+
+    def _library_notes_sync_folder(self) -> str:
+        """Return the sync folder as text (unexpanded).
+
+        Prefers the folder box's live typed text (``Input.Changed`` keeps it
+        in screen state without touching disk) so recomposes and Sync now
+        always see what the user sees; falls back to the committed config
+        value when the box hasn't been edited this panel visit.
+        """
+        if self._library_notes_sync_folder_text is not None:
+            return self._library_notes_sync_folder_text
+        return str(get_cli_setting("notes", "sync_directory", "~/Documents/Notes"))
+
+    def _build_library_notes_sync_state(self) -> LibraryNotesSyncState:
+        """Build the sync panel's display state from screen fields."""
+        return LibraryNotesSyncState(
+            folder=self._library_notes_sync_folder(),
+            direction=self._library_notes_sync_direction,
+            conflict=self._library_notes_sync_conflict,
+            auto_sync=self._library_notes_sync_auto,
+            status_line=self._library_notes_sync_status,
+            activity_lines=self._library_notes_sync_activity,
+            running=self._library_notes_sync_running,
+        )
+
+    def _resolve_library_notes_sync_db(self) -> Any:
+        """Resolve the per-user ChaChaNotes DB the sync service writes to.
+
+        Mirrors ``NotesSyncPane.on_mount`` (notes_workbench_panes.py) EXACTLY:
+        prefer the app's ``chachanotes_db``, falling back to the notes
+        service's own ``db`` attribute when that is unset.
+        """
+        notes_service = getattr(self.app_instance, "notes_service", None)
+        return getattr(self.app_instance, "chachanotes_db", None) or getattr(
+            notes_service, "db", None
+        )
+
+    def _arm_library_notes_auto_sync_timer(self) -> None:
+        """Start the 300s auto-sync repeating timer if not already running.
+
+        Scoped to this Library screen instance's lifetime (like the
+        standalone ``NotesSyncPane``'s timer) -- it is never persisted or
+        resumed across screen instances; only the ``auto_sync`` boolean
+        preference is persisted, and is re-armed on the next sync-mode
+        entry via ``_ensure_library_notes_sync_config_loaded``.
+        """
+        if self._library_notes_auto_sync_timer is not None:
+            return
+        self._library_notes_auto_sync_timer = self.set_interval(
+            AUTO_SYNC_INTERVAL_SECONDS,
+            self._library_notes_auto_sync_tick,
+        )
+
+    def _cancel_library_notes_auto_sync_timer(self) -> None:
+        if self._library_notes_auto_sync_timer is not None:
+            self._library_notes_auto_sync_timer.stop()
+            self._library_notes_auto_sync_timer = None
+
+    def _library_notes_auto_sync_tick(self) -> None:
+        """Auto-sync timer callback: skip quietly when busy or misconfigured."""
+        if self._library_notes_sync_running:
+            return
+        folder_value = self._library_notes_sync_folder()
+        if not folder_value:
+            return
+        try:
+            folder = validate_path_simple(
+                Path(folder_value).expanduser(), require_exists=True
+            )
+        except ValueError:
+            return
+        if not folder.is_dir():
+            return
+        self.run_worker(
+            self._run_library_notes_sync(folder),
+            exclusive=True,
+            group="library_notes_sync",
+        )
+
     # ----- Notes editor: save, autosave, conflict policy -----------------
 
     def _mark_library_note_dirty(self) -> None:
@@ -3415,15 +3737,35 @@ class LibraryScreen(BaseAppScreen):
 
         Called at the top of the Back handler, note-row selection, and
         rail-row selection so a dirty edit is never silently discarded by
-        navigating away. Cancels the pending autosave timer first (it
-        would otherwise race this flush) and awaits the save inline so the
-        caller's navigation only proceeds once the seam call has returned.
+        navigating away.
+
+        Cancels the pending autosave timer, then WAITS for any save already
+        running in the ``library_note_save`` worker group (an autosave that
+        fired just before this navigation) before deciding whether an inline
+        save is still needed. Without the wait, this inline flush and the
+        in-flight autosave both call ``save_note`` with the same
+        not-yet-bumped version -- an optimistic-lock conflict that fires
+        against the note's *own* autosave and pops a spurious "changed
+        elsewhere" banner, aborting the navigation. After the in-flight save
+        finishes it has already persisted the text and cleared the dirty
+        flag, so the re-check below usually short-circuits; the inline save
+        only runs when edits genuinely remain, and then against the bumped
+        version.
         """
-        if not self._library_note_dirty:
-            return
         if self._library_notes_autosave_timer is not None:
             self._library_notes_autosave_timer.stop()
             self._library_notes_autosave_timer = None
+        for worker in list(self.workers):
+            if worker.group == "library_note_save" and not worker.is_finished:
+                try:
+                    await worker.wait()
+                except Exception:
+                    logger.debug(
+                        "In-flight note-save worker errored while flushing; continuing.",
+                        exc_info=True,
+                    )
+        if not self._library_note_dirty:
+            return
         await self._save_library_note(explicit=False)
 
     async def _resolve_library_note_conflict(self, *, overwrite: bool) -> None:
@@ -4086,6 +4428,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter = ""
         self._library_notes_filter_records = None
         self._reset_library_note_editor_state()
+        self._reset_library_notes_sync_transient_state()
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -4267,6 +4610,428 @@ class LibraryScreen(BaseAppScreen):
             self.query_one("#library-notes-filter", Input).focus()
         except (NoMatches, QueryError):
             pass
+
+    _LIBRARY_NOTE_IMPORT_TITLE_MAX_CHARS = 300
+
+    @on(Button.Pressed, "#library-notes-import")
+    def handle_library_notes_import(self, event: Button.Pressed) -> None:
+        """Push a ``FileOpen`` dialog to import a local file as a new note.
+
+        Mirrors ``notes_screen.handle_import_button``'s dialog flow exactly
+        (the working ``FileOpen`` reference -- unlike ``FileSave``, whose
+        constructor only accepts ``location``/``title``/``default_file``,
+        ``FileOpen`` here is invoked the same simple ``title=``-only way the
+        standalone screen already relies on). The callback resolves the
+        chosen path (or ``None`` on cancel) through
+        ``_import_library_note_from_path``, which validates, reads, parses,
+        and hands off to the existing ``_create_library_note`` seam -- so a
+        successful import lands in the editor with the snapshot/count
+        refresh that seam already performs.
+
+        Args:
+            event: Button press event emitted by the "Import note" action.
+        """
+        event.stop()
+
+        async def import_callback(selected_path: Path | None) -> None:
+            await self._import_library_note_from_path(selected_path)
+
+        self.app.push_screen(
+            FileOpen(title="Import Note (TXT, MD, JSON, YAML)"),
+            import_callback,
+        )
+
+    async def _import_library_note_from_path(self, selected_path: Path | None) -> None:
+        """Validate, read, and parse a chosen file, then create a note from it.
+
+        Cancelling the dialog (``selected_path is None``) is a silent no-op.
+        Every other failure mode -- a path ``validate_path_simple`` rejects,
+        a file that cannot be read/decoded, or one larger than
+        ``LIBRARY_NOTE_CONTENT_MAX_CHARS`` -- is a quiet warning notice with
+        no note created, matching every other Library note failure path in
+        this screen. The file read is offloaded to a thread (mirroring
+        ``notes_screen._import_note_from_path``) and is memory-bounded by a
+        pre-read ``st_size`` guard: UTF-8 chars are at most 4 bytes, so any
+        file over ``4 * LIBRARY_NOTE_CONTENT_MAX_CHARS`` bytes is guaranteed
+        over the char cap and is rejected without reading it at all (no
+        false rejections: a file that passes could still fail the exact
+        char-level check after decoding, which stays in place).
+
+        Args:
+            selected_path: The path chosen via the ``FileOpen`` dialog, or
+                ``None`` if the dialog was cancelled.
+        """
+        if selected_path is None:
+            return
+
+        from tldw_chatbook.Event_Handlers.notes_events import _parse_note_from_file_content
+
+        try:
+            note_path = validate_path_simple(str(selected_path), require_exists=True)
+        except ValueError:
+            logger.warning(f"Rejected Library note import path {selected_path!r}.", exc_info=True)
+            self._notify_library_note_create_warning("Could not import that file.")
+            return
+
+        try:
+            file_size = note_path.stat().st_size
+        except OSError:
+            logger.warning(f"Could not stat Library note import file '{note_path}'.", exc_info=True)
+            self._notify_library_note_create_warning("Could not import that file.")
+            return
+        if file_size > LIBRARY_NOTE_CONTENT_MAX_CHARS * 4:
+            # See docstring: st_size > 4x the char cap proves the decoded
+            # text exceeds the cap (UTF-8 is <= 4 bytes/char), so reject
+            # BEFORE reading -- the char check below would otherwise slurp
+            # an arbitrarily large file into memory first.
+            self._notify_library_note_create_warning("Could not import that file.")
+            return
+
+        try:
+            file_content = await asyncio.to_thread(
+                note_path.read_text, encoding="utf-8", errors="strict"
+            )
+        except (OSError, UnicodeDecodeError):
+            logger.warning(f"Could not read Library note import file '{note_path}'.", exc_info=True)
+            self._notify_library_note_create_warning("Could not import that file.")
+            return
+
+        if len(file_content) > LIBRARY_NOTE_CONTENT_MAX_CHARS:
+            self._notify_library_note_create_warning("Could not import that file.")
+            return
+
+        title, content = _parse_note_from_file_content(note_path, file_content)
+        title = sanitize_string(title or "", max_length=self._LIBRARY_NOTE_IMPORT_TITLE_MAX_CHARS)
+        if not title:
+            title = note_path.stem or "Imported note"
+        content = (content or "").replace("\x00", "")
+
+        await self._create_library_note(title=title, content=content)
+
+    # ----- Notes sync panel ------------------------------------------------
+
+    @on(Button.Pressed, "#library-notes-sync-open")
+    async def handle_library_notes_sync_open(self, event: Button.Pressed) -> None:
+        """Enter the in-canvas notes sync panel from the notes list header.
+
+        Flushes any pending editor save first (mirrors every other exit
+        from the notes list/editor) and seeds direction/conflict/auto-sync
+        from config on first entry only.
+
+        Args:
+            event: Button press event emitted by the "Sync" action.
+        """
+        event.stop()
+        await self._flush_library_note_save()
+        if self._library_note_autosave_state == "conflict":
+            return
+        self._ensure_library_notes_sync_config_loaded()
+        self._library_notes_view = "sync"
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-sync-back")
+    async def handle_library_notes_sync_back(self, event: Button.Pressed) -> None:
+        """Return the Library notes canvas from the sync panel to its list view.
+
+        Args:
+            event: Button press event emitted by the "‹ Back to notes" action.
+        """
+        event.stop()
+        await self._flush_library_note_save()
+        self._library_notes_view = "list"
+        self._reset_library_notes_sync_transient_state()
+        self.refresh(recompose=True)
+
+    @on(Input.Changed, "#library-notes-sync-folder")
+    def handle_library_notes_sync_folder_changed(self, event: Input.Changed) -> None:
+        """Track the sync folder text as the user edits it (state only).
+
+        Deliberately does NOT persist: writing the TOML config here meant a
+        full config rewrite + cache reload per keystroke. The typed value is
+        committed by ``handle_library_notes_sync_folder_submitted`` (Enter),
+        ``_apply_library_notes_sync_folder`` (Browse…), or a validated
+        ``handle_library_notes_sync_run``.
+
+        Args:
+            event: Input change event emitted by the sync folder box.
+        """
+        event.stop()
+        self._library_notes_sync_folder_text = event.value
+
+    @on(Input.Submitted, "#library-notes-sync-folder")
+    def handle_library_notes_sync_folder_submitted(self, event: Input.Submitted) -> None:
+        """Commit the typed sync folder to config on Enter.
+
+        Args:
+            event: Input submit event emitted by the sync folder box.
+        """
+        event.stop()
+        self._library_notes_sync_folder_text = event.value
+        save_setting_to_cli_config("notes", "sync_directory", event.value)
+
+    @on(Button.Pressed, "#library-notes-sync-browse")
+    async def handle_library_notes_sync_browse(self, event: Button.Pressed) -> None:
+        """Open a directory picker and adopt the chosen folder.
+
+        Args:
+            event: Button press event emitted by the "Browse…" action.
+        """
+        event.stop()
+        from ...Third_Party.textual_fspicker import SelectDirectory
+
+        current = Path(self._library_notes_sync_folder()).expanduser()
+        if not current.exists():
+            current = Path.home()
+        await self.app.push_screen(
+            SelectDirectory(str(current), title="Select Notes Sync Folder"),
+            callback=self._apply_library_notes_sync_folder,
+        )
+
+    def _apply_library_notes_sync_folder(self, path: Path | None) -> None:
+        """Persist and render the folder chosen via ``SelectDirectory``."""
+        if not path:
+            return
+        self._library_notes_sync_folder_text = str(path)
+        save_setting_to_cli_config("notes", "sync_directory", str(path))
+        if self._library_notes_view == "sync":
+            self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-sync-direction")
+    def handle_library_notes_sync_direction(self, event: Button.Pressed) -> None:
+        """Cycle the sync direction and persist the new value.
+
+        Args:
+            event: Button press event emitted by the direction cycler.
+        """
+        event.stop()
+        self._library_notes_sync_direction = next_sync_direction(
+            self._library_notes_sync_direction
+        )
+        save_setting_to_cli_config(
+            "notes", "sync_direction", self._library_notes_sync_direction
+        )
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-sync-conflict")
+    def handle_library_notes_sync_conflict(self, event: Button.Pressed) -> None:
+        """Cycle the conflict-resolution mode and persist the new value.
+
+        Args:
+            event: Button press event emitted by the conflict cycler.
+        """
+        event.stop()
+        self._library_notes_sync_conflict = next_sync_conflict(
+            self._library_notes_sync_conflict
+        )
+        save_setting_to_cli_config(
+            "notes", "sync_conflict_resolution", self._library_notes_sync_conflict
+        )
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-sync-auto")
+    def handle_library_notes_sync_auto_toggle(self, event: Button.Pressed) -> None:
+        """Toggle auto-sync, persist it, and arm/cancel the repeating timer.
+
+        The timer is scoped to this Library screen instance's lifetime --
+        the same scope the standalone ``NotesSyncPane``'s timer had -- not
+        persisted/resumed across screen instances; only the boolean
+        preference persists, and is re-armed the next time sync mode is
+        entered (``_ensure_library_notes_sync_config_loaded``).
+
+        Args:
+            event: Button press event emitted by the auto-sync toggle.
+        """
+        event.stop()
+        self._library_notes_sync_auto = not self._library_notes_sync_auto
+        save_setting_to_cli_config("notes", "auto_sync", self._library_notes_sync_auto)
+        if self._library_notes_sync_auto:
+            self._arm_library_notes_auto_sync_timer()
+        else:
+            self._cancel_library_notes_auto_sync_timer()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-notes-sync-run")
+    def handle_library_notes_sync_run(self, event: Button.Pressed) -> None:
+        """Validate the folder and kick off a sync run as an exclusive worker.
+
+        Args:
+            event: Button press event emitted by the "Sync now" action.
+        """
+        event.stop()
+        if self._library_notes_sync_running:
+            return
+        folder_value = self._library_notes_sync_folder()
+        if not folder_value:
+            self._notify_library_notes_sync_warning("Please select a folder to sync.")
+            return
+        try:
+            folder = validate_path_simple(
+                Path(folder_value).expanduser(), require_exists=True
+            )
+        except ValueError:
+            self._notify_library_notes_sync_warning(
+                "That sync folder does not exist."
+            )
+            return
+        if not folder.is_dir():
+            self._notify_library_notes_sync_warning(
+                "Selected path is a file; choose a folder to sync."
+            )
+            return
+        # A validated run is a commit point for a typed-but-unsubmitted
+        # folder (see handle_library_notes_sync_folder_changed): the folder
+        # a run actually used is always the one that persists.
+        save_setting_to_cli_config("notes", "sync_directory", folder_value)
+        self.run_worker(
+            self._run_library_notes_sync(folder),
+            exclusive=True,
+            group="library_notes_sync",
+        )
+
+    def _notify_library_notes_sync_warning(self, message: str) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    async def _run_library_notes_sync(self, folder: Path) -> None:
+        """Run one notes sync pass against ``folder`` and report the outcome.
+
+        Builds a fresh ``NotesSyncService`` per run (mirroring
+        ``NotesSyncPane.on_mount`` -- see ``_resolve_library_notes_sync_db``)
+        and calls ``sync_folder`` offloaded onto a worker thread via
+        ``_run_library_service_call(..., isolate_in_worker=True)``, since
+        the sync engine walks the filesystem and touches the DB
+        synchronously in places.
+
+        The engine's ``progress_callback`` fires from that worker thread
+        (a plain function call, not a coroutine -- see
+        ``NotesSyncEngine``), so it is never called directly here; it is
+        marshaled onto the UI thread via ``self.app.call_from_thread``
+        (Textual's own running-App property -- the same object as
+        ``self.app_instance`` in production, but the one that actually
+        matters for ``call_from_thread``'s event-loop lookup) and only
+        ever performs targeted ``query_one(...).update(...)`` calls,
+        guarded against the user having navigated away mid-run. Only the
+        start and the final outcome trigger a recompose (also
+        freshness-guarded).
+        """
+        from ...Notes.sync_engine import ConflictResolution, SyncDirection
+        from ...Notes.sync_service import NotesSyncService
+
+        notes_service = getattr(self.app_instance, "notes_service", None)
+        db = self._resolve_library_notes_sync_db()
+        if notes_service is None or db is None:
+            self._notify_library_notes_sync_warning(
+                "Sync service is unavailable in this runtime."
+            )
+            return
+
+        try:
+            direction = SyncDirection(self._library_notes_sync_direction)
+        except ValueError:
+            direction = SyncDirection.BIDIRECTIONAL
+        try:
+            resolution = ConflictResolution(self._library_notes_sync_conflict)
+        except ValueError:
+            resolution = ConflictResolution.NEWER_WINS
+
+        self._library_notes_sync_running = True
+        self._library_notes_sync_status = sync_status_line("syncing", processed=0, total=0)
+        self._library_notes_sync_activity = append_activity(
+            self._library_notes_sync_activity, f"Starting sync: {folder.name}"
+        )
+        self.refresh(recompose=True)
+
+        def progress_callback(sync_progress: Any) -> None:
+            def apply() -> None:
+                if self._library_notes_view != "sync" or not self.is_mounted:
+                    return
+                total = getattr(sync_progress, "total_files", 0)
+                processed = getattr(sync_progress, "processed_files", 0)
+                self._library_notes_sync_status = sync_status_line(
+                    "syncing", processed=processed, total=total
+                )
+                try:
+                    self.query_one("#library-notes-sync-status", Static).update(
+                        self._library_notes_sync_status
+                    )
+                except (NoMatches, QueryError):
+                    pass
+
+            # ``self.app`` (Textual's own running-App property), not
+            # ``self.app_instance`` -- in production the two are the same
+            # object (``screen_class(self)`` in app.py), but
+            # ``call_from_thread`` needs the App whose event loop is
+            # actually running this screen, which is what ``self.app``
+            # always resolves to even where a test harness's ``app_instance``
+            # is a separate, non-running object.
+            try:
+                self.app.call_from_thread(apply)
+            except RuntimeError:
+                # The app already finished shutting down mid-sync (or this
+                # is being invoked outside a running app entirely) --
+                # a missed progress tick must never surface as a sync
+                # error for an otherwise-successful file.
+                pass
+
+        try:
+            service = NotesSyncService(notes_service=notes_service, db=db)
+            _session_id, results = await self._run_library_service_call(
+                service.sync_folder,
+                root_folder=folder,
+                user_id=self._library_notes_user_id(),
+                direction=direction,
+                conflict_resolution=resolution,
+                progress_callback=progress_callback,
+                isolate_in_worker=True,
+            )
+            changes = len(results.created_notes) + len(results.updated_notes) + (
+                len(results.created_files) + len(results.updated_files)
+            )
+            conflicts = len(results.conflicts)
+            # The done line counts CHANGES the run made, not files scanned
+            # (a no-op run over N files is "done · no changes", never
+            # "done · 0 files" -- the PR reviewer's misleading-count flag).
+            self._library_notes_sync_status = sync_status_line(
+                "done", processed=changes, conflicts=conflicts
+            )
+            summary_parts = []
+            if results.created_notes:
+                summary_parts.append(f"{count_noun(len(results.created_notes), 'note')} created")
+            if results.updated_notes:
+                summary_parts.append(f"{count_noun(len(results.updated_notes), 'note')} updated")
+            if results.created_files:
+                summary_parts.append(f"{count_noun(len(results.created_files), 'file')} created")
+            if results.updated_files:
+                summary_parts.append(f"{count_noun(len(results.updated_files), 'file')} updated")
+            summary = ", ".join(summary_parts) if summary_parts else "No changes"
+            self._library_notes_sync_activity = append_activity(
+                self._library_notes_sync_activity, f"Sync complete: {summary}"
+            )
+            if conflicts:
+                # Honest-copy fix: this used to promise a "review" surface
+                # that doesn't exist in this panel. State the resolved
+                # policy instead -- what actually happened to the conflict.
+                self._library_notes_sync_activity = append_activity(
+                    self._library_notes_sync_activity,
+                    f"{count_noun(conflicts, 'conflict')} resolved "
+                    f"({sync_conflict_label(resolution.value)})",
+                )
+            if results.errors:
+                self._library_notes_sync_activity = append_activity(
+                    self._library_notes_sync_activity,
+                    f"{count_noun(len(results.errors), 'error')} during sync",
+                )
+        except Exception as exc:
+            logger.error(f"Library notes sync failed (folder={folder}): {exc}", exc_info=True)
+            self._library_notes_sync_status = sync_status_line("failed", error=str(exc))
+            self._library_notes_sync_activity = append_activity(
+                self._library_notes_sync_activity, f"Sync failed: {exc}"
+            )
+        finally:
+            self._library_notes_sync_running = False
+            if self._library_notes_view == "sync" and self.is_mounted:
+                self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-notes-row")
     async def handle_library_notes_row(self, event: Button.Pressed) -> None:
@@ -6620,8 +7385,20 @@ class LibraryScreen(BaseAppScreen):
         )
 
     @on(Button.Pressed, "#library-open-notes")
-    def open_notes(self) -> None:
-        self.post_message(NavigateToScreen("notes"))
+    async def open_notes(self, event: Button.Pressed) -> None:
+        """Switch to the Notes canvas in-place.
+
+        Part of the retired 3-pane workbench chrome (see
+        ``_legacy_workbench_present``): ``#library-open-notes`` is no
+        longer composed by the current rail + canvas shell, so this
+        handler is unreachable in practice, mirroring ``open_media``/
+        ``open_conversations``. Kept in sync with the shell's native
+        (non-route) mode-switch pattern regardless, since the standalone
+        Notes screen this used to hand off to via
+        ``NavigateToScreen("notes")`` has been retired.
+        """
+        event.stop()
+        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES, "notes")
 
     @on(Button.Pressed, "#library-open-media")
     def open_media(self) -> None:

@@ -11,6 +11,7 @@ LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
 LIBRARY_ROW_BROWSE_MEDIA = "browse-media"
 LIBRARY_ROW_BROWSE_NOTES = "browse-notes"
+LIBRARY_ROW_CREATE_NOTE = "create-note"
 
 
 @dataclass(frozen=True)
@@ -130,7 +131,7 @@ def build_library_shell_state(
 
     create_rows = (
         LibraryRailRow(
-            row_id="create-note",
+            row_id=LIBRARY_ROW_CREATE_NOTE,
             section_id="create",
             title="New note",
             target_kind="canvas",
