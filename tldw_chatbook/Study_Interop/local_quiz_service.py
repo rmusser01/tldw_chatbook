@@ -66,6 +66,9 @@ class LocalQuizService:
         normalized_q = str(q or "").strip() or None
         return self._require_db().list_quizzes(q=normalized_q, limit=limit, offset=offset)
 
+    def count_quizzes(self) -> int:
+        return int(self._require_db().count_quizzes())
+
     def get_quiz(self, quiz_id: str) -> Any:
         return self._require_db().get_quiz(quiz_id)
 

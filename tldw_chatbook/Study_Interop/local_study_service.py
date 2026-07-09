@@ -71,6 +71,12 @@ class LocalStudyService:
     def list_decks(self, *, limit: int = 100, offset: int = 0) -> Any:
         return self._require_db().list_decks(limit=limit, offset=offset)
 
+    def count_decks(self) -> int:
+        return int(self._require_db().count_decks())
+
+    def count_due_flashcards(self) -> int:
+        return int(self._require_db().count_due_flashcards())
+
     def get_deck(self, deck_id: str) -> Any:
         return self._require_db().get_deck(deck_id)
 

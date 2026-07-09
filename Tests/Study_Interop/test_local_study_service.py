@@ -25,6 +25,14 @@ class FakeDB:
         self.calls.append(("list_decks", limit, offset))
         return [{"id": "deck-local-1", "name": "Biology", "description": "Cell review"}]
 
+    def count_decks(self):
+        self.calls.append(("count_decks",))
+        return 3
+
+    def count_due_flashcards(self):
+        self.calls.append(("count_due_flashcards",))
+        return 5
+
     def create_deck(self, name, description=None):
         self.calls.append(("create_deck", name, description))
         return "deck-local-1"
@@ -224,6 +232,18 @@ def test_local_study_service_lists_and_creates_decks():
         ("create_deck", "Biology", "Cell review"),
         ("get_deck", "deck-local-1"),
     ]
+
+
+def test_local_study_service_counts_decks_and_due_flashcards():
+    db = FakeDB()
+    service = LocalStudyService(db=db)
+
+    deck_count = service.count_decks()
+    due_count = service.count_due_flashcards()
+
+    assert deck_count == 3
+    assert due_count == 5
+    assert db.calls == [("count_decks",), ("count_due_flashcards",)]
 
 
 def test_local_study_service_updates_decks_and_refetches_record():

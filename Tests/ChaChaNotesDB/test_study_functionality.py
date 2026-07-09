@@ -645,6 +645,44 @@ class TestQuizOperations:
         assert [row["id"] for row in token_results] == [biology_card]
 
 
+class TestCountSeams:
+    """Tests for the exact COUNT(*) seams the Library rail badges consume."""
+
+    def test_counts_start_at_zero(self, db_instance):
+        assert db_instance.count_decks() == 0
+        assert db_instance.count_due_flashcards() == 0
+        assert db_instance.count_quizzes() == 0
+
+    def test_count_due_flashcards_and_count_decks_track_active_records_and_soft_delete(self, db_instance):
+        deck_id = db_instance.create_deck("Biology")
+        db_instance.create_flashcard(create_flashcard_data(deck_id, "Q1", "A1"))
+        db_instance.create_flashcard(create_flashcard_data(deck_id, "Q2", "A2"))
+        suspended_card_id = db_instance.create_flashcard(create_flashcard_data(deck_id, "Q3", "A3"))
+
+        with db_instance.transaction() as cursor:
+            cursor.execute(
+                "UPDATE flashcards SET is_suspended = 1 WHERE id = ?",
+                (suspended_card_id,),
+            )
+
+        assert db_instance.count_decks() == 1
+        assert db_instance.count_due_flashcards() == 2
+
+        db_instance.delete_deck(deck_id, expected_version=1)
+
+        assert db_instance.count_decks() == 0
+        assert db_instance.count_due_flashcards() == 0
+
+    def test_count_quizzes_tracks_create_and_soft_delete(self, db_instance):
+        quiz_id = db_instance.create_quiz(name="Geography Review")
+
+        assert db_instance.count_quizzes() == 1
+
+        db_instance.delete_quiz(quiz_id)
+
+        assert db_instance.count_quizzes() == 0
+
+
 class TestSpacedRepetition:
     """Tests for the spaced repetition algorithm (SM-2)."""
     
