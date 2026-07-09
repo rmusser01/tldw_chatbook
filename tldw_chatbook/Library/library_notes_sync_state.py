@@ -158,8 +158,11 @@ def sync_status_line(
     Args:
         status: One of ``"idle"``/``"syncing"``/``"done"``/``"failed"``.
             Any other value renders as-is (no suffix).
-        processed: Files processed so far (``"syncing"``/``"done"``).
-        total: Total files to process (``"syncing"``/``"done"``).
+        processed: For ``"syncing"``, files processed so far. For
+            ``"done"``, the number of CHANGES the run made (created +
+            updated notes/files) -- NOT files scanned; a run that scans
+            many files but changes nothing reads ``"done · no changes"``.
+        total: Total files to process (``"syncing"`` only).
         conflicts: Conflicts recorded (``"done"`` only; omitted from the
             line when zero).
         error: The failure reason (``"failed"`` only; omitted from the
@@ -167,13 +170,17 @@ def sync_status_line(
 
     Returns:
         The rendered status line, e.g. ``"syncing · 3/12"``,
-        ``"done · 12 files · 2 conflicts"``, ``"done · 1 file"``,
+        ``"done · 12 changes · 2 conflicts"``, ``"done · no changes"``,
         ``"failed · <reason>"``, ``"failed"``, or ``"idle"``.
     """
     if status == "syncing":
         return f"syncing · {processed}/{total}"
     if status == "done":
-        line = f"done · {count_noun(processed, 'file')}"
+        line = (
+            "done · no changes"
+            if processed == 0
+            else f"done · {count_noun(processed, 'change')}"
+        )
         if conflicts:
             line += f" · {count_noun(conflicts, 'conflict')}"
         return line

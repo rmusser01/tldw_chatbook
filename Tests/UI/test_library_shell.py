@@ -34,6 +34,16 @@ from Tests.UI.test_screen_navigation import _build_test_app
 
 LIBRARY_TEST_SIZE = (170, 48)
 
+# Gated fakes block a real executor thread on a threading.Event until a test
+# releases it. A test that fails (or forgets to release) before that point
+# would leave the thread parked on an unbounded ``Event.wait()`` -- and the
+# asyncio default executor joins its threads at loop/interpreter shutdown, so
+# one un-released gate wedges the WHOLE pytest process at exit with no output
+# (observed: three full-suite runs hung in ``wait_for_thread_shutdown``). A
+# generous bound lets the thread free itself so shutdown always completes;
+# passing tests release within milliseconds, far inside this window.
+_GATED_RELEASE_TIMEOUT_SECONDS = 30.0
+
 
 class LibraryHarness(App):
     """Mount a single LibraryScreen with the real app stylesheet."""
@@ -2392,7 +2402,7 @@ class _GatedSearchLibraryNotesScopeService(StaticLibraryNotesScopeService):
 
     async def search_notes(self, **kwargs):
         self.search_calls.append(kwargs)
-        await asyncio.to_thread(self.release_event.wait)
+        await asyncio.to_thread(self.release_event.wait, _GATED_RELEASE_TIMEOUT_SECONDS)
         return await super().search_notes(
             scope=kwargs.get("scope"),
             query=kwargs.get("query"),
@@ -2682,7 +2692,7 @@ class _DelayedSaveLibraryNotesScopeService(StaticLibraryNotesScopeService):
     async def save_note(self, **kwargs):
         self.save_started.append(str(kwargs.get("note_id") or ""))
         if self.release_event is not None:
-            await asyncio.to_thread(self.release_event.wait)
+            await asyncio.to_thread(self.release_event.wait, _GATED_RELEASE_TIMEOUT_SECONDS)
         else:
             await asyncio.sleep(self.delay)
         return await super().save_note(**kwargs)
@@ -4392,6 +4402,59 @@ async def test_library_shell_import_note_oversize_file_rejected(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+async def test_library_shell_import_note_huge_file_rejected_without_reading(tmp_path, monkeypatch):
+    """A file whose on-disk SIZE already proves it exceeds the char cap
+    (UTF-8 chars are at most 4 bytes, so ``st_size > 4 * cap`` guarantees
+    over-cap) must be rejected before ``read_text`` is ever called -- the
+    char-level check alone would first slurp an arbitrarily large file into
+    memory (the PR reviewer's OOM finding).
+    """
+    import pathlib
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.notify = Mock()
+    host = LibraryHarness(app)
+
+    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTE_CONTENT_MAX_CHARS", 10)
+    note_file = tmp_path / "way_too_big.txt"
+    note_file.write_text("x" * 50, encoding="utf-8")  # 50 bytes > 4 * 10
+
+    read_calls: list[pathlib.Path] = []
+    real_read_text = pathlib.Path.read_text
+
+    def _recording_read_text(self, *args, **kwargs):
+        read_calls.append(self)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "read_text", _recording_read_text)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-import")
+
+        _fake_import_dialog_result(screen, note_file)
+
+        service = app.notes_scope_service
+        screen.query_one("#library-notes-import").press()
+        for _ in range(60):
+            await pilot.pause(0.02)
+
+        assert not any(p.name == "way_too_big.txt" for p in read_calls), (
+            "The oversized file must be rejected by the pre-read size guard, "
+            f"not read into memory first (read_text calls: {read_calls!r})."
+        )
+        assert not service.save_calls, "Huge import must not create a note."
+        assert screen._library_notes_view != "editor"
+        app.notify.assert_called()
+        args, kwargs = app.notify.call_args
+        assert "import" in args[0].lower()
+        assert kwargs.get("severity") == "warning"
+
+
+@pytest.mark.asyncio
 async def test_library_shell_import_note_md_without_title_uses_filename_stem(tmp_path):
     """A ``.md`` file (which never carries a JSON/YAML "title" key in this
     parser's contract) falls back to the filename stem as the note title."""
@@ -4549,7 +4612,7 @@ class _RecordingNotesSyncService:
         # own (see library_screen.py); blocking here on a plain
         # threading.Event (not asyncio.sleep) is what actually holds up
         # that worker thread until the test lets it proceed.
-        await asyncio.to_thread(self.release_event.wait)
+        await asyncio.to_thread(self.release_event.wait, _GATED_RELEASE_TIMEOUT_SECONDS)
         results = _RecordingSyncResults()
         results.created_notes = ["n-new"]
         return ("session-1", results)
@@ -4717,6 +4780,98 @@ async def test_library_shell_notes_sync_auto_toggle_flips_and_persists():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_notes_sync_folder_typing_does_not_write_config(tmp_path):
+    """Typing in the sync folder box must NOT rewrite the config file per
+    keystroke (a full TOML write + cache reload per character -- the PR
+    reviewer's IO-thrash finding). The typed value lives in screen state
+    (surviving the panel's recomposes) and persists only on explicit
+    commit: Enter in the box, or a validated Sync now run.
+    """
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+
+    save_setting_to_cli_config("notes", "sync_directory", "~/Documents/Notes")
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        folder_input = screen.query_one("#library-notes-sync-folder", Input)
+        folder_input.value = str(tmp_path)
+        folder_input.focus()
+        await pilot.pause()
+
+        # Typed but not committed: config untouched...
+        assert get_cli_setting("notes", "sync_directory", None) == "~/Documents/Notes"
+        # ...but the typed value survives a recompose (cycling any setting
+        # rebuilds the canvas) instead of snapping back to the config value.
+        screen.query_one("#library-notes-sync-direction").press()
+        await pilot.pause()
+        folder_input = screen.query_one("#library-notes-sync-folder", Input)
+        assert folder_input.value == str(tmp_path)
+        assert get_cli_setting("notes", "sync_directory", None) == "~/Documents/Notes"
+
+        # Enter commits the typed folder to config.
+        folder_input.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert get_cli_setting("notes", "sync_directory", None) == str(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_sync_run_persists_validated_folder(monkeypatch, tmp_path):
+    """A validated Sync now run commits the (typed-but-unsubmitted) folder to
+    config -- the other explicit commit point besides Enter/Browse -- so the
+    folder a run actually used is always the one that persists.
+    """
+    from tldw_chatbook.Notes import sync_service as sync_service_module
+
+    _RecordingNotesSyncService.instances.clear()
+    monkeypatch.setattr(sync_service_module, "NotesSyncService", _RecordingNotesSyncService)
+
+    app = _build_test_app()
+    _prepare_library_notes_sync_app(app)
+    from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
+
+    save_setting_to_cli_config("notes", "sync_directory", "~/Documents/Notes")
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_notes_sync_panel(screen, pilot)
+
+        folder_input = screen.query_one("#library-notes-sync-folder", Input)
+        folder_input.value = str(tmp_path)
+        folder_input.focus()
+        await pilot.pause()
+        assert get_cli_setting("notes", "sync_directory", None) == "~/Documents/Notes"
+
+        screen.query_one("#library-notes-sync-run").press()
+        for _ in range(150):
+            if _RecordingNotesSyncService.instances and _RecordingNotesSyncService.instances[0].calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Sync-now never reached the recording service.")
+
+        # The run validated the typed folder and committed it to config.
+        assert get_cli_setting("notes", "sync_directory", None) == str(tmp_path)
+
+        # Release the gated fake so the run (and teardown) can finish.
+        service = _RecordingNotesSyncService.instances[0]
+        service.release_event.set()
+        for _ in range(150):
+            if not screen._library_notes_sync_running:
+                break
+            await pilot.pause(0.02)
+
+
+@pytest.mark.asyncio
 async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_enums(
     monkeypatch, tmp_path
 ):
@@ -4758,8 +4913,18 @@ async def test_library_shell_notes_sync_now_calls_recording_service_with_chosen_
         else:
             raise AssertionError("Sync-now never started.")
 
-        # A3: the run handler recomposes at start, so the button must now
-        # read "Syncing…" and be disabled -- no double-triggering a run.
+        # A3: the run handler flips the running flag then recomposes; the
+        # flag is set synchronously at the top of the worker coroutine, so
+        # poll until the start-of-run recompose has landed the disabled
+        # "Syncing…" button (querying the instant the flag flips can race
+        # the mid-recompose teardown -> NoMatches).
+        for _ in range(150):
+            run_buttons = screen.query("#library-notes-sync-run")
+            if run_buttons and run_buttons.first().disabled:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Sync-now never rendered the disabled Syncing… state.")
         run_button_mid_run = screen.query_one("#library-notes-sync-run", Button)
         assert "Syncing…" in str(run_button_mid_run.label)
         assert run_button_mid_run.disabled

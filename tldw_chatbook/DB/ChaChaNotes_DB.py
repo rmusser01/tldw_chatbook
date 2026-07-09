@@ -6658,6 +6658,13 @@ UPDATE db_schema_version
         return self._list_generic_items("notes", "last_modified DESC", limit, offset)
 
     def count_notes(self) -> int:
+        """Count all non-deleted notes.
+
+        Returns:
+            The number of notes with ``deleted = 0`` -- the exact total the
+            Library rail badge displays. Soft-deleted notes are excluded,
+            matching ``list_notes``' visibility.
+        """
         query = "SELECT COUNT(*) AS cnt FROM notes WHERE deleted = 0"
         cursor = self.execute_query(query)
         row = cursor.fetchone()

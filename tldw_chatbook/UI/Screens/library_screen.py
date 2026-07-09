@@ -584,6 +584,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sync_activity: tuple[str, ...] = ()
         self._library_notes_sync_running: bool = False
         self._library_notes_auto_sync_timer: Timer | None = None
+        # The folder box's live (possibly uncommitted) text. Typing updates
+        # only this field -- persisting to the TOML config on every
+        # Input.Changed meant a full config rewrite + cache reload per
+        # keystroke. It commits to config on Enter, Browse…, or a validated
+        # Sync now run. None = not edited this panel visit; fall back to the
+        # persisted config value.
+        self._library_notes_sync_folder_text: str | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -3368,6 +3375,10 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_sync_status = "idle"
         self._library_notes_sync_activity = ()
         self._library_notes_sync_running = False
+        # Typed-but-uncommitted folder text is visit-scoped, like the
+        # status/activity above: re-entering the panel re-reads the
+        # committed config value.
+        self._library_notes_sync_folder_text = None
 
     def _ensure_library_notes_sync_config_loaded(self) -> None:
         """Seed sync direction/conflict/auto-sync from config on first entry.
@@ -3405,7 +3416,15 @@ class LibraryScreen(BaseAppScreen):
             self._arm_library_notes_auto_sync_timer()
 
     def _library_notes_sync_folder(self) -> str:
-        """Return the configured sync folder as text (unexpanded)."""
+        """Return the sync folder as text (unexpanded).
+
+        Prefers the folder box's live typed text (``Input.Changed`` keeps it
+        in screen state without touching disk) so recomposes and Sync now
+        always see what the user sees; falls back to the committed config
+        value when the box hasn't been edited this panel visit.
+        """
+        if self._library_notes_sync_folder_text is not None:
+            return self._library_notes_sync_folder_text
         return str(get_cli_setting("notes", "sync_directory", "~/Documents/Notes"))
 
     def _build_library_notes_sync_state(self) -> LibraryNotesSyncState:
@@ -4631,9 +4650,12 @@ class LibraryScreen(BaseAppScreen):
         ``LIBRARY_NOTE_CONTENT_MAX_CHARS`` -- is a quiet warning notice with
         no note created, matching every other Library note failure path in
         this screen. The file read is offloaded to a thread (mirroring
-        ``notes_screen._import_note_from_path``); it is bounded by the same
-        size cap enforced right after, so it can never block the UI loop on
-        an unbounded read.
+        ``notes_screen._import_note_from_path``) and is memory-bounded by a
+        pre-read ``st_size`` guard: UTF-8 chars are at most 4 bytes, so any
+        file over ``4 * LIBRARY_NOTE_CONTENT_MAX_CHARS`` bytes is guaranteed
+        over the char cap and is rejected without reading it at all (no
+        false rejections: a file that passes could still fail the exact
+        char-level check after decoding, which stays in place).
 
         Args:
             selected_path: The path chosen via the ``FileOpen`` dialog, or
@@ -4648,6 +4670,20 @@ class LibraryScreen(BaseAppScreen):
             note_path = validate_path_simple(str(selected_path), require_exists=True)
         except ValueError:
             logger.warning(f"Rejected Library note import path {selected_path!r}.", exc_info=True)
+            self._notify_library_note_create_warning("Could not import that file.")
+            return
+
+        try:
+            file_size = note_path.stat().st_size
+        except OSError:
+            logger.warning(f"Could not stat Library note import file '{note_path}'.", exc_info=True)
+            self._notify_library_note_create_warning("Could not import that file.")
+            return
+        if file_size > LIBRARY_NOTE_CONTENT_MAX_CHARS * 4:
+            # See docstring: st_size > 4x the char cap proves the decoded
+            # text exceeds the cap (UTF-8 is <= 4 bytes/char), so reject
+            # BEFORE reading -- the char check below would otherwise slurp
+            # an arbitrarily large file into memory first.
             self._notify_library_note_create_warning("Could not import that file.")
             return
 
@@ -4708,12 +4744,29 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Changed, "#library-notes-sync-folder")
     def handle_library_notes_sync_folder_changed(self, event: Input.Changed) -> None:
-        """Persist the sync folder as the user edits it.
+        """Track the sync folder text as the user edits it (state only).
+
+        Deliberately does NOT persist: writing the TOML config here meant a
+        full config rewrite + cache reload per keystroke. The typed value is
+        committed by ``handle_library_notes_sync_folder_submitted`` (Enter),
+        ``_apply_library_notes_sync_folder`` (Browse…), or a validated
+        ``handle_library_notes_sync_run``.
 
         Args:
             event: Input change event emitted by the sync folder box.
         """
         event.stop()
+        self._library_notes_sync_folder_text = event.value
+
+    @on(Input.Submitted, "#library-notes-sync-folder")
+    def handle_library_notes_sync_folder_submitted(self, event: Input.Submitted) -> None:
+        """Commit the typed sync folder to config on Enter.
+
+        Args:
+            event: Input submit event emitted by the sync folder box.
+        """
+        event.stop()
+        self._library_notes_sync_folder_text = event.value
         save_setting_to_cli_config("notes", "sync_directory", event.value)
 
     @on(Button.Pressed, "#library-notes-sync-browse")
@@ -4738,6 +4791,7 @@ class LibraryScreen(BaseAppScreen):
         """Persist and render the folder chosen via ``SelectDirectory``."""
         if not path:
             return
+        self._library_notes_sync_folder_text = str(path)
         save_setting_to_cli_config("notes", "sync_directory", str(path))
         if self._library_notes_view == "sync":
             self.refresh(recompose=True)
@@ -4824,6 +4878,10 @@ class LibraryScreen(BaseAppScreen):
                 "Selected path is a file; choose a folder to sync."
             )
             return
+        # A validated run is a commit point for a typed-but-unsubmitted
+        # folder (see handle_library_notes_sync_folder_changed): the folder
+        # a run actually used is always the one that persists.
+        save_setting_to_cli_config("notes", "sync_directory", folder_value)
         self.run_worker(
             self._run_library_notes_sync(folder),
             exclusive=True,
@@ -4927,12 +4985,15 @@ class LibraryScreen(BaseAppScreen):
                 progress_callback=progress_callback,
                 isolate_in_worker=True,
             )
-            processed = len(results.created_notes) + len(results.updated_notes) + (
+            changes = len(results.created_notes) + len(results.updated_notes) + (
                 len(results.created_files) + len(results.updated_files)
             )
             conflicts = len(results.conflicts)
+            # The done line counts CHANGES the run made, not files scanned
+            # (a no-op run over N files is "done · no changes", never
+            # "done · 0 files" -- the PR reviewer's misleading-count flag).
             self._library_notes_sync_status = sync_status_line(
-                "done", processed=processed, total=processed, conflicts=conflicts
+                "done", processed=changes, conflicts=conflicts
             )
             summary_parts = []
             if results.created_notes:

@@ -730,6 +730,22 @@ class NotesScopeService:
         scope: ScopeType | str,
         user_id: Optional[str] = None,
     ) -> int:
+        """Count all non-deleted notes in the given scope.
+
+        Args:
+            scope: The note scope to count in; only ``ScopeType.LOCAL_NOTE``
+                is supported (see Raises).
+            user_id: The local user whose database to count in. Required
+                for the local scope.
+
+        Returns:
+            The exact number of non-deleted local notes.
+
+        Raises:
+            ValueError: For server/workspace scopes (no count-only backend
+                seam exists; see the inline comment) or a missing
+                ``user_id``.
+        """
         normalized_scope = self._normalize_scope(scope)
         self._enforce_policy(self._note_action_id(normalized_scope, "list"))
         if normalized_scope == ScopeType.LOCAL_NOTE:

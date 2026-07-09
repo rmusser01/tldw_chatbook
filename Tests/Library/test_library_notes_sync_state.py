@@ -99,28 +99,32 @@ def test_sync_status_line_syncing_with_zero_total():
     assert sync_status_line("syncing", processed=0, total=0) == "syncing · 0/0"
 
 
-def test_sync_status_line_done_shows_files_and_conflicts():
+def test_sync_status_line_done_shows_changes_and_conflicts():
     assert sync_status_line("done", processed=12, total=12, conflicts=2) == (
-        "done · 12 files · 2 conflicts"
+        "done · 12 changes · 2 conflicts"
     )
 
 
 def test_sync_status_line_done_with_no_conflicts_omits_conflict_clause():
-    assert sync_status_line("done", processed=12, total=12, conflicts=0) == "done · 12 files"
+    assert sync_status_line("done", processed=12, total=12, conflicts=0) == "done · 12 changes"
 
 
-def test_sync_status_line_done_pluralizes_singular_file():
-    assert sync_status_line("done", processed=1, total=1, conflicts=0) == "done · 1 file"
+def test_sync_status_line_done_pluralizes_singular_change():
+    assert sync_status_line("done", processed=1, total=1, conflicts=0) == "done · 1 change"
 
 
 def test_sync_status_line_done_pluralizes_singular_conflict():
     assert sync_status_line("done", processed=1, total=1, conflicts=1) == (
-        "done · 1 file · 1 conflict"
+        "done · 1 change · 1 conflict"
     )
 
 
-def test_sync_status_line_done_zero_files_pluralizes():
-    assert sync_status_line("done", processed=0, total=0, conflicts=0) == "done · 0 files"
+def test_sync_status_line_done_zero_changes_says_no_changes():
+    # "0 changes" after a run that scanned files but changed nothing read as
+    # "0 files (scanned)" -- the copy the PR bot flagged as misleading. The
+    # done line counts CHANGES (created+updated notes/files), and the
+    # zero case says so in words.
+    assert sync_status_line("done", processed=0, total=0, conflicts=0) == "done · no changes"
 
 
 def test_sync_status_line_failed_shows_reason():

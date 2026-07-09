@@ -1674,12 +1674,17 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     ) -> None:
         """Return to Library's Notes list after leaving it for another screen.
 
-        The standalone Notes tab's per-workspace scope (``workspace_id`` /
-        ``subview``) has no equivalent in Library, which browses notes as a
-        flat list; both parameters are accepted for backward compatibility
-        with existing callers (e.g. Study's "back to workspace" action) but
-        are no longer applied. This always re-opens the shared Library
-        Notes list rather than any specific workspace-scoped view.
+        The standalone Notes tab's per-workspace scope has no equivalent in
+        Library, which browses notes as a flat list -- this always re-opens
+        the shared Library Notes list rather than any workspace-scoped view.
+
+        Args:
+            workspace_id: The retired Notes tab's workspace identifier.
+                Accepted for backward compatibility with existing callers
+                (e.g. Study's "back to workspace" action) but no longer
+                applied.
+            subview: The retired Notes tab's workspace subview. Accepted for
+                backward compatibility; no longer applied.
         """
         self.invalidate_screen_cache()
         self.post_message(NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "notes"}))
