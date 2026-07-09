@@ -1,6 +1,6 @@
 # ADR-013: Library Ingest Ownership and Job Lifecycle
 
-Status: Accepted
+Status: Superseded by ADR-014
 Date: 2026-07-09
 Related Task: N/A (design decision recorded before implementation task selection)
 Supersedes: N/A
@@ -83,6 +83,7 @@ server-authoritative and cannot be weakened by the client.
 
 ## Links
 
+- [Superseding ADR-014: Library Ingest Service Authority and Recovery](014-library-ingest-service-authority-and-recovery.md)
 - [Library Import Media redesign](../../Docs/superpowers/specs/2026-07-09-library-ingest-upload-redesign-design.md)
 - [Library L2b + L3 design](../../Docs/superpowers/specs/2026-07-07-library-l2b-l3-design.md)
 - [ADR-011: Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)

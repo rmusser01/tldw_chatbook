@@ -89,7 +89,8 @@
 > topology, Local/Server capability rules, security boundary, administration
 > ownership, and lifetime semantics in this L3b section are superseded by
 > `Docs/superpowers/specs/2026-07-09-library-ingest-upload-redesign-design.md`
-> and `backlog/decisions/013-library-ingest-ownership-and-job-lifecycle.md`.
+> and `backlog/decisions/014-library-ingest-service-authority-and-recovery.md`
+> (which supersedes ADR-013).
 > The parity bar, real-database smoke requirement, Home integration, and
 > legacy-retirement gates remain binding where the newer design does not refine
 > them.
