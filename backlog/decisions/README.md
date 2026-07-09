@@ -17,6 +17,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-009](009-local-skill-trust-boundary.md) | Accepted | Use a passphrase-rooted authenticated trust boundary with logical quarantine for Chatbook-managed local skills. |
 | [ADR-010](010-console-conversation-local-marks.md) | Accepted | Keep Console conversation stars as durable local-only marks outside conversation metadata, sync, server payloads, and chat metadata mirror reports. |
 | [ADR-011](011-chatbook-workbench-ui-system.md) | Accepted | Adopt a shared Textual-native Workbench UI System with stable composition, explicit state, visible workflow controls, responsiveness gates, and route-owner migration policy. |
+| [ADR-012](012-provider-credential-settings-boundary.md) | Accepted | Keep durable provider credential setup in Settings while Console owns blocked-send recovery and exact navigation into those controls. |
+| [ADR-013](013-library-ingest-ownership-and-job-lifecycle.md) | Accepted | Keep media import Library-owned, coordinate local and server job lifecycles outside the canvas, and move durable ingestion-source administration to Settings. |
 
 ## Historical Decision Material
 
