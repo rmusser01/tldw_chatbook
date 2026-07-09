@@ -304,6 +304,31 @@ async def test_library_shell_flashcards_row_renders_mode_canvas():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_search_row_renders_first_class_canvas():
+    """Browse ▸ Search/RAG is a first-class canvas row now, not a legacy
+    "mode" row: pressing it mounts ``LibrarySearchRagPanel`` directly (no
+    ``_compose_mode_canvas`` indirection), and -- unlike a real mode row
+    (e.g. Flashcards, see the sibling test above) -- the shared mode-title
+    block never renders for it.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+
+        canvas = screen.query_one("#library-canvas")
+        panel = screen.query_one("#library-search-rag-panel")
+        assert canvas in panel.ancestors
+        assert not screen.query("#library-active-mode-title")
+
+
+@pytest.mark.asyncio
 async def test_library_shell_rag_open_import_export_switches_canvas_and_selection():
     app = _build_test_app()
     # Empty sources so the Search/RAG scope recovery button renders.

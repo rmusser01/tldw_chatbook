@@ -3016,6 +3016,19 @@ class LibraryScreen(BaseAppScreen):
                         mode="create",
                         id="library-notes-canvas",
                     )
+                elif shell.canvas_kind == "search":
+                    yield LibrarySearchRagPanel(
+                        self._library_rag_panel_state(),
+                        id="library-search-rag-panel",
+                    )
+                elif shell.canvas_kind == "collections":
+                    yield LibraryCollectionsPanel(
+                        self._library_collections_panel_state(),
+                        name_value=self._library_collection_name_input,
+                        description_value=self._library_collection_description_input,
+                        delete_pending=bool(self._library_collection_pending_delete_id),
+                        id="library-collections-panel",
+                    )
                 elif shell.canvas_kind == "mode":
                     yield from self._compose_mode_canvas(shell.canvas_target)
                 else:
@@ -4304,19 +4317,6 @@ class LibraryScreen(BaseAppScreen):
             )
         if mode in LIBRARY_STUDY_HANDOFF_MODES:
             yield self._study_handoff_detail_widget()
-        elif mode == "search":
-            yield LibrarySearchRagPanel(
-                self._library_rag_panel_state(),
-                id="library-search-rag-panel",
-            )
-        elif mode == "collections":
-            yield LibraryCollectionsPanel(
-                self._library_collections_panel_state(),
-                name_value=self._library_collection_name_input,
-                description_value=self._library_collection_description_input,
-                delete_pending=bool(self._library_collection_pending_delete_id),
-                id="library-collections-panel",
-            )
         elif mode == "import-export":
             for row in self._import_export_workflow_rows():
                 yield row
@@ -7090,7 +7090,7 @@ class LibraryScreen(BaseAppScreen):
             action_label="Review evidence in Console",
         )
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="library_rag_search")
     async def _execute_library_rag_search(self, request: LibraryRagSearchRequest) -> None:
         outcome = await run_library_rag_search(self.app_instance, request)
         await self._apply_library_rag_search_outcome(request, outcome)

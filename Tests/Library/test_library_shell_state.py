@@ -20,8 +20,9 @@ def test_shell_sections_rows_and_targets_are_fixed():
     assert [r.title for r in browse.rows] == [
         "Media", "Conversations", "Notes", "Collections", "Search / RAG"
     ]
-    assert browse.rows[4].target_kind == "mode" and browse.rows[4].target_id == "search"
+    assert browse.rows[4].target_kind == "canvas" and browse.rows[4].target_id == "search"
     assert browse.rows[4].count is None
+    assert browse.rows[3].target_kind == "canvas" and browse.rows[3].target_id == "collections"
     conv = browse.rows[1]
     assert (conv.target_kind, conv.target_id, conv.count) == ("canvas", "conversations", 128)
     media = browse.rows[0]
@@ -68,6 +69,22 @@ def test_media_selection_yields_media_canvas():
 def test_mode_selection_yields_mode_canvas():
     shell = build_library_shell_state(LibraryShellInput(), selected_row_id="create-flashcards")
     assert (shell.canvas_kind, shell.canvas_target) == ("mode", "flashcards")
+
+
+def test_browse_search_selection_yields_search_canvas():
+    # browse-search is a first-class canvas row (not a legacy "mode" row):
+    # its canvas_kind is the target_id itself, matching browse-media/-notes.
+    shell = build_library_shell_state(LibraryShellInput(), selected_row_id="browse-search")
+    assert (shell.canvas_kind, shell.canvas_target) == ("search", "")
+    assert shell.selected_row_id == "browse-search"
+
+
+def test_browse_collections_selection_yields_collections_canvas():
+    shell = build_library_shell_state(
+        LibraryShellInput(collections_count=5), selected_row_id="browse-collections"
+    )
+    assert (shell.canvas_kind, shell.canvas_target) == ("collections", "")
+    assert shell.selected_row_id == "browse-collections"
 
 
 def test_browse_notes_row_targets_notes_canvas():
