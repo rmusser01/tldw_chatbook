@@ -11,6 +11,24 @@ and this project adheres to Some kind of Versioning
 - Initial features pending documentation
 
 
+## [0.1.7.4] - 2026-07-08
+### Changed
+- Master-shell UI/navigation overhaul: the app is organized around primary destinations
+  (Home, Console, Library, Artifacts, Personas, Watchlists, Schedules, Workflows, MCP, ACP,
+  Skills, Settings) instead of a flat tab bar. Legacy tabs remain reachable as routes/aliases.
+### Added
+- Console dual-audience redesign: first-run setup card, keyboard layer (command palette,
+  Ctrl+K session switcher, Alt+M model popover, direct message copy/edit/regenerate), and a
+  collapsible Session / Context / Model / Details rail with auto-titled, recent-first conversations.
+- Home triage surface: Needs Attention / Running / Recent rail + focus canvas with per-item actions.
+- Library local-content hub around (re)view · search · ingest · create, with an in-Library media
+  viewer; Notes absorbed into Library.
+- Personas Console-parity workbench (avatar upload, markdown / character-card import).
+- Notes Sync v2 (P1/P2) conformance work.
+### Removed
+- Standalone Notes tab retired (absorbed into Library); legacy entrypoints retired.
+
+
 ## [0.1.7.3] - 2025-08-7
 ### Fixed 
 - Replaced top tab bar with link bar instead

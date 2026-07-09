@@ -6,7 +6,7 @@ A sophisticated Terminal User Interface (TUI) application built with the Textual
 
 ## Project Status & Recent UI Overhaul
 
-tldw_chatbook is in active development (currently `v0.1.7.3`, pre-1.0). The `dev` branch has landed a major UI/navigation overhaul that reorganizes the app around a **master shell** with a small set of primary destinations instead of a flat tab bar. Older tabs (Chat, Notes, Media, Ingest, Search, Coding, Characters/Prompts, Subscriptions, Chatbooks) remain reachable as routes/aliases during migration, but are no longer separate primary destinations.
+tldw_chatbook is in active development (currently `v0.1.7.4`, pre-1.0). The `dev` branch has landed a major UI/navigation overhaul that reorganizes the app around a **master shell** with a small set of primary destinations instead of a flat tab bar. Older tabs (Chat, Notes, Media, Ingest, Search, Coding, Characters/Prompts, Subscriptions, Chatbooks) remain reachable as routes/aliases during migration, but are no longer separate primary destinations.
 
 **Highlights:**
 
