@@ -46,11 +46,23 @@ Seeded: 4 notes / 4 conversations / 3 media / 3 decks / 7 due flashcards / 2 qui
 4. Multi-result searches rendered only the first row: the search canvas never scrolled (plain `Vertical`), rows past the fold were mounted but clipped — panel is now a `VerticalScroll`; geometry-based pilot added. NOTE: `#library-canvas` (shared ancestor) still does not scroll — follow-up audit for other canvases with unbounded content.
 5. Stale `searching…` on canvas re-entry; search launched past a note-conflict abort; mode-toggle mid-flight mislabeling; one severed test assertion; history rerun not repopulating the input — all fixed (see `.superpowers/sdd/final-review-fixes-report.md`).
 
+### UX wave (user-approved sr UX/HCI review findings, commits 8ea40e3d + 463edb81 + 9f48f1b9)
+
+Findings A1–A4, B1–B3, C1–C2, D1, E1, E3 implemented; C3 (post-submit scroll anchor) and E2
+(Home `Route:` id leak, pre-existing) logged as follow-ups.
+
+| Capture | What it shows |
+|---|---|
+| `l3a-ux-canvas-idle.png` | Rebuilt idle canvas: single quiet gate line, no callout/recovery dump, Console section headers (no ASCII rules), `✓ Notes (4) / ✓ Media (3) / ✓ Conversations (4)` scope toggles, `Evidence · top 5 per source`, history with hint + Clear history. |
+| `l3a-ux-canvas-results.png` | Content-first result rows (title → badges → snippet → actions), **Open** primary + `Select evidence` secondary, uniform keyword metadata (no stray scores). |
+| `l3a-ux-rail-bright-fixed.png` | `Flashcards due: 7` as bold accent text — no selected-look background fill. |
+| `l3a-ux-home-primary.png` | Home due-row canvas with `Review flashcards` as the primary action. |
+
 ### Known observations at the gate (deliberate/pre-existing)
 
-- Legacy copy inside the panel (ASCII `-- Query --` rules, pipe-drawn scope table, `Tab: move panes` hint, Workspace/Import-Export scope rows) predates L3a; full Console-parity restyle was not in L3a scope — flag for a follow-up polish pass if wanted.
 - RAG-unavailable setup routing: when no RAG runtime exists, the pre-flight provider gate blocks Run with Console-convention copy; the richer service-level recovery copy remains for non-UI callers (deliberate Task-5 decision).
 - Study screen itself is unchanged (spec: not absorbed).
+- Mode label stays `RAG Answer` (rename to e.g. `Semantic` offered, not requested).
 
 ### Follow-ups carried (unchanged from spec)
 
@@ -59,3 +71,5 @@ Seeded: 4 notes / 4 conversations / 3 media / 3 decks / 7 due flashcards / 2 qui
 - Rail-badge refresh at sync completion; last-synced timestamp (L2b.2 carryovers).
 - Conversations open-by-id prepend vs snapshot-refresh race (narrow window).
 - `app_config` vs CLI-config read audit (`library.rail_state`); `#library-canvas` scroll audit.
+- C3: scroll the Evidence heading into view when results land (post-submit viewport anchor).
+- E2: Home canvas prints internal route ids (`Route: study`) for all rows — Home-wide copy follow-up.
