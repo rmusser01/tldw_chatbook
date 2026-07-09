@@ -7235,14 +7235,17 @@ class LibraryScreen(BaseAppScreen):
         # The rail-top search box can invoke this mid-recompose -- it selects
         # the Search canvas via ``_select_library_rail_row`` and then runs the
         # query immediately after, before the scheduled recompose has mounted
-        # ``#library-search-rag-panel``. The widget refresh below is best
-        # effort in that window: a NoMatches/QueryError here is non-fatal
-        # because the subsequent recompose renders the same state (the status
-        # fields set above already carry it).
-        try:
+        # ``#library-search-rag-panel``. The widget refresh is only attempted
+        # when the panel is actually mounted; when it isn't, skipping is
+        # non-fatal because the subsequent recompose renders the same state
+        # (the status fields set above already carry it). This is an
+        # explicit presence check, not a broad NoMatches/QueryError catch --
+        # a prior version wrapped the whole refresh (results rows included)
+        # in a blanket ``except (NoMatches, QueryError): pass``, which also
+        # silently swallowed unrelated mid-rebuild query failures instead of
+        # only tolerating the "panel not mounted yet" case it was meant for.
+        if self.query("#library-search-rag-panel"):
             await self._refresh_search_rag_panel_state_widgets()
-        except (NoMatches, QueryError):
-            pass
         self._execute_library_rag_search(request)
 
     @on(Button.Pressed, "#library-create-collection")

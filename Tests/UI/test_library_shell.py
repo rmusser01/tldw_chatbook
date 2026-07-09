@@ -837,6 +837,271 @@ async def test_library_shell_search_outcome_resolves_status_after_leaving_canvas
 
 
 @pytest.mark.asyncio
+async def test_library_shell_rail_search_submit_renders_every_result_row():
+    """RED regression pilot: a rail-top search that matches multiple
+    sources (one note, one media item, one conversation -- mirroring the
+    live QA repro for query "research") must render ALL result rows in
+    the Evidence region, not just the first, and every row must actually
+    be reachable on screen (not merely present in the widget tree).
+
+    Live QA on the served app found only result 1 rendering for a
+    multi-result query after commits e308a71f/ec1a207c; single-result
+    queries rendered fine. This submits through the rail search box (the
+    path live QA used) so it also covers the rail's
+    ``_select_library_rail_row`` -> recompose -> ``_start_library_rag_query``
+    sequence, not just the in-panel Run button.
+
+    Root cause note: the live truncation was NOT a mid-rebuild exception
+    dropping rows from the DOM -- ``screen.query("#library-rag-result-N")``
+    finds every row's widgets even on the buggy build (compose()/the live
+    refresh both iterate every result without raising). The actual bug is
+    that ``LibrarySearchRagPanel`` (and its ``#library-rag-results``
+    sub-region) never scrolled: ``#library-rag-query-controls`` switched
+    from a hand-counted fixed height to ``height: auto`` in ec1a207c, which
+    (correctly) fixed that region's own internal overlap but also let it
+    consume more of the fixed, non-scrolling canvas box, leaving less room
+    for Evidence -- and anything past that both silently clipped AND was
+    permanently unreachable, no matter how a user tried to scroll. So a
+    query that only checks widget existence passes on both the broken and
+    fixed builds; this asserts each row becomes visible in an actual
+    rendered screenshot after ``scroll_visible()``, which only succeeds if
+    some ancestor in the chain is actually scrollable.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Tides research",
+                    "snippet": "Tide charts for the coastal survey.",
+                    "source_id": "note-1",
+                    "chunk_id": "chunk-1",
+                    "provenance": {"source_type": "note"},
+                },
+                {
+                    "document_title": "Ocean survey transcript",
+                    "snippet": "Recorded interview about tide research.",
+                    "source_id": "media-1",
+                    "chunk_id": "chunk-2",
+                    "provenance": {"source_type": "media"},
+                },
+                {
+                    "document_title": "Draft quarterly research digest",
+                    "snippet": "Conversation drafting the research digest.",
+                    "source_id": "chat-1",
+                    "chunk_id": "chunk-3",
+                    "provenance": {"source_type": "conversation"},
+                },
+            ]
+        }
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search_input = screen.query_one("#library-search-input", Input)
+        search_input.value = "research"
+        search_input.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+
+        for _ in range(150):
+            if service.calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Rail submit never reached the search service.")
+
+        await _wait_for_selector(screen, pilot, "#library-rag-result-2")
+
+        for index in range(3):
+            assert screen.query(f"#library-rag-result-{index}"), (
+                f"Result row {index} never rendered. Visible text: "
+                f"{_visible_text(screen)}"
+            )
+            assert screen.query(f"#library-rag-select-result-{index}"), (
+                f"Select-evidence button {index} never rendered."
+            )
+            assert screen.query(f"#library-rag-open-result-{index}"), (
+                f"Open button {index} never rendered (all three results are "
+                "openable: note, media, conversation)."
+            )
+
+        # Existence alone doesn't catch the real regression (see the
+        # docstring): every row must also be reachable on screen. Scroll
+        # each one into view individually and confirm its title text
+        # actually appears in a rendered screenshot -- on the broken build
+        # this fails for every row (nothing in the ancestor chain scrolls,
+        # so ``scroll_visible()`` is a no-op and clipped content never
+        # becomes visible no matter what).
+        titles = ("Tides research", "Ocean survey transcript", "Draft quarterly research digest")
+        for index, title in enumerate(titles):
+            result_widget = screen.query_one(f"#library-rag-result-{index}")
+            result_widget.scroll_visible(animate=False)
+            await pilot.pause()
+            for _ in range(10):
+                await pilot.pause(0.02)
+            screenshot = pilot.app.export_screenshot()
+            # Match a distinctive word rather than the full title: Rich's
+            # SVG export can render a run-together phrase as separate
+            # per-style text nodes (e.g. a non-breaking space between
+            # words), which would make a full-phrase substring check flaky.
+            distinctive_word = title.split()[0]
+            assert distinctive_word in screenshot, (
+                f"Result row {index} ({title!r}) was never reachable on "
+                f"screen after scroll_visible()."
+            )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_rail_search_submit_renders_every_result_row_post_mount():
+    """Variation: force the outcome to land AFTER the Search canvas has
+    already recomposed and mounted, so resolution must go through the
+    incremental ``_refresh_library_rag_results_widgets`` DOM-mutation path
+    instead of a fresh ``compose()`` picking up already-set state.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _GatedLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Tides research",
+                    "snippet": "Tide charts for the coastal survey.",
+                    "source_id": "note-1",
+                    "chunk_id": "chunk-1",
+                    "provenance": {"source_type": "note"},
+                },
+                {
+                    "document_title": "Ocean survey transcript",
+                    "snippet": "Recorded interview about tide research.",
+                    "source_id": "media-1",
+                    "chunk_id": "chunk-2",
+                    "provenance": {"source_type": "media"},
+                },
+                {
+                    "document_title": "Draft quarterly research digest",
+                    "snippet": "Conversation drafting the research digest.",
+                    "source_id": "chat-1",
+                    "chunk_id": "chunk-3",
+                    "provenance": {"source_type": "conversation"},
+                },
+            ]
+        }
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search_input = screen.query_one("#library-search-input", Input)
+        search_input.value = "research"
+        search_input.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+
+        for _ in range(150):
+            if service.calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Rail submit never reached the search service.")
+
+        # Make sure the Search canvas has actually recomposed and mounted
+        # before releasing the gated fake -- forces outcome resolution
+        # through the live incremental refresh, not a fresh compose().
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        for _ in range(10):
+            await pilot.pause(0.02)
+
+        service.release_event.set()
+
+        await _wait_for_selector(screen, pilot, "#library-rag-result-2")
+
+        for index in range(3):
+            assert screen.query(f"#library-rag-result-{index}"), (
+                f"Result row {index} never rendered. Visible text: "
+                f"{_visible_text(screen)}"
+            )
+            assert screen.query(f"#library-rag-select-result-{index}"), (
+                f"Select-evidence button {index} never rendered."
+            )
+            assert screen.query(f"#library-rag-open-result-{index}"), (
+                f"Open button {index} never rendered."
+            )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_run_button_renders_every_result_row():
+    """Variation: use the in-panel Run button (no rail recompose at all) so
+    resolution always goes through the incremental
+    ``_refresh_library_rag_results_widgets`` DOM-mutation path.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "document_title": "Tides research",
+                    "snippet": "Tide charts for the coastal survey.",
+                    "source_id": "note-1",
+                    "chunk_id": "chunk-1",
+                    "provenance": {"source_type": "note"},
+                },
+                {
+                    "document_title": "Ocean survey transcript",
+                    "snippet": "Recorded interview about tide research.",
+                    "source_id": "media-1",
+                    "chunk_id": "chunk-2",
+                    "provenance": {"source_type": "media"},
+                },
+                {
+                    "document_title": "Draft quarterly research digest",
+                    "snippet": "Conversation drafting the research digest.",
+                    "source_id": "chat-1",
+                    "chunk_id": "chunk-3",
+                    "provenance": {"source_type": "conversation"},
+                },
+            ]
+        }
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        screen.query_one("#library-rag-query-input", Input).value = "research"
+        await _wait_for_library_rag_query_ready(screen, pilot, "research")
+        screen.query_one("#library-rag-run-query", Button).press()
+
+        await _wait_for_selector(screen, pilot, "#library-rag-result-2")
+
+        for index in range(3):
+            assert screen.query(f"#library-rag-result-{index}"), (
+                f"Result row {index} never rendered. Visible text: "
+                f"{_visible_text(screen)}"
+            )
+            assert screen.query(f"#library-rag-select-result-{index}"), (
+                f"Select-evidence button {index} never rendered."
+            )
+            assert screen.query(f"#library-rag-open-result-{index}"), (
+                f"Open button {index} never rendered."
+            )
+
+
+@pytest.mark.asyncio
 async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
     """I1(a): a rail-top search submit while a dirty note sits in an
     unresolved save conflict must not run the query or record history.

@@ -5,7 +5,7 @@ from __future__ import annotations
 from rich.markup import escape as escape_markup
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Static
 from textual.widget import Widget
 
@@ -39,7 +39,7 @@ _SELECTED_EVIDENCE_DETAIL_IDS = (
 )
 
 
-class LibrarySearchRagPanel(Vertical):
+class LibrarySearchRagPanel(VerticalScroll):
     """Display the source scope, query controls, and evidence results."""
 
     def __init__(self, state: LibraryRagPanelState, **kwargs) -> None:

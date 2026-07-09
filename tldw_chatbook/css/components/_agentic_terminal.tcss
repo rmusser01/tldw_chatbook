@@ -3463,6 +3463,24 @@ ListItem.personas-library-row.is-active.-highlight {
     text-style: bold underline;
 }
 
+/* Regression fix: #library-canvas (this panel's parent) and this panel's
+ * own body never scrolled, so once the Query/Scope/Results/History regions'
+ * combined natural height exceeded the fixed canvas box, whatever fell
+ * past the bottom edge was silently clipped and permanently unreachable --
+ * not just visually cut off, but gone, with no way to scroll to it. That
+ * is what made multi-result searches render only the first row: rows past
+ * whatever vertical room the Query and Scope regions left behind vanished.
+ * Making the panel scrollable keeps every mounted row reachable regardless
+ * of how many results (or how much recovery/callout copy) the current
+ * state renders. */
+#library-search-rag-panel {
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 .library-rag-region {
     width: 100%;
     min-width: 0;
@@ -3492,7 +3510,7 @@ ListItem.personas-library-row.is-active.-highlight {
 }
 
 #library-rag-results {
-    height: 1fr;
+    height: auto;
     min-height: 8;
 }
 
