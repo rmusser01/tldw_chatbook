@@ -1,8 +1,22 @@
 # tldw_chatbook
 
-A sophisticated Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. The product is organized around a chat-first screen shell: Chat is the main work surface, while notes, media, study, personas, ingestion, search, and model tools act as supporting destinations that can hand context back into the active conversation.
+A sophisticated Terminal User Interface (TUI) application built with the Textual framework for interacting with various Large Language Model APIs. The product is organized around a chat-first **master shell**: the **Console** is the main work surface, with **Home** (triage/status) and **Library** (notes, media, study, ingestion, search) as the other top-priority destinations, alongside supporting surfaces (Personas, Artifacts, Watchlists, and model/agent tools) that hand context back into the active conversation.
 
 ![Screenshot](https://github.com/rmusser01/tldw_chatbook/blob/main/static/PoC-Frontpage.PNG?raw=true)
+
+## Project Status & Recent UI Overhaul
+
+tldw_chatbook is in active development (currently `v0.1.7.4`, pre-1.0). The `dev` branch has landed a major UI/navigation overhaul that reorganizes the app around a **master shell** with a small set of primary destinations instead of a flat tab bar. Older tabs (Chat, Notes, Media, Ingest, Search, Coding, Characters/Prompts, Subscriptions, Chatbooks) remain reachable as routes/aliases during migration, but are no longer separate primary destinations.
+
+**Highlights:**
+
+- **Console** — the chat-first primary work surface (formerly *Chat*). A dual-audience redesign: a first-run **setup card** walks new users to their first message (progressive disclosure, no docs required), while power users get a keyboard-first layer — command palette, session switcher (`Ctrl+K`), quick model popover (`Alt+M`), and direct copy/edit/regenerate on messages. The left rail is organized into collapsible **Session / Context / Model / Details** sections with auto-titled, recent-first conversations.
+- **Home** — a triage surface: a rail of **Needs Attention / Running / Recent** rows with a focus canvas that shows the selected item and its actions (approve, reject, retry, open).
+- **Library** — the landing page for local content, organized around four verbs: **(re)view · search · ingest · create**. It absorbs media browsing (an in-Library viewer), Search/RAG, ingestion, Study (flashcards/quizzes), and **Notes** — the standalone Notes tab has been retired and its workbench now lives inside Library.
+- **Personas** — a Console-parity workbench for characters, personas, and prompts (avatar upload, markdown / character-card import).
+- Supporting destinations: **Artifacts** (generated outputs + Chatbooks), **Watchlists** (monitored sources), **Schedules**, **Workflows**, **MCP**, **ACP**, **Skills**, and **Settings**.
+
+Design specs for the overhaul live in [`Docs/superpowers/specs/`](Docs/superpowers/specs/) — see `2026-07-02-console-dual-audience-ux-design.md` and `2026-07-04-home-library-redesign-design.md`.
 
 ## System Requirements
 - Python ≥ 3.11
@@ -219,20 +233,22 @@ python scripts/verify_higgs_installation.py
   - Full functionality via browser interface
 
 ### Main Application Destinations
-The current screen shell is organized around primary destinations and local subviews rather than equal-weight tabs:
+The screen shell is organized around a **master shell** of primary destinations (not a flat, equal-weight tab bar). Listed in navigation order:
 
-1. **Chat** - Primary conversation and agentic control surface with streaming, tool use, inline approvals, and task continuity
-2. **Conversations, Characters & Prompts** - Manage conversations, personas, and prompt templates, then hand them into the active chat session
-3. **Study** - Workspace/global study dashboard with flashcards, quizzes, study guides, and related learning flows
-4. **Notes** - Advanced note-taking with bidirectional file sync
-5. **Media** - Browse and manage ingested media content
-6. **Search/RAG** - Hybrid search across all content (FTS5 + optional vectors)
-7. **Media Ingestion** - Process documents, videos, audio, and web content
-8. **Model & Evaluation Tools** - LLM management, speech tools, and evaluation workflows
-9. **System Surfaces** - Settings, customization, logs, and statistics
-10. **Subscriptions / Chatbooks** - Supporting library and monitoring destinations
+1. **Home** — Dashboard, notifications, status, and next actions (triage rail + focus canvas)
+2. **Console** — Live agent conversations: streaming chat, approvals, tool use, RAG, and runs
+3. **Library** — Workspaces and local source material: notes, media, imported content, conversations, Study (flashcards/quizzes), and Search/RAG — organized around *(re)view · search · ingest · create*
+4. **Artifacts** — Generated outputs, bundles, reports, datasets, and Chatbooks
+5. **Personas** — Characters, personas, prompts, dictionaries, and behavior profiles
+6. **Watchlists** — Monitored sources, runs, alerts, and recovery (formerly *Subscriptions*)
+7. **Schedules** — When jobs, watchlists, and workflows run
+8. **Workflows** — Reusable procedures, recipes, dry-runs, and outputs
+9. **MCP** — MCP servers, tools, permissions, auth, and audit
+10. **ACP** — Agent Client Protocol agents, sessions, runtimes, diffs, and terminals
+11. **Skills** — Agent Skills packs, discovery, validation, and attachments
+12. **Settings** — Global app preferences, appearance, accounts, and storage
 
-`Coding` still exists as a compatibility route during migration, but agentic programming and control are moving into Chat-first workflows instead of living as a separate primary destination.
+> **Migration note:** legacy tabs — `Chat` (now Console), `Notes`, `Media`, `Ingest`, `Search`, `Coding`, `Characters/Prompts` (now Personas), `Subscriptions` (now Watchlists), and `Chatbooks` (now under Artifacts) — still resolve as routes/aliases, but are no longer separate primary destinations. `Coding` in particular is now a thin compatibility stub; agentic programming happens in the Console.
 
 ### LLM Support
 - **Commercial LLM APIs**: OpenAI, Anthropic, Cohere, DeepSeek, Google, Groq, Mistral, OpenRouter, HuggingFace

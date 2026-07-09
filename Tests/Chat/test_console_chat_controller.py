@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -173,6 +174,42 @@ def test_controller_creates_and_switches_sessions():
     controller.switch_session(first.id)
 
     assert store.active_session_id == first.id
+
+
+def test_controller_session_changes_clear_terminal_run_copy() -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    first = store.ensure_session(title="Chat 1")
+
+    controller.run_state = ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete.")
+    controller.new_session(title="Chat 2")
+
+    assert controller.run_state.status is ConsoleRunStatus.IDLE
+    assert controller.run_state.visible_copy == ""
+
+    controller.run_state = ConsoleRunState(ConsoleRunStatus.BLOCKED, "Provider blocked.")
+    controller.switch_session(first.id)
+
+    assert controller.run_state.status is ConsoleRunStatus.IDLE
+    assert controller.run_state.visible_copy == ""
+
+
+def test_controller_session_changes_preserve_active_run_copy() -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    first = store.ensure_session(title="Chat 1")
+
+    controller.run_state = ConsoleRunState(ConsoleRunStatus.STREAMING, "Streaming response.")
+    controller.new_session(title="Chat 2")
+
+    assert controller.run_state.status is ConsoleRunStatus.STREAMING
+    assert controller.run_state.visible_copy == "Streaming response."
+
+    controller.run_state = ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider.")
+    controller.switch_session(first.id)
+
+    assert controller.run_state.status is ConsoleRunStatus.VALIDATING
+    assert controller.run_state.visible_copy == "Validating provider."
 
 
 def test_controller_new_session_accepts_settings_snapshot() -> None:
@@ -553,6 +590,59 @@ async def test_stop_active_run_returns_without_waiting_for_next_provider_chunk()
 
 
 @pytest.mark.asyncio
+async def test_shutdown_stops_and_awaits_active_stream_task():
+    """Verify controller shutdown stops and drains an active stream task."""
+    class StalledGateway(StreamingGateway):
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.never_release = asyncio.Event()
+
+        async def stream_chat(self, resolution, messages):
+            self.started.set()
+            yield "partial"
+            await self.never_release.wait()
+            yield "ignored"
+
+    gateway = StalledGateway()
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    task = asyncio.create_task(controller.submit_draft("hello"))
+    await asyncio.wait_for(gateway.started.wait(), timeout=1)
+    await asyncio.sleep(0)
+
+    await asyncio.wait_for(controller.shutdown(), timeout=0.5)
+    result = await asyncio.wait_for(task, timeout=0.1)
+
+    messages = store.messages_for_session(store.active_session_id)
+    assert result.accepted is True
+    assert messages[-1].content == "partial"
+    assert messages[-1].status == "stopped"
+    assert controller.run_state.status is ConsoleRunStatus.STOPPED
+    assert controller._active_stream_task is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_ignores_failed_active_stream_task():
+    async def fail_before_shutdown():
+        raise RuntimeError("stream task failed before shutdown")
+
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    task = asyncio.create_task(fail_before_shutdown())
+    await asyncio.sleep(0)
+    assert task.done()
+
+    controller._active_stream_task = task
+    controller._stop_requested = True
+
+    await controller.shutdown()
+
+    assert controller._active_stream_task is None
+    assert controller._stop_requested is False
+
+
+@pytest.mark.asyncio
 async def test_close_streaming_session_stops_run_without_key_error():
     class WaitingGateway(StreamingGateway):
         def __init__(self):
@@ -665,6 +755,40 @@ async def test_retry_failed_message_records_retrying_then_streaming_transition()
     assert ConsoleRunStatus.RETRYING in controller.run_state_history
     assert observed == [ConsoleRunStatus.STREAMING]
     assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_continuation_message_ends_provider_payload_with_user_instruction():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Prompt",
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Seed",
+    )
+    failed = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(failed.id, "Partial continuation")
+    store.mark_message_failed(failed.id)
+
+    result = await controller.retry_message(failed.id)
+
+    assert result.accepted is True
+    assert gateway.messages_seen == [
+        {"role": "user", "content": "Prompt"},
+        {"role": "assistant", "content": "Seed"},
+        {"role": "user", "content": "Continue and extend the selected message."},
+    ]
 
 
 @pytest.mark.asyncio
@@ -816,3 +940,84 @@ async def test_regenerate_message_streams_new_selected_variant():
     assert result.accepted is True
     assert updated.variants.current.content == "hello"
     assert updated.variants.can_go_previous is True
+
+
+@pytest.mark.asyncio
+async def test_regenerate_continuation_message_ends_provider_payload_with_user_instruction():
+    store = ConsoleChatStore()
+    gateway = RecordingStreamingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.ensure_session()
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Prompt",
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Seed",
+    )
+    continuation = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Continuation",
+    )
+
+    result = await controller.regenerate_message(continuation.id)
+
+    assert result.accepted is True
+    assert gateway.messages_seen == [
+        {"role": "user", "content": "Prompt"},
+        {"role": "assistant", "content": "Seed"},
+        {"role": "user", "content": "Continue and extend the selected message."},
+    ]
+
+
+class _AutoTitleReadyGateway:
+    async def resolve_for_send(self, selection):
+        return SimpleNamespace(ready=True, visible_copy="")
+
+    async def stream_chat(self, resolution, messages):
+        yield "ok"
+
+
+def _auto_title_controller() -> ConsoleChatController:
+    return ConsoleChatController(
+        store=ConsoleChatStore(),
+        provider_gateway=_AutoTitleReadyGateway(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_auto_titles_default_session_from_first_message():
+    controller = _auto_title_controller()
+    session = controller.new_session()
+    assert session.title == "Chat 1"
+
+    await controller.submit_draft("fix the login bug in the auth flow")
+
+    assert controller.store.sessions()[0].title == "fix the login bug in the au..."
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_preserves_user_renamed_session_title():
+    controller = _auto_title_controller()
+    session = controller.new_session()
+    controller.store.rename_session(session.id, "My research thread")
+
+    await controller.submit_draft("hello there")
+
+    assert controller.store.sessions()[0].title == "My research thread"
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_does_not_retitle_after_first_send():
+    controller = _auto_title_controller()
+    controller.new_session()
+
+    await controller.submit_draft("first message decides the title")
+    first_title = controller.store.sessions()[0].title
+    await controller.submit_draft("second message must not retitle")
+
+    assert controller.store.sessions()[0].title == first_title

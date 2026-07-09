@@ -34,7 +34,7 @@ def _install_textual_compatibility_shims() -> None:
 
 _install_textual_compatibility_shims()
 
-__version__ = "0.1.7.3"
+__version__ = "0.1.7.4"
 __author__ = "Robert Musser"
 __email__ = "contact@rmusser.net"
 __license__ = "AGPLv3+"

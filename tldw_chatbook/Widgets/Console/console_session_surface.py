@@ -12,6 +12,8 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE
+from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Utils.console_background_effects import ConsoleBackgroundEffectSettings
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from tldw_chatbook.Widgets.Console.console_background_effect import ConsoleTranscriptSurface
@@ -20,11 +22,18 @@ from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 CONSOLE_CLOSE_TAB_BUTTON_WIDTH = 3
 CONSOLE_CLOSE_TAB_BUTTON_HEIGHT = 1
-CONSOLE_NEW_TAB_BUTTON_WIDTH = 3
+CONSOLE_NEW_TAB_BUTTON_WIDTH = 12
 CONSOLE_NEW_TAB_BUTTON_HEIGHT = 1
 CONSOLE_SESSION_TAB_DISPLAY_CHARS = 19
 CONSOLE_SESSION_TAB_WIDTH = 21
 CONSOLE_TRANSCRIPT_TITLE = "Transcript / Event Stream"
+
+
+def _session_tab_tooltip(session: ConsoleChatSession, *, active: bool) -> str:
+    """Return action copy for a Console session tab."""
+    if active:
+        return f"Active Console tab: {session.title}. Click again to rename."
+    return f"Switch to Console tab: {session.title}"
 
 
 class ConsoleSessionSurface(Vertical):
@@ -74,7 +83,7 @@ class ConsoleSessionSurface(Vertical):
 
     def _build_new_tab_button(self) -> Button:
         """Return the compact symbolic Console new-session control."""
-        button = Button("+", id="console-new-chat-tab", compact=True)
+        button = Button("New tab", id="console-new-chat-tab", compact=True)
         button.tooltip = "New Console tab"
         button.styles.width = CONSOLE_NEW_TAB_BUTTON_WIDTH
         button.styles.min_width = CONSOLE_NEW_TAB_BUTTON_WIDTH
@@ -109,11 +118,7 @@ class ConsoleSessionSurface(Vertical):
             classes=classes,
             compact=True,
         )
-        button.tooltip = (
-            f"Rename Console tab: {session.title}"
-            if active
-            else f"Switch to Console tab: {session.title}"
-        )
+        button.tooltip = _session_tab_tooltip(session, active=active)
         button.styles.width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.min_width = CONSOLE_SESSION_TAB_WIDTH
         button.styles.max_width = CONSOLE_SESSION_TAB_WIDTH
@@ -125,7 +130,7 @@ class ConsoleSessionSurface(Vertical):
     def _build_close_tab_button(self, session: ConsoleChatSession) -> Button:
         """Build the compact close control for a Console session tab."""
         close_button = Button(
-            "x",
+            GLYPH_CLOSE,
             id=f"console-close-session-tab-{session.id}",
             classes="console-session-close-button",
             compact=True,
@@ -170,15 +175,27 @@ class ConsoleSessionSurface(Vertical):
                 if session is None or not isinstance(child, Button):
                     continue
                 child.label = self._display_title(session.title)
-                child.tooltip = (
-                    f"Rename Console tab: {session.title}"
-                    if session.id == active_session_id
-                    else f"Switch to Console tab: {session.title}"
+                child.tooltip = _session_tab_tooltip(
+                    session,
+                    active=session.id == active_session_id,
                 )
                 child.set_class(
                     session.id == active_session_id,
                     "console-session-tab-active",
                 )
+
+    def _record_mount_churn(self, *, mounted: int = 0, removed: int = 0) -> None:
+        """Best-effort tab churn diagnostic hook."""
+        try:
+            monitor = getattr(self.app_instance, "ui_responsiveness_monitor", None)
+            if monitor is not None:
+                monitor.record_mounts(
+                    "console-tabs",
+                    mounted=mounted,
+                    removed=removed,
+                )
+        except Exception:
+            return
 
     async def sync_sessions(
         self,
@@ -202,6 +219,8 @@ class ConsoleSessionSurface(Vertical):
                 )
                 return
 
+            removed_count = len(tab_strip.children)
+            mounted_count = (len(sessions) * 2) + 1
             for child in list(tab_strip.children):
                 await child.remove()
             for session in sessions:
@@ -211,9 +230,16 @@ class ConsoleSessionSurface(Vertical):
                 )
                 await tab_strip.mount(self._build_close_tab_button(session))
             await tab_strip.mount(self._build_new_tab_button())
+            self._record_mount_churn(mounted=mounted_count, removed=removed_count)
 
-    def sync_inline_guidance(self, *, visible: bool, copy: str = "") -> None:
-        """Keep guidance out of the title and sync empty transcript copy."""
+    def sync_inline_guidance(
+        self,
+        card_state: ConsoleSetupCardState,
+        *,
+        provider_action_label: str = "",
+        provider_action_tooltip: str = "",
+    ) -> None:
+        """Keep guidance out of the title and sync the empty transcript card state."""
         try:
             title = self.query_one("#console-transcript-title", Static)
         except Exception:
@@ -224,7 +250,11 @@ class ConsoleSessionSurface(Vertical):
             transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
         except Exception:
             return
-        transcript.sync_empty_state(copy if visible else "")
+        transcript.sync_empty_state(
+            card_state,
+            provider_action_label=provider_action_label,
+            provider_action_tooltip=provider_action_tooltip,
+        )
 
     def sync_background_effect_settings(
         self,

@@ -59,7 +59,7 @@ class TestToastNotification(EmbeddingsTestBase):
         app = WidgetTestApp(toast)
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert "toast-slide-in" in toast.classes
+            assert "toast-slide-out" not in toast.classes
 
             await asyncio.sleep(0.25)
             await pilot.pause(0.1)

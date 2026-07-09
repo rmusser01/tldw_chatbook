@@ -70,6 +70,8 @@ class ConsoleComposerBar(Horizontal):
     FALLBACK_DRAFT_WIDTH = 80
     PASTE_TOKEN_STYLE = "bold cyan"
     PASTE_CONFIRM_STYLE = "bold black on yellow"
+    CURSOR_GLYPH = "▌"  # LEFT HALF BLOCK, terminal-style caret
+    CURSOR_BLINK_INTERVAL = 0.53
 
     def __init__(
         self,
@@ -97,6 +99,9 @@ class ConsoleComposerBar(Horizontal):
         self._setup_blocked_reason = ""
         self._can_save_chatbook = False
         self._suppress_next_draft_click = False
+        self._draft_selection_all = False
+        self._cursor_visible = True
+        self._cursor_blink_timer: Any | None = None
 
     @property
     def collapse_large_pastes_enabled(self) -> bool:
@@ -184,6 +189,10 @@ class ConsoleComposerBar(Horizontal):
                         self.PASTE_CONFIRM_STYLE,
                     )
                 )
+        if self._draft_selection_all:
+            display_text = self._display_draft_text()
+            if display_text:
+                style_ranges.append((0, len(display_text), "reverse"))
         return style_ranges
 
     def _sync_hidden_input(self) -> None:
@@ -251,6 +260,7 @@ class ConsoleComposerBar(Horizontal):
             return
 
         send_ready = has_draft and not send_blocked
+
         send_button.disabled = False
         send_button.variant = "primary" if send_ready else "default"
         if send_blocked and setup_blocked_reason:
@@ -260,7 +270,7 @@ class ConsoleComposerBar(Horizontal):
         elif has_draft:
             send_button.tooltip = "Send the active Console session draft."
         else:
-            send_button.tooltip = "Type a message before sending."
+            send_button.tooltip = None
         send_button.set_class(send_ready, "console-action-primary")
         send_button.set_class(not send_ready, "console-action-subdued")
         send_button.set_class(not send_ready, "console-action-disabled")
@@ -282,6 +292,7 @@ class ConsoleComposerBar(Horizontal):
         stop_button.set_class(run_active, "console-stop-active")
         stop_button.set_class(not run_active, "console-stop-idle")
         stop_button.set_class(not run_active, "console-action-disabled")
+        stop_button.styles.display = "block" if run_active else "none"
 
         attach_button.disabled = False
         attach_button.variant = "default"
@@ -412,51 +423,80 @@ class ConsoleComposerBar(Horizontal):
         *,
         width: int = FALLBACK_DRAFT_WIDTH,
         style_ranges: list[_DraftStyleRange] | None = None,
+        focused: bool = False,
+        cursor_visible: bool = True,
     ) -> Text:
         if text:
-            line_slices = cls._visible_draft_line_slices(text, width)
+            # While focused, exactly one trailing display cell is always
+            # reserved after the wrapped draft -- the caret glyph during the
+            # visible blink phase, an ordinary space during the hidden phase
+            # -- and it is wrapped in the *same* pass as the draft itself
+            # (rather than appended afterward). That keeps the two blink
+            # phases layout-identical: whichever character reserves the row
+            # is decided by wrap width alone, never by which literal
+            # character it is, so a blink tick can never change how many
+            # visual rows the draft occupies (which previously could clip or
+            # jitter the composer when the last wrapped line landed exactly
+            # at the wrap width). The glyph is left unstyled: the block
+            # character is prominent enough on its own, and leaving it
+            # unstyled keeps it from being mistaken for a stateful paste
+            # token.
+            trailing_cell = (cls.CURSOR_GLYPH if cursor_visible else " ") if focused else ""
+            line_slices = cls._visible_draft_line_slices(f"{text}{trailing_cell}", width)
             rendered = Text("\n".join(line.text for line in line_slices))
-            if not style_ranges:
-                return rendered
-
-            output_offset = 0
-            for line_index, line_slice in enumerate(line_slices):
-                source_to_output_offset = (
-                    output_offset + line_slice.synthetic_prefix_columns - line_slice.start
-                )
-                for style_start, style_end, style in style_ranges:
-                    span_start = max(style_start, line_slice.start)
-                    span_end = min(style_end, line_slice.end)
-                    if span_start < span_end:
-                        rendered.stylize(
-                            style,
-                            span_start + source_to_output_offset,
-                            span_end + source_to_output_offset,
-                        )
-                output_offset += len(line_slice.text)
-                if line_index < len(line_slices) - 1:
-                    output_offset += 1
+            if style_ranges:
+                output_offset = 0
+                for line_index, line_slice in enumerate(line_slices):
+                    source_to_output_offset = (
+                        output_offset + line_slice.synthetic_prefix_columns - line_slice.start
+                    )
+                    for style_start, style_end, style in style_ranges:
+                        span_start = max(style_start, line_slice.start)
+                        span_end = min(style_end, line_slice.end)
+                        if span_start < span_end:
+                            rendered.stylize(
+                                style,
+                                span_start + source_to_output_offset,
+                                span_end + source_to_output_offset,
+                            )
+                    output_offset += len(line_slice.text)
+                    if line_index < len(line_slices) - 1:
+                        output_offset += 1
             return rendered
+
+        if focused:
+            placeholder = Text(cls.CURSOR_GLYPH if cursor_visible else " ")
+            placeholder.append(cls.DRAFT_PLACEHOLDER, style="bright_black")
+            return placeholder
         return Text(cls.DRAFT_PLACEHOLDER, style="bright_black")
 
     def _placeholder_renderable(self, *, width: int) -> Text:
-        """Return setup-aware empty composer placeholder copy."""
-        if self._send_blocked and self._setup_blocked_reason:
-            if "model" in self._setup_blocked_reason.lower():
-                return Text(
-                    "Setup required: choose a model in Console Settings.",
-                    style="bold yellow",
-                )
-            return Text("Setup required: finish provider setup.", style="bold yellow")
-        return self._draft_renderable("", width=width)
+        """Return the empty composer placeholder copy."""
+        return self._draft_renderable(
+            "",
+            width=width,
+            focused=self.has_focus_within,
+            cursor_visible=getattr(self, "_cursor_visible", True),
+        )
 
     @classmethod
-    def _visible_draft_row_count(cls, text: str, width: int) -> int:
+    def _visible_draft_row_count(
+        cls,
+        text: str,
+        width: int,
+        *,
+        reserve_trailing_cell: bool = False,
+    ) -> int:
         if not text:
             return cls.MIN_DRAFT_ROWS
+        # Budget for the same reserved trailing cell _draft_renderable adds
+        # while focused, computed once here (at focus/blur/mutation time,
+        # never on a blink tick) so the exactly-at-width case gets its extra
+        # row up front instead of only discovering it needs one mid-blink.
+        measured_text = f"{text} " if reserve_trailing_cell else text
         return max(
             cls.MIN_DRAFT_ROWS,
-            min(cls.MAX_DRAFT_ROWS, len(cls._wrap_draft_line_slices(text, width))),
+            min(cls.MAX_DRAFT_ROWS, len(cls._wrap_draft_line_slices(measured_text, width))),
         )
 
     def _draft_render_width(self) -> int:
@@ -490,25 +530,71 @@ class ConsoleComposerBar(Horizontal):
         else:
             self._segments.append(_DraftSegment(text))
 
-    def _refresh_visible_draft(self) -> None:
+    def _current_visible_draft_renderable(self, draft: str, width: int) -> Text:
+        """Build the Text renderable for the current draft/placeholder state."""
+        if draft:
+            return self._draft_renderable(
+                draft,
+                width=width,
+                style_ranges=self._display_draft_style_ranges(),
+                focused=self.has_focus_within,
+                cursor_visible=getattr(self, "_cursor_visible", True),
+            )
+        return self._placeholder_renderable(width=width)
+
+    def _render_visible_draft_only(self) -> None:
+        """Re-render the visible-draft Static without recomputing composer height.
+
+        Used by the cursor blink tick, which must stay cheap and must not
+        trigger a layout recompute on every blink phase.
+        """
         try:
             draft = self._display_draft_text()
             width = self._draft_render_width()
-            row_count = self._visible_draft_row_count(draft, width)
-            if draft:
-                renderable = self._draft_renderable(
-                    draft,
-                    width=width,
-                    style_ranges=self._display_draft_style_ranges(),
-                )
-            else:
-                renderable = self._placeholder_renderable(width=width)
+            renderable = self._current_visible_draft_renderable(draft, width)
+            self.query_one("#console-command-visible-text", Static).update(renderable)
+        except NoMatches:
+            return
+
+    def _refresh_visible_draft(self) -> None:
+        try:
+            # Any draft mutation or focus change shows a solid caret, matching
+            # terminal cursor behavior (blink resets while actively editing).
+            self._cursor_visible = True
+            draft = self._display_draft_text()
+            width = self._draft_render_width()
+            row_count = self._visible_draft_row_count(
+                draft, width, reserve_trailing_cell=self.has_focus_within
+            )
+            renderable = self._current_visible_draft_renderable(draft, width)
             self.query_one("#console-command-visible-text", Static).update(renderable)
             self._apply_draft_height(row_count)
         except NoMatches:
             return
 
+    def _toggle_cursor_blink(self) -> None:
+        """Flip the cursor blink phase and refresh only the visible draft."""
+        self._cursor_visible = not self._cursor_visible
+        self._render_visible_draft_only()
+
+    def _sync_cursor_blink_state(self) -> None:
+        """Start/stop the blink timer and reset caret visibility on focus changes."""
+        timer = self._cursor_blink_timer
+        self._cursor_visible = True
+        if timer is None:
+            return
+        if self.has_focus_within:
+            timer.resume()
+        else:
+            timer.pause()
+
     def on_mount(self) -> None:
+        self._cursor_blink_timer = self.set_interval(
+            self.CURSOR_BLINK_INTERVAL,
+            self._toggle_cursor_blink,
+            pause=True,
+        )
+        self._sync_cursor_blink_state()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
         self._sync_current_action_state()
@@ -518,15 +604,23 @@ class ConsoleComposerBar(Horizontal):
 
     def on_focus(self) -> None:
         self._sync_interaction_classes()
+        self._sync_cursor_blink_state()
+        self._refresh_visible_draft()
 
     def on_blur(self) -> None:
         self._sync_interaction_classes()
+        self._sync_cursor_blink_state()
+        self._refresh_visible_draft()
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         self._sync_interaction_classes()
+        self._sync_cursor_blink_state()
+        self._refresh_visible_draft()
 
     def on_descendant_blur(self, event: DescendantBlur) -> None:
         self._sync_interaction_classes()
+        self._sync_cursor_blink_state()
+        self._refresh_visible_draft()
 
     def load_draft(self, text: str) -> None:
         """Replace the native Console draft with literal text.
@@ -534,6 +628,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             text: Draft payload to show and send literally.
         """
+        self._draft_selection_all = False
         self._segments = [_DraftSegment(text)] if text else []
         self._segments_initialized = True
         self._sync_hidden_input()
@@ -543,12 +638,39 @@ class ConsoleComposerBar(Horizontal):
 
     def clear_draft(self) -> None:
         """Clear the native Console draft without falling back to stale input."""
+        self._draft_selection_all = False
         self._segments = []
         self._segments_initialized = True
         self._sync_hidden_input()
         self._refresh_visible_draft()
         self._sync_interaction_classes()
         self._sync_current_action_state()
+
+    def select_all_draft(self) -> bool:
+        """Mark the full visible Console draft as selected without mutating it.
+
+        Returns:
+            True when there is draft text to select, otherwise False.
+        """
+        if not self.draft_text():
+            self._draft_selection_all = False
+            self._refresh_visible_draft()
+            return False
+        if not self._segments_initialized:
+            existing = self.draft_text()
+            self._segments = [_DraftSegment(existing)] if existing else []
+            self._segments_initialized = True
+        self._draft_selection_all = True
+        self._refresh_visible_draft()
+        return True
+
+    def has_full_draft_selection(self) -> bool:
+        """Return whether the composer currently has a full-draft selection.
+
+        Returns:
+            True when the visible draft exists and is fully selected.
+        """
+        return self._draft_selection_all and bool(self.draft_text())
 
     def insert_text(self, text: str) -> None:
         """Append user-entered text to the Console draft as literal text.
@@ -564,6 +686,9 @@ class ConsoleComposerBar(Horizontal):
             existing = self.draft_text()
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
+        if self._draft_selection_all:
+            self._segments = []
+            self._draft_selection_all = False
         self._reset_pending_unfurl_state()
         self._append_literal_segment(text)
         self._sync_hidden_input()
@@ -585,6 +710,9 @@ class ConsoleComposerBar(Horizontal):
             existing = self.draft_text()
             self._segments = [_DraftSegment(existing)] if existing else []
             self._segments_initialized = True
+        if self._draft_selection_all:
+            self._segments = []
+            self._draft_selection_all = False
         self._reset_pending_unfurl_state()
         should_collapse = (
             self.collapse_large_pastes_enabled
@@ -601,6 +729,9 @@ class ConsoleComposerBar(Horizontal):
 
     def delete_left(self) -> None:
         """Delete the last draft character for simple terminal-style editing."""
+        if self._draft_selection_all:
+            self.clear_draft()
+            return
         if not self._segments_initialized:
             self.load_draft(self.draft_text()[:-1])
             return
@@ -781,7 +912,10 @@ class ConsoleComposerBar(Horizontal):
             padding_left=padding_left,
         )
         if segment is None:
-            return False
+            changed = bool(self._reset_pending_unfurl_state())
+            if changed:
+                self._refresh_visible_draft()
+            return changed
         if segment.collapse_state == "collapsed":
             segment.collapse_state = "confirm"
         elif segment.collapse_state == "confirm":
@@ -986,6 +1120,17 @@ class ConsoleComposerBar(Horizontal):
         visible_draft.styles.width = "1fr"
         visible_draft.styles.min_width = 0
         yield visible_draft
+        recovery = Static(
+            "",
+            id="console-composer-recovery",
+            classes="console-composer-recovery",
+        )
+        recovery.styles.display = "none"
+        recovery.styles.width = 0
+        recovery.styles.min_width = 0
+        recovery.styles.height = 0
+        recovery.styles.min_height = 0
+        yield recovery
         command_input = Input(
             value="",
             id="console-command-input",
@@ -1012,6 +1157,20 @@ class ConsoleComposerBar(Horizontal):
         status.styles.height = 0
         status.styles.min_height = 0
         yield status
+        disabled_reason = Static(
+            "",
+            id="console-send-disabled-reason",
+            classes="console-send-disabled-reason",
+        )
+        disabled_reason.styles.display = "none"
+        disabled_reason.styles.width = 0
+        disabled_reason.styles.min_width = 0
+        disabled_reason.styles.max_width = 0
+        disabled_reason.styles.height = 0
+        disabled_reason.styles.min_height = 0
+        disabled_reason.styles.text_overflow = "ellipsis"
+        disabled_reason.styles.text_wrap = "nowrap"
+        yield disabled_reason
         actions = Horizontal(id="console-composer-actions", classes="console-composer-actions")
         actions.styles.width = 37
         actions.styles.min_width = 37
@@ -1028,13 +1187,15 @@ class ConsoleComposerBar(Horizontal):
                 variant="primary",
                 tooltip="Send the active Console session draft.",
             )
-            yield self._bounded_button(
+            stop_button = self._bounded_button(
                 "Stop",
                 width=8,
                 id="console-stop-generation",
                 classes="destination-action-button console-stop-button",
                 tooltip="Stop generation in the active Console session.",
             )
+            stop_button.styles.display = "none"
+            yield stop_button
             yield self._bounded_button(
                 "Attach",
                 width=10,

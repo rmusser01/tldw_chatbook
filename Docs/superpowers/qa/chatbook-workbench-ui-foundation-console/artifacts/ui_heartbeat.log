@@ -1,0 +1,3 @@
+enabled=True
+max_heartbeat_lag_ms=20
+stalled=False

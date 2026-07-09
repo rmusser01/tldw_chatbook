@@ -164,16 +164,21 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
                 pilot,
                 lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
             )
+            # The retired hub's "Search/RAG" / "Study Dashboard" /
+            # "Import/Export Sources" action-region copy is gone; the rail
+            # row titles are the surviving discoverable surface for the same
+            # four capabilities (Search / RAG, Study, Import / Export,
+            # Collections).
             library_text = _screen_text(app)
-            assert "Search/RAG" in library_text
-            assert "Study Dashboard" in library_text
-            assert "Import/Export Sources" in library_text
+            assert "Search / RAG" in library_text
+            assert "Study decks" in library_text
+            assert "Import / Export" in library_text
             assert "Collections" in library_text
 
-            app.screen.query_one("#library-mode-search", Button).press()
+            app.screen.query_one("#library-row-browse-search", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "library" and "Search/RAG mode" in _screen_text(app),
+                lambda: app.current_tab == "library" and "Library Search/RAG" in _screen_text(app),
             )
 
             app.screen.query_one("#nav-library", Button).press()
@@ -181,14 +186,18 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
                 pilot,
                 lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
             )
-            # Import/Export is now an in-Library mode; the ingest screen is
-            # one press deeper via the mode's "Open Ingest" action.
-            app.screen.query_one("#library-open-import-export", Button).press()
+            # Import/Export is reached via its own rail row (proving the
+            # native mode renders in place); the in-canvas "Open Ingest"
+            # button lived only in the never-mounted #library-action-region
+            # and is dead (see test_destination_shells.py), so the Ingest
+            # screen is now reached via the always-visible Ingest > Import
+            # media rail row instead of a button inside Import/Export mode.
+            app.screen.query_one("#library-row-ingest-import-export", Button).press()
             await _wait_until(
                 pilot,
-                lambda: bool(app.screen.query("#library-import-export-open-ingest")),
+                lambda: app.current_tab == "library" and "Import/Export mode" in _screen_text(app),
             )
-            app.screen.query_one("#library-import-export-open-ingest", Button).press()
+            app.screen.query_one("#library-row-ingest-import-media", Button).press()
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == "ingest" and app.screen.__class__.__name__ == "MediaIngestScreen",
@@ -229,5 +238,4 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
                 assert subscription_window is not None
                 assert subscription_window.initial_tab == "watchlist-runs"
                 assert subscription_window._selected_watchlist_run_id == "local:watchlist_run:91"
-
 

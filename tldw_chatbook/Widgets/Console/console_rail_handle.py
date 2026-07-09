@@ -8,6 +8,8 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_INSPECTOR_LABEL
+
 
 class ConsoleRailHandle(Vertical):
     """Focusable compact handle for opening a collapsed Console rail."""
@@ -67,7 +69,7 @@ class ConsoleRailHandle(Vertical):
         """Return a compact visible label while preserving full tooltips."""
         if self.side != "right":
             return self.label
-        return "Inspector" if self.label == "< Inspector" else self.label
+        return "Inspector" if self.label == CONSOLE_RAIL_INSPECTOR_LABEL else self.label
 
     def _display_badge(self) -> str:
         """Return badge copy that fits the collapsed inspector affordance."""

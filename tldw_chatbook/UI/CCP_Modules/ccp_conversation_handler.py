@@ -1,4 +1,4 @@
-"""Handler for conversation-related operations in the CCP window."""
+"""Handler for conversation-related operations in the Personas screen."""
 
 from typing import TYPE_CHECKING, Optional, List, Dict, Any, Tuple, Union
 from loguru import logger
@@ -9,7 +9,7 @@ from ...config import get_chachanotes_db_lazy
 from .ccp_messages import ConversationMessage, ViewChangeMessage
 
 if TYPE_CHECKING:
-    from ..Conv_Char_Window import CCPWindow
+    from ..Screens.personas_screen import PersonasScreen
 
 logger = logger.bind(module="CCPConversationHandler")
 ConversationId = Union[int, str]
@@ -35,13 +35,13 @@ def normalize_conversation_row(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class CCPConversationHandler:
-    """Handles all conversation-related operations for the CCP window."""
+    """Handles all conversation-related operations for the Personas screen."""
     
-    def __init__(self, window: 'CCPWindow'):
+    def __init__(self, window: "PersonasScreen"):
         """Initialize the conversation handler.
         
         Args:
-            window: Reference to the parent CCP window
+            window: Reference to the parent Personas screen
         """
         self.window = window
         self.app_instance = window.app_instance

@@ -52,6 +52,48 @@ def _is_blocked_rag_status(value: Any) -> bool:
     return text.startswith("missing") or text in {"blocked", "unavailable"}
 
 
+def build_console_disabled_reason(
+    *,
+    action_id: str,
+    has_draft: bool,
+    send_blocked: bool,
+    setup_blocked_reason: str = "",
+) -> str:
+    """Return concise disabled copy for Console action controls.
+
+    Args:
+        action_id: Canonical action id, such as ``send``.
+        has_draft: Whether the composer currently has message text.
+        send_blocked: Whether sending is blocked by setup or run state.
+        setup_blocked_reason: Provider/setup blocker copy, when present.
+
+    Returns:
+        A user-facing disabled reason, or an empty string when no conservative
+        reason should be shown.
+    """
+    if action_id != "send":
+        return ""
+
+    setup_reason = _clean(setup_blocked_reason, "")
+    setup_reason_lower = setup_reason.lower()
+    if send_blocked and setup_reason:
+        if "model" in setup_reason_lower:
+            return "Send blocked — choose a model to continue"
+        if "api key" in setup_reason_lower:
+            return "Send blocked — add an API key to continue"
+        if "endpoint" in setup_reason_lower:
+            return "Send blocked — configure the endpoint to continue"
+        if (
+            "choose a provider" in setup_reason_lower
+            or "missing provider" in setup_reason_lower
+        ):
+            return "Send blocked — choose a provider to continue"
+        return "Send blocked — finish provider setup to continue"
+    if not has_draft:
+        return "Send disabled: type a message"
+    return ""
+
+
 @dataclass(frozen=True)
 class ConsoleDisplayRow:
     """One user-visible Console display row."""
@@ -213,6 +255,9 @@ class ConsoleControlState:
     sources_label: str
     tools_label: str
     approvals_label: str
+    sources_active: bool = False
+    tools_active: bool = False
+    approvals_active: bool = False
 
     @classmethod
     def from_values(
@@ -238,6 +283,9 @@ class ConsoleControlState:
             sources_label=f"Sources: {staged_source_count} staged",
             tools_label=f"Tools: {tool_count} ready",
             approvals_label=f"Approvals: {approval_count} pending",
+            sources_active=staged_source_count > 0,
+            tools_active=tool_count > 0,
+            approvals_active=approval_count > 0,
         )
 
 
@@ -249,6 +297,7 @@ class ConsoleStagedContextState:
     summary: str
     rows: tuple[ConsoleDisplayRow, ...] = ()
     recovery: str = ""
+    is_empty: bool = False
 
     @classmethod
     def from_live_work(
@@ -289,7 +338,8 @@ class ConsoleStagedContextState:
     def empty(cls) -> "ConsoleStagedContextState":
         return cls(
             heading="Staged Context",
-            summary="No staged work.",
+            summary="No sources attached.",
+            is_empty=True,
         )
 
 
@@ -307,6 +357,8 @@ class ConsoleInspectorState:
         cls,
         *,
         live_work_title: Any = None,
+        provider_label: Any = None,
+        model_label: Any = None,
         provider_ready: bool = True,
         provider_recovery: Any = None,
         rag_status: Any = None,
@@ -323,7 +375,15 @@ class ConsoleInspectorState:
         normalized_tool_count = coerce_non_negative_int(tool_count)
         normalized_approval_count = coerce_non_negative_int(approval_count)
         rag_value = _clean(rag_status, "not staged")
+        provider_value = _clean(provider_label, "provider")
+        model_value = _clean(model_label, "no model")
+        source_summary = rag_value
+        run_recipe = (
+            f"{provider_value} / {model_value} / sources {source_summary} / "
+            f"tools {normalized_tool_count} / approvals {normalized_approval_count}"
+        )
         rows = [
+            ConsoleDisplayRow("Run recipe", run_recipe),
             ConsoleDisplayRow("Live work", _clean(live_work_title, "No active work")),
             ConsoleDisplayRow(
                 "Provider",
@@ -331,12 +391,12 @@ class ConsoleInspectorState:
                 status=provider_status,
                 recovery=_clean(provider_recovery, "") if not provider_ready else "",
             ),
-            ConsoleDisplayRow("Tools", f"{normalized_tool_count} ready"),
             ConsoleDisplayRow(
-                "RAG/source",
-                rag_value,
-                status="blocked" if _is_blocked_rag_status(rag_value) else "ready",
+                "Sources",
+                source_summary,
+                status="blocked" if _is_blocked_rag_status(source_summary) else "ready",
             ),
+            ConsoleDisplayRow("Tools", f"{normalized_tool_count} ready"),
             ConsoleDisplayRow(
                 "Approvals",
                 f"{normalized_approval_count} pending",

@@ -20,7 +20,7 @@ def test_imports():
             QuickActionsProvider, SettingsProvider, CharacterProvider,
             MediaProvider, DeveloperProvider, TldwCli
         )
-        from tldw_chatbook.Constants import TAB_CHAT, TAB_NOTES
+        from tldw_chatbook.Constants import TAB_CHAT
         print("✅ All imports successful")
         return True
     except ImportError as e:
@@ -109,27 +109,27 @@ def test_constants():
     
     try:
         from tldw_chatbook.Constants import (
-            TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, 
-            TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS, 
+            TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH,
+            TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS,
             TAB_STATS, TAB_EVALS, TAB_CODING, ALL_TABS
         )
-        
+
         expected_tabs = [
-            TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH,
+            TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH,
             TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS,
             TAB_STATS, TAB_EVALS, TAB_CODING
         ]
-        
-        if len(expected_tabs) == 12:
-            print("✅ All 12 tab constants found")
+
+        if len(expected_tabs) == 11:
+            print("✅ All 11 tab constants found")
         else:
-            print(f"❌ Expected 12 tabs, found {len(expected_tabs)}")
+            print(f"❌ Expected 11 tabs, found {len(expected_tabs)}")
             return False
-            
-        if len(ALL_TABS) == 12:
-            print("✅ ALL_TABS contains all tabs")
+
+        if "notes" not in ALL_TABS:
+            print("✅ ALL_TABS no longer carries the retired Notes tab")
         else:
-            print(f"❌ ALL_TABS has {len(ALL_TABS)} tabs, expected 12")
+            print("❌ ALL_TABS still carries the retired 'notes' tab id")
             return False
             
         return True

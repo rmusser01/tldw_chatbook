@@ -8,6 +8,7 @@ from textual.widgets import Button
 
 from tldw_chatbook.UI.ChatbookExportManagementWindow import ChatbookExportManagementWindow
 from tldw_chatbook.UI.ChatbookTemplatesWindow import ChatbookTemplatesWindow
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 
 def _assert_button_tooltips(root, expected_tooltips: dict[str, str]) -> None:
@@ -98,6 +99,41 @@ async def test_chatbook_export_toolbar_actions_explain_selected_pack_requirement
                 "open-location": "Open the selected Chatbook location.",
             },
         )
+
+
+@pytest.mark.asyncio
+async def test_chatbook_delete_selected_opens_confirmation_with_delete_labels(tmp_path):
+    class ManagementApp:
+        def __init__(self):
+            self.config_data = {}
+            self.notify = Mock()
+            self.pushed_screen = None
+            self.wait_for_dismiss = None
+
+        async def push_screen(self, screen, wait_for_dismiss=False):
+            self.pushed_screen = screen
+            self.wait_for_dismiss = wait_for_dismiss
+            return False
+
+    app = ManagementApp()
+    window = ChatbookExportManagementWindow(app)
+    window.chatbook_files = [
+        {
+            "name": "Research Pack",
+            "path": tmp_path / "Research Pack.chatbook.zip",
+            "size": 1024,
+            "created": datetime(2026, 4, 20, 9, 0),
+            "modified": datetime(2026, 4, 20, 9, 0),
+        }
+    ]
+    window.selected_chatbook = 0
+
+    await window._delete_selected()
+
+    assert isinstance(app.pushed_screen, ConfirmationDialog)
+    assert app.wait_for_dismiss is True
+    assert app.pushed_screen.confirm_label == "Delete"
+    assert app.pushed_screen.cancel_label == "Cancel"
 
 
 @pytest.mark.asyncio

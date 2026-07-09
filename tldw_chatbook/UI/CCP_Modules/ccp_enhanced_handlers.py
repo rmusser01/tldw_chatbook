@@ -27,6 +27,16 @@ from .ccp_validators import (
 logger = logger.bind(module="CCPEnhancedHandlers")
 
 
+def _is_enhanced(handler_class, marker: str) -> bool:
+    """Return whether a handler class already has the requested enhancement."""
+    return bool(getattr(handler_class, marker, False))
+
+
+def _mark_enhanced(handler_class, marker: str) -> None:
+    """Mark a handler class as enhanced to avoid stacked decorators."""
+    setattr(handler_class, marker, True)
+
+
 def enhance_conversation_handler(handler_class):
     """
     Enhance the conversation handler with validation and loading indicators.
@@ -36,6 +46,10 @@ def enhance_conversation_handler(handler_class):
     - Loading indicators for async operations
     - Performance tracking via existing stats system
     """
+    marker = "_personas_conversation_enhanced"
+    if _is_enhanced(handler_class, marker):
+        logger.debug(f"Conversation handler already enhanced: {handler_class.__name__}")
+        return handler_class
     
     # Enhance search method
     original_search = handler_class.handle_search
@@ -69,6 +83,7 @@ def enhance_conversation_handler(handler_class):
         
         handler_class.handle_save_details = enhanced_save
     
+    _mark_enhanced(handler_class, marker)
     logger.info("Enhanced conversation handler with validation and loading indicators")
     return handler_class
 
@@ -77,6 +92,10 @@ def enhance_character_handler(handler_class):
     """
     Enhance the character handler with validation and loading indicators.
     """
+    marker = "_personas_character_enhanced"
+    if _is_enhanced(handler_class, marker):
+        logger.debug(f"Character handler already enhanced: {handler_class.__name__}")
+        return handler_class
     
     # Enhance save character method
     if hasattr(handler_class, 'handle_save_character'):
@@ -121,12 +140,18 @@ def enhance_character_handler(handler_class):
     # Enhance refresh list
     original_refresh = handler_class.refresh_character_list
     
-    @with_loading("Refreshing character list...", "List refreshed", "Failed to refresh list")
+    @with_loading(
+        "Refreshing character list...",
+        "List refreshed",
+        "Failed to refresh list",
+        notify=False,
+    )
     async def enhanced_refresh(self):
         return await original_refresh(self)
     
     handler_class.refresh_character_list = enhanced_refresh
     
+    _mark_enhanced(handler_class, marker)
     logger.info("Enhanced character handler with validation and loading indicators")
     return handler_class
 
@@ -135,6 +160,10 @@ def enhance_prompt_handler(handler_class):
     """
     Enhance the prompt handler with validation and loading indicators.
     """
+    marker = "_personas_prompt_enhanced"
+    if _is_enhanced(handler_class, marker):
+        logger.debug(f"Prompt handler already enhanced: {handler_class.__name__}")
+        return handler_class
     
     # Enhance save prompt method
     if hasattr(handler_class, 'handle_save_prompt'):
@@ -164,6 +193,7 @@ def enhance_prompt_handler(handler_class):
         
         handler_class.handle_search = enhanced_search
     
+    _mark_enhanced(handler_class, marker)
     logger.info("Enhanced prompt handler with validation and loading indicators")
     return handler_class
 
@@ -172,6 +202,10 @@ def enhance_dictionary_handler(handler_class):
     """
     Enhance the dictionary handler with validation and loading indicators.
     """
+    marker = "_personas_dictionary_enhanced"
+    if _is_enhanced(handler_class, marker):
+        logger.debug(f"Dictionary handler already enhanced: {handler_class.__name__}")
+        return handler_class
     
     # Enhance save dictionary method
     if hasattr(handler_class, 'handle_save_dictionary'):
@@ -192,28 +226,47 @@ def enhance_dictionary_handler(handler_class):
     # Enhance refresh list
     original_refresh = handler_class.refresh_dictionary_list
     
-    @with_loading("Refreshing dictionary list...", "List refreshed", "Failed to refresh list")
+    @with_loading(
+        "Refreshing dictionary list...",
+        "List refreshed",
+        "Failed to refresh list",
+        notify=False,
+    )
     async def enhanced_refresh(self):
         return await original_refresh(self)
     
     handler_class.refresh_dictionary_list = enhanced_refresh
     
+    _mark_enhanced(handler_class, marker)
     logger.info("Enhanced dictionary handler with validation and loading indicators")
     return handler_class
 
 
 def setup_ccp_enhancements(ccp_window):
     """
-    Setup all enhancements for the CCP window.
+    Setup all enhancements for the Personas screen's reused CCP handlers.
     
-    This should be called during CCP window initialization to add:
+    This should be called during Personas screen initialization to add:
     - Loading manager
     - Validation to all handlers
     - Performance tracking integration
     
     Args:
-        ccp_window: The CCPWindow instance to enhance
+        ccp_window: The Personas screen instance to enhance
     """
+    screen_type = type(ccp_window).__name__
+    handler_attrs = (
+        "conversation_handler",
+        "character_handler",
+        "prompt_handler",
+        "dictionary_handler",
+    )
+    detected_handlers = [
+        attr.removesuffix("_handler")
+        for attr in handler_attrs
+        if hasattr(ccp_window, attr)
+    ]
+
     try:
         # Initialize loading manager
         ccp_window.loading_manager = LoadingManager(ccp_window)
@@ -236,7 +289,14 @@ def setup_ccp_enhancements(ccp_window):
             # This would be called in on_mount to properly mount the widget
             pass
         
-        logger.info("CCP window enhancements setup complete")
+        logger.info(
+            f"Personas handler enhancements setup complete for "
+            f"screen_type={screen_type} handlers={detected_handlers}"
+        )
         
     except Exception as e:
-        logger.error(f"Failed to setup CCP enhancements: {e}", exc_info=True)
+        logger.error(
+            f"Failed to setup Personas handler enhancements for "
+            f"screen_type={screen_type} handlers={detected_handlers}: {e}",
+            exc_info=True,
+        )

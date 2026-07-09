@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input
 
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 from tldw_chatbook.Library.library_rag_service import (
@@ -25,9 +25,26 @@ from Tests.UI.test_destination_shells import (
     _active_destination_screen,
     _build_test_app,
     _visible_text,
-    _wait_for_library_snapshot,
     _wait_for_selector,
 )
+
+
+async def _wait_for_library_shell_ready(screen, pilot, *, timeout: float = 2.0) -> None:
+    """Wait for the Library rail shell (not the retired 3-pane workbench).
+
+    Mirrors ``Tests/UI/test_library_shell.py::_wait_for_library_shell`` for
+    suites that use the generic ``DestinationHarness``.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if getattr(screen, "_library_loaded", False) and screen.query("#library-rail"):
+            await pilot.pause()
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Library shell never loaded. Visible text: {_visible_text(screen)}"
+    )
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -109,26 +126,27 @@ async def _wait_for_query_ready(screen, pilot, query: str, *, timeout: float = 2
     raise AssertionError(f"Timed out waiting for Library Search/RAG query readiness: {query!r}")
 
 
-async def _wait_for_inspector_selection(
+async def _wait_for_evidence_selected(
     screen,
     pilot,
     title: str,
     *,
     timeout: float = 2.0,
 ) -> None:
+    """Wait for a result row to be selected in-panel.
+
+    The retired 3-pane inspector column (``#library-rag-selected-result``,
+    ``#library-rag-use-in-console``) is never mounted by the new canvas;
+    ``LibrarySearchRagPanel`` now surfaces selection directly on the result
+    row (``is-selected`` class) and its own per-result Console action
+    (``#library-rag-use-selected-in-console``).
+    """
     deadline = time.monotonic() + timeout
-    expected = f"Selected: {title}"
     while time.monotonic() < deadline:
-        selected_widgets = list(screen.query("#library-rag-selected-result"))
-        console_buttons = list(screen.query("#library-rag-use-in-console"))
-        if selected_widgets and console_buttons:
-            selected_widget = selected_widgets[0]
-            console_button = console_buttons[0]
-            if (
-                selected_widget.display is True
-                and expected in str(selected_widget.renderable)
-                and console_button.disabled is False
-            ):
+        selected_rows = list(screen.query(".library-rag-result-row.is-selected"))
+        console_buttons = list(screen.query("#library-rag-use-selected-in-console"))
+        if selected_rows and console_buttons:
+            if title in str(selected_rows[0].renderable) and console_buttons[0].disabled is False:
                 await pilot.pause()
                 return
         await pilot.pause(0.01)
@@ -168,6 +186,11 @@ def test_library_search_rag_provenance_labels_escape_rich_markup() -> None:
 
 @pytest.mark.asyncio
 async def test_library_search_rag_mode_mounts_native_panel_without_leaving_library() -> None:
+    """Selecting the Search rail row mounts ``LibrarySearchRagPanel`` inside
+    the Library canvas without navigating away. The retired 3-pane workbench
+    panes (``#library-source-browser/-detail/-inspector``) and the inspector
+    column (``#library-rag-inspector``, ``#library-rag-use-in-console``) are
+    never mounted by the new shell; the canvas host is ``#library-canvas``."""
     app = _build_test_app()
     _seed_library_sources(app)
     seen_routes: list[str] = []
@@ -175,39 +198,30 @@ async def test_library_search_rag_mode_mounts_native_panel_without_leaving_libra
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
-        source_browser = screen.query_one("#library-source-browser")
-        source_detail = screen.query_one("#library-source-detail")
-        source_inspector = screen.query_one("#library-source-inspector")
+        await _wait_for_library_shell_ready(screen, pilot)
 
         assert len(screen.query("#library-search-rag-panel")) == 0
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
         assert _active_destination_screen(host) is screen
         assert seen_routes == []
-        assert screen.query_one("#library-source-browser") is source_browser
-        assert screen.query_one("#library-source-detail") is source_detail
-        assert screen.query_one("#library-source-inspector") is source_inspector
-        assert screen.query_one("#library-rag-inspector")
-        assert source_inspector.query_one("#library-rag-inspector")
         assert len(screen.query("#search-rag-container")) == 0
 
+        canvas = screen.query_one("#library-canvas")
         for selector in (
             "#library-search-rag-panel",
             "#library-rag-source-scope",
             "#library-rag-query-input",
             "#library-rag-run-query",
             "#library-rag-results",
-            "#library-rag-inspector",
-            "#library-rag-use-in-console",
         ):
-            assert screen.query_one(selector)
+            assert canvas.query_one(selector)
 
-        active_mode_button = screen.query_one("#library-mode-search", Button)
-        assert str(active_mode_button.label) == "Search/RAG"
-        assert "Ask Library sources, inspect evidence, then send selected snippets to Console." in _visible_text(screen)
+        active_row_button = screen.query_one("#library-row-browse-search", Button)
+        assert active_row_button.tooltip == "Search / RAG"
+        assert active_row_button.has_class("library-rail-row-selected")
 
 
 @pytest.mark.asyncio
@@ -218,27 +232,29 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
         query_input = screen.query_one("#library-rag-query-input", Input)
         run_button = screen.query_one("#library-rag-run-query", Button)
-        console_button = screen.query_one("#library-rag-use-in-console", Button)
         visible_text = _visible_text(screen)
 
         assert query_input.value == ""
         assert str(run_button.label) == "Run Search/RAG"
         assert run_button.disabled is True
         assert "Enter a question or search query" in str(run_button.tooltip)
-        assert console_button.disabled is True
-        assert "Library | Search/RAG | Blocked: Enter a question or search query. | Local" in visible_text
+        assert not screen.query(".library-rag-result-action")
+        # The blocked state now surfaces on the in-panel query callout
+        # (the retired 3-pane status row is gone; the header is fixed
+        # "Library | Local" regardless of mode).
+        assert "Blocked: enter a question or search query." in visible_text
+        assert "Blocked | Enter a question before running retrieval." in visible_text
         assert "Scope: all local | Notes 1 | Media 1 | Conversations 1" in visible_text
         assert "Query" in visible_text
         assert "Enter: run query | Tab: move panes | Enter on result: select | u: Use in Console" in visible_text
         assert "Enter a question or search query" in visible_text
-        assert "Run a query and select usable evidence before sending to Console" in visible_text
 
 
 @pytest.mark.asyncio
@@ -249,9 +265,9 @@ async def test_library_search_rag_task_loop_orders_query_before_scope_and_result
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
         panel = screen.query_one("#library-search-rag-panel")
@@ -266,39 +282,6 @@ async def test_library_search_rag_task_loop_orders_query_before_scope_and_result
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_mode_hides_generic_hub_and_study_actions() -> None:
-    app = _build_test_app()
-    _seed_library_sources(app)
-    host = DestinationHarness(app, "library")
-
-    async with host.run_test(size=(170, 50)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
-
-        assert len(screen.query("#library-content-hub-title")) == 1
-
-        screen.query_one("#library-mode-search", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
-
-        visible_text = _visible_text(screen)
-        assert len(screen.query("#library-content-hub-title")) == 0
-        assert len(screen.query("#library-hub-study-card")) == 0
-        assert len(screen.query("#library-use-in-console")) == 0
-        assert len(screen.query("#library-open-study")) == 0
-        open_search_button = screen.query_one("#library-open-search", Button)
-        assert open_search_button.display is False
-        assert "Library Content Hub" not in visible_text
-        assert "Knowledge workflow" not in visible_text
-        assert "Study Dashboard" not in visible_text
-        assert "Retrieval Inspector" in visible_text
-
-        screen.query_one("#library-mode-sources", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-content-hub-title")
-        assert screen.query_one("#library-open-search", Button) is open_search_button
-        assert open_search_button.display is True
-
-
-@pytest.mark.asyncio
 async def test_library_search_rag_empty_sources_has_mode_local_blocked_status() -> None:
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService([])
@@ -308,27 +291,24 @@ async def test_library_search_rag_empty_sources_has_mode_local_blocked_status() 
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
         visible_text = _visible_text(screen)
-        assert "Library | Search/RAG | Blocked: no Library sources | Local" in visible_text
         assert "No sources." in visible_text
-        assert "Next: Add or import Library sources before querying." in visible_text
         assert "Recovery checklist" in visible_text
         assert "1. Import Library sources." in visible_text
         assert "2. Run Search/RAG." in visible_text
         assert "3. Select evidence, then Use in Console." in visible_text
         assert "Why: Enter a question or search query." not in visible_text
-        assert screen.query_one("#library-rag-open-import-export", Button)
-        assert len(screen.query("#library-content-hub-title")) == 0
-
-        screen.query_one("#library-rag-open-import-export", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-import-export-workflow-title")
-
-        assert "Library | Import/Export | Empty | Local" in _visible_text(screen)
+        recovery_button = screen.query_one("#library-rag-open-import-export", Button)
+        assert str(recovery_button.label) == "Open Import/Export"
+        assert recovery_button.tooltip == "Open Library Import/Export to add sources."
+        # Pressing this button drives the shell selection to the Import/Export
+        # row so the recomposed canvas renders that mode; the canvas-switch
+        # behavior itself is covered by test_library_shell.py.
 
 
 @pytest.mark.asyncio
@@ -340,9 +320,9 @@ async def test_library_search_rag_query_updates_action_and_survives_recompose() 
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
         screen.query_one("#library-rag-query-input", Input).value = query
@@ -355,10 +335,8 @@ async def test_library_search_rag_query_updates_action_and_survives_recompose() 
 
         screen.refresh(recompose=True)
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
-        await _wait_for_selector(screen, pilot, "#library-rag-inspector")
 
         assert len(screen.query("#library-search-rag-panel")) == 1
-        assert len(screen.query("#library-rag-inspector")) == 1
         assert screen.query_one("#library-rag-query-input", Input).value == query
         assert screen.query_one("#library-rag-run-query", Button).disabled is False
 
@@ -394,9 +372,9 @@ async def test_library_search_rag_run_query_renders_service_results_and_calls_sc
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         screen.query_one("#library-rag-query-input", Input).value = query
         await _wait_for_query_ready(screen, pilot, query)
@@ -417,7 +395,6 @@ async def test_library_search_rag_run_query_renders_service_results_and_calls_sc
         assert "Incident Review | score 0.930" in visible_text
         assert "Expired credential caused the incident." in visible_text
         assert "Incident Review p.2" in visible_text
-        assert "Status: Ready" in visible_text
         assert len(screen.query("#library-rag-service-error")) == 0
 
 
@@ -453,24 +430,24 @@ async def test_library_search_rag_selected_result_launches_console_live_work() -
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         screen.query_one("#library-rag-query-input", Input).value = query
         await _wait_for_query_ready(screen, pilot, query)
 
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-result-0")
-        assert screen.query_one("#library-rag-use-in-console", Button).disabled is True
+        assert not screen.query(".library-rag-console-action")
 
         screen.query_one("#library-rag-select-result-0", Button).press()
-        await _wait_for_inspector_selection(screen, pilot, "Incident Review")
+        await _wait_for_evidence_selected(screen, pilot, "Incident Review")
 
-        assert screen.query_one("#library-rag-use-in-console", Button).disabled is False
-        assert "Selected: Incident Review" in _visible_text(screen)
+        assert screen.query_one("#library-rag-use-selected-in-console", Button).disabled is False
+        assert "Incident Review" in str(screen.query_one("#library-rag-result-0").renderable)
 
-        screen.query_one("#library-rag-use-in-console", Button).press()
+        screen.query_one("#library-rag-use-selected-in-console", Button).press()
         await pilot.pause(0.1)
 
     app.open_console_for_live_work.assert_called_once()
@@ -498,7 +475,13 @@ async def test_library_search_rag_selected_result_launches_console_live_work() -
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_selected_result_inspector_exposes_evidence_metadata() -> None:
+async def test_library_search_rag_selected_result_evidence_metadata() -> None:
+    """``LibrarySearchRagPanel`` surfaces the row provenance badge, snippet,
+    and citations for a result unconditionally (not gated on selection). The
+    retired inspector column's structured evidence breakdown (Source/Score/
+    Runtime lines, "Authority & eligibility" and "Console Handoff" headings,
+    the eligibility/handoff sentences) has no successor in the single-pane
+    canvas."""
     app = _build_test_app()
     _seed_library_sources(app)
     app.library_rag_search_service = StaticLibraryRagSearchService(
@@ -529,9 +512,9 @@ async def test_library_search_rag_selected_result_inspector_exposes_evidence_met
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         screen.query_one("#library-rag-query-input", Input).value = query
         await _wait_for_query_ready(screen, pilot, query)
@@ -539,33 +522,13 @@ async def test_library_search_rag_selected_result_inspector_exposes_evidence_met
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-result-0")
         screen.query_one("#library-rag-select-result-0", Button).press()
-        await _wait_for_inspector_selection(screen, pilot, "Incident Review")
-
-        for selector in (
-            "#library-rag-selected-snippet",
-            "#library-rag-selected-citations",
-            "#library-rag-selected-source",
-            "#library-rag-selected-authority",
-            "#library-rag-selected-eligibility",
-            "#library-rag-selected-handoff",
-        ):
-            assert screen.query_one(selector, Static).display is True
+        await _wait_for_evidence_selected(screen, pilot, "Incident Review")
 
         visible_text = _visible_text(screen)
         assert "note | workspace-a | 1 citation | eligible" in visible_text
         assert screen.query_one("#library-rag-use-selected-in-console", Button).disabled is False
-        assert "Snippet: Expired credential caused the incident." in visible_text
+        assert "Expired credential caused the incident." in visible_text
         assert "Citations: Incident Review p.2" in visible_text
-        assert "Source: note-42 / chunk-7" in visible_text
-        assert "Score: 0.930" in visible_text
-        assert "Runtime: local-fts" in visible_text
-        assert "Retrieval" in visible_text
-        assert "Selected Evidence" in visible_text
-        assert "Authority & eligibility" in visible_text
-        assert "Authority: Workspace: workspace-a" in visible_text
-        assert "Eligibility: available for active workspace" in visible_text
-        assert "Console handoff" in visible_text
-        assert "Handoff: snippet + citations + source/chunk IDs" in visible_text
 
 
 @pytest.mark.asyncio
@@ -591,9 +554,9 @@ async def test_library_search_rag_keyboard_enter_runs_query_and_handoff_button()
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         query_input = screen.query_one("#library-rag-query-input", Input)
         query_input.value = query
@@ -606,9 +569,9 @@ async def test_library_search_rag_keyboard_enter_runs_query_and_handoff_button()
         select_button = screen.query_one("#library-rag-select-result-0", Button)
         select_button.focus()
         await pilot.press("enter")
-        await _wait_for_inspector_selection(screen, pilot, "Keyboard Evidence")
+        await _wait_for_evidence_selected(screen, pilot, "Keyboard Evidence")
 
-        console_button = screen.query_one("#library-rag-use-in-console", Button)
+        console_button = screen.query_one("#library-rag-use-selected-in-console", Button)
         console_button.focus()
         await pilot.press("enter")
         await pilot.pause(0.1)
@@ -643,9 +606,9 @@ async def test_library_search_rag_keyboard_u_shortcut_uses_selected_evidence() -
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         query_input = screen.query_one("#library-rag-query-input", Input)
         query_input.value = query
@@ -658,7 +621,7 @@ async def test_library_search_rag_keyboard_u_shortcut_uses_selected_evidence() -
         select_button = screen.query_one("#library-rag-select-result-0", Button)
         select_button.focus()
         await pilot.press("enter")
-        await _wait_for_inspector_selection(screen, pilot, "Shortcut Evidence")
+        await _wait_for_evidence_selected(screen, pilot, "Shortcut Evidence")
 
         await pilot.press("u")
         await pilot.pause(0.1)
@@ -698,9 +661,9 @@ async def test_library_search_rag_server_result_launches_server_console_live_wor
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         screen.query_one("#library-rag-query-input", Input).value = query
         await _wait_for_query_ready(screen, pilot, query)
@@ -708,9 +671,9 @@ async def test_library_search_rag_server_result_launches_server_console_live_wor
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-result-0")
         screen.query_one("#library-rag-select-result-0", Button).press()
-        await _wait_for_inspector_selection(screen, pilot, "Server Incident Review")
+        await _wait_for_evidence_selected(screen, pilot, "Server Incident Review")
 
-        screen.query_one("#library-rag-use-in-console", Button).press()
+        screen.query_one("#library-rag-use-selected-in-console", Button).press()
         await pilot.pause(0.1)
 
     app.open_console_for_live_work.assert_called_once()
@@ -743,52 +706,6 @@ async def test_library_search_rag_server_result_launches_server_console_live_wor
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_inspector_pre_mounts_selection_states() -> None:
-    app = _build_test_app()
-    _seed_library_sources(app)
-    app.library_rag_search_service = StaticLibraryRagSearchService(
-        {
-            "results": [
-                {
-                    "document_title": "Incident Review",
-                    "snippet": "Expired credential caused the incident.",
-                    "source_id": "note-42",
-                    "chunk_id": "chunk-7",
-                }
-            ],
-        }
-    )
-    host = DestinationHarness(app, "library")
-    query = "Why did the incident happen?"
-
-    async with host.run_test(size=(170, 50)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
-
-        screen.query_one("#library-mode-search", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
-
-        empty_state = screen.query_one("#library-rag-inspector-empty", Static)
-        selected_state = screen.query_one("#library-rag-selected-result", Static)
-        assert empty_state.display is True
-        assert selected_state.display is False
-
-        screen.query_one("#library-rag-query-input", Input).value = query
-        await _wait_for_query_ready(screen, pilot, query)
-        screen.query_one("#library-rag-run-query", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-rag-result-0")
-        screen.query_one("#library-rag-select-result-0", Button).press()
-
-        await _wait_for_inspector_selection(screen, pilot, "Incident Review")
-
-        assert screen.query_one("#library-rag-inspector-empty", Static) is empty_state
-        assert screen.query_one("#library-rag-selected-result", Static) is selected_state
-        assert empty_state.display is False
-        assert selected_state.display is True
-        assert "Selected: Incident Review" in str(selected_state.renderable)
-
-
-@pytest.mark.asyncio
 async def test_library_search_rag_run_query_renders_persistent_recovery_without_service() -> None:
     app = _build_test_app()
     _seed_library_sources(app)
@@ -797,9 +714,9 @@ async def test_library_search_rag_run_query_renders_persistent_recovery_without_
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         screen.query_one("#library-rag-query-input", Input).value = query
         await _wait_for_query_ready(screen, pilot, query)
@@ -810,7 +727,6 @@ async def test_library_search_rag_run_query_renders_persistent_recovery_without_
         visible_text = _visible_text(screen)
         assert "Unavailable: Library Search/RAG retrieval." in visible_text
         assert "Owner: Library retrieval service." in visible_text
-        assert "Status: Blocked" in visible_text
 
 
 @pytest.mark.asyncio
@@ -834,38 +750,43 @@ async def test_library_search_rag_run_query_preserves_panel_instances_during_upd
 
     async with host.run_test(size=(170, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        screen.query_one("#library-mode-search", Button).press()
+        screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         screen.query_one("#library-rag-query-input", Input).value = query
         await _wait_for_query_ready(screen, pilot, query)
         panel = screen.query_one("#library-search-rag-panel")
-        inspector = screen.query_one("#library-rag-inspector")
 
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-searching")
 
         assert screen.query_one("#library-search-rag-panel") is panel
-        assert screen.query_one("#library-rag-inspector") is inspector
 
         await _wait_for_selector(screen, pilot, "#library-rag-result-0")
 
         assert screen.query_one("#library-search-rag-panel") is panel
-        assert screen.query_one("#library-rag-inspector") is inspector
 
 
 @pytest.mark.asyncio
 async def test_library_search_rag_worker_completion_ignores_unmounted_screen(monkeypatch) -> None:
     app = _build_test_app()
     screen = LibraryScreen(app)
+    # Put the screen in the state where every guard in
+    # _apply_library_rag_search_outcome passes EXCEPT is_mounted, so that the
+    # mount guard is the sole thing preventing the DOM refresh. The code under
+    # test refreshes via _refresh_search_rag_panel_state_widgets (not the stale
+    # _sync_search_rag_panel), so that is the method the test must poison.
+    screen._active_mode = "search"
     screen._library_rag_query = "Find evidence"
+    monkeypatch.setattr(screen, "query", lambda *args, **kwargs: [object()])
 
-    async def fail_sync():
+    async def fail_refresh() -> None:
         raise AssertionError("unmounted worker completion should not touch the DOM")
 
-    monkeypatch.setattr(screen, "_sync_search_rag_panel", fail_sync)
+    monkeypatch.setattr(screen, "_refresh_search_rag_panel_state_widgets", fail_refresh)
 
+    assert screen.is_mounted is False
     await screen._apply_library_rag_search_outcome(
         LibraryRagSearchRequest(
             query="Find evidence",

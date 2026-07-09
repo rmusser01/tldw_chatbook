@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any, Literal, Mapping
 
 from tldw_chatbook.Sync_Interop.crypto import encrypt_sync_payload
+from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.tldw_api import SyncV2Envelope
 
 
@@ -20,11 +22,50 @@ class SyncEnvelopeBuilder:
         device_id: str,
         dataset_key: bytes,
         adapter_version: int = 1,
+        notes_mirror: Any = None,
     ) -> None:
         self.dataset_id = dataset_id
         self.device_id = device_id
         self.dataset_key = dataset_key
         self.adapter_version = adapter_version
+        self.notes_mirror = notes_mirror
+
+    # ------------------------------------------------------------------ M1 dotted-domain builders
+
+    def build_notes_note_upsert(self, *, note_id: str, title: str, content: str) -> SyncV2Envelope:
+        payload = {"title": title, "content": content}
+        return self._notes_note_envelope(note_id=note_id, operation="upsert", payload=payload, deleted=False)
+
+    def build_notes_note_tombstone(self, *, note_id: str, deleted_at: str | None = None) -> SyncV2Envelope:
+        payload = {
+            "deleted_at": deleted_at or datetime.now(timezone.utc).isoformat(),
+            "reason": "user_deleted",
+        }
+        return self._notes_note_envelope(note_id=note_id, operation="tombstone", payload=payload, deleted=True)
+
+    def _notes_note_envelope(self, *, note_id: str, operation: str, payload: dict[str, Any], deleted: bool) -> SyncV2Envelope:
+        payload_hash = canonical_payload_hash(payload)
+        base = self.notes_mirror.get(self.dataset_id, note_id) if self.notes_mirror is not None else None
+        return SyncV2Envelope(
+            client_envelope_id=f"{self.device_id}:notes.note:{note_id}:{payload_hash}",
+            dataset_id=self.dataset_id,
+            device_id=self.device_id,
+            domain="notes.note",
+            object_id=note_id,
+            operation=operation,
+            adapter_version=self.adapter_version,
+            schema_version=1,
+            deleted=deleted,
+            payload=payload,
+            payload_hash=payload_hash,
+            base_object_revision=base.object_revision if base else None,
+            base_object_hash=base.object_hash if base else None,
+            base_server_cursor=base.server_cursor if base else None,
+            encryption_policy="server_trusted_v1",
+            encryption_metadata={"policy": "server_trusted_v1"},
+        )
+
+    # ------------------------------------------------------------------ legacy coarse-domain builders
 
     def build_note_upsert(
         self,

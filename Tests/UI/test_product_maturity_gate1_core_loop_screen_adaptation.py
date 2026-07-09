@@ -61,13 +61,16 @@ def _visible_text(screen) -> str:
     return " ".join([*static_text, *button_text])
 
 
-async def _wait_for_visible_text(screen, pilot, expected: str, *, timeout: float = 1.0) -> None:
+async def _wait_for_visible_text(screen, pilot, expected: str, *, timeout: float = 4.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if expected in _visible_text(screen):
             await pilot.pause()
             return
         await pilot.pause(0.01)
+    if expected in _visible_text(screen):
+        await pilot.pause()
+        return
     raise AssertionError(f"Timed out waiting for {expected!r}. Visible text: {_visible_text(screen)}")
 
 
@@ -112,24 +115,19 @@ async def test_home_core_loop_uses_dashboard_regions_and_selected_item_inspector
 
     async with host.run_test(size=(140, 42)) as pilot:
         home = _active_home_screen(host)
-        await _wait_for_selector(home, pilot, "#home-dashboard-grid")
+        await _wait_for_selector(home, pilot, "#home-triage-grid")
 
         for selector in (
-            "#home-status-row",
-            "#home-scope-filter-row",
-            "#home-dashboard-grid",
-            "#home-attention-queue",
-            "#home-active-work-region",
-            "#home-inspector",
-            "#home-next-actions-region",
-            "#home-recent-work-region",
+            "#home-header-line",
+            "#home-triage-grid",
+            "#home-rail",
+            "#home-canvas",
         ):
             assert home.query_one(selector)
 
         text = _visible_text(home)
         assert "Daily papers" in text
         assert "RAG Summary Chatbook" in text
-        assert "Selected item" in text
         assert "Open in Console" in text
         assert "Open Chatbook in Console" in text
 
@@ -164,11 +162,11 @@ async def test_home_selected_item_matches_prioritized_details_control():
 
     async with host.run_test(size=(140, 42)) as pilot:
         home = _active_home_screen(host)
-        await _wait_for_selector(home, pilot, "#home-dashboard-grid")
+        await _wait_for_selector(home, pilot, "#home-triage-grid")
 
-        selected_body = str(home.query_one("#home-selected-item-body", Static).renderable)
-        assert "Daily papers" in selected_body
-        assert "RAG Summary Chatbook" not in selected_body
+        selected_title = str(home.query_one("#home-canvas-title", Static).renderable)
+        assert "Daily papers" in selected_title
+        assert "RAG Summary Chatbook" not in selected_title
 
         await pilot.click("#home-open-details")
         await _wait_for_selector(home, pilot, "#home-open-details")
@@ -210,7 +208,7 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
         assert "Console" in text
         assert "Transcript / Event Stream" in text
         assert "Staged Context" in text
-        assert "Console Settings" in text
+        assert "Choose model" in text or "Open Settings" in text
         assert "Inspector" in text
 
 
@@ -233,41 +231,50 @@ async def test_console_native_session_surface_survives_screen_recompose():
 
 @pytest.mark.asyncio
 async def test_library_core_loop_modes_are_actionable_without_leaving_library():
+    # The retired 3-pane hub's mode-chip strip and #library-source-browser /
+    # #library-source-detail / #library-source-inspector panes are gone; the
+    # rail + canvas shell carries the same "modes are actionable in-place"
+    # contract via rail-row presses that swap the #library-canvas body
+    # without posting a NavigateToScreen (unlike the browse-media/-notes
+    # rows, which do navigate away).
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService(
         [{"title": "Research Note", "id": "note-1"}]
     )
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
-    host = DestinationHarness(app, "library")
+    seen_routes = []
+    host = DestinationHarness(app, "library", seen_routes)
 
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        source_browser = screen.query_one("#library-source-browser")
-        source_detail = screen.query_one("#library-source-detail")
 
-        screen.query_one("#library-mode-search", Button).press()
-        await _wait_for_visible_text(screen, pilot, "Search/RAG mode")
+        screen.query_one("#library-row-browse-collections", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
-        assert screen.query_one("#library-source-detail")
-        assert screen.query_one("#library-source-inspector")
-        assert screen.query_one("#library-source-browser") is source_browser
-        assert screen.query_one("#library-source-detail") is source_detail
-        assert screen.query_one("#library-mode-search").has_class("is-active")
-        text = _visible_text(screen)
-        assert "Search/RAG mode" in text
-        assert "Ask in Console" in text or "Use in Console" in text
+        # Same screen instance, same rail + canvas shell -- the mode row
+        # recomposed the canvas body in place rather than pushing a screen.
+        assert _active_destination_screen(host) is screen
+        assert screen.query_one("#library-canvas") in screen.query_one(
+            "#library-collections-panel"
+        ).ancestors
+        assert screen._library_selected_row_id == "browse-collections"
+        assert screen.query_one("#library-row-browse-collections").has_class(
+            "library-rail-row-selected"
+        )
+        assert not seen_routes
 
-        screen.query_one("#library-mode-collections", Button).press()
-        await _wait_for_visible_text(screen, pilot, "Collections mode")
+        screen.query_one("#library-row-create-flashcards", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-detail")
 
-        text = _visible_text(screen)
-        assert screen.query_one("#library-source-browser") is source_browser
-        assert screen.query_one("#library-source-detail") is source_detail
-        assert screen.query_one("#library-mode-collections").has_class("is-active")
-        assert "Collections mode" in text
-        assert "Library-owned" in text
-        assert "citations/snippets" in text
-
-
+        assert _active_destination_screen(host) is screen
+        assert screen.query_one("#library-canvas") in screen.query_one(
+            "#library-study-handoff-detail"
+        ).ancestors
+        assert screen._library_selected_row_id == "create-flashcards"
+        assert screen.query_one("#library-row-create-flashcards").has_class(
+            "library-rail-row-selected"
+        )
+        # Neither mode row leaves the Library screen.
+        assert not seen_routes

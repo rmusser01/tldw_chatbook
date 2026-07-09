@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Tab_Links import TabLinks
 from tldw_chatbook.Constants import (
-    TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH,
+    TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH,
     TAB_INGEST, TAB_EVALS, TAB_LLM, TAB_TOOLS_SETTINGS,
     TAB_STATS, TAB_LOGS, TAB_CODING, TAB_STTS, TAB_STUDY,
     TAB_CHATBOOKS, TAB_MCP, ALL_TABS, TAB_GROUPS
@@ -160,7 +160,6 @@ class TestTabLinksNavigation:
         expected_labels = {
             TAB_CHAT: "Console",
             TAB_CCP: "Personas",
-            TAB_NOTES: "Notes",
             TAB_MEDIA: "Media",
             TAB_SEARCH: "Search",
             TAB_INGEST: "Ingest",
@@ -200,7 +199,11 @@ class TestTabLinksNavigation:
                 
                 assert actual_label == expected, \
                     f"Tab {tab_id} should have label '{expected}', got '{actual_label}'"
-    
+
+            # Notes is retired as a standalone tab -- it now lives entirely
+            # inside Library, so no "#tab-link-notes" should ever be mounted.
+            assert not tab_links.query("#tab-link-notes")
+
     async def test_separators_present(self):
         """Test that grouped navigation separators are rendered correctly."""
         app = TldwCli()
@@ -227,7 +230,7 @@ class TestTabLinksNavigation:
             await pilot.pause(7)  # Wait for splash screen and UI initialization
             
             # Rapidly switch between multiple tabs
-            test_sequence = [TAB_CHAT, TAB_NOTES, TAB_MEDIA, TAB_CHAT, TAB_CODING]
+            test_sequence = [TAB_CHAT, TAB_SEARCH, TAB_MEDIA, TAB_CHAT, TAB_CODING]
             
             for tab_id in test_sequence:
                 tab_links = app.query_one(TabLinks)

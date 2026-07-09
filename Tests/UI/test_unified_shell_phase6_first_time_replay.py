@@ -134,7 +134,8 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
             assert [(button.id, str(button.label).strip()) for button in nav_buttons] == EXPECTED_NAV
 
             home_text = _screen_text(app)
-            assert "Dashboard, notifications, status, active work, and next actions." in home_text
+            assert "Console needs a working model before live AI tasks." in home_text
+            assert "Needs Attention" in home_text
             assert "Set up Console model" in home_text
             assert "More: Ctrl+P" in home_text
 
@@ -155,7 +156,12 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                     "nav-personas",
                     "personas",
                     "PersonasScreen",
-                    ("Personas", "Behavior, characters, prompts, lore", "Attach to Console"),
+                    (
+                        "Personas",
+                        "Behavior profiles for chat and agents",
+                        "characters, personas, prompts, dictionaries, and lore",
+                        "Attach to Console",
+                    ),
                 ),
                 (
                     "nav-skills",
@@ -174,5 +180,3 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                 screen_text = _screen_text(app)
                 for copy in required_copy:
                     assert copy in screen_text
-
-

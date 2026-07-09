@@ -85,6 +85,24 @@ def test_note_applier_merges_safe_metadata_without_content_overwrite() -> None:
     assert store.note_content == {}
 
 
+def test_legacy_encrypted_apply_conflicts_when_dataset_key_missing() -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)
+    store = RecordingLocalStore()
+    applier = SyncEnvelopeApplier(local_store=store)
+
+    envelope = builder.build_note_upsert(
+        note_id="note-1",
+        title="Remote",
+        body="remote body",
+    )
+    result = applier.apply(envelope)
+
+    assert result["status"] == "conflict"
+    assert result["conflict"]["conflict_type"] == "missing_dataset_key"
+    assert store.note_content == {}
+
+
 def test_chat_applier_appends_by_stable_id_and_conflicts_on_hash_mismatch() -> None:
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key)

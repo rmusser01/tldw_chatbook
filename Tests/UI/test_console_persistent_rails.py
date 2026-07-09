@@ -8,6 +8,9 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_console_internals_decomposition import (
+    _configure_native_ready_console,
+)
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
     _visible_text,
@@ -17,6 +20,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_rail_state import (
     CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS,
+    build_console_rail_preference_key,
 )
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -205,6 +209,31 @@ async def _wait_for_saved_settings(pilot, saved_settings, expected_count: int) -
     )
 
 
+def _rail_prefs(
+    *,
+    left_open: bool,
+    right_open: bool,
+    session_open: bool = True,
+    context_open: bool = True,
+    model_open: bool = True,
+    details_open: bool = False,
+) -> dict[str, bool]:
+    """Full serialized rail-preference shape (left/right rails + four sections).
+
+    The persisted shape now carries the four collapsible left-rail section
+    states alongside the left/right rail openness. Section states default to
+    the first-run layout (Session/Context/Model open, Details collapsed).
+    """
+    return {
+        "left_open": left_open,
+        "right_open": right_open,
+        "session_open": session_open,
+        "context_open": context_open,
+        "model_open": model_open,
+        "details_open": details_open,
+    }
+
+
 class _FixedUuid:
     def __init__(self, value: str) -> None:
         self.value = value
@@ -233,6 +262,16 @@ def test_generated_console_stylesheet_includes_rail_rules():
         composer_focus = _css_block(css, "#console-native-composer.console-composer-focused")
         assert "border: heavy $ds-action-focus;" not in composer_focus
         assert "border: thick $ds-action-focus;" not in css
+        for selector in (
+            "#console-left-rail:focus",
+            "#console-left-rail-body:focus",
+            "#console-workspace-context:focus",
+            "#console-workspace-conversations:focus",
+        ):
+            focus_block = _css_block(css, selector)
+            assert "border: solid $ds-action-focus;" not in focus_block
+            assert "border: thick $ds-action-focus;" not in focus_block
+            assert "outline: none;" in focus_block
 
         right_handle = _css_block(css, ".console-rail-handle-right")
         right_button = _css_block(css, ".console-rail-handle-button-right")
@@ -241,6 +280,32 @@ def test_generated_console_stylesheet_includes_rail_rules():
         assert "max-width: 11;" in right_handle
         assert "width: 11;" in right_button
         assert "max-width: 11;" in right_button
+
+
+def test_generated_console_stylesheet_includes_rail_section_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for selector in (
+        ".console-rail-section-header",
+        ".console-rail-section-title",
+        ".console-rail-section-toggle",
+        ".console-rail-section-body",
+        ".console-model-section-line",
+    ):
+        assert selector in component_css, selector
+        assert selector in generated_css, selector
+
+
+def test_generated_console_stylesheet_single_frame_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    for css_path in (
+        root / "components" / "_agentic_terminal.tcss",
+        root / "tldw_cli_modular.tcss",
+    ):
+        css = css_path.read_text()
+        block = _css_block(css, ".console-region")
+        assert "border:" not in block, css_path.name
 
 
 @pytest.mark.asyncio
@@ -287,8 +352,11 @@ async def test_console_first_start_does_not_create_rail_state_config_on_read():
 
 
 @pytest.mark.asyncio
-async def test_console_first_start_right_handle_is_focusable():
+async def test_console_ready_right_handle_is_focusable():
+    # A blocked first start traps focus in the setup modal by design, so
+    # handle focusability is asserted in the ready (unblocked) state.
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(180, 48)) as pilot:
@@ -333,7 +401,7 @@ async def test_console_context_rail_collapse_hides_left_rail_and_expands_main_co
         assert left_handle.has_class("console-rail-handle-left")
         _assert_handle_button_contained(left_handle)
         open_button = console.query_one("#console-context-rail-open", Button)
-        assert str(open_button.label) == "Context >"
+        assert str(open_button.label) == "Context ▸"
         assert open_button.tooltip == "Open Context rail"
         assert (
             await _wait_for_main_column_width_change(
@@ -357,7 +425,7 @@ async def test_console_visible_rail_headers_are_left_aligned_and_collapse_button
         context_title = console.query_one("#console-context-rail-title", Static)
         context_collapse = console.query_one("#console-context-rail-collapse", Button)
         assert context_title.has_class("console-rail-title")
-        assert str(context_collapse.label) == "<"
+        assert str(context_collapse.label) == "◂"
         assert context_collapse.tooltip == "Collapse Context rail"
         assert context_collapse.region.width >= 3
         assert context_title.region.x < context_collapse.region.x
@@ -368,7 +436,7 @@ async def test_console_visible_rail_headers_are_left_aligned_and_collapse_button
         inspector_title = console.query_one("#console-inspector-rail-title", Static)
         inspector_collapse = console.query_one("#console-inspector-rail-collapse", Button)
         assert inspector_title.has_class("console-rail-title")
-        assert str(inspector_collapse.label) == ">"
+        assert str(inspector_collapse.label) == "▸"
         assert inspector_collapse.tooltip == "Collapse Inspector rail"
         assert inspector_collapse.region.width >= 3
         assert inspector_title.region.x < inspector_collapse.region.x
@@ -481,14 +549,11 @@ async def test_console_rail_state_persists_by_workspace_session_key(monkeypatch)
 
     rail_state = app.app_config["console"]["rail_state"]
     expected_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:{session.id}"
-    assert rail_state[expected_key] == {
-        "left_open": False,
-        "right_open": True,
-    }
+    assert rail_state[expected_key] == _rail_prefs(left_open=False, right_open=True)
     assert saved_settings[-1] == (
         "console.rail_state",
         expected_key,
-        {"left_open": False, "right_open": True},
+        _rail_prefs(left_open=False, right_open=True),
     )
 
     app.console_rail_session_id = session.id
@@ -617,6 +682,13 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
         lambda section, key, value: True,
         raising=False,
     )
+    deleted_keys: list[str] = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "delete_settings_from_cli_config",
+        lambda section, keys: deleted_keys.extend(keys) or True,
+        raising=False,
+    )
     monkeypatch.setattr(
         console_chat_store_module,
         "uuid4",
@@ -633,14 +705,15 @@ async def test_console_session_preference_copies_to_durable_conversation_key(mon
         await _wait_for_selector(console, pilot, "#console-context-rail-handle")
 
     rail_state = app.app_config["console"]["rail_state"]
-    assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-1"] == {
-        "left_open": False,
-        "right_open": True,
-    }
-    assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-1"] == {
-        "left_open": False,
-        "right_open": True,
-    }
+    # The durable conversation copy is written through the full serialized
+    # shape, and the superseded session fallback entry is deleted so it can
+    # no longer accumulate as a permanent orphan section.
+    session_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-1"
+    assert session_key not in rail_state
+    assert session_key in deleted_keys
+    assert rail_state[
+        f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-1"
+    ] == _rail_prefs(left_open=False, right_open=True)
 
 
 @pytest.mark.asyncio
@@ -679,20 +752,18 @@ async def test_console_rail_key_prefers_native_session_over_legacy_conversation(
         await _wait_for_hidden(console, pilot, "#console-left-rail")
 
         rail_state = app.app_config["console"]["rail_state"]
-        assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-native"] == {
-            "left_open": False,
-            "right_open": False,
-        }
+        assert rail_state[
+            f"console_rail_state:{DEFAULT_WORKSPACE_ID}:session-native"
+        ] == _rail_prefs(left_open=False, right_open=False)
         assert f"console_rail_state:{DEFAULT_WORKSPACE_ID}:legacy-conv" not in rail_state
 
         session.persisted_conversation_id = "native-conv"
         console._sync_console_rail_visibility(console._current_console_rail_state())
 
     rail_state = app.app_config["console"]["rail_state"]
-    assert rail_state[f"console_rail_state:{DEFAULT_WORKSPACE_ID}:native-conv"] == {
-        "left_open": False,
-        "right_open": False,
-    }
+    assert rail_state[
+        f"console_rail_state:{DEFAULT_WORKSPACE_ID}:native-conv"
+    ] == _rail_prefs(left_open=False, right_open=False)
     assert f"console_rail_state:{DEFAULT_WORKSPACE_ID}:legacy-conv" not in rail_state
 
 
@@ -750,8 +821,12 @@ async def test_console_provider_blocked_badge_does_not_auto_open_inspector():
             "#console-inspector-rail-badge",
             "setup",
         )
-        assert _is_displayed(console.query_one("#console-provider-recovery-strip"))
-        settings_button = console.query_one("#console-open-provider-settings", Button)
+        # The shared Workbench recovery banner must stay hidden — the blocking
+        # setup modal's own action button carries this guidance instead (Phase 2
+        # spec, section 2 revised).
+        recovery = console.query_one("#workbench-recovery-callout")
+        assert not _is_displayed(recovery)
+        settings_button = console.query_one("#console-setup-modal-action", Button)
         assert _is_displayed(settings_button)
         assert settings_button.disabled is False
 
@@ -1046,3 +1121,304 @@ async def test_console_desktop_composer_span_ignores_rail_width_changes():
 
         assert right_open_main_width < left_collapsed_main_width
         assert composer.region.width == first_start_composer_width
+
+
+@pytest.mark.asyncio
+async def test_console_left_rail_renders_four_sections_with_details_collapsed():
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-details")
+
+        for section_id in ("session", "context", "model", "details"):
+            assert _is_displayed(
+                console.query_one(f"#console-rail-section-header-{section_id}")
+            )
+        assert _is_displayed(console.query_one("#console-rail-section-body-session"))
+        assert _is_displayed(console.query_one("#console-rail-section-body-context"))
+        assert _is_displayed(console.query_one("#console-rail-section-body-model"))
+        assert not _is_displayed(console.query_one("#console-rail-section-body-details"))
+        # Session content: workspace context tray without duplicate heading.
+        assert _is_displayed(console.query_one("#console-workspace-context"))
+        _assert_selector_hidden_or_absent(console, "#console-workspace-context-title")
+        # Details content exists but is hidden.
+        assert list(console.query("#console-workspace-details"))
+        # Model section content.
+        assert _is_displayed(console.query_one("#console-model-section-line1"))
+        assert _is_displayed(console.query_one("#console-model-section-configure"))
+
+
+@pytest.mark.asyncio
+async def test_console_details_toggle_expands_and_persists():
+    app = _build_test_app()
+    # Ready console so the first-run setup modal is not blocking the rail.
+    app.app_config = {
+        "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "local-model"}
+        },
+    }
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "local-model"
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-details")
+
+        await pilot.click("#console-rail-section-toggle-details")
+        try:
+            await _wait_for_displayed(console, pilot, "#console-rail-section-body-details")
+        except AssertionError:
+            # A reused test profile can resume a conversation whose stored
+            # details_open=True re-applies asynchronously before the click,
+            # which then collapses instead of expanding. Toggling once more
+            # always lands on the expand path; the persistence assertion
+            # below still verifies the real contract.
+            await pilot.click("#console-rail-section-toggle-details")
+            await _wait_for_displayed(console, pilot, "#console-rail-section-body-details")
+        assert _is_displayed(console.query_one("#console-workspace-authority-label"))
+
+    rail_state_config = app.app_config.get("console", {}).get("rail_state", {})
+    assert any(
+        isinstance(value, dict) and value.get("details_open") is True
+        for value in rail_state_config.values()
+    )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_section_sync_applies_stored_scope_preferences():
+    """Runtime rail syncs re-apply stored section prefs for the current scope.
+
+    This is the resume path: when the preference scope switches to a
+    conversation whose stored prefs differ from the composed defaults (for
+    example Details was expanded there before a relaunch), the next rail
+    sync must apply those flags to the section bodies and headers.
+    """
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-rail-section-header-details")
+        assert not _is_displayed(console.query_one("#console-rail-section-body-details"))
+        assert _is_displayed(console.query_one("#console-rail-section-body-model"))
+
+        workspace_context = console._current_console_workspace_context()
+        key = build_console_rail_preference_key(
+            workspace_id=workspace_context.active_workspace_id,
+            conversation_id=console._current_console_rail_conversation_id(),
+            session_id=console._current_console_session_id(),
+        )
+        rail_config = app.app_config.setdefault("console", {}).setdefault(
+            "rail_state", {}
+        )
+        rail_config[key.value] = {"details_open": True, "model_open": False}
+
+        console._sync_console_rail_visibility_if_changed(
+            console._current_console_rail_state()
+        )
+        await pilot.pause(0.1)
+
+        assert _is_displayed(console.query_one("#console-rail-section-body-details"))
+        assert not _is_displayed(console.query_one("#console-rail-section-body-model"))
+        details_toggle = console.query_one(
+            "#console-rail-section-toggle-details", Button
+        )
+        model_toggle = console.query_one("#console-rail-section-toggle-model", Button)
+        assert _button_text(details_toggle) == "▾"
+        assert _button_text(model_toggle) == "▸"
+
+
+def test_generated_console_stylesheet_includes_setup_card_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for selector in (
+        ".console-setup-step",
+        ".console-setup-step-done",
+        ".console-setup-step-active",
+        ".console-setup-step-pending",
+    ):
+        assert selector in component_css, selector
+        assert selector in generated_css, selector
+    for stale in (".console-provider-recovery-strip", ".console-provider-blocker"):
+        assert stale not in component_css, stale
+        assert stale not in generated_css, stale
+
+
+def test_generated_console_stylesheet_includes_counter_chip_emphasis_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for selector in (
+        ".console-chip-dim",
+        ".console-chip-alert",
+    ):
+        assert selector in component_css, selector
+        assert selector in generated_css, selector
+
+
+def test_generated_console_stylesheet_includes_setup_modal_rules():
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for selector in (
+        "#console-setup-modal",
+        ".console-setup-modal-card",
+        ".console-setup-modal-title",
+        ".console-setup-modal-action",
+        ".console-setup-modal-backdrop-snow",
+        "layer: console-setup-overlay",
+        "layers: console-workbench console-setup-overlay",
+        "layers: console-setup-snow console-setup-card",
+        "layer: console-setup-snow",
+        "layer: console-setup-card",
+    ):
+        assert selector in component_css, selector
+        assert selector in generated_css, selector
+
+
+def test_generated_console_stylesheet_includes_tab_strip_spacing_rule():
+    # NOTE: a companion "selection gets a thick accent border-left" rule was
+    # scoped for this same change but is intentionally NOT implemented here:
+    # `Tests/UI/test_non_obscuring_focus_contract.py::
+    # test_console_transcript_selected_message_uses_selected_contract_without_geometry`
+    # asserts `.console-transcript-message-selected` carries no `border:` at
+    # all (part of the repo-wide non-obscuring-focus contract). Adding a
+    # border-left there regresses that guard, so selection styling keeps its
+    # existing background/color/bold-underline treatment.
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
+    component_css = (root / "components" / "_agentic_terminal.tcss").read_text()
+    generated_css = (root / "tldw_cli_modular.tcss").read_text()
+    for css in (component_css, generated_css):
+        tab_strip_block = _css_block(css, "#console-native-tab-strip")
+        assert "margin-bottom: 1;" in tab_strip_block
+
+
+async def _wait_for_recorded_calls(pilot, recorded, expected_count: int) -> None:
+    for _ in range(40):
+        if len(recorded) >= expected_count:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"expected at least {expected_count} recorded calls, saw {len(recorded)}"
+    )
+
+
+class _StubConversationsDB:
+    """Minimal chachanotes_db exposing only list_all_active_conversations."""
+
+    def __init__(self, conversation_ids: list[str]) -> None:
+        self._rows = [{"id": cid} for cid in conversation_ids]
+
+    def list_all_active_conversations(self, limit: int = 1000, offset: int = 0):
+        return self._rows[offset : offset + limit]
+
+
+@pytest.mark.asyncio
+async def test_console_rail_preference_skips_persist_when_unchanged(monkeypatch):
+    app = _build_test_app()
+    app.app_config = {"console": {"rail_state": {}}}
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: True,
+        raising=False,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_native_console_session(console, pilot)
+
+        persisted: list[str] = []
+        original_persist = console._persist_console_rail_preferences
+
+        def _spy_persist(key, preferences, **kwargs):
+            persisted.append(key)
+            return original_persist(key, preferences, **kwargs)
+
+        monkeypatch.setattr(
+            console, "_persist_console_rail_preferences", _spy_persist
+        )
+
+        # Details defaults to collapsed; opening it is a real change → one write.
+        console._set_console_rail_preference(section_updates={"details": True})
+        assert len(persisted) == 1
+
+        # Re-applying the identical value must not persist again (dirty-check).
+        console._set_console_rail_preference(section_updates={"details": True})
+        assert len(persisted) == 1
+
+        # A genuine change persists once more.
+        console._set_console_rail_preference(section_updates={"details": False})
+        assert len(persisted) == 2
+
+
+@pytest.mark.asyncio
+async def test_console_rail_prune_removes_orphans_and_is_one_shot(monkeypatch):
+    app = _build_test_app()
+    app.app_config = {"console": {"rail_state": {}}}
+
+    monkeypatch.setattr(
+        chat_screen_module,
+        "save_setting_to_cli_config",
+        lambda section, key, value: True,
+        raising=False,
+    )
+    deleted_calls: list[list[str]] = []
+    monkeypatch.setattr(
+        chat_screen_module,
+        "delete_settings_from_cli_config",
+        lambda section, keys: deleted_calls.append(list(keys)) or True,
+        raising=False,
+    )
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_native_console_session(console, pilot)
+
+        # Seed a mixed rail_state and stub conversation liveness. Reset the
+        # one-shot latch so the manual dispatch runs against this exact state
+        # rather than racing the natural mount-time dispatch.
+        live_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-live"
+        global_key = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:global"
+        orphan_a = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-dead-a"
+        orphan_b = f"console_rail_state:{DEFAULT_WORKSPACE_ID}:conv-dead-b"
+        app.app_config["console"]["rail_state"] = {
+            live_key: _rail_prefs(left_open=True, right_open=False),
+            global_key: _rail_prefs(left_open=True, right_open=False),
+            orphan_a: _rail_prefs(left_open=False, right_open=True),
+            orphan_b: _rail_prefs(left_open=False, right_open=False),
+        }
+        console.app_instance.chachanotes_db = _StubConversationsDB(["conv-live"])
+        deleted_calls.clear()
+        console._console_rail_prune_dispatched = False
+
+        console._dispatch_console_rail_preference_prune()
+        await _wait_for_recorded_calls(pilot, deleted_calls, 1)
+
+        # The disk delete is recorded on the worker; the in-memory removal is
+        # scheduled back onto the UI thread, so wait for it to land.
+        rail_state = app.app_config["console"]["rail_state"]
+        for _ in range(40):
+            if orphan_a not in rail_state and orphan_b not in rail_state:
+                break
+            await pilot.pause(0.05)
+        assert live_key in rail_state
+        assert global_key in rail_state
+        assert orphan_a not in rail_state
+        assert orphan_b not in rail_state
+        assert deleted_calls[-1] == [orphan_a, orphan_b]
+
+        # One-shot: a second dispatch does no further work.
+        assert console._console_rail_prune_dispatched is True
+        deleted_calls.clear()
+        console._dispatch_console_rail_preference_prune()
+        await pilot.pause(0.2)
+        assert deleted_calls == []

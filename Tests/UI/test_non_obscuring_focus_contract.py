@@ -54,6 +54,13 @@ NOTES_TOOLBAR = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_toolbar.py"
 NOTES_EDITOR = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_editor_widget.py"
 NOTES_SYNC = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget.py"
 NOTES_SYNC_IMPROVED = ROOT / "tldw_chatbook/Widgets/Note_Widgets/notes_sync_widget_improved.py"
+CONSOLE_MODAL_FILES = (
+    ROOT / "tldw_chatbook/Widgets/Console/console_settings_modal.py",
+    ROOT / "tldw_chatbook/Widgets/Console/console_edit_message_modal.py",
+    ROOT / "tldw_chatbook/Widgets/Console/console_rename_session_modal.py",
+    ROOT / "tldw_chatbook/Widgets/Console/console_save_as_modal.py",
+    ROOT / "tldw_chatbook/Widgets/Console/console_workspace_switcher_modal.py",
+)
 
 BUNDLED_RESIDUAL_ACTIVE_SELECTED_CONTRACTS = (
     (LLM_MANAGEMENT, ".llm-nav-pane .llm-nav-button.-active"),
@@ -112,6 +119,29 @@ def css_block(text: str, selector: str) -> str:
     if blocks:
         return blocks[0]
     raise AssertionError(f"Missing CSS block for {selector}")
+
+
+def css_int_declaration(block: str, property_name: str) -> int:
+    """Return an integer declaration from a CSS rule body.
+
+    Args:
+        block: CSS rule body to inspect.
+        property_name: CSS property name whose integer value should be returned.
+
+    Returns:
+        The parsed integer value for the requested property.
+
+    Raises:
+        AssertionError: If the property is missing or not an integer declaration.
+    """
+    match = re.search(
+        rf"^\s*{re.escape(property_name)}\s*:\s*(?P<value>\d+)\s*;",
+        block,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError(f"Missing integer CSS declaration for {property_name}")
+    return int(match.group("value"))
 
 
 def bundled_css_module_paths() -> set[Path]:
@@ -194,8 +224,8 @@ def assert_embeddings_focus_and_active_contracts(text: str) -> None:
         assert "text-style: bold underline;" in block
 
     for selector in (
-        "#embeddings-model-list ModelListItem.--highlight",
-        "#embeddings-collection-list CollectionListItem.--highlight",
+        "#embeddings-model-list ModelListItem.-highlight",
+        "#embeddings-collection-list CollectionListItem.-highlight",
     ):
         block = css_block(text, selector)
         assert_readable_selected_state_contract(block)
@@ -523,6 +553,32 @@ def test_console_and_library_visible_offenders_do_not_obscure_labels():
         assert "$ds-status-error" not in block
 
 
+def test_console_selected_message_actions_keep_clickable_hit_targets():
+    for path in (AGENTIC, BUNDLE):
+        text = path.read_text(encoding="utf-8")
+        action_row = css_block(text, ".console-transcript-action-row")
+        action_button = css_block(text, ".console-transcript-action-button")
+
+        assert css_int_declaration(action_row, "height") >= 3
+        assert css_int_declaration(action_row, "min-height") >= 3
+        assert css_int_declaration(action_button, "height") >= 3
+        assert css_int_declaration(action_button, "min-height") >= 3
+        assert css_int_declaration(action_button, "min-width") >= 5
+
+
+def test_console_modal_headers_are_decoupled_from_transcript_action_rows():
+    for path in CONSOLE_MODAL_FILES:
+        text = path.read_text(encoding="utf-8")
+        assert 'classes="console-transcript-action-row"' not in text
+        assert "console-modal-header" in text
+
+    for path in (AGENTIC, BUNDLE):
+        text = path.read_text(encoding="utf-8")
+        modal_header = css_block(text, ".console-modal-header")
+        assert css_int_declaration(modal_header, "height") == 1
+        assert css_int_declaration(modal_header, "min-height") == 1
+
+
 def test_console_session_tab_active_state_uses_selected_contract():
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
@@ -621,12 +677,17 @@ def test_console_composer_action_availability_states_are_visually_distinct():
 
 
 def test_library_mode_chip_active_states_use_selected_focus_contracts():
+    """``.library-mode-chip:focus`` (the retired mode-strip's own focus rule)
+    was removed once the Library screen stopped rendering any widget with
+    that class (see Task 7's rail/canvas rework); ``.notes-mode-chip:focus``
+    keeps that contract. ``.library-mode-chip.is-active``/``:focus`` are
+    untouched (still shared with ``.notes-mode-chip``/``.personas-mode-chip``
+    and out of this retirement's scope), so those assertions stay."""
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8"),
     ):
-        focus = css_block(text, ".library-mode-chip:focus")
-        assert_non_obscuring_focus(focus)
+        assert ".library-mode-chip:focus" not in css_selectors(text)
 
         active = css_block(text, ".library-mode-chip.is-active")
         assert_readable_selected_state_contract(active)
@@ -651,6 +712,22 @@ def test_console_composer_focus_uses_thin_input_treatment():
     assert "border: heavy" not in block
     assert "border: solid $ds-input-focus-border;" in block
     assert "border-bottom: solid $ds-input-focus-accent;" in block
+
+
+def test_console_structural_separators_use_visible_column_line_token():
+    text = AGENTIC.read_text(encoding="utf-8")
+    transcript_region_blocks = css_blocks(text, "#console-transcript-region")
+    composer = css_block(text, "#console-native-composer")
+    transcript_rule = css_block(text, ".console-transcript-rule")
+
+    assert transcript_region_blocks
+    assert all("$ds-grid-line" not in block for block in transcript_region_blocks)
+    assert any("border: solid $ds-column-line;" in block for block in transcript_region_blocks)
+    assert any("border: round $ds-column-line;" in block for block in transcript_region_blocks)
+    assert "border: round $ds-column-line;" in composer
+    assert "border: round $ds-grid-line;" not in composer
+    assert "color: $ds-column-line;" in transcript_rule
+    assert "color: $ds-grid-line;" not in transcript_rule
 
 
 @pytest.mark.unit
@@ -1322,31 +1399,31 @@ def test_native_listview_row_states_follow_shared_contracts():
     text = LISTS.read_text(encoding="utf-8")
     assert "height: auto;" in css_block(text, "ListView ListItem")
     assert_native_row_hover_state_contract(css_block(text, "ListView ListItem:hover"))
-    assert_native_row_selected_state_contract(css_block(text, "ListView ListItem.--highlight"))
+    assert_native_row_selected_state_contract(css_block(text, "ListView ListItem.-highlight"))
 
 
 def test_bundled_native_listview_row_states_keep_effective_contracts():
     text = BUNDLE.read_text(encoding="utf-8")
     assert len(css_blocks(text, "ListView ListItem:hover")) == 1
-    assert len(css_blocks(text, "ListView ListItem.--highlight")) == 1
+    assert len(css_blocks(text, "ListView ListItem.-highlight")) == 1
     assert "height: auto;" in css_blocks(text, "ListView ListItem")[-1]
     assert_native_row_hover_state_contract(css_blocks(text, "ListView ListItem:hover")[-1])
-    assert_native_row_selected_state_contract(css_blocks(text, "ListView ListItem.--highlight")[-1])
+    assert_native_row_selected_state_contract(css_blocks(text, "ListView ListItem.-highlight")[-1])
 
     assert_native_row_hover_state_contract(css_block(text, "#chatbooks-list ListItem:hover"))
     for selector in (
-        "#chatbooks-list ListItem.--highlight",
-        "ConfigSearchResult.--highlight",
+        "#chatbooks-list ListItem.-highlight",
+        "ConfigSearchResult.-highlight",
     ):
         assert_native_row_selected_state_contract(css_block(text, selector))
 
-    assert css_blocks(text, "ConfigSearchResult ListItem.--highlight") == []
+    assert css_blocks(text, "ConfigSearchResult ListItem.-highlight") == []
 
 
 def test_config_search_result_highlight_targets_rendered_list_item():
     text = CONFIG_SEARCH.read_text(encoding="utf-8")
-    assert css_blocks(text, "ConfigSearchResult ListItem.--highlight") == []
-    assert_native_row_selected_state_contract(css_block(text, "ConfigSearchResult.--highlight"))
+    assert css_blocks(text, "ConfigSearchResult ListItem.-highlight") == []
+    assert_native_row_selected_state_contract(css_block(text, "ConfigSearchResult.-highlight"))
 
 
 def test_native_datatable_row_states_follow_shared_contracts():

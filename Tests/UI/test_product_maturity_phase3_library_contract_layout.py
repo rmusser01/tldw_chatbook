@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,6 @@ from Tests.UI.test_destination_shells import (
     StaticLibraryNotesScopeService,
     _active_destination_screen,
     _build_test_app,
-    _wait_for_library_snapshot,
 )
 
 
@@ -33,6 +33,13 @@ TASK_10_3 = Path(
 
 def _text(path: Path) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
+
+
+def _css_block(text: str, selector: str) -> str:
+    start = text.index(selector)
+    block_start = text.index("{", start)
+    block_end = text.index("}", block_start)
+    return text[block_start:block_end]
 
 
 def _rendered_static_text(widget: Static) -> str:
@@ -54,6 +61,106 @@ def _screen_text(screen) -> str:
     return " ".join([*static_text, *button_text])
 
 
+async def _wait_for_library_shell_ready(screen, pilot, *, timeout: float = 2.0) -> None:
+    """Wait for the Library rail shell (not the retired hub) to mount.
+
+    Mirrors ``Tests/UI/test_library_shell.py::_wait_for_library_shell`` for
+    suites that use the generic ``DestinationHarness`` instead of the
+    dedicated ``LibraryHarness``.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if getattr(screen, "_library_loaded", False) and screen.query("#library-rail"):
+            await pilot.pause()
+            await pilot.pause()
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(
+        f"Library shell never loaded. Visible text: {_screen_text(screen)}"
+    )
+
+
+def test_library_source_actions_use_console_text_control_style() -> None:
+    variables = _text(Path("tldw_chatbook/css/core/_variables.tcss"))
+    agentic_terminal = _text(Path("tldw_chatbook/css/components/_agentic_terminal.tcss"))
+    bundled_stylesheet = _text(Path("tldw_chatbook/css/tldw_cli_modular.tcss"))
+
+    assert "$ds-library-source-action-width: auto;" in variables
+    assert "$ds-library-source-action-min-width: 0;" in variables
+    assert "$ds-library-source-action-height: 1;" in variables
+    assert "$ds-library-source-action-width: auto;" in bundled_stylesheet
+    assert "$ds-library-source-action-min-width: 0;" in bundled_stylesheet
+    assert "$ds-library-source-action-height: 1;" in bundled_stylesheet
+    assert ".library-source-action {" in agentic_terminal
+    source_action_block = _css_block(agentic_terminal, ".library-source-action")
+    bundled_source_action_block = _css_block(bundled_stylesheet, ".library-source-action")
+    assert "background: transparent;" in source_action_block
+    assert "background: transparent;" in bundled_source_action_block
+    assert "border: none;" in source_action_block
+    assert "border: none;" in bundled_source_action_block
+    assert "content-align: left middle;" in source_action_block
+    assert "content-align: left middle;" in bundled_source_action_block
+    assert "text-style: none;" in agentic_terminal
+    assert "text-style: none;" in bundled_stylesheet
+    assert ".library-source-action:focus {" in agentic_terminal
+    assert "background: transparent;" in _css_block(agentic_terminal, ".library-source-action:focus")
+    assert "text-style: bold underline;" in _css_block(agentic_terminal, ".library-source-action:focus")
+    assert "background: transparent;" in _css_block(bundled_stylesheet, ".library-source-action:focus")
+    assert "text-style: bold underline;" in _css_block(bundled_stylesheet, ".library-source-action:focus")
+    assert "color: $ds-focus-fg;" in _css_block(
+        agentic_terminal,
+        ".library-source-action.is-active",
+    )
+    assert "background: transparent;" in _css_block(
+        agentic_terminal,
+        ".library-source-action.is-active",
+    )
+    assert "border: none;" in _css_block(
+        agentic_terminal,
+        ".library-source-action.is-active",
+    )
+    assert "text-style: bold underline;" in _css_block(
+        agentic_terminal,
+        ".library-source-action.is-active",
+    )
+    assert "color: $ds-focus-fg;" in _css_block(
+        bundled_stylesheet,
+        ".library-source-action.is-active",
+    )
+    assert "background: transparent;" in _css_block(
+        bundled_stylesheet,
+        ".library-source-action.is-active",
+    )
+    assert "border: none;" in _css_block(
+        bundled_stylesheet,
+        ".library-source-action.is-active",
+    )
+    assert "text-style: bold underline;" in _css_block(
+        bundled_stylesheet,
+        ".library-source-action.is-active",
+    )
+    assert ".library-source-active-marker {" in agentic_terminal
+    assert ".library-source-active-marker {" in bundled_stylesheet
+    assert "background: $ds-focus-bg;" in _css_block(
+        agentic_terminal,
+        ".library-source-active-marker",
+    )
+    assert "color: $ds-focus-fg;" in _css_block(
+        bundled_stylesheet,
+        ".library-source-active-marker",
+    )
+    assert "#library-collection-form Input {" in agentic_terminal
+    assert "border: tall $ds-grid-line;" in _css_block(
+        agentic_terminal,
+        "#library-collection-form Input",
+    )
+    assert "#library-collection-actions Button {" in agentic_terminal
+    assert "background: transparent;" in _css_block(
+        agentic_terminal,
+        "#library-collection-actions Button",
+    )
+
+
 def _seed_library_sources(app) -> None:
     app.notes_scope_service = StaticLibraryNotesScopeService(
         [{"title": "Research Note", "id": "note-1"}]
@@ -71,62 +178,56 @@ def _seed_library_sources(app) -> None:
 async def test_library_contract_layout_regions_survive_terminal_sizes(
     terminal_size: tuple[int, int],
 ) -> None:
+    """The rail + canvas shell (not the retired 3-pane contract grid) must
+    keep every rail row reachable across narrow, medium, and wide terminals."""
     app = _build_test_app()
     _seed_library_sources(app)
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=terminal_size) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
         for selector in (
-            "#library-status-row",
-            "#library-mode-bar",
-            "#library-contract-grid",
-            "#library-source-browser",
-            "#library-source-detail",
-            "#library-source-inspector",
+            "#library-header-line",
+            "#library-shell-grid",
+            "#library-rail",
+            "#library-canvas",
         ):
             assert screen.query_one(selector)
 
         visible_text = _screen_text(screen)
         for label in (
-            "Sources",
-            "Search/RAG",
-            "Import/Export",
-            "Workspaces",
             "Collections",
-            "Study",
+            "Search / RAG",
+            "Import / Export",
+            "Study decks",
             "Flashcards",
             "Quizzes",
-            "Library Modules",
-            "Content Hub",
-            "Hub Inspector",
-            "Library Content Hub",
-            "No source selected.",
-            "Research Note",
-            "Transcript A",
-            "Planning Chat",
         ):
             assert label in visible_text
 
-        expected_actions = {
-            "#library-open-notes": "Open Notes",
-            "#library-open-media": "Open Media",
-            "#library-open-conversations": "Open Conversations",
-            "#library-open-import-export": "Import/Export Sources",
-            "#library-open-study": "Study Dashboard",
-            "#library-open-flashcards": "Flashcards",
-            "#library-open-quizzes": "Quizzes",
-            "#library-use-in-console": "Use in Console",
-        }
-        for selector, label in expected_actions.items():
-            button = screen.query_one(selector, Button)
-            assert str(button.label) == label
+        for row_id in (
+            "browse-media",
+            "browse-conversations",
+            "browse-notes",
+            "browse-collections",
+            "browse-search",
+            "create-note",
+            "create-study",
+            "create-flashcards",
+            "create-quizzes",
+            "ingest-import-media",
+            "ingest-import-export",
+        ):
+            assert screen.query_one(f"#library-row-{row_id}", Button)
 
 
 @pytest.mark.asyncio
 async def test_library_status_row_preserves_unavailable_taxonomy() -> None:
+    """"Unavailable" (vs. policy-denied "Wrong source") taxonomy must survive;
+    it now surfaces via the Details rail lookup-error line instead of a
+    dedicated status row."""
     app = _build_test_app()
     app.notes_scope_service = None
     app.media_reading_scope_service = None
@@ -135,16 +236,23 @@ async def test_library_status_row_preserves_unavailable_taxonomy() -> None:
 
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        status_row = _rendered_static_text(screen.query_one("#library-status-row", Static))
+        lookup_error = screen._library_lookup_error
+        assert "unavailable" in lookup_error.lower()
+        assert "blocked" not in lookup_error.lower()
 
-    assert "Unavailable" in status_row
-    assert "Blocked" not in status_row
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        details_body = _rendered_static_text(screen.query_one("#library-details-body", Static))
+        assert lookup_error in details_body
 
 
 @pytest.mark.asyncio
 async def test_library_status_row_preserves_policy_recovery_status() -> None:
+    """Policy-denied lookups keep the "Wrong source" taxonomy label, now on
+    the Details rail lookup-error line."""
     app = _build_test_app()
     app.notes_scope_service = PolicyDeniedLibraryNotesScopeService()
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -153,11 +261,14 @@ async def test_library_status_row_preserves_policy_recovery_status() -> None:
 
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
+        await _wait_for_library_shell_ready(screen, pilot)
 
-        status_row = _rendered_static_text(screen.query_one("#library-status-row", Static))
+        lookup_error = screen._library_lookup_error
+        assert "Wrong source" in lookup_error
+        assert "Blocked" not in lookup_error
 
-    assert "Wrong source" in status_row
-    assert "Blocked" not in status_row
-
-
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        details_body = _rendered_static_text(screen.query_one("#library-details-body", Static))
+        assert "Wrong source" in details_body

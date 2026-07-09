@@ -377,6 +377,7 @@ def test_local_notification_adapter_maps_console_saved_chatbook_to_active_work()
             status="ready",
             detail_route="artifacts",
             console_available=True,
+            updated_at="2026-05-05T20:00:00Z",
         ),
     )
 
@@ -983,3 +984,71 @@ def test_home_control_result_can_carry_route_and_console_launch_payload():
 
 def test_home_control_result_status_contract_uses_enum_only():
     assert get_type_hints(HomeControlResult)["status"] is HomeControlResultStatus
+
+
+def test_local_watchlist_items_carry_updated_at():
+    class FakeWatchlistsService:
+        def list_home_run_snapshot(self, *, limit=20):
+            return [
+                {
+                    "id": "local:watchlist_run:9",
+                    "run_id": 9,
+                    "status": "running",
+                    "source_title": "Timed feed",
+                    "updated_at": "2026-07-04T10:00:00+00:00",
+                },
+            ]
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(watchlist_service=FakeWatchlistsService())
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+    item = next(i for i in dashboard_input.active_work_items if i.item_id == "local:watchlist_run:9")
+    assert item.updated_at == "2026-07-04T10:00:00+00:00"
+
+
+def test_terminal_watchlist_runs_become_recent_items_recent_first_capped():
+    class FakeWatchlistsService:
+        def list_home_run_snapshot(self, *, limit=20):
+            runs = [
+                {
+                    "id": f"local:watchlist_run:{index}",
+                    "run_id": index,
+                    "status": "completed",
+                    "source_title": f"Done feed {index}",
+                    "updated_at": f"2026-07-04T{index:02d}:00:00+00:00",
+                }
+                for index in range(1, 11)
+            ]
+            runs.append(
+                {
+                    "id": "local:watchlist_run:99",
+                    "run_id": 99,
+                    "status": "running",
+                    "source_title": "Live feed",
+                }
+            )
+            return runs
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(watchlist_service=FakeWatchlistsService())
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+    recent_ids = [item.item_id for item in dashboard_input.recent_work_items]
+    assert len(recent_ids) == 8
+    assert recent_ids[0] == "local:watchlist_run:10"  # most recent first
+    assert "local:watchlist_run:99" not in recent_ids  # running stays active
+    active_ids = [item.item_id for item in dashboard_input.active_work_items]
+    assert "local:watchlist_run:99" in active_ids
+    assert "local:watchlist_run:10" not in active_ids
+
+
+def test_unavailable_adapter_recent_items_empty():
+    adapter = UnavailableHomeActiveWorkAdapter()
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={},
+        has_recent_work=False,
+    )
+    assert dashboard_input.recent_work_items == ()

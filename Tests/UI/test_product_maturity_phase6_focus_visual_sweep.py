@@ -43,9 +43,9 @@ TERMINAL_SIZE_MATRIX = (
     ("wide", (180, 50)),
 )
 DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
-    "home": ("#home-dashboard",),
+    "home": ("#home-triage-grid",),
     "console": ("#console-shell", "#console-transcript-region"),
-    "library": ("#library-shell",),
+    "library": ("#library-shell-grid",),
     "artifacts": ("#artifacts-shell",),
     "personas": ("#personas-shell",),
     "watchlists_collections": ("#watchlists-collections-shell",),
@@ -251,10 +251,9 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
 
             expected_focus_ids = [
                 *(f"nav-{destination_id}" for destination_id in TOP_LEVEL_DESTINATION_IDS),
-                "home-primary-action",
             ]
             observed_focus_ids: list[str] = []
-            for index, expected_focus_id in enumerate(expected_focus_ids):
+            for expected_focus_id in expected_focus_ids:
                 await _wait_until(
                     pilot,
                     lambda: isinstance(app.focused, Button) and app.focused.id == expected_focus_id,
@@ -264,10 +263,21 @@ async def test_phase6_home_keyboard_focus_reaches_navigation_and_primary_action(
                 assert isinstance(focused, Button)
                 observed_focus_ids.append(focused.id or "")
                 assert str(focused.label).strip()
-                if index < len(expected_focus_ids) - 1:
-                    await pilot.press("tab")
+                await pilot.press("tab")
 
-            assert observed_focus_ids == expected_focus_ids
+            for _ in range(24):
+                if isinstance(app.focused, Button) and app.focused.id == "home-primary-action":
+                    break
+                await pilot.press("tab")
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.focused, Button) and app.focused.id == "home-primary-action",
+                context="focus:home-primary-action",
+            )
+            focused = app.focused
+            assert isinstance(focused, Button)
+            observed_focus_ids.append(focused.id or "")
+            assert str(focused.label).strip()
+
+            assert observed_focus_ids == [*expected_focus_ids, "home-primary-action"]
             assert any(binding.key == "ctrl+p" for binding in TldwCli.BINDINGS)
-
-

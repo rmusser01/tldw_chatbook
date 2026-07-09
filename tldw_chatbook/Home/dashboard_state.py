@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+
+from tldw_chatbook.Constants import TAB_SETTINGS
+from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
 
 
 APPROVAL_RUN_STATUS = "approval"
@@ -57,6 +61,7 @@ class HomeActiveWorkItem:
     status: str
     detail_route: str = "chat"
     console_available: bool = False
+    updated_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -85,6 +90,7 @@ class HomeDashboardInput:
     has_recent_work: bool = False
     active_detail_route: str = "chat"
     active_work_items: tuple[HomeActiveWorkItem, ...] = ()
+    recent_work_items: tuple[HomeActiveWorkItem, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -123,7 +129,7 @@ def choose_next_best_action(state: HomeDashboardInput) -> HomeAction:
         return HomeAction(
             "fix_model_setup",
             "Set up Console model",
-            "llm",
+            TAB_SETTINGS,
             "Console needs a working model before live AI tasks.",
         )
     if _pending_approval_count(state):
@@ -304,21 +310,25 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
     return tuple(controls)
 
 
-def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
-    next_action = choose_next_best_action(state)
-    approval_label = "Approval required" if _pending_approval_count(state) else "Ready"
-    active_count = _active_run_count(state)
-    approval_count = _pending_approval_count(state)
-    status_summary = (
+def _status_summary_line(state: HomeDashboardInput) -> str:
+    return (
         f"Model: {'Ready' if state.model_ready else 'Blocked'} | "
         f"RAG: {'Ready' if state.rag_ready else 'Missing sources'} | "
         f"MCP: {'Ready' if state.mcp_ready else 'Blocked'} | "
         f"ACP: {'Ready' if state.acp_ready else 'Blocked'} | "
         f"Mode: {_runtime_source_label(state.runtime_source)} | "
         f"Server: {_server_status_label(state)} | "
-        f"Active: {active_count} | "
-        f"Approvals: {approval_count}"
+        f"Active: {_active_run_count(state)} | "
+        f"Approvals: {_pending_approval_count(state)}"
     )
+
+
+def summarize_home_dashboard(state: HomeDashboardInput) -> HomeDashboard:
+    next_action = choose_next_best_action(state)
+    approval_label = "Approval required" if _pending_approval_count(state) else "Ready"
+    active_count = _active_run_count(state)
+    approval_count = _pending_approval_count(state)
+    status_summary = _status_summary_line(state)
     return HomeDashboard(
         next_action=next_action,
         sections=(
@@ -521,3 +531,196 @@ def _next_action_lines(
         if label not in lines:
             lines.append(label)
     return tuple(lines[:3])
+
+
+@dataclass(frozen=True)
+class HomeRailRow:
+    """One selectable row in the Home triage rail."""
+
+    row_id: str
+    section_id: str
+    glyph: str
+    title: str
+    age_label: str
+    source: str = ""
+    status_category: str = ""
+    detail_route: str = "chat"
+
+
+@dataclass(frozen=True)
+class HomeRailSectionState:
+    """One Home triage rail section with its rows and empty copy."""
+
+    section_id: str
+    title: str
+    count: int
+    rows: tuple[HomeRailRow, ...]
+    empty_copy: str
+
+
+@dataclass(frozen=True)
+class HomeCanvasState:
+    """The Home focus canvas for the selected row or the next best action."""
+
+    title: str
+    lines: tuple[str, ...]
+    actions: tuple[HomeControl, ...]
+    next_action: HomeAction
+    next_action_is_canvas: bool
+
+
+@dataclass(frozen=True)
+class HomeTriageState:
+    """Full Home triage display state: header, rail sections, canvas."""
+
+    header_line: str
+    sections: tuple[HomeRailSectionState, ...]
+    details_lines: tuple[str, ...]
+    canvas: HomeCanvasState
+    selected_row_id: str
+
+
+_CATEGORY_GLYPHS = {
+    APPROVAL_RUN_STATUS: "\u25cf",
+    FAILED_RUN_STATUS: "\u25cf",
+    PAUSED_RUN_STATUS: "\u25cb",
+    RUNNING_RUN_STATUS: "\u25cf",
+    UNKNOWN_RUN_STATUS: "\u25cb",
+}
+_ATTENTION_CATEGORIES = frozenset({APPROVAL_RUN_STATUS, FAILED_RUN_STATUS})
+_RUNNING_CATEGORIES = frozenset({RUNNING_RUN_STATUS, PAUSED_RUN_STATUS})
+
+
+def _item_row(item: HomeActiveWorkItem, section_id: str, now: datetime) -> HomeRailRow:
+    category = categorize_run_status(item.status)
+    return HomeRailRow(
+        row_id=item.item_id,
+        section_id=section_id,
+        glyph=_CATEGORY_GLYPHS.get(category, "\u25cb"),
+        title=item.title,
+        age_label=format_console_relative_age(item.updated_at, now=now),
+        source=item.source,
+        status_category=category,
+        detail_route=item.detail_route,
+    )
+
+
+def _header_line(state: HomeDashboardInput) -> str:
+    readiness = "Ready" if state.model_ready else "Blocked"
+    source = str(state.runtime_source or RUNTIME_SOURCE_LOCAL).strip().lower()
+    if source == RUNTIME_SOURCE_SERVER:
+        label = str(state.server_label or "").strip()
+        runtime = f"Server: {label}" if label else "Server"
+    else:
+        runtime = "Local"
+    return f"Home | {readiness} \u00b7 {runtime}"
+
+
+def build_home_triage_state(
+    state: HomeDashboardInput,
+    *,
+    selected_row_id: str = "",
+    now: datetime | None = None,
+) -> HomeTriageState:
+    """Build the Home triage rail + canvas display state.
+
+    Args:
+        state: Adapter-provided dashboard input.
+        selected_row_id: Explicit row selection; falls back to control
+            priority (approval > failed > running > paused > first).
+        now: Reference time for age labels (defaults to UTC now).
+
+    Returns:
+        Immutable triage state: header line, rail sections, details lines,
+        and the canvas for the selected row (or the next best action when
+        nothing is selectable).
+    """
+    reference_now = now or datetime.now(timezone.utc)
+    attention_rows: list[HomeRailRow] = []
+    running_rows: list[HomeRailRow] = []
+    for item in state.active_work_items:
+        category = categorize_run_status(item.status)
+        if category in _ATTENTION_CATEGORIES:
+            attention_rows.append(_item_row(item, "attention", reference_now))
+        else:
+            # Running, paused, and unknown/ready items all remain visible
+            # as active work rather than silently dropping.
+            running_rows.append(_item_row(item, "running", reference_now))
+    recent_rows = tuple(
+        _item_row(item, "recent", reference_now) for item in state.recent_work_items
+    )
+
+    sections = (
+        HomeRailSectionState(
+            "attention",
+            "Needs Attention",
+            len(attention_rows),
+            tuple(attention_rows),
+            "No approvals or failures pending.",
+        ),
+        HomeRailSectionState(
+            "running",
+            "Running",
+            len(running_rows),
+            tuple(running_rows),
+            "Nothing running right now.",
+        ),
+        HomeRailSectionState(
+            "recent",
+            "Recent",
+            len(recent_rows),
+            recent_rows,
+            "Runs, chatbooks, imports, and schedules will appear here.",
+        ),
+    )
+
+    all_rows = {row.row_id: row for section in sections for row in section.rows}
+    selected = all_rows.get(selected_row_id)
+    if selected is None:
+        fallback_item = choose_home_selected_item(state)
+        selected = all_rows.get(fallback_item.item_id) if fallback_item else None
+    next_action = choose_next_best_action(state)
+    if selected is not None:
+        item = next(
+            i
+            for i in tuple(state.active_work_items) + tuple(state.recent_work_items)
+            if i.item_id == selected.row_id
+        )
+        canvas = HomeCanvasState(
+            title=item.title,
+            lines=(
+                f"Source: {item.source} \u00b7 Status: {item.status}",
+                f"{selected.glyph} {selected.status_category or 'item'}"
+                + (f" since {selected.age_label}" if selected.age_label else ""),
+                f"Route: {item.detail_route}",
+            ),
+            actions=build_home_controls(state),
+            next_action=next_action,
+            next_action_is_canvas=False,
+        )
+        selected_id = selected.row_id
+    else:
+        # Count-only inputs (no item list) still expose their controls so
+        # approvals/retries remain reachable without a selectable row.
+        controls = build_home_controls(state)
+        canvas = HomeCanvasState(
+            title=next_action.label,
+            lines=(next_action.reason,),
+            actions=controls,
+            next_action=next_action,
+            next_action_is_canvas=not controls,
+        )
+        selected_id = ""
+
+    details_lines = (_status_summary_line(state),) + _system_status_lines(state)
+    if state.notification_count:
+        details_lines = details_lines + (
+            f"Notifications: {state.notification_count} unread",
+        )
+    return HomeTriageState(
+        header_line=_header_line(state),
+        sections=sections,
+        details_lines=details_lines,
+        canvas=canvas,
+        selected_row_id=selected_id,
+    )

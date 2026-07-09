@@ -14,7 +14,7 @@ ListView ListItem:hover {
     color: $text;
 }
 
-ListView ListItem.--highlight {
+ListView ListItem.-highlight {
     background: $surface;
     color: $text;
     text-style: bold underline;

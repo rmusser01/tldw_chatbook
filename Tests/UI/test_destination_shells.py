@@ -5,7 +5,7 @@ import inspect
 import logging
 import time
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.app import App
@@ -124,10 +124,131 @@ class StaticLibraryNotesScopeService:
     def __init__(self, notes):
         self.notes = tuple(notes)
         self.calls = []
+        self.count_calls = []
+        self.search_calls = []
+        self.detail_calls = []
+        self.save_calls = []
+        self.delete_calls = []
+        self._next_note_id = len(self.notes) + 1
 
     async def list_notes(self, **kwargs):
         self.calls.append(kwargs)
         return {"items": list(self.notes), "pagination": {"total": len(self.notes)}}
+
+    async def count_notes(self, *, scope, user_id=None, **kwargs):
+        """Mirror ``NotesScopeService.count_notes``'s local-scope signature
+        and return value (an ``int``, not an envelope)."""
+        self.count_calls.append({"scope": scope, "user_id": user_id, **kwargs})
+        return len(self.notes)
+
+    async def search_notes(self, *, scope, query, limit=None, user_id=None, offset=0, **kwargs):
+        """Case-insensitive title/content substring search, matching the
+        real ``NotesScopeService.search_notes`` -> local backend's
+        ``search_notes`` shape: a plain list of matching note records
+        (no ``items``/``pagination`` envelope, unlike ``list_notes``).
+        """
+        self.search_calls.append(
+            {"scope": scope, "query": query, "limit": limit, "user_id": user_id, "offset": offset, **kwargs}
+        )
+        needle = str(query or "").strip().lower()
+        matches = [
+            dict(note)
+            for note in self.notes
+            if needle
+            and (
+                needle in str(note.get("title") or "").lower()
+                or needle in str(note.get("content") or "").lower()
+            )
+        ]
+        if isinstance(limit, int):
+            matches = matches[:limit]
+        return matches
+
+    async def get_note_detail(self, *, scope, note_id, user_id=None, **kwargs):
+        self.detail_calls.append({"scope": scope, "note_id": note_id, "user_id": user_id, **kwargs})
+        target_id = str(note_id)
+        for note in self.notes:
+            if str(note.get("id")) == target_id:
+                return dict(note)
+        return None
+
+    async def save_note(
+        self, *, scope, title, content, note_id=None, version=None, user_id=None, keywords=None, **kwargs
+    ):
+        """Create (append, version=1) or update (version-checked) a note.
+
+        Mirrors the real ``NotesScopeService.save_note`` local-scope
+        contract exactly (verified against the real service + a real
+        ChaChaNotes DB in ``Tests/Notes/test_notes_scope_service_library_canvas.py``):
+        an update whose ``version`` does not match the stored version
+        returns ``False`` without mutating the note, and a successful
+        update bumps the stored version by one. When ``keywords`` is
+        omitted (``None``) a successful update returns the plain ``True``
+        the real local backend returns; only when ``keywords`` is passed
+        does a successful update return a dict carrying the bumped
+        ``version``. The create path (no ``note_id``) mirrors this exactly:
+        omitted ``keywords`` returns the bare new id (a ``str``, matching
+        ``NotesScopeService.save_note``'s local-scope create path -- see
+        ``Tests/Notes/test_notes_scope_service_library_canvas.py``), and
+        only a passed ``keywords`` upgrades the return to a dict.
+        """
+        self.save_calls.append(
+            {
+                "scope": scope,
+                "title": title,
+                "content": content,
+                "note_id": note_id,
+                "version": version,
+                "user_id": user_id,
+                "keywords": keywords,
+                **kwargs,
+            }
+        )
+        notes = list(self.notes)
+        if note_id:
+            target_id = str(note_id)
+            for index, note in enumerate(notes):
+                if str(note.get("id")) != target_id:
+                    continue
+                stored_version = note.get("version")
+                if version != stored_version:
+                    return False
+                updated = dict(note)
+                updated["title"] = title
+                updated["content"] = content
+                updated["version"] = int(stored_version or 0) + 1
+                if keywords is not None:
+                    updated["keywords"] = list(keywords)
+                notes[index] = updated
+                self.notes = tuple(notes)
+                return updated if keywords is not None else True
+            return False
+        new_id = f"note-{self._next_note_id}"
+        self._next_note_id += 1
+        created = {"id": new_id, "title": title, "content": content, "version": 1}
+        if keywords is not None:
+            created["keywords"] = list(keywords)
+        notes.append(created)
+        self.notes = tuple(notes)
+        if keywords is None:
+            return new_id
+        return dict(created)
+
+    async def delete_note(self, *, scope, note_id, version, user_id=None, **kwargs):
+        self.delete_calls.append(
+            {"scope": scope, "note_id": note_id, "version": version, "user_id": user_id, **kwargs}
+        )
+        notes = list(self.notes)
+        target_id = str(note_id)
+        for index, note in enumerate(notes):
+            if str(note.get("id")) != target_id:
+                continue
+            if version != note.get("version"):
+                return False
+            del notes[index]
+            self.notes = tuple(notes)
+            return True
+        return False
 
 
 class StaticLibraryNotesListScopeService:
@@ -144,13 +265,272 @@ class StaticLibraryNotesListScopeService:
 
 
 class StaticLibraryMediaScopeService:
-    def __init__(self, media_items):
+    # Mirrors LocalMediaReadingService._SUPPORTED_METADATA_FIELDS in
+    # tldw_chatbook/Media/local_media_reading_service.py -- keep in sync so
+    # this fake fails the same way the real local backend does when a
+    # caller sends an unsupported field (e.g. ``version``).
+    _SUPPORTED_METADATA_FIELDS = {"title", "media_type", "author", "url", "keywords"}
+
+    def __init__(self, media_items, highlights=None):
         self.media_items = tuple(media_items)
         self.calls = []
+        self.detail_calls = []
+        self.update_calls = []
+        self.delete_calls = []
+        # item_id (str) -> list of highlight dicts, mirroring the field
+        # names LocalMediaReadingService._highlight_row_to_dict returns
+        # ("id"/"item_id"/"quote"/"note"/"color"/...), keyed the same way
+        # ``media_id``/``item_id`` is normalized elsewhere in this fake.
+        self.highlights_by_item_id: dict = {}
+        self._next_highlight_id = 1
+        self.list_highlights_calls = []
+        self.create_highlight_calls = []
+        self.delete_highlight_calls = []
+        self.read_it_later_calls = []
+        self.analysis_calls = []
+        for item_id, quote, note, color in highlights or ():
+            self._seed_highlight(item_id, quote=quote, note=note, color=color)
+
+    def _seed_highlight(self, item_id, *, quote, note=None, color=None):
+        highlight = {
+            "id": self._next_highlight_id,
+            "item_id": str(item_id),
+            "quote": quote,
+            "note": note,
+            "color": color,
+        }
+        self._next_highlight_id += 1
+        self.highlights_by_item_id.setdefault(str(item_id), []).append(highlight)
+        return highlight
+
+    async def list_highlights(self, *, item_id, mode=None):
+        """Return the stored highlights for ``item_id``, matching the real
+        ``media_reading_scope_service.list_highlights`` -> ``LocalMediaReadingService.list_highlights``
+        chain (``mode`` accepted and discarded).
+        """
+        self.list_highlights_calls.append({"item_id": item_id})
+        return [dict(highlight) for highlight in self.highlights_by_item_id.get(str(item_id), [])]
+
+    async def create_highlight(self, *, item_id, quote, mode=None, note=None, color=None, **kwargs):
+        """Record and store a new highlight, matching the real
+        ``media_reading_scope_service.create_highlight`` -> ``LocalMediaReadingService.create_highlight``
+        chain (``mode`` accepted and discarded).
+        """
+        self.create_highlight_calls.append(
+            {"item_id": item_id, "quote": quote, "note": note, "color": color}
+        )
+        return self._seed_highlight(item_id, quote=quote, note=note, color=color)
+
+    async def delete_highlight(self, *, highlight_id, mode=None):
+        """Remove a highlight by id, matching the real
+        ``media_reading_scope_service.delete_highlight`` -> ``LocalMediaReadingService.delete_highlight``
+        chain (``mode`` accepted and discarded).
+        """
+        self.delete_highlight_calls.append({"highlight_id": highlight_id})
+        removed = False
+        for item_id, highlights in list(self.highlights_by_item_id.items()):
+            remaining = [h for h in highlights if str(h["id"]) != str(highlight_id)]
+            if len(remaining) != len(highlights):
+                removed = True
+            self.highlights_by_item_id[item_id] = remaining
+        return {"success": removed}
 
     async def list_media_items(self, **kwargs):
         self.calls.append(kwargs)
         return {"items": list(self.media_items), "pagination": {"total_items": len(self.media_items)}}
+
+    async def get_media_item(self, *, media_id, **kwargs):
+        self.detail_calls.append({"media_id": media_id, **kwargs})
+        target_id = str(media_id)
+        for item in self.media_items:
+            item_id = str(item.get("id") or item.get("media_id") or "")
+            if item_id == target_id:
+                return dict(item)
+        return None
+
+    async def update_media_item(self, *, media_id, mode=None, **fields):
+        """Record the update call and apply it to the stored item in place.
+
+        Mirrors the real ``media_reading_scope_service.update_media_item`` ->
+        ``LocalMediaReadingService.update_media_item`` chain: the scope-level
+        ``mode`` kwarg is stripped (never forwarded to the local backend),
+        and the remaining fields are checked against the local backend's
+        metadata allowlist. Any other field (e.g. a leftover ``version``)
+        raises ``ValueError`` just like the real
+        ``update_media_metadata`` does, so tests can't go green by sending
+        fields the production local backend would reject.
+
+        Args:
+            media_id: The media item id to update.
+            mode: Scope-level backend selector (e.g. ``"local"``); accepted
+                and discarded, matching ``MediaReadingScopeService``.
+            **fields: Field values to merge onto the stored item (e.g.
+                ``title``, ``author``, ``url``, ``keywords``).
+
+        Returns:
+            The updated item mapping, or None when ``media_id`` is unknown.
+
+        Raises:
+            ValueError: If any field is outside the local metadata
+                allowlist.
+        """
+        unsupported = sorted(
+            key for key, value in fields.items()
+            if value is not None and key not in self._SUPPORTED_METADATA_FIELDS
+        )
+        if unsupported:
+            unsupported_text = ", ".join(unsupported)
+            raise ValueError(f"Unsupported local media metadata fields: {unsupported_text}")
+
+        self.update_calls.append({"media_id": media_id, **fields})
+        target_id = str(media_id)
+        updated_items = []
+        updated = None
+        for item in self.media_items:
+            item_id = str(item.get("id") or item.get("media_id") or "")
+            if item_id == target_id:
+                merged = dict(item)
+                merged.update(fields)
+                updated = merged
+                updated_items.append(merged)
+            else:
+                updated_items.append(item)
+        self.media_items = tuple(updated_items)
+        return updated
+
+    async def delete_media_item(self, *, media_id, mode=None):
+        """Record the delete call and remove the item from storage in place.
+
+        Mirrors the real ``media_reading_scope_service.delete_media_item`` ->
+        ``LocalMediaReadingService.delete_media_item`` chain, which moves the
+        item to trash: the scope-level ``mode`` kwarg is stripped, and the
+        item is dropped from ``media_items`` so a subsequent
+        ``list_media_items`` call omits it, matching the real backend's
+        normal (non-trash) paginated list no longer returning trashed items.
+
+        Args:
+            media_id: The media item id to delete.
+            mode: Scope-level backend selector (e.g. ``"local"``); accepted
+                and discarded, matching ``MediaReadingScopeService``.
+
+        Returns:
+            A ``{"ok": True, "media_id": media_id}`` mapping, matching the
+            real local backend's response shape.
+        """
+        self.delete_calls.append({"media_id": media_id})
+        target_id = str(media_id)
+        self.media_items = tuple(
+            item
+            for item in self.media_items
+            if str(item.get("id") or item.get("media_id") or "") != target_id
+        )
+        return {"ok": True, "media_id": media_id}
+
+    async def save_to_read_it_later(self, *, media_id, mode=None):
+        """Mark a media item saved for read-it-later, matching the real
+        ``media_reading_scope_service.save_to_read_it_later`` ->
+        ``LocalMediaReadingService.save_to_read_it_later`` chain (``mode``
+        accepted and discarded).
+        """
+        self.read_it_later_calls.append({"action": "save", "media_id": media_id})
+        return self._set_read_it_later_state(media_id, saved=True)
+
+    async def remove_from_read_it_later(self, *, media_id, mode=None):
+        """Clear a media item's read-it-later state, matching the real
+        ``media_reading_scope_service.remove_from_read_it_later`` ->
+        ``LocalMediaReadingService.remove_from_read_it_later`` chain
+        (``mode`` accepted and discarded).
+        """
+        self.read_it_later_calls.append({"action": "remove", "media_id": media_id})
+        return self._set_read_it_later_state(media_id, saved=False)
+
+    def _set_read_it_later_state(self, media_id, *, saved):
+        """Apply the read-it-later flag to the stored item in place.
+
+        On removal, the ``is_read_it_later``/``saved_at`` keys are dropped
+        entirely rather than set to ``False``/``None`` -- mirroring the
+        real local backend, whose ``MediaReadItLaterState`` row is deleted
+        outright on removal, so a re-fetched detail has neither key present
+        (see ``LocalMediaReadingService._enrich_with_read_it_later_state``).
+        """
+        target_id = str(media_id)
+        updated_items = []
+        saved_at = None
+        for item in self.media_items:
+            item_id = str(item.get("id") or item.get("media_id") or "")
+            if item_id == target_id:
+                merged = dict(item)
+                if saved:
+                    saved_at = merged.get("saved_at") or "2026-01-01T00:00:00Z"
+                    merged["is_read_it_later"] = True
+                    merged["saved_at"] = saved_at
+                else:
+                    merged.pop("is_read_it_later", None)
+                    merged.pop("saved_at", None)
+                updated_items.append(merged)
+            else:
+                updated_items.append(item)
+        self.media_items = tuple(updated_items)
+        return {"media_id": media_id, "is_read_it_later": saved, "saved_at": saved_at}
+
+    async def save_analysis_version(self, *, media_id, content, analysis_content, mode=None, prompt=None):
+        """Create a new document version carrying ``analysis_content``, matching
+        the real ``media_reading_scope_service.save_analysis_version`` ->
+        ``LocalMediaReadingService.save_analysis_version`` ->
+        ``Client_Media_DB_v2.create_document_version`` chain (``mode``
+        accepted and discarded). New versions are prepended (newest first),
+        matching the real backend's ``get_all_document_versions`` ordering
+        (``ORDER BY version_number DESC``).
+        """
+        self.analysis_calls.append(
+            {
+                "media_id": media_id,
+                "content": content,
+                "analysis_content": analysis_content,
+                "prompt": prompt,
+            }
+        )
+        return self._append_document_version(
+            media_id, content=content, analysis_content=analysis_content, prompt=prompt
+        )
+
+    async def overwrite_analysis_version(self, *, media_id, content, analysis_content, mode=None, prompt=None):
+        """Alias for ``save_analysis_version``, matching the real backend
+        (``LocalMediaReadingService.overwrite_analysis_version`` simply
+        delegates to ``save_analysis_version``).
+        """
+        return await self.save_analysis_version(
+            media_id=media_id, content=content, analysis_content=analysis_content, mode=mode, prompt=prompt
+        )
+
+    def _append_document_version(self, media_id, *, content, analysis_content, prompt):
+        target_id = str(media_id)
+        updated_items = []
+        new_version = None
+        for item in self.media_items:
+            item_id = str(item.get("id") or item.get("media_id") or "")
+            if item_id == target_id:
+                merged = dict(item)
+                existing_versions = list(merged.get("versions") or [])
+                next_version_number = (
+                    max((v.get("version_number", 0) for v in existing_versions), default=0) + 1
+                )
+                new_version = {
+                    "id": next_version_number,
+                    "uuid": f"version-{next_version_number}",
+                    "media_id": media_id,
+                    "version_number": next_version_number,
+                    "analysis_content": analysis_content,
+                    "prompt": prompt,
+                    "content": content,
+                }
+                merged["versions"] = [new_version, *existing_versions]
+                merged["content"] = content
+                updated_items.append(merged)
+            else:
+                updated_items.append(item)
+        self.media_items = tuple(updated_items)
+        return new_version
 
 
 class StaticLibraryConversationScopeService:
@@ -265,9 +645,47 @@ class StaticSkillsScopeService:
         self.skills = tuple(skills)
         self.calls = []
 
+    def set_skills(self, skills) -> None:
+        self.skills = tuple(skills)
+
     async def list_skills(self, **kwargs):
         self.calls.append(kwargs)
         return {"skills": list(self.skills), "total": len(self.skills)}
+
+
+class RecordingSkillTrustService:
+    def __init__(self, review_id="review-id", on_capture_review=None):
+        self.review_id = review_id
+        self.bootstrap_calls = 0
+        self.bootstrap_passphrases = []
+        self.unlock_calls = 0
+        self.unlock_passphrases = []
+        self.reviewed_skill = None
+        self.trusted_review_id = None
+        self.trust_reviewed_calls = 0
+        self.on_capture_review = on_capture_review
+
+    def bootstrap_trust(self, passphrase, *args, **kwargs):
+        self.bootstrap_calls += 1
+        self.bootstrap_passphrases.append(passphrase)
+
+    def unlock_with_passphrase(self, passphrase, *args, **kwargs):
+        self.unlock_calls += 1
+        self.unlock_passphrases.append(passphrase)
+
+    def capture_review(self, skill_name):
+        self.reviewed_skill = skill_name
+        if self.on_capture_review is not None:
+            self.on_capture_review(skill_name)
+        return {
+            "review_id": self.review_id,
+            "skill_name": skill_name,
+            "changed_files": ["SKILL.md"],
+        }
+
+    def trust_reviewed_snapshot(self, review_id):
+        self.trust_reviewed_calls += 1
+        self.trusted_review_id = review_id
 
 
 class RaisingSkillsScopeService:
@@ -392,6 +810,7 @@ async def _wait_for_personas_snapshot(screen, pilot, *, timeout: float = 2.0) ->
         "#personas-empty-state",
         "#personas-characters-summary",
         "#personas-profiles-summary",
+        "#personas-readiness-console",
     )
     while time.monotonic() < deadline:
         terminal_state_visible = any(screen.query(selector) for selector in terminal_selectors)
@@ -424,20 +843,24 @@ async def _wait_for_wc_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
 
 
 async def _wait_for_library_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
+    """Wait for the Library rail shell to finish its async source-count load.
+
+    Mirrors ``Tests/UI/test_library_shell.py::_wait_for_library_shell`` for
+    suites (like this one) that mount Library through the generic
+    ``DestinationHarness`` instead of the dedicated ``LibraryHarness``. The
+    retired 3-pane hub's terminal selectors (``#library-source-error``,
+    ``#library-source-empty``, the per-source summary ids) never mount under
+    the rail + canvas shell, so readiness is keyed off ``_library_loaded``
+    and the rail itself.
+    """
     deadline = time.monotonic() + timeout
-    terminal_selectors = (
-        "#library-source-error",
-        "#library-source-empty",
-        "#library-notes-summary",
-        "#library-media-summary",
-        "#library-conversations-summary",
-    )
     while time.monotonic() < deadline:
-        if any(screen.query(selector) for selector in terminal_selectors):
+        if getattr(screen, "_library_loaded", False) and screen.query("#library-rail"):
+            await pilot.pause()
             await pilot.pause()
             return
         await pilot.pause(0.01)
-    raise AssertionError(f"Timed out waiting for Library snapshot. Visible text: {_visible_text(screen)}")
+    raise AssertionError(f"Library shell never loaded. Visible text: {_visible_text(screen)}")
 
 
 async def _wait_for_skills_snapshot(screen, pilot, *, timeout: float = 2.0) -> None:
@@ -482,6 +905,21 @@ async def _wait_for_mock_call(mock: Mock, pilot, *, timeout: float = 1.0) -> Non
             return
         await pilot.pause()
     raise AssertionError("Timed out waiting for mock call")
+
+
+async def _wait_for_skills_list_calls(
+    service: StaticSkillsScopeService,
+    count: int,
+    pilot,
+    *,
+    timeout: float = 1.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if len(service.calls) >= count:
+            return
+        await pilot.pause(0.01)
+    raise AssertionError(f"Timed out waiting for {count} Skills list calls; saw {len(service.calls)}")
 
 
 async def _wait_for_route(seen_routes: list[str], target_route: str, pilot, *, timeout: float = 1.0) -> None:
@@ -531,7 +969,12 @@ def _custom_policy_recovery_state(exc, *, unavailable_what, stable_selector, pol
 @pytest.mark.parametrize(
     ("route", "title_id", "purpose_text"),
     [
-        ("library", "#library-title", "source material"),
+        # Library's Console-rail redesign replaced the shared
+        # title+purpose destination header with its own header line
+        # (#library-header-line); the landing canvas still carries a
+        # `.destination-purpose` line, just with Library's own copy instead
+        # of the generic "source material" phrasing artifacts/personas use.
+        ("library", "#library-header-line", "content type"),
         ("artifacts", "#artifacts-title", "generated"),
         ("personas", "#personas-title", "behavior"),
     ],
@@ -547,7 +990,8 @@ async def test_primary_destination_wrappers_mount(route, title_id, purpose_text)
 
         title = screen.query_one(title_id)
         assert title
-        assert title.has_class("ds-destination-header")
+        if route != "library":
+            assert title.has_class("ds-destination-header")
         assert purpose_text in _static_text(screen.query_one(".destination-purpose", Static)).lower()
         assert screen.query_one(".ds-panel")
 
@@ -788,17 +1232,31 @@ async def test_library_exposes_source_sections_and_import_export_boundary():
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
 
+        # The retired hub's per-source open buttons and mode-search chip are
+        # dead; the rail rows are the surviving reachable surface for the
+        # same source sections and Search/RAG mode.
         for selector in [
-            "#library-open-notes",
-            "#library-open-media",
-            "#library-open-conversations",
-            "#library-open-import-export",
-            "#library-mode-search",
+            "#library-row-browse-notes",
+            "#library-row-browse-media",
+            "#library-row-browse-conversations",
+            "#library-row-ingest-import-export",
+            "#library-row-browse-search",
         ]:
             assert screen.query_one(selector)
+
+        # The Import/Export ownership-boundary copy survives on the mode
+        # canvas reached from the Ingest ▸ Import/Export row.
+        screen.query_one("#library-row-ingest-import-export", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert (
+            "Library owns source acquisition framing; Ingest and Media own deeper file handling."
+            in _visible_text(screen)
+        )
 
 
 @pytest.mark.asyncio
@@ -831,36 +1289,34 @@ async def test_library_destination_lists_local_source_snapshot_from_services():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await _wait_for_visible_text(screen, pilot, "Notes: 2")
+        await _wait_for_visible_text(screen, pilot, "Notes (2)")
         text = _visible_text(screen)
         button = screen.query_one("#library-use-in-console", Button)
 
-        assert "Library Content Hub" in text
-        assert "Landing page for ingested content" in text
-        assert "Notes: 2" in text
-        assert "Media: 1" in text
-        assert "Conversations: 1" in text
-        assert "Research Note" in text
-        assert "Transcript A" in text
-        assert "Planning Chat" in text
-        assert "Console handoff is secondary" in text
+        # The retired "Library snapshot" hub copy has no successor; the rail
+        # row counts are the surviving surface for "services feed real
+        # counts" and the linked-workspace items keep Console handoff live.
+        assert "Notes (2)" in text
+        assert "Media (1)" in text
+        assert "Conversations (1)" in text
         assert button.disabled is False
 
+    library_page_sizes = getattr(library_screen_module, "LIBRARY_SOURCE_PAGE_SIZES", {})
     assert app.notes_scope_service.calls[0] == {
         "scope": "local_note",
-        "limit": getattr(library_screen_module, "LIBRARY_SOURCE_PAGE_SIZE", None),
+        "limit": library_page_sizes.get("notes"),
         "offset": 0,
         "user_id": "unit-user",
     }
     assert app.media_reading_scope_service.calls[0] == {
         "mode": "local",
         "page": 1,
-        "results_per_page": getattr(library_screen_module, "LIBRARY_SOURCE_PAGE_SIZE", None),
+        "results_per_page": library_page_sizes.get("media"),
         "include_keywords": False,
     }
     assert app.chat_conversation_scope_service.calls[0] == {
         "mode": "local",
-        "limit": getattr(library_screen_module, "LIBRARY_SOURCE_PAGE_SIZE", None),
+        "limit": library_page_sizes.get("conversations"),
         "offset": 0,
     }
 
@@ -877,8 +1333,17 @@ async def test_library_destination_empty_state_disables_console_handoff():
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
         button = screen.query_one("#library-use-in-console", Button)
+        text = _visible_text(screen)
 
-        assert "No local Library content yet." in _visible_text(screen)
+        # The retired "No local Library content yet." hub copy has no
+        # successor as standalone canvas text; the landing canvas purpose
+        # line plus the zero-state rail row counts carry the same "there is
+        # nothing here yet" signal, and Console handoff stays disabled.
+        assert "Search, pick a content type, or ingest something new." in text
+        assert "Notes (0)" in text
+        assert "Media (0)" in text
+        assert "Conversations (0)" in text
+        assert screen.query_one("#library-canvas-landing")
         assert button.disabled is True
         assert "Stage Library source context" in str(button.tooltip)
 
@@ -886,17 +1351,24 @@ async def test_library_destination_empty_state_disables_console_handoff():
 @pytest.mark.asyncio
 async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
     app = _build_test_app()
+    # Seed more notes than the per-source Library page size (100) so the
+    # plain-list service (no pagination metadata) genuinely truncates,
+    # exercising the "sample capped below actual" labeling.
     app.notes_scope_service = StaticLibraryNotesListScopeService(
-        [{"title": f"Research Note {index}", "id": f"note-{index}"} for index in range(1, 7)]
+        [{"title": f"Research Note {index}", "id": f"note-{index}"} for index in range(1, 106)]
     )
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     app.open_chat_with_handoff = Mock()
+    # Console/RAG handoff requires every *fetched* source row to be linked to
+    # the active workspace (see build_library_workspace_depth_state); link
+    # all 100 notes the page-size cap will actually fetch (note-1..note-100),
+    # not just the unlinked overflow (note-101..note-105).
     _link_library_items_to_active_workspace(
         app,
         tuple(
             ("note", f"note-{index}", f"Research Note {index}")
-            for index in range(1, 6)
+            for index in range(1, 101)
         ),
     )
     host = DestinationHarness(app, "library")
@@ -904,31 +1376,32 @@ async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await _wait_for_visible_text(screen, pilot, "Notes (showing up to 5): 5")
+        await _wait_for_visible_text(screen, pilot, "Notes (100+)")
         text = _visible_text(screen)
 
-        assert "Notes (showing up to 5): 5" in text
-        assert "Notes: 5" not in text
-        assert "Research Note 1" in text
-        assert "Research Note 5" in text
-        assert "Research Note 6" not in text
+        # The retired hub's "Notes: 100+" line has no successor as standalone
+        # canvas text; the rail row count suffix is the surviving surface
+        # that distinguishes a capped sample ("(100+)") from an exact count
+        # ("(n)"). The sample-vs-exact contract itself is asserted below via
+        # the Console handoff payload, which still carries the exact titles.
+        assert "Notes (100+)" in text
+        assert "Notes (100)" not in text
 
-        await pilot.click("#library-use-in-console")
-        await pilot.pause(0.1)
+        screen.query_one("#library-use-in-console", Button).press()
+        # 100 sample notes take longer to format into the handoff payload
+        # than the old 5-note sample; wait for the async handoff to land
+        # instead of a fixed sleep tuned for the smaller dataset.
+        await _wait_for_mock_call(app.open_chat_with_handoff, pilot)
 
     app.open_chat_with_handoff.assert_called_once()
     payload = app.open_chat_with_handoff.call_args.args[0]
-    assert "Notes (showing up to 5): 5" in payload.body
-    assert "Notes: 5" not in payload.body
-    assert payload.metadata["notes_sample_count"] == 5
+    assert "Notes (showing up to 100): 100" in payload.body
+    assert "Notes: 100" not in payload.body
+    assert payload.metadata["notes_sample_count"] == 100
     assert payload.metadata["notes_total_count"] is None
     assert "notes_count" not in payload.metadata
     assert payload.metadata["note_titles"] == [
-        "Research Note 1",
-        "Research Note 2",
-        "Research Note 3",
-        "Research Note 4",
-        "Research Note 5",
+        f"Research Note {index}" for index in range(1, 101)
     ]
 
 
@@ -961,11 +1434,19 @@ async def test_library_policy_denial_uses_runtime_recovery_taxonomy():
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        error = screen.query_one("#library-source-error", Static)
+        # The retired #library-source-error Static never mounts under the
+        # rail shell; the same lookup-error taxonomy copy now renders on the
+        # Details rail body instead (see test_library_status_row_preserves_
+        # policy_recovery_status in test_product_maturity_phase3_library_
+        # contract_layout.py for the sibling re-anchor of this surface).
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        details_body = screen.query_one("#library-details-body", Static)
         button = screen.query_one("#library-use-in-console", Button)
 
         _assert_policy_recovery_copy(
-            visible_text=_static_text(error),
+            visible_text=_static_text(details_body),
             button=button,
             status_label="Wrong source",
             unavailable_what="Use Library sources in Console",
@@ -991,10 +1472,18 @@ async def test_library_policy_denial_uses_recovery_state_selector(monkeypatch):
 
     async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
-        await _wait_for_selector(screen, pilot, "#custom-library-source-error")
+        await _wait_for_library_snapshot(screen, pilot)
+        # The retired #custom-library-source-error id (a stable_selector-
+        # derived dynamic id) never mounts under the rail shell; the custom
+        # recovery state's copy renders on the surviving Details rail body
+        # surface instead, and the disabled tooltip still reflects it.
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        details_body = screen.query_one("#library-details-body", Static)
         button = screen.query_one("#library-use-in-console", Button)
 
-        assert "Custom policy state" in _visible_text(screen)
+        assert "Custom policy state" in _static_text(details_body)
         assert button.tooltip == "Custom policy tooltip."
 
 
@@ -1022,8 +1511,16 @@ async def test_library_use_in_console_uses_source_snapshot_context():
     host = DestinationHarness(app, "library")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
-        await pilot.click("#library-use-in-console")
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        # #library-use-in-console now lives in the Workspaces body under the
+        # Details rail section, which starts collapsed and, once open, can
+        # scroll the button below the visible viewport; press it directly
+        # rather than simulating a pointer click at an on-screen offset.
+        screen.query_one("#console-rail-section-toggle-library-details", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#library-use-in-console", Button).press()
         await pilot.pause(0.1)
 
     app.open_chat_with_handoff.assert_called_once()
@@ -1047,8 +1544,12 @@ async def test_library_use_in_console_uses_source_snapshot_context():
 @pytest.mark.parametrize(
     ("route", "selector", "target_route"),
     [
-        ("library", "#library-open-notes", "notes"),
-        ("library", "#library-open-media", "media"),
+        # Browse ▸ Notes and Browse ▸ Media are no longer screen-route rows
+        # -- they are canvas rows like Conversations now (see
+        # test_library_notes_action_switches_to_canvas_without_route_handoff
+        # and test_library_media_action_switches_to_native_mode_without_route_handoff
+        # below); no Library rail row emits the legacy NavigateToScreen
+        # compatibility route any more.
         ("artifacts", "#artifacts-open-chatbooks", "chatbooks"),
         # The Personas destination is now a native workbench and no longer
         # hands off to the legacy CCP route via #personas-open-profiles.
@@ -1071,6 +1572,60 @@ async def test_destination_action_buttons_emit_compatibility_routes(route, selec
 
 
 @pytest.mark.asyncio
+async def test_library_media_action_switches_to_native_mode_without_route_handoff():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    seen_routes = []
+    host = DestinationHarness(app, "library", seen_routes)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        # The retired hub's #library-open-media button is dead; the Browse ▸
+        # Media rail row is the surviving trigger, and the media canvas
+        # mounting is the successor signal that the native (non-route) mode
+        # switch happened. The media SCREEN route now lives behind the
+        # canvas's own "Open in Media" action.
+        screen.query_one("#library-row-browse-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+
+        assert getattr(screen, "_active_mode") == "media"
+        assert screen.query_one("#library-media-canvas")
+
+    assert seen_routes == []
+
+
+@pytest.mark.asyncio
+async def test_library_notes_action_switches_to_canvas_without_route_handoff():
+    app = _build_test_app()
+    app.notes_scope_service = StaticLibraryNotesScopeService([])
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    seen_routes = []
+    host = DestinationHarness(app, "library", seen_routes)
+
+    async with host.run_test(size=(160, 40)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_library_snapshot(screen, pilot)
+        # Browse ▸ Notes used to emit a NavigateToScreen("notes") compatibility
+        # route to the legacy Notes screen; it now selects the in-canvas
+        # "notes" target and stays on the Library screen, matching how
+        # Media/Conversations already stopped routing. The notes canvas
+        # mounting is the successor signal that the native (non-route) mode
+        # switch happened.
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-canvas")
+
+        assert getattr(screen, "_library_selected_row_id") == "browse-notes"
+        assert getattr(screen, "_active_mode") == "notes"
+        assert screen.query_one("#library-notes-canvas")
+
+    assert seen_routes == []
+
+
+@pytest.mark.asyncio
 async def test_library_conversations_action_switches_to_native_mode_without_route_handoff():
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService([])
@@ -1082,12 +1637,16 @@ async def test_library_conversations_action_switches_to_native_mode_without_rout
     async with host.run_test(size=(160, 40)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#library-open-conversations")
-        await pilot.click("#library-open-conversations")
-        await _wait_for_selector(screen, pilot, "#library-conversations-browser-title")
+        # The retired #library-open-conversations button and its
+        # #library-conversations-browser-title / "Conversations mode" copy
+        # are dead; the Browse ▸ Conversations rail row is the surviving
+        # trigger, and the conversations canvas mounting is the successor
+        # signal that the native (non-route) mode switch happened.
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
 
         assert getattr(screen, "_active_mode") == "conversations"
-        assert "Conversations mode" in _visible_text(screen)
+        assert screen.query_one("#library-conversations-canvas")
 
     assert seen_routes == []
 
@@ -1104,8 +1663,10 @@ async def test_library_import_export_action_switches_to_native_mode_without_rout
     async with host.run_test(size=(160, 40)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#library-open-import-export")
-        await pilot.click("#library-open-import-export")
+        # The retired #library-open-import-export button is dead; the
+        # Ingest ▸ Import/Export rail row is the surviving trigger for the
+        # same native mode switch.
+        screen.query_one("#library-row-ingest-import-export", Button).press()
         await _wait_for_selector(screen, pilot, "#library-import-export-workflow-title")
 
         assert getattr(screen, "_active_mode") == "import-export"
@@ -1126,9 +1687,12 @@ async def test_library_import_export_dedicated_import_action_emits_ingest_route(
     async with host.run_test(size=(160, 40)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        await pilot.click("#library-open-import-export")
-        await _wait_for_selector(screen, pilot, "#library-import-export-open-ingest")
-        await pilot.click("#library-import-export-open-ingest")
+        # The in-canvas #library-import-export-open-ingest button lived only
+        # in the never-mounted #library-action-region and is dead; the
+        # always-reachable Ingest ▸ Import media rail row is the surviving
+        # trigger for the same Ingest route (no Import/Export mode entry
+        # required first -- the rail row is visible regardless of mode).
+        screen.query_one("#library-row-ingest-import-media", Button).press()
         await _wait_for_route(seen_routes, "ingest", pilot)
 
     assert seen_routes[-1] == "ingest"
@@ -1141,13 +1705,17 @@ async def test_library_search_action_switches_to_search_mode_without_route_hando
     host = DestinationHarness(app, "library", seen_routes)
 
     async with host.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
-        await pilot.click("#library-mode-search")
-        await pilot.pause(0.1)
+        await _wait_for_library_snapshot(screen, pilot)
+        # The retired #library-mode-search chip and its "Library |
+        # Search/RAG |" title text are dead (no mode-chip strip is rendered
+        # at all); the Browse ▸ Search/RAG rail row is the surviving
+        # trigger, and the Search/RAG panel mounting in the canvas is the
+        # successor signal for the native (non-route) mode switch.
+        screen.query_one("#library-row-browse-search", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
         assert getattr(screen, "_active_mode") == "search"
-        assert "Search/RAG mode" in _visible_text(screen)
 
     assert seen_routes == []
 
@@ -1703,7 +2271,7 @@ async def test_workflows_empty_state_reads_as_live_queue_with_recovery_path():
         ("mcp", "scoped tools"),
         ("acp", "Agent Client Protocol"),
         ("skills", "SKILL.md"),
-        ("settings", "global preferences"),
+        ("settings", "Global preferences"),
     ],
 )
 @pytest.mark.asyncio
@@ -1712,11 +2280,8 @@ async def test_protocol_and_settings_wrappers_have_distinct_boundaries(route, ex
     host = DestinationHarness(app, route)
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
-
-        visible_text = _visible_text(screen).lower()
-        assert expected_text.lower() in visible_text
+        await _wait_for_visible_text(screen, pilot, expected_text)
 
 
 @pytest.mark.parametrize(
@@ -1939,6 +2504,288 @@ async def test_skills_destination_distinguishes_valid_and_invalid_skill_readines
         assert "Execution: blocked" in text
         assert "Reason: description is required" in text
         assert attach_button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_blocks_metadata_valid_trust_blocked_skill():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "record_id": "local:skill:summarize-notes",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "quarantined_modified",
+                "trust_reason_code": "skill_modified",
+                "trust_blocked": True,
+                "trust_changed_files": ["SKILL.md"],
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        text = _visible_text(screen)
+        button = screen.query_one("#skills-attach-to-console", Button)
+
+        assert "Trust: changed since trusted baseline" in text
+        assert "Reason code: skill_modified" in text
+        assert "Changed files: SKILL.md" in text
+        assert "Execution: blocked" in text
+        assert (
+            "Reason: local skill files changed since the trusted baseline. "
+            "Next: Review Diff, then Trust Reviewed Version."
+        ) in text
+        assert "Reason: trust blocked" not in text
+        assert button.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_shows_uninitialized_bootstrap_action():
+    app = _build_test_app()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "new-skill",
+                "description": "New local skill",
+                "record_id": "local:skill:new-skill",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "trust_uninitialized",
+                "trust_reason_code": "trust_uninitialized",
+                "trust_blocked": True,
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        text = _visible_text(screen)
+
+        assert "Trust: not initialized" in text
+        assert screen.query_one("#skills-bootstrap-trust", Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_bootstrap_action_calls_trust_service():
+    app = _build_test_app()
+    app.local_skill_trust_service = RecordingSkillTrustService()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "new-skill",
+                "description": "New local skill",
+                "record_id": "local:skill:new-skill",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "trust_uninitialized",
+                "trust_reason_code": "trust_uninitialized",
+                "trust_blocked": True,
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        initial_list_calls = len(app.skills_scope_service.calls)
+        screen._request_skill_trust_passphrase = AsyncMock(return_value="passphrase")
+        await pilot.click("#skills-bootstrap-trust")
+        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+
+        assert app.local_skill_trust_service.bootstrap_calls == 1
+        assert app.local_skill_trust_service.bootstrap_passphrases == ["passphrase"]
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_unlock_action_calls_trust_service():
+    app = _build_test_app()
+    app.local_skill_trust_service = RecordingSkillTrustService()
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "locked-skill",
+                "description": "Locked local skill",
+                "record_id": "local:skill:locked-skill",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "trust_locked",
+                "trust_reason_code": "trust_locked",
+                "trust_blocked": True,
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        initial_list_calls = len(app.skills_scope_service.calls)
+        screen._request_skill_trust_passphrase = AsyncMock(return_value="passphrase")
+
+        unlock_button = screen.query_one("#skills-unlock-trust", Button)
+        assert unlock_button.disabled is False
+
+        await pilot.click("#skills-unlock-trust")
+        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+
+        assert app.local_skill_trust_service.unlock_calls == 1
+        assert app.local_skill_trust_service.unlock_passphrases == ["passphrase"]
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_review_action_enables_trust_reviewed_version():
+    app = _build_test_app()
+    app.local_skill_trust_service = RecordingSkillTrustService(review_id="review-1")
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "record_id": "local:skill:summarize-notes",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "quarantined_modified",
+                "trust_reason_code": "skill_modified",
+                "trust_blocked": True,
+                "trust_changed_files": ["SKILL.md"],
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        initial_list_calls = len(app.skills_scope_service.calls)
+        await pilot.click("#skills-review-diff")
+        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        text = _visible_text(screen)
+
+        assert app.local_skill_trust_service.reviewed_skill == "summarize-notes"
+        assert "Review captured: SKILL.md." in text
+        assert "Confirm these current files should become the trusted baseline." in text
+        assert "Reviewed skill: summarize-notes" in text
+        assert "/SKILL.md" not in text
+        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+
+        list_calls_after_review = len(app.skills_scope_service.calls)
+        await pilot.click("#skills-trust-reviewed-version")
+        await _wait_for_skills_list_calls(app.skills_scope_service, list_calls_after_review + 1, pilot)
+        assert app.local_skill_trust_service.trusted_review_id == "review-1"
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_clears_stale_review_after_refresh():
+    app = _build_test_app()
+    trusted_skill = {
+        "name": "summarize-notes",
+        "description": "Summarize note collections",
+        "record_id": "local:skill:summarize-notes",
+        "validation_status": "valid",
+        "validation_errors": [],
+        "trust_status": "trusted",
+        "trust_reason_code": None,
+        "trust_blocked": False,
+        "trust_changed_files": [],
+    }
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "record_id": "local:skill:summarize-notes",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "quarantined_modified",
+                "trust_reason_code": "skill_modified",
+                "trust_blocked": True,
+                "trust_changed_files": ["SKILL.md"],
+            },
+        ]
+    )
+    app.local_skill_trust_service = RecordingSkillTrustService(
+        review_id="review-1",
+        on_capture_review=lambda _skill_name: app.skills_scope_service.set_skills([trusted_skill]),
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        initial_list_calls = len(app.skills_scope_service.calls)
+
+        await pilot.click("#skills-review-diff")
+        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+        await _wait_for_visible_text(screen, pilot, "Trust: trusted baseline")
+
+        approve_button = screen.query_one("#skills-trust-reviewed-version", Button)
+        assert approve_button.disabled is True
+        assert "Review captured:" not in _visible_text(screen)
+
+        await pilot.click("#skills-trust-reviewed-version")
+        await pilot.pause()
+        assert app.local_skill_trust_service.trust_reviewed_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_skills_destination_hides_review_summary_when_selecting_another_skill():
+    app = _build_test_app()
+    app.local_skill_trust_service = RecordingSkillTrustService(review_id="review-1")
+    app.skills_scope_service = StaticSkillsScopeService(
+        [
+            {
+                "name": "summarize-notes",
+                "description": "Summarize note collections",
+                "record_id": "local:skill:summarize-notes",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "quarantined_modified",
+                "trust_reason_code": "skill_modified",
+                "trust_blocked": True,
+                "trust_changed_files": ["SKILL.md"],
+            },
+            {
+                "name": "code-review",
+                "description": "Review code changes",
+                "record_id": "local:skill:code-review",
+                "validation_status": "valid",
+                "validation_errors": [],
+                "trust_status": "quarantined_modified",
+                "trust_reason_code": "skill_modified",
+                "trust_blocked": True,
+                "trust_changed_files": ["SKILL.md"],
+            },
+        ]
+    )
+    host = DestinationHarness(app, "skills")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_skills_snapshot(screen, pilot)
+        initial_list_calls = len(app.skills_scope_service.calls)
+        await pilot.click("#skills-review-diff")
+        await _wait_for_skills_list_calls(app.skills_scope_service, initial_list_calls + 1, pilot)
+
+        assert "Reviewed skill: summarize-notes" in _visible_text(screen)
+        assert "Review captured: SKILL.md." in _visible_text(screen)
+        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is False
+
+        await pilot.click("#skills-select-local-1")
+        await pilot.pause()
+        text = _visible_text(screen)
+
+        assert "Selected: code-review" in text
+        assert screen.query_one("#skills-trust-reviewed-version", Button).disabled is True
+        assert "Reviewed skill: summarize-notes" not in text
+        assert "Review captured: SKILL.md." not in text
 
 
 @pytest.mark.asyncio
@@ -2204,8 +3051,13 @@ async def test_settings_destination_uses_three_column_workbench_contract():
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
-    async with host.run_test(size=(180, 50)):
+    async with host.run_test(size=(180, 50)) as pilot:
         screen = _active_destination_screen(host)
+        await _wait_for_visible_text(
+            screen,
+            pilot,
+            "Settings | Global preferences, appearance, accounts, storage | Local",
+        )
         text = _visible_text(screen)
 
         assert "Settings | Global preferences, appearance, accounts, storage | Local" in text
@@ -2260,7 +3112,8 @@ async def test_settings_appearance_action_routes_to_customize_surface():
     host = DestinationHarness(app, "settings", seen_routes)
 
     async with host.run_test(size=(180, 40)) as pilot:
-        await pilot.pause(0.1)
+        screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-open-appearance")
         await pilot.click("#settings-open-appearance")
         await pilot.pause(0.1)
 
@@ -2294,10 +3147,10 @@ async def test_settings_console_paste_collapse_toggle_reflects_and_persists_conf
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.1)
-        await pilot.click("#settings-category-console-behavior")
-        await pilot.pause(0.1)
         screen = _active_destination_screen(host)
+        await _wait_for_selector(screen, pilot, "#settings-category-console-behavior")
+        await pilot.click("#settings-category-console-behavior")
+        await _wait_for_selector(screen, pilot, "#settings-console-collapse-large-pastes-toggle")
         toggle = screen.query_one(
             "#settings-console-collapse-large-pastes-toggle",
             Button,

@@ -46,6 +46,7 @@ from ...config import (
     save_setting_to_cli_config,
 )
 from ...Utils.input_validation import (
+    provider_api_key_validation_error,
     sanitize_string,
     validate_number_range,
     validate_text_input,
@@ -620,6 +621,7 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_models: tuple[object, ...] = ()
         self._model_discovery_selected_model_ids: set[str] = set()
         self._syncing_provider_endpoint = False
+        self._syncing_provider_api_key = False
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
         self._syncing_provider_model_value = False
@@ -634,6 +636,7 @@ class SettingsScreen(BaseAppScreen):
         self._active_settings_field_id: str | None = None
         self._navigation_provider: str | None = None
         self._navigation_model: str | None = None
+        self._navigation_field: str | None = None
         self._diagnostics_validation_result = "Config validation: not run"
         self._diagnostics_reload_result = "Config reload: not run"
         self._storage_check_rows: tuple[str, ...] = (
@@ -940,6 +943,7 @@ class SettingsScreen(BaseAppScreen):
                     "chat_defaults.provider",
                     "chat_defaults.model",
                     "api_settings.<provider>.endpoint",
+                    "api_settings.<provider>.api_key",
                     "api_settings.<provider>.api_key_env_var",
                     "api_settings.<provider>.model_defaults.<model>",
                 ),
@@ -947,7 +951,8 @@ class SettingsScreen(BaseAppScreen):
                 writes_allowed=True,
                 runtime_owner="Settings persisted defaults; Console runtime selection",
                 boundary_copy=(
-                    "Provider, default model, endpoint, credential source, and selected "
+                    "Provider, default model, endpoint, local config API key, credential "
+                    "source, and selected "
                     "provider+model profile defaults are shared with Console."
                 ),
                 recovery_copy=(
@@ -2664,6 +2669,15 @@ class SettingsScreen(BaseAppScreen):
         writable = os.access(target, os.W_OK) if target.exists() else os.access(target.parent, os.W_OK)
         return "writable" if writable else "not writable"
 
+    def _config_path_overview_value(self) -> str:
+        try:
+            config_path = self._config_path()
+        except (OSError, RuntimeError, ValueError) as exc:
+            return f"invalid path - {redact_secret_text(str(exc))}"
+        source = "Override config" if os.environ.get("TLDW_CONFIG_PATH") else "User config"
+        filename = config_path.name or "config.toml"
+        return f"{source}: {filename} ({self._config_writable_status()})"
+
     def _raw_config_text(self) -> str:
         try:
             config_path = self._config_path()
@@ -2879,13 +2893,58 @@ class SettingsScreen(BaseAppScreen):
         )
         self.app.call_from_thread(self._apply_storage_check_result, rows)
 
+    def _skill_trust_posture(self) -> dict[str, object]:
+        skill_trust_service = getattr(
+            self.app_instance,
+            "local_skill_trust_service",
+            None,
+        )
+        if skill_trust_service is None:
+            return {
+                "enabled": False,
+                "trust_status": "unavailable",
+                "keyring_convenience_enabled": False,
+                "reduced_rollback_protection": False,
+            }
+
+        trust_status = "unavailable"
+        overall_status = getattr(skill_trust_service, "overall_status", None)
+        if callable(overall_status):
+            try:
+                trust_status = overall_status()
+            except Exception:
+                logger.warning("Unable to read local skill trust posture.")
+                trust_status = "unavailable_error"
+
+        return {
+            "enabled": True,
+            "trust_status": trust_status,
+            "keyring_convenience_enabled": bool(
+                getattr(
+                    skill_trust_service,
+                    "keyring_convenience_enabled",
+                    False,
+                )
+            ),
+            "reduced_rollback_protection": bool(
+                getattr(
+                    skill_trust_service,
+                    "reduced_rollback_protection",
+                    False,
+                )
+            ),
+        }
+
     def _settings_privacy_posture(
         self,
         app_config: object | None = None,
     ) -> SettingsPrivacyPosture:
         if app_config is None:
             app_config = getattr(self.app_instance, "app_config", {}) or {}
-        return build_settings_privacy_posture(app_config)
+        return build_settings_privacy_posture(
+            app_config,
+            skill_trust=self._skill_trust_posture(),
+        )
 
     def _privacy_posture_rows(self, app_config: object | None = None) -> tuple[str, ...]:
         return build_privacy_posture_rows(self._settings_privacy_posture(app_config))
@@ -3271,6 +3330,7 @@ class SettingsScreen(BaseAppScreen):
             "provider": provider,
             "model": model,
             "endpoint": self._provider_endpoint_value(provider),
+            "api_key": "",
             "credential_env_var": self._provider_credential_env_var(provider),
             "model_profile_temperature": profile.get("temperature", ""),
             "model_profile_top_p": profile.get("top_p", ""),
@@ -3314,6 +3374,7 @@ class SettingsScreen(BaseAppScreen):
                 "provider": provider,
                 "model": model,
                 "endpoint": self._provider_endpoint_value(provider),
+                "api_key": "",
                 "credential_env_var": self._provider_credential_env_var(provider),
                 "model_profile_temperature": profile.get("temperature", ""),
                 "model_profile_top_p": profile.get("top_p", ""),
@@ -3336,6 +3397,7 @@ class SettingsScreen(BaseAppScreen):
     def _clear_navigation_provider_context(self) -> None:
         self._navigation_provider = None
         self._navigation_model = None
+        self._navigation_field = None
 
     @staticmethod
     def _normalise_optional_float(
@@ -3555,6 +3617,7 @@ class SettingsScreen(BaseAppScreen):
             or str(loaded_values["model"])
         )
         endpoint = self.query_one("#settings-provider-endpoint-value", Input).value.strip()
+        api_key = self.query_one("#settings-provider-api-key", Input).value.strip()
         credential_env_var = self.query_one(
             "#settings-provider-credential-env-var",
             Input,
@@ -3612,6 +3675,7 @@ class SettingsScreen(BaseAppScreen):
             "provider": provider,
             "model": model,
             "endpoint": endpoint,
+            "api_key": api_key,
             "credential_env_var": credential_env_var,
             "model_profile_temperature": model_profile_temperature,
             "model_profile_top_p": model_profile_top_p,
@@ -3632,7 +3696,11 @@ class SettingsScreen(BaseAppScreen):
     def _stage_provider_value(self, key: str, value: object) -> None:
         category = SettingsCategoryId.PROVIDERS_MODELS
         draft = self._settings_drafts.setdefault(category, SettingsDraft(category=category))
-        original = self._provider_loaded_setting_values().get(key)
+        if key == "api_key":
+            provider = str(self._provider_setting_values_mapping().get("provider") or "").strip()
+            original = self._provider_api_key_value(provider)
+        else:
+            original = self._provider_loaded_setting_values().get(key)
         draft.set_value(key, original, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
@@ -3660,13 +3728,64 @@ class SettingsScreen(BaseAppScreen):
         env_var = self._provider_config(provider).get("api_key_env_var", "")
         return str(env_var or "").strip()
 
+    def _provider_api_key_value(self, provider: str) -> str:
+        api_key = self._provider_config(provider).get("api_key", "")
+        return str(api_key or "").strip() if isinstance(api_key, str) else ""
+
+    def _provider_readiness_app_config(self) -> Mapping[str, object]:
+        """Return app config for provider-readiness checks."""
+        try:
+            app_config = getattr(self.app, "app_config")
+        except (AttributeError, NoActiveAppError):
+            return getattr(self.app_instance, "app_config", {}) or {}
+        return app_config or {}
+
+    def _provider_saved_api_key_present(self, provider: str) -> bool:
+        readiness = get_provider_readiness(
+            provider,
+            self._provider_readiness_app_config(),
+        )
+        return bool(
+            readiness.api_key_source
+            and readiness.api_key_source.startswith("config:")
+        )
+
+    def _provider_api_key_placeholder(self, provider: str) -> str:
+        provider_key = provider_config_key(provider)
+        if not provider_key:
+            return "Select provider first"
+        readiness = get_provider_readiness(
+            provider,
+            self._provider_readiness_app_config(),
+        )
+        if not readiness.requires_api_key:
+            return "No credential required"
+        if self._provider_saved_api_key_present(provider):
+            return "Local config key saved; paste a replacement to change it"
+        return "Paste API key to save locally in config"
+
+    def _provider_credential_status(self, provider: str) -> str:
+        readiness = get_provider_readiness(
+            provider,
+            self._provider_readiness_app_config(),
+        )
+        if self._provider_saved_api_key_present(provider):
+            return "API key source: local config key saved"
+        if readiness.api_key_source and readiness.api_key_source.startswith("env:"):
+            return f"API key source: {readiness.api_key_source}"
+        if not readiness.requires_api_key:
+            return "API key source: not required for this provider"
+        if readiness.env_var:
+            return f"API key source: missing; set {readiness.env_var} or paste a local key"
+        return "API key source: missing"
+
     def _provider_credential_placeholder(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
         if not provider_key:
             return "Select provider first"
         readiness = get_provider_readiness(
             provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         if not readiness.requires_api_key:
             return "No credential required"
@@ -3839,6 +3958,7 @@ class SettingsScreen(BaseAppScreen):
             return
         for key in (
             "endpoint",
+            "api_key",
             "credential_env_var",
             *PROVIDER_MODEL_PROFILE_FIELD_KEYS,
         ):
@@ -3861,13 +3981,28 @@ class SettingsScreen(BaseAppScreen):
         try:
             credential_input = self.query_one("#settings-provider-credential-env-var", Input)
         except QueryError:
-            return
-        self._syncing_provider_credential_env_var = True
+            credential_input = None
         try:
-            credential_input.value = self._provider_credential_env_var(provider)
-            credential_input.placeholder = self._provider_credential_placeholder(provider)
+            api_key_input = self.query_one("#settings-provider-api-key", Input)
+        except QueryError:
+            api_key_input = None
+        draft = self._provider_draft()
+        self._syncing_provider_credential_env_var = True
+        self._syncing_provider_api_key = True
+        try:
+            if credential_input is not None:
+                credential_input.value = self._provider_credential_env_var(provider)
+                credential_input.placeholder = self._provider_credential_placeholder(provider)
+            if api_key_input is not None:
+                api_key_input.value = (
+                    str(draft.values.get("api_key") or "")
+                    if draft is not None and "api_key" in draft.values
+                    else ""
+                )
+                api_key_input.placeholder = self._provider_api_key_placeholder(provider)
         finally:
             self._syncing_provider_credential_env_var = False
+            self._syncing_provider_api_key = False
 
     def _sync_provider_model_profile_widgets(self, provider: str, model: str) -> None:
         profile = self._provider_model_profile(provider, model)
@@ -3998,10 +4133,14 @@ class SettingsScreen(BaseAppScreen):
             )
         return None
 
+    @staticmethod
+    def _validate_provider_api_key(api_key: object) -> str | None:
+        return provider_api_key_validation_error(api_key)
+
     def _provider_key_status(self, provider: str) -> str:
         readiness = get_provider_readiness(
             provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         if readiness.api_key_source:
             return f"API key: {readiness.api_key_source}"
@@ -4356,6 +4495,16 @@ class SettingsScreen(BaseAppScreen):
             self.query_one("#settings-provider-key-status", Static).update(
                 self._provider_key_status(provider)
             )
+            self.query_one("#settings-provider-credential-status", Static).update(
+                self._provider_credential_status(provider)
+            )
+            api_key_input = self.query_one("#settings-provider-api-key", Input)
+            api_key_input.placeholder = self._provider_api_key_placeholder(provider)
+            clear_button = self.query_one("#settings-provider-api-key-clear", Button)
+            clear_button.disabled = (
+                not self._provider_saved_api_key_present(provider)
+                and not bool(api_key_input.value.strip())
+            )
         except QueryError:
             pass
         self._set_static_text(
@@ -4408,10 +4557,17 @@ class SettingsScreen(BaseAppScreen):
                 ("Saved as", endpoint_key),
                 ("Validation", "must start with http:// or https:// when set"),
             )
+        if field_id == "settings-provider-api-key":
+            return (
+                ("Focused setting", "API key"),
+                ("Purpose", "Stores a provider API key in local config for Console generation."),
+                ("Saved as", f"{provider_config_prefix}.api_key"),
+                ("Validation", "single-line secret value; visible UI stays masked"),
+            )
         if field_id == "settings-provider-credential-env-var":
             return (
                 ("Focused setting", "Credential env"),
-                ("Purpose", "Points Settings at the environment variable containing the API key."),
+                ("Purpose", "Stores the environment variable name containing the API key."),
                 ("Saved as", f"{provider_config_prefix}.api_key_env_var"),
                 ("Validation", "environment variable names must start with a letter or underscore"),
             )
@@ -4838,7 +4994,7 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Storage", classes="destination-section")
             yield self._detail_row(
                 "Config path",
-                f"{self._config_path()} ({self._config_writable_status()})",
+                self._config_path_overview_value(),
                 identifier="settings-overview-storage",
             )
             yield Static("Privacy", classes="destination-section")
@@ -5092,14 +5248,45 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder=self._provider_endpoint_placeholder(provider),
                 )
+            yield Static("Credentials", classes="destination-section")
+            yield Static(
+                self._provider_credential_status(provider),
+                id="settings-provider-credential-status",
+                classes="settings-status-row",
+            )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Credential env", classes="settings-input-label")
+                yield Static("API key", classes="settings-input-label")
+                yield Input(
+                    value=str(values.get("api_key") or ""),
+                    id="settings-provider-api-key",
+                    classes="settings-compact-input",
+                    placeholder=self._provider_api_key_placeholder(provider),
+                    password=True,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("", classes="settings-input-label")
+                yield Button(
+                    "Clear saved key",
+                    id="settings-provider-api-key-clear",
+                    disabled=(
+                        not self._provider_saved_api_key_present(provider)
+                        and not bool(str(values.get("api_key") or "").strip())
+                    ),
+                    tooltip="Clear the API key saved in local config for this provider.",
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Env var", classes="settings-input-label")
                 yield Input(
                     value=str(values["credential_env_var"]),
                     id="settings-provider-credential-env-var",
                     classes="settings-compact-input",
                     placeholder=self._provider_credential_placeholder(provider),
                 )
+            yield Static(
+                "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.",
+                id="settings-provider-credential-guidance",
+                classes="settings-status-row",
+            )
             yield Static(
                 self._provider_catalog_summary(),
                 id="settings-provider-catalog",
@@ -5850,6 +6037,22 @@ class SettingsScreen(BaseAppScreen):
                     "Recovery actions",
                     "Check Privacy | Open Providers & Models | Open Advanced Config",
                 )
+                yield self._detail_row(
+                    "Skill trust",
+                    posture.skill_trust_status if posture.skill_trust_enabled else "disabled",
+                )
+                yield self._detail_row(
+                    "Skill trust keyring convenience",
+                    "enabled"
+                    if posture.skill_trust_keyring_convenience_enabled
+                    else "disabled",
+                )
+                yield self._detail_row(
+                    "Skill trust rollback protection",
+                    "reduced"
+                    if posture.skill_trust_reduced_rollback_protection
+                    else "full",
+                )
                 with Horizontal(id="settings-privacy-actions", classes="settings-action-row"):
                     yield Button(
                         "Check Privacy",
@@ -6312,6 +6515,7 @@ class SettingsScreen(BaseAppScreen):
             self._select_category(category_value, restore_focus=True)
             return
         model = str(context.get("model") or "").strip()
+        field = str(context.get("field") or "").strip()
         if self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS):
             self._clear_navigation_provider_context()
             self._select_category(category_value, restore_focus=True)
@@ -6323,15 +6527,22 @@ class SettingsScreen(BaseAppScreen):
             return
         self._navigation_provider = provider
         self._navigation_model = model
+        self._navigation_field = field
         self._select_category(category_value, restore_focus=True)
-        self.call_after_refresh(self._apply_navigation_provider_context, provider, model)
+        self.call_after_refresh(self._apply_navigation_provider_context, provider, model, field)
 
-    def _apply_navigation_provider_context(self, provider: str, model: str = "") -> None:
+    def _apply_navigation_provider_context(
+        self,
+        provider: str,
+        model: str = "",
+        field: str = "",
+    ) -> None:
         """Synchronize mounted provider widgets after route-targeted navigation.
 
         Args:
             provider: Provider key to highlight in the mounted Providers & Models UI.
             model: Optional model name to show with the highlighted provider.
+            field: Optional field intent to focus after provider/model sync.
 
         Returns:
             None. This method updates mounted widgets only and does not create a
@@ -6359,6 +6570,21 @@ class SettingsScreen(BaseAppScreen):
         self._sync_provider_model_profile_widgets(provider_value, model_value)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+        self._focus_navigation_provider_field(field or self._navigation_field or "")
+
+    def _focus_navigation_provider_field(self, field: str) -> None:
+        field_selectors = {
+            "api_key": "#settings-provider-api-key",
+            "endpoint": "#settings-provider-endpoint-value",
+            "credential_env_var": "#settings-provider-credential-env-var",
+        }
+        selector = field_selectors.get(str(field or "").strip())
+        if not selector:
+            return
+        try:
+            self.query_one(selector).focus()
+        except QueryError:
+            return
 
     def _select_category(self, category_value: str, *, restore_focus: bool = False) -> None:
         if category_value != SettingsCategoryId.PROVIDERS_MODELS.value:
@@ -6412,6 +6638,8 @@ class SettingsScreen(BaseAppScreen):
             "settings-provider-manual-value",
             "settings-model-value",
             "settings-provider-endpoint-value",
+            "settings-provider-api-key",
+            "settings-provider-api-key-clear",
             "settings-provider-credential-env-var",
             "settings-model-profile-temperature",
             "settings-model-profile-top-p",
@@ -7125,6 +7353,50 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
+    @on(Input.Changed, "#settings-provider-api-key")
+    def handle_provider_api_key_changed(self, event: Input.Changed) -> None:
+        """Stage a local provider API-key draft.
+
+        Args:
+            event: Textual input change event containing the masked key value.
+
+        Returns:
+            None.
+        """
+        if self._syncing_provider_api_key:
+            self._update_provider_dynamic_widgets()
+            return
+        self._stage_provider_value("api_key", event.value.strip())
+        self._reset_provider_model_discovery_state()
+        self._update_provider_dynamic_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Button.Pressed, "#settings-provider-api-key-clear")
+    def handle_provider_api_key_clear_pressed(self, event: Button.Pressed) -> None:
+        """Clear the staged local provider API key.
+
+        Args:
+            event: Textual button press event from the provider API-key clear control.
+
+        Returns:
+            None.
+        """
+        event.stop()
+        try:
+            api_key_input = self.query_one("#settings-provider-api-key", Input)
+        except QueryError:
+            api_key_input = None
+        self._stage_provider_value("api_key", "")
+        self._syncing_provider_api_key = True
+        try:
+            if api_key_input is not None:
+                api_key_input.value = ""
+        finally:
+            self._syncing_provider_api_key = False
+        self._reset_provider_model_discovery_state()
+        self._update_provider_dynamic_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
     @on(Input.Changed, "#settings-model-profile-temperature")
     def handle_model_profile_temperature_changed(self, event: Input.Changed) -> None:
         if self._syncing_provider_model_profile:
@@ -7266,17 +7538,17 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-save-category")
     def handle_save_category(self, event: Button.Pressed) -> None:
         event.stop()
-        self.action_settings_save_category()
+        self.action_settings_save_category(allow_text_entry_focus=True)
 
     @on(Button.Pressed, "#settings-revert-category")
     def handle_revert_category(self, event: Button.Pressed) -> None:
         event.stop()
-        self.action_settings_revert_category()
+        self.action_settings_revert_category(allow_text_entry_focus=True)
 
     @on(Button.Pressed, "#settings-test-provider")
     def handle_test_provider(self, event: Button.Pressed) -> None:
         event.stop()
-        self.action_settings_test_category()
+        self.action_settings_test_category(allow_text_entry_focus=True)
 
     @on(Button.Pressed, "#settings-discover-provider-models")
     def handle_discover_provider_models(self, event: Button.Pressed) -> None:
@@ -7363,8 +7635,8 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._update_advanced_validation_status()
 
-    def action_settings_save_category(self) -> None:
-        if self._settings_text_entry_has_focus():
+    def action_settings_save_category(self, *, allow_text_entry_focus: bool = False) -> None:
+        if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
         if category not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
@@ -7383,6 +7655,7 @@ class SettingsScreen(BaseAppScreen):
             provider = str(values.get("provider") or "").strip()
             model = str(values.get("model") or "").strip()
             endpoint = str(values.get("endpoint") or "").strip()
+            api_key = str(values.get("api_key") or "").strip()
             credential_env_var = str(values.get("credential_env_var") or "").strip()
             draft = self._settings_drafts.get(category)
             if not provider_config_key(provider):
@@ -7415,6 +7688,12 @@ class SettingsScreen(BaseAppScreen):
                 self._set_static_text("#settings-provider-save-result", self._provider_save_result)
                 self.app.notify(credential_validation_error, severity="error")
                 return
+            api_key_validation_error = self._validate_provider_api_key(api_key)
+            if api_key_validation_error:
+                self._provider_save_result = api_key_validation_error
+                self._set_static_text("#settings-provider-save-result", self._provider_save_result)
+                self.app.notify(api_key_validation_error, severity="error")
+                return
             dirty_values = {
                 key: value
                 for key, value in values.items()
@@ -7432,6 +7711,7 @@ class SettingsScreen(BaseAppScreen):
             provider_section_key, _provider_config = self._provider_config_entry(provider)
             current_provider_endpoint = self._provider_endpoint_value(provider)
             current_credential_env_var = self._provider_credential_env_var(provider)
+            api_key_dirty = draft is not None and "api_key" in draft.dirty_keys
             endpoint_dirty = endpoint != current_provider_endpoint
             credential_dirty = credential_env_var != current_credential_env_var
             if endpoint_dirty and not provider_key:
@@ -7443,6 +7723,11 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_save_result = (
                     "Provider is required before saving a credential source."
                 )
+                self._set_static_text("#settings-provider-save-result", self._provider_save_result)
+                self.app.notify(self._provider_save_result, severity="error")
+                return
+            if api_key_dirty and not provider_key:
+                self._provider_save_result = "Provider is required before saving an API key."
                 self._set_static_text("#settings-provider-save-result", self._provider_save_result)
                 self.app.notify(self._provider_save_result, severity="error")
                 return
@@ -7458,7 +7743,13 @@ class SettingsScreen(BaseAppScreen):
                 self._set_static_text("#settings-provider-save-result", self._provider_save_result)
                 self.app.notify(self._provider_save_result, severity="error")
                 return
-            if not dirty_values and not endpoint_dirty and not credential_dirty and not model_profile_dirty:
+            if (
+                not dirty_values
+                and not endpoint_dirty
+                and not credential_dirty
+                and not api_key_dirty
+                and not model_profile_dirty
+            ):
                 self._settings_drafts.pop(category, None)
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)
@@ -7473,6 +7764,8 @@ class SettingsScreen(BaseAppScreen):
             provider_settings_values = {}
             if endpoint_dirty:
                 provider_settings_values[endpoint_key] = endpoint
+            if api_key_dirty:
+                provider_settings_values["api_key"] = api_key
             if credential_dirty:
                 provider_settings_values["api_key_env_var"] = credential_env_var
             if provider_settings_values and provider_key:
@@ -7503,7 +7796,12 @@ class SettingsScreen(BaseAppScreen):
                         str(values.get("provider") or "").strip(),
                         str(values.get("model") or "").strip(),
                     )
-                if (endpoint_dirty or credential_dirty or next_model_defaults is not None) and provider_key:
+                if (
+                    endpoint_dirty
+                    or credential_dirty
+                    or api_key_dirty
+                    or next_model_defaults is not None
+                ) and provider_key:
                     app_config = getattr(self.app_instance, "app_config", None)
                     if not isinstance(app_config, dict):
                         self.app_instance.app_config = {}
@@ -7523,6 +7821,7 @@ class SettingsScreen(BaseAppScreen):
                 self._settings_drafts.pop(category, None)
                 self._provider_save_result = "Provider settings saved."
                 self._set_static_text("#settings-provider-save-result", self._provider_save_result)
+                self._sync_provider_credential_widget(provider)
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)
                 self.app.notify("Provider and model settings saved.", severity="information")
@@ -7745,8 +8044,8 @@ class SettingsScreen(BaseAppScreen):
 
         self.app.notify("This Settings category has no save action yet.", severity="warning")
 
-    def action_settings_revert_category(self) -> None:
-        if self._settings_text_entry_has_focus():
+    def action_settings_revert_category(self, *, allow_text_entry_focus: bool = False) -> None:
+        if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
         if not self._category_has_unsaved_changes(category):
@@ -7784,6 +8083,9 @@ class SettingsScreen(BaseAppScreen):
                 endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
                 endpoint_input.value = str(values["endpoint"])
                 endpoint_input.placeholder = self._provider_endpoint_placeholder(provider)
+                api_key_input = self.query_one("#settings-provider-api-key", Input)
+                api_key_input.value = str(values.get("api_key") or "")
+                api_key_input.placeholder = self._provider_api_key_placeholder(provider)
                 credential_input = self.query_one(
                     "#settings-provider-credential-env-var",
                     Input,
@@ -7806,8 +8108,8 @@ class SettingsScreen(BaseAppScreen):
             self._update_draft_status_widgets(category)
         self.app.notify("Settings category changes reverted.", severity="information")
 
-    def action_settings_test_category(self) -> None:
-        if self._settings_text_entry_has_focus():
+    def action_settings_test_category(self, *, allow_text_entry_focus: bool = False) -> None:
+        if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
             self._provider_test_result = self._run_provider_readiness_test()

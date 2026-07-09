@@ -11,6 +11,8 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleProviderSelection,
     ConsoleRunState,
     ConsoleRunStatus,
+    derive_console_session_title,
+    is_default_console_session_title,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
@@ -114,6 +116,7 @@ class ConsoleChatController:
             visible_copy = self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
             return self._block(session.id, visible_copy)
 
+        self._maybe_auto_title_session(session, clean_draft)
         self.store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
@@ -141,13 +144,45 @@ class ConsoleChatController:
     ) -> ConsoleChatSession:
         """Create and activate a new native Console session."""
         next_number = len(self.store.sessions()) + 1
-        return self.store.create_session(
+        session = self.store.create_session(
             title=title or f"Chat {next_number}",
             settings=settings,
         )
+        self._clear_terminal_run_state()
+        return session
+
+    def _maybe_auto_title_session(self, session: ConsoleChatSession, draft: str) -> None:
+        """Title a default-named session from its first accepted message."""
+        if session.persisted_conversation_id is not None:
+            return
+        if not is_default_console_session_title(session.title):
+            return
+        derived = derive_console_session_title(draft)
+        if derived:
+            self.store.rename_session(session.id, derived)
 
     def update_provider_selection(self, selection: ConsoleProviderSelection) -> None:
         """Sync controller provider settings from a Console selection."""
+        previous_selection = (
+            self.provider,
+            self.model,
+            self.configured_model,
+            self.base_url,
+            self.temperature,
+            self.top_p,
+            self.min_p,
+            self.top_k,
+            self.max_tokens,
+            self.seed,
+            self.presence_penalty,
+            self.frequency_penalty,
+            self.reasoning_effort,
+            self.reasoning_summary,
+            self.verbosity,
+            self.thinking_effort,
+            self.thinking_budget_tokens,
+            self.streaming,
+        )
         self.provider = selection.provider
         self.model = selection.explicit_model
         self.configured_model = selection.configured_model
@@ -166,10 +201,34 @@ class ConsoleChatController:
         self.thinking_effort = selection.thinking_effort
         self.thinking_budget_tokens = selection.thinking_budget_tokens
         self.streaming = selection.streaming
+        current_selection = (
+            self.provider,
+            self.model,
+            self.configured_model,
+            self.base_url,
+            self.temperature,
+            self.top_p,
+            self.min_p,
+            self.top_k,
+            self.max_tokens,
+            self.seed,
+            self.presence_penalty,
+            self.frequency_penalty,
+            self.reasoning_effort,
+            self.reasoning_summary,
+            self.verbosity,
+            self.thinking_effort,
+            self.thinking_budget_tokens,
+            self.streaming,
+        )
+        if current_selection != previous_selection:
+            self._clear_terminal_run_state()
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
         """Activate an existing native Console session."""
-        return self.store.switch_session(session_id)
+        session = self.store.switch_session(session_id)
+        self._clear_terminal_run_state()
+        return session
 
     def close_session(self, session_id: str) -> ConsoleChatSession | None:
         """Close an existing native Console session.
@@ -214,6 +273,30 @@ class ConsoleChatController:
             self._active_stream_task.cancel()
         return True
 
+    async def shutdown(self) -> None:
+        """Stop and await the active stream task before owner teardown."""
+        task = self._active_stream_task
+        if task is None:
+            return
+        if not self.stop_active_run():
+            self._stop_requested = True
+            if task is not asyncio.current_task():
+                task.cancel()
+        if task is asyncio.current_task():
+            return
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            # Shutdown is a teardown path; stale task failures should not crash owner cleanup.
+            pass
+        finally:
+            if self._active_stream_task is task:
+                self._active_assistant_message_id = None
+                self._active_stream_task = None
+                self._stop_requested = False
+
     def _active_streaming_assistant_message_id(self) -> str | None:
         """Return the visible streaming assistant message for the active session."""
         session_id = self.store.active_session_id
@@ -256,6 +339,7 @@ class ConsoleChatController:
             session_id,
             before_message_id=message_id,
         )
+        self._ensure_user_continuation_instruction(provider_messages)
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
@@ -285,10 +369,7 @@ class ConsoleChatController:
             return self._block(session_id, visible_copy)
 
         provider_messages = self._provider_messages_through_message(session_id, message_id)
-        if provider_messages and provider_messages[-1].get("role") == ConsoleMessageRole.ASSISTANT.value:
-            provider_messages.append(
-                {"role": ConsoleMessageRole.USER.value, "content": CONSOLE_CONTINUE_INSTRUCTION}
-            )
+        self._ensure_user_continuation_instruction(provider_messages)
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -328,6 +409,7 @@ class ConsoleChatController:
             session_id,
             before_message_id=message_id,
         )
+        self._ensure_user_continuation_instruction(provider_messages)
         self._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING, "Regenerating response."))
         chunks: list[str] = []
         try:
@@ -371,6 +453,18 @@ class ConsoleChatController:
             streaming=self.streaming,
             workspace_context=self.store.workspace_context,
         )
+
+    @staticmethod
+    def _ensure_user_continuation_instruction(
+        provider_messages: list[dict[str, str]],
+    ) -> None:
+        if (
+            provider_messages
+            and provider_messages[-1].get("role") == ConsoleMessageRole.ASSISTANT.value
+        ):
+            provider_messages.append(
+                {"role": ConsoleMessageRole.USER.value, "content": CONSOLE_CONTINUE_INSTRUCTION}
+            )
 
     @staticmethod
     def _validated_draft(draft: str) -> tuple[str, str | None]:
@@ -580,6 +674,16 @@ class ConsoleChatController:
     def _set_run_state(self, run_state: ConsoleRunState) -> None:
         self.run_state = run_state
         self.run_state_history.append(run_state.status)
+
+    def _clear_terminal_run_state(self) -> None:
+        """Clear stale terminal status copy when the active session changes."""
+        if self.run_state.status in {
+            ConsoleRunStatus.BLOCKED,
+            ConsoleRunStatus.COMPLETED,
+            ConsoleRunStatus.FAILED,
+            ConsoleRunStatus.STOPPED,
+        }:
+            self._set_run_state(ConsoleRunState())
 
     def _active_stream_belongs_to_session(self, session_id: str) -> bool:
         if self._active_assistant_message_id is None:

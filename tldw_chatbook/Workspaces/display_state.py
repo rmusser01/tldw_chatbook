@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from loguru import logger
 
@@ -27,6 +27,9 @@ from .models import (
 )
 from .eligibility import evaluate_workspace_eligibility
 
+if TYPE_CHECKING:
+    from .conversation_browser_state import ConsoleConversationBrowserState
+
 logger = logger.bind(module="WorkspaceDisplayState")
 
 LIBRARY_WORKSPACE_VISIBILITY_COPY = (
@@ -46,6 +49,83 @@ class ConsoleWorkspaceConversationRow:
     title: str
     status: str = ""
     selected: bool = False
+
+
+CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT = 50
+CONSOLE_WORKSPACE_CONVERSATION_MIN_VISIBLE_ROWS = 4
+CONSOLE_WORKSPACE_CONVERSATION_MAX_VISIBLE_ROWS = 12
+CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT = 3
+CONSOLE_WORKSPACE_CONVERSATION_HEIGHT_RATIO = 0.45
+
+
+@dataclass(frozen=True)
+class ConsoleWorkspaceConversationSectionState:
+    """Renderable state for the Console workspace Conversations subsection."""
+
+    workspace_id: str
+    collapsed: bool
+    query: str
+    selected_summary: str
+    rows: tuple[ConsoleWorkspaceConversationRow, ...]
+    workspace_total_count: int | None = None
+    result_total_count: int | None = None
+    result_limit: int = CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT
+    status_copy: str = ""
+    empty_copy: str = ""
+    search_enabled: bool = True
+    new_conversation_enabled: bool = True
+    error_copy: str = ""
+
+
+def console_workspace_conversation_visible_rows(body_height: int | None) -> int:
+    """Return the adaptive visible row count for the conversation list.
+
+    Args:
+        body_height: Available Console body height, or ``None`` when the
+            mounted body has not been measured yet.
+
+    Returns:
+        A clamped row count for the bounded workspace conversation list.
+    """
+
+    if body_height is None or body_height <= 0:
+        return CONSOLE_WORKSPACE_CONVERSATION_MIN_VISIBLE_ROWS
+    target_rows = int(
+        (int(body_height) * CONSOLE_WORKSPACE_CONVERSATION_HEIGHT_RATIO)
+        // CONSOLE_WORKSPACE_CONVERSATION_ROW_HEIGHT
+    )
+    return max(
+        CONSOLE_WORKSPACE_CONVERSATION_MIN_VISIBLE_ROWS,
+        min(CONSOLE_WORKSPACE_CONVERSATION_MAX_VISIBLE_ROWS, target_rows),
+    )
+
+
+def console_workspace_conversation_result_copy(
+    *,
+    query: str,
+    result_total_count: int | None,
+    result_limit: int = CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
+) -> str:
+    """Return explicit search result count copy for the conversation rail.
+
+    Args:
+        query: Current workspace conversation search text.
+        result_total_count: Total number of scoped matches, or ``None`` when
+            no search result count should be shown.
+        result_limit: Maximum number of result rows rendered in the rail.
+
+    Returns:
+        Human-readable count copy for scoped search results, or an empty
+        string when no count should be displayed.
+    """
+
+    if not str(query or "").strip() or result_total_count is None:
+        return ""
+    total = max(0, int(result_total_count))
+    limit = max(1, int(result_limit))
+    if total > limit:
+        return f"Showing {limit} of {total} matches"
+    return f"{total} match" if total == 1 else f"{total} matches"
 
 
 @dataclass(frozen=True)
@@ -112,6 +192,14 @@ class ConsoleWorkspaceContextState:
     runtime_label: str
     conversation_rows: tuple[ConsoleWorkspaceConversationRow, ...]
     conversation_empty_copy: str
+    conversation_section: ConsoleWorkspaceConversationSectionState | None = field(
+        default=None,
+        kw_only=True,
+    )
+    conversation_browser: ConsoleConversationBrowserState | None = field(
+        default=None,
+        kw_only=True,
+    )
     change_workspace_enabled: bool
     change_workspace_recovery: str
     new_conversation_enabled: bool
@@ -199,6 +287,7 @@ def build_console_workspace_state(
             runtime_label="Runtime: unavailable",
             conversation_rows=(),
             conversation_empty_copy="Workspace conversations are unavailable.",
+            conversation_section=None,
             change_workspace_enabled=False,
             change_workspace_recovery="Workspace service not ready.",
             new_conversation_enabled=False,
@@ -231,6 +320,7 @@ def build_console_workspace_state(
             runtime_label="Runtime: unavailable",
             conversation_rows=(),
             conversation_empty_copy="Workspace conversations are unavailable.",
+            conversation_section=None,
             change_workspace_enabled=False,
             change_workspace_recovery="Workspace registry could not be read.",
             new_conversation_enabled=False,
@@ -259,12 +349,13 @@ def build_console_workspace_state(
             runtime_label="Runtime: none",
             conversation_rows=(),
             conversation_empty_copy="No active workspace conversations.",
+            conversation_section=None,
             change_workspace_enabled=can_switch,
             change_workspace_recovery=(
                 "" if can_switch else "Create a workspace in Library > Workspaces before switching."
             ),
-            new_conversation_enabled=False,
-            new_conversation_recovery="Conversation creation is read-only until workspace selection is wired.",
+            new_conversation_enabled=True,
+            new_conversation_recovery="",
             recovery_copy=(
                 "" if can_switch else "Workspace switching: locked"
             ),
@@ -304,12 +395,13 @@ def build_console_workspace_state(
         ),
         conversation_rows=rows,
         conversation_empty_copy="No conversations in this workspace yet.",
+        conversation_section=None,
         change_workspace_enabled=can_switch,
         change_workspace_recovery=(
             "" if can_switch else "Add another workspace before switching."
         ),
-        new_conversation_enabled=False,
-        new_conversation_recovery="Workspace conversation creation lands in a later slice.",
+        new_conversation_enabled=True,
+        new_conversation_recovery="",
         recovery_copy=(
             ""
             if can_switch or is_default_workspace
@@ -521,14 +613,16 @@ def _conversation_rows_from_memberships(
         return ()
     if not memberships:
         return ()
+    conversation_memberships = tuple(
+        membership for membership in memberships if membership.item_type == "conversation"
+    )
+    duplicate_titles = _duplicate_membership_titles(conversation_memberships)
     rows: list[ConsoleWorkspaceConversationRow] = []
-    for membership in memberships:
-        if membership.item_type != "conversation":
-            continue
+    for membership in conversation_memberships:
         rows.append(
             ConsoleWorkspaceConversationRow(
                 conversation_id=membership.item_id,
-                title=membership.title or membership.item_id,
+                title=_membership_display_title(membership, duplicate_titles),
                 status=membership.role,
             )
         )
@@ -547,14 +641,17 @@ def _handoff_rows_from_memberships(
             exc_info=True,
         )
         return ()
+    memberships_seq = tuple(memberships or ())
+    duplicate_titles = _duplicate_membership_titles(memberships_seq)
     rows: list[ConsoleWorkspaceHandoffRow] = []
-    for membership in memberships or ():
-        rows.append(_handoff_row_from_membership(membership))
+    for membership in memberships_seq:
+        rows.append(_handoff_row_from_membership(membership, duplicate_titles))
     return tuple(rows)
 
 
 def _handoff_row_from_membership(
     membership: WorkspaceMembership,
+    duplicate_titles: set[str] | None = None,
 ) -> ConsoleWorkspaceHandoffRow:
     policy = membership.transfer_policy
     label = f"Handoff: {policy.value}"
@@ -576,12 +673,37 @@ def _handoff_row_from_membership(
     return ConsoleWorkspaceHandoffRow(
         item_type=membership.item_type,
         item_id=membership.item_id,
-        title=membership.title or membership.item_id,
+        title=_membership_display_title(membership, duplicate_titles or set()),
         transfer_policy=policy,
         handoff_label=label,
         portable=portable,
         detail=details[policy],
     )
+
+
+def _duplicate_membership_titles(
+    memberships: Iterable[WorkspaceMembership],
+) -> set[str]:
+    counts: dict[str, int] = {}
+    for membership in memberships:
+        title = _membership_base_title(membership)
+        counts[title] = counts.get(title, 0) + 1
+    return {title for title, count in counts.items() if count > 1}
+
+
+def _membership_display_title(
+    membership: WorkspaceMembership,
+    duplicate_titles: set[str],
+) -> str:
+    title = _membership_base_title(membership)
+    if title not in duplicate_titles:
+        return title
+    short_id = str(membership.item_id or "").strip()[:8]
+    return f"{title} [{short_id}]" if short_id else title
+
+
+def _membership_base_title(membership: WorkspaceMembership) -> str:
+    return str(membership.title or membership.item_id).strip()
 
 
 def _library_source_rows_without_workspace(

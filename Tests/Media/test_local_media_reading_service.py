@@ -8,6 +8,7 @@ import zipfile
 import pytest
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
+from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 
 
 _MODULE_PATH = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "Media" / "local_media_reading_service.py"
@@ -209,6 +210,111 @@ def test_local_service_direct_media_management_round_trips(memory_db_factory):
     assert after_permanent["items"] == []
 
 
+def test_local_service_update_media_item_persists_library_edit_fields_without_version(memory_db_factory):
+    """Regression test for the Library edit-save bug.
+
+    ``LibraryScreen._save_library_media_edit`` sends exactly these four
+    fields (title, author, url, keywords) to
+    ``update_media_item``/``update_media_metadata`` -- it must NOT send
+    ``version``, which is outside ``_SUPPORTED_METADATA_FIELDS`` and would
+    make every real save raise ``ValueError``. Drive the real local backend
+    (an in-memory ``MediaDatabase``, not a test fake) with that exact
+    payload and confirm the edit actually persists.
+    """
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        url="https://example.com/original.md",
+        title="Original Title",
+        content="Body text",
+        media_type="document",
+        keywords=["draft"],
+        author="Original Author",
+    )
+    service = LocalMediaReadingService(db)
+
+    updated = service.update_media_item(
+        media_id,
+        title="Revised Title",
+        author="Revised Author",
+        url="https://example.com/revised.md",
+        keywords=["reviewed", "final"],
+    )
+
+    assert updated["title"] == "Revised Title"
+    assert updated["author"] == "Revised Author"
+    assert updated["url"] == "https://example.com/revised.md"
+    # The DB layer does not guarantee keyword ordering; compare as sets.
+    assert set(updated["keywords"]) == {"reviewed", "final"}
+
+    # Re-fetch independently of the update's own return value to prove the
+    # write actually landed in the database rather than merely echoing back
+    # the caller's input.
+    refetched = service.get_media_item(media_id, include_content=False)
+    assert refetched["title"] == "Revised Title"
+    assert refetched["author"] == "Revised Author"
+    assert refetched["url"] == "https://example.com/revised.md"
+    assert set(refetched["keywords"]) == {"reviewed", "final"}
+
+
+def test_local_service_update_media_item_rejects_version_field(memory_db_factory):
+    """Pin the root cause: ``version`` is not a supported local metadata field.
+
+    This is the exact failure the Library edit-save handler used to trigger
+    in production by sending ``version=<current>`` alongside the edit
+    fields; the local backend's allowlist raises ``ValueError`` for it. If
+    a future change reintroduces sending ``version`` (or any other
+    unsupported field) from the Library screen, this documents why it
+    would break saves against a real database.
+    """
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Original Title",
+        content="Body text",
+        media_type="document",
+        keywords=[],
+    )
+    service = LocalMediaReadingService(db)
+
+    with pytest.raises(ValueError, match="Unsupported local media metadata fields"):
+        service.update_media_item(media_id, title="Revised Title", version=1)
+
+
+def test_local_service_delete_media_item_removes_it_from_the_normal_list(memory_db_factory):
+    """Regression test for the Library viewer's Delete action.
+
+    ``LibraryScreen`` calls
+    ``media_reading_scope_service.delete_media_item(mode="local", media_id=...)``,
+    which the scope service forwards straight to
+    ``LocalMediaReadingService.delete_media_item``. Drive the real (in-memory)
+    ``MediaDatabase`` backend -- not a test fake -- and confirm the item is
+    actually moved to trash: it disappears from the normal paginated list
+    (``list_media_items`` / ``get_paginated_files``) and ``is_trash`` is set
+    on the underlying row, while an unrelated item is left untouched.
+    """
+    db = memory_db_factory()
+    kept_id, _, _ = db.add_media_with_keywords(
+        title="Keep", content="A", media_type="article", keywords=[]
+    )
+    target_id, _, _ = db.add_media_with_keywords(
+        title="Delete me", content="B", media_type="article", keywords=[]
+    )
+    service = LocalMediaReadingService(db)
+
+    before = service.list_media_items(page=1, results_per_page=10)
+    assert any(item["id"] == target_id for item in before["items"])
+
+    result = service.delete_media_item(target_id)
+
+    assert result == {"ok": True, "media_id": target_id}
+
+    after = service.list_media_items(page=1, results_per_page=10)
+    assert all(item["id"] != target_id for item in after["items"])
+    assert any(item["id"] == kept_id for item in after["items"])
+
+    trashed_row = db.get_media_by_id(target_id, include_trash=True)
+    assert trashed_row["is_trash"] in {1, True}
+
+
 def test_local_service_downloads_local_media_files_and_stored_content(memory_db_factory, tmp_path):
     db = memory_db_factory()
     source_file = tmp_path / "source.md"
@@ -288,6 +394,84 @@ def test_local_service_save_and_remove_read_it_later_round_trips(memory_db_facto
     assert removed["is_read_it_later"] is False
     assert removed["saved_at"] is None
     assert db.get_media_read_it_later_state(media_id) is None
+
+
+def test_local_service_get_media_detail_reflects_read_it_later_toggle_used_by_viewer(memory_db_factory):
+    """Regression test for the Library viewer's read-it-later button.
+
+    The viewer decides its saved state and re-fetches via
+    ``get_media_detail``/``get_media_item`` (not the raw
+    ``save_to_read_it_later`` return value) -- this proves that fetch path
+    reflects the toggle, including the real backend's asymmetric shape:
+    after removal, ``is_read_it_later`` is absent entirely (the
+    ``MediaReadItLaterState`` row is deleted), not merely False.
+    """
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(title="Keep", content="A", media_type="article", keywords=[])
+    service = LocalMediaReadingService(db)
+
+    before = service.get_media_detail(media_id)
+    assert "is_read_it_later" not in before
+
+    service.save_to_read_it_later(media_id)
+    after_save = service.get_media_detail(media_id)
+    assert after_save["is_read_it_later"] is True
+    assert after_save["saved_at"] is not None
+
+    # get_media_item (the exact call the viewer's detail fetch uses) must
+    # also reflect the saved state.
+    item_after_save = service.get_media_item(media_id, include_content=True, include_versions=True)
+    assert item_after_save["is_read_it_later"] is True
+
+    service.remove_from_read_it_later(media_id)
+    after_remove = service.get_media_detail(media_id)
+    assert "is_read_it_later" not in after_remove
+    assert "saved_at" not in after_remove
+
+
+def test_local_service_get_media_item_surfaces_latest_document_version_analysis(memory_db_factory):
+    """Regression test for the Library viewer's analysis section.
+
+    ``analysis_content`` lives on ``DocumentVersions``, not the top-level
+    Media row -- this proves ``save_analysis_version`` + a re-fetched
+    ``get_media_item(..., include_versions=True)`` round-trips the analysis
+    text via the newest version, ordered ``versions[0]`` first (matching
+    ``get_all_document_versions``'s ``ORDER BY version_number DESC``).
+    """
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Report", content="Body text", media_type="article", keywords=[]
+    )
+    service = LocalMediaReadingService(db)
+
+    before = service.get_media_item(media_id, include_versions=True, include_version_content=True)
+    assert before.get("analysis_content") is None
+
+    first_save = service.save_analysis_version(
+        media_id, content="Body text", analysis_content="First analysis"
+    )
+    assert first_save["media_id"] == media_id
+
+    after_first_save = service.get_media_item(
+        media_id, include_content=True, include_versions=True, include_version_content=True
+    )
+    versions = after_first_save["versions"]
+    # add_media_with_keywords already created version 1 (analysis_content
+    # None); save_analysis_version created a second version rather than
+    # mutating it.
+    assert len(versions) == 2
+    assert versions[0]["analysis_content"] == "First analysis"
+    assert versions[0]["version_number"] == max(v["version_number"] for v in versions)
+
+    # Editing again creates a new version rather than mutating the old one,
+    # and the newest version's analysis is what the viewer must show.
+    service.save_analysis_version(media_id, content="Body text", analysis_content="Revised analysis")
+    after_second_save = service.get_media_item(media_id, include_content=True, include_versions=True)
+    versions_after_revision = after_second_save["versions"]
+    assert versions_after_revision[0]["analysis_content"] == "Revised analysis"
+    assert len(versions_after_revision) == len(versions) + 1
+    # Older version's analysis is preserved, not overwritten.
+    assert any(v["analysis_content"] == "First analysis" for v in versions_after_revision[1:])
 
 
 def test_local_service_saves_direct_reading_item_with_content(memory_db_factory):
@@ -401,6 +585,58 @@ def test_local_service_persists_reading_highlights(memory_db_factory):
     assert updated["state"] == "stale"
     assert deleted == {"success": True}
     assert service.list_highlights(media_id) == []
+
+
+def test_scope_service_local_highlight_seam_persists_against_real_db(memory_db_factory):
+    """Real-backend regression for the Library media viewer's highlights seam.
+
+    The Library viewer (``LibraryScreen._add_library_media_highlight`` /
+    ``_fetch_library_media_highlights`` / ``_delete_library_media_highlight``)
+    calls ``media_reading_scope_service.create_highlight``/``list_highlights``/
+    ``delete_highlight`` with ``mode="local"`` -- NOT the ``reading_``-prefixed
+    ``create_reading_highlight``/``list_reading_highlights``/
+    ``delete_reading_highlight`` methods, which ``MediaReadingScopeService``
+    only ever forwards to ``ServerMediaReadingService`` (see
+    ``Tests/Media/test_media_reading_scope_service.py``'s
+    ``test_scope_service_routes_reading_highlights_and_enforces_actions``,
+    which only exercises ``mode="server"``); calling those against a local
+    service raises ``AttributeError`` because ``LocalMediaReadingService``
+    only implements the non-prefixed names. This test drives the actual
+    working seam through ``MediaReadingScopeService`` against a real
+    ``LocalMediaReadingService`` backed by a real in-memory ``MediaDatabase``,
+    proving the UI's create/list/delete round-trip persists for real (a fake
+    scope service could hide a signature/field-name mismatch that this test
+    would catch).
+    """
+    db = memory_db_factory()
+    media_id, _, _ = db.add_media_with_keywords(
+        title="Scoped Highlight",
+        content="Reviewed local content",
+        media_type="article",
+        keywords=[],
+    )
+    local_service = LocalMediaReadingService(db)
+    scope = MediaReadingScopeService(local_service=local_service, server_service=None)
+
+    created = asyncio.run(
+        scope.create_highlight(
+            mode="local",
+            item_id=media_id,
+            quote="Reviewed",
+            color="yellow",
+            note="worth citing",
+        )
+    )
+    listed = asyncio.run(scope.list_highlights(mode="local", item_id=media_id))
+    deleted = asyncio.run(scope.delete_highlight(mode="local", highlight_id=created["id"]))
+
+    assert created["item_id"] == media_id
+    assert created["quote"] == "Reviewed"
+    assert created["color"] == "yellow"
+    assert created["note"] == "worth citing"
+    assert listed == [created]
+    assert deleted == {"success": True}
+    assert asyncio.run(scope.list_highlights(mode="local", item_id=media_id)) == []
 
 
 def test_local_service_persists_document_annotations(memory_db_factory):

@@ -15,7 +15,6 @@ from tldw_chatbook.Third_Party.textual_fspicker import Filters
 # --- Constants ---
 TAB_CHAT = "chat"
 TAB_CCP = "conversations_characters_prompts"
-TAB_NOTES = "notes"
 TAB_MEDIA = "media"
 TAB_SEARCH = "search"
 TAB_INGEST = "ingest"
@@ -43,14 +42,22 @@ TAB_MCP = "mcp"
 TAB_ACP = "acp"
 TAB_SKILLS = "skills"
 TAB_SETTINGS = "settings"
-ALL_TABS = [TAB_CHAT, TAB_CCP, TAB_NOTES, TAB_MEDIA, TAB_SEARCH, TAB_INGEST,
+
+# Library navigation-context contract keys and values.
+LIBRARY_NAV_CONTEXT_MODE = "mode"
+LIBRARY_NAV_CONTEXT_CONVERSATION_ID = "conversation_id"
+LIBRARY_NAV_CONTEXT_NOTE_ID = "note_id"
+LIBRARY_NAV_CONTEXT_NOTES_CREATE = "notes_create"
+LIBRARY_MODE_CONVERSATIONS = "conversations"
+
+ALL_TABS = [TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH, TAB_INGEST,
             TAB_EVALS, TAB_LLM, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH,
             TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, TAB_TOOLS_SETTINGS, TAB_LOGS, TAB_CODING, TAB_STATS, TAB_CUSTOMIZE]
 
 # Visual grouping for tab bar (presentation only, does not affect ALL_TABS order)
 TAB_GROUPS = {
     "Workspace": [TAB_CHAT, TAB_CODING, TAB_CHATBOOKS],
-    "Content": [TAB_NOTES, TAB_MEDIA, TAB_INGEST, TAB_SEARCH, TAB_SUBSCRIPTIONS],
+    "Content": [TAB_MEDIA, TAB_INGEST, TAB_SEARCH, TAB_SUBSCRIPTIONS],
     "Characters": [TAB_CCP, TAB_STUDY],
     "AI Config": [TAB_LLM, TAB_STTS, TAB_EVALS],
     "System": [TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, TAB_LOGS, TAB_STATS],
@@ -59,7 +66,6 @@ TAB_GROUPS = {
 TAB_DISPLAY_LABELS = {
     TAB_CHAT: "Console",
     TAB_CCP: "Personas",
-    TAB_NOTES: "Notes",
     TAB_MEDIA: "Media",
     TAB_SEARCH: "Search",
     TAB_INGEST: "Ingest",

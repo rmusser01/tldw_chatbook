@@ -44,6 +44,13 @@ def test_console_control_state_preserves_falsy_labels_and_general_assistant_fall
     assert state.persona_label == "Assistant: General"
 
 
+def test_console_control_state_counter_activity_flags():
+    idle = ConsoleControlState.from_values()
+    assert (idle.sources_active, idle.tools_active, idle.approvals_active) == (False, False, False)
+    busy = ConsoleControlState.from_values(staged_source_count=2, tool_count=1, approval_count=3)
+    assert (busy.sources_active, busy.tools_active, busy.approvals_active) == (True, True, True)
+
+
 def test_console_staged_context_state_preserves_live_work_payload_provenance():
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
@@ -59,6 +66,14 @@ def test_console_staged_context_state_preserves_live_work_payload_provenance():
     assert "Transformer notes" in state.summary
     assert any(row.label == "source_id" and row.value == "note-1" for row in state.rows)
     assert state.recovery == "Review citations before sending."
+    assert state.is_empty is False
+
+
+def test_console_staged_context_empty_state_uses_semantic_flag():
+    state = ConsoleStagedContextState.empty()
+
+    assert state.summary == "No sources attached."
+    assert state.is_empty is True
 
 
 def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows():
@@ -75,11 +90,13 @@ def test_console_inspector_state_combines_readiness_artifact_and_recovery_rows()
     assert "Daily papers" in text
     assert "Provider: blocked" in text
     assert "Configure a provider before sending." in text
-    assert "RAG/source: missing index" in text
+    assert "Sources: missing index" in text
+    assert "RAG/source:" not in text
     assert "Artifacts: save available after response" in text
     rows_by_label = {row.label: row for row in state.rows}
     assert rows_by_label["Provider"].status == "blocked"
-    assert rows_by_label["RAG/source"].status == "blocked"
+    assert rows_by_label["Sources"].status == "blocked"
+    assert "RAG/source" not in rows_by_label
     assert rows_by_label["Approvals"].status == "ready"
 
 
@@ -112,7 +129,8 @@ def test_console_inspector_state_exposes_action_disabled_reasons():
     actions_by_id = {action.widget_id: action for action in state.actions}
 
     assert "Tools: 0 ready" in text
-    assert "RAG/source: missing source" in text
+    assert "Sources: missing source" in text
+    assert "RAG/source:" not in text
     assert actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].enabled is False
     assert (
         actions_by_id[CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID].disabled_reason

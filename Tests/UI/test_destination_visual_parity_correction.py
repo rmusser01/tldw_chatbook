@@ -21,6 +21,11 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
 )
 from Tests.UI.test_home_screen import HomeHarness, _active_home_screen
+from Tests.UI.test_library_shell import (
+    LibraryHarness,
+    _active_library_screen,
+    _wait_for_library_shell,
+)
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import ConsoleHarness
 from Tests.UI.test_screen_navigation import _build_test_app
 from tldw_chatbook.UI.MCP_Modules import unified_mcp_panel as unified_mcp_panel_module
@@ -71,10 +76,12 @@ def _assert_strip_compact(screen, selector: str, *, max_height: int = 2) -> None
     assert strip.region.height <= max_height, f"{selector} is too tall: {strip.region}"
 
 
-def _assert_horizontal_panes(screen, selectors: tuple[str, str, str]) -> None:
+def _assert_horizontal_panes(screen, selectors: tuple[str, ...]) -> None:
     panes = [screen.query_one(selector) for selector in selectors]
-    assert panes[0].region.x < panes[1].region.x < panes[2].region.x
-    assert panes[0].region.y == panes[1].region.y == panes[2].region.y
+    assert len(panes) >= 2
+    for left, right in zip(panes, panes[1:]):
+        assert left.region.x < right.region.x
+    assert len({pane.region.y for pane in panes}) == 1
     for selector, pane in zip(selectors, panes):
         assert pane.region.width > 0, f"{selector} has no width"
         assert pane.region.height > 0, f"{selector} has no height"
@@ -180,6 +187,13 @@ def _visible_button_labels(screen) -> set[str]:
     return {str(button.label) for button in screen.query(Button) if button.display}
 
 
+def _mark_console_onboarding_complete(app) -> None:
+    app.app_config = getattr(app, "app_config", {}) or {}
+    console_config = app.app_config.setdefault("console", {})
+    onboarding = console_config.setdefault("onboarding", {})
+    onboarding["first_send_completed"] = True
+
+
 def _is_effectively_displayed(widget) -> bool:
     current = widget
     while current is not None:
@@ -203,7 +217,7 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
     host = HomeHarness(app)
     async with host.run_test(size=(140, 42)) as pilot:
         home = _active_home_screen(host)
-        await _wait_for_selector(home, pilot, "#home-dashboard")
+        await _wait_for_selector(home, pilot, "#home-triage-grid")
         nav = home.query_one(MainNavigationBar)
         settings = nav.query_one("#nav-settings", Button)
         more = nav.query_one("#nav-overflow-hint")
@@ -216,9 +230,9 @@ async def test_destination_content_starts_immediately_below_nav():
     host = HomeHarness(app)
     async with host.run_test(size=(140, 42)) as pilot:
         home = _active_home_screen(host)
-        await _wait_for_selector(home, pilot, "#home-dashboard")
+        await _wait_for_selector(home, pilot, "#home-triage-grid")
         content = home.query_one("#screen-content")
-        dashboard = home.query_one("#home-dashboard")
+        dashboard = home.query_one("#home-triage-grid")
         assert content.region.y == 3
         assert dashboard.region.y <= 4
 
@@ -251,16 +265,17 @@ async def test_home_dashboard_regions_fit_default_viewport():
     host = HomeHarness(app)
     async with host.run_test(size=(140, 42)) as pilot:
         home = _active_home_screen(host)
-        await _wait_for_selector(home, pilot, "#home-dashboard-grid")
-        assert home.query_one("#home-dashboard-grid").region.y <= 12
+        await _wait_for_selector(home, pilot, "#home-triage-grid")
+        assert home.query_one("#home-triage-grid").region.y <= 12
         _assert_horizontal_panes(
             home,
-            ("#home-attention-queue", "#home-active-work-region", "#home-inspector"),
+            ("#home-rail", "#home-canvas"),
         )
         for selector in (
-            "#home-dashboard-grid",
-            "#home-next-actions-region",
-            "#home-recent-work-region",
+            "#home-triage-grid",
+            "#home-rail",
+            "#home-canvas",
+            "#home-details-body",
         ):
             _assert_visible_in_viewport(home.query_one(selector), height=42, context=selector)
         _assert_any_action_visible(
@@ -280,6 +295,7 @@ async def test_home_dashboard_regions_fit_default_viewport():
 @pytest.mark.asyncio
 async def test_console_first_start_shows_left_rail_main_and_right_handle():
     app = _build_test_app()
+    _mark_console_onboarding_complete(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=(140, 42)) as pilot:
         console = host.screen_stack[-1]
@@ -313,98 +329,91 @@ async def test_console_first_start_shows_left_rail_main_and_right_handle():
 
 
 @pytest.mark.asyncio
-async def test_library_mode_strip_is_compact_and_workbench_visible():
+async def test_library_shell_grid_is_visible_in_viewport():
+    # The retired horizontal mode-chip strip (#library-mode-bar,
+    # .library-mode-chip) and the list/detail/inspector 3-pane contract grid
+    # (#library-contract-grid) are both gone with no analog: LibraryRail
+    # renders vertical Browse/Create/Ingest/Details sections instead of a
+    # chip strip, and the canvas is a single pane, not three. The surviving
+    # geometry contract is that the rail + canvas shell itself renders near
+    # the top of the viewport with both panes fully visible.
     app = _build_test_app()
     host = DestinationHarness(app, "library")
     async with host.run_test(size=(140, 42)) as pilot:
         library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-contract-grid")
-        _assert_ascii_workbench_contract(
-            library,
-            workbench="#library-contract-grid",
-            panes=("#library-source-browser", "#library-source-detail", "#library-source-inspector"),
-            strip="#library-mode-bar",
-            strip_max_height=3,
-            actions=("#library-open-notes", "#library-open-media", "#library-open-search", "#library-use-in-console"),
-            height=42,
-        )
+        await _wait_for_selector(library, pilot, "#library-shell-grid")
+        shell_grid = library.query_one("#library-shell-grid")
+        rail = library.query_one("#library-rail")
+        canvas = library.query_one("#library-canvas")
+        assert shell_grid.region.y <= 12, f"#library-shell-grid starts too low: {shell_grid.region}"
+        _assert_visible_in_viewport(shell_grid, height=42, context="#library-shell-grid")
+        _assert_visible_in_viewport(rail, height=42, context="#library-rail")
+        _assert_visible_in_viewport(canvas, height=42, context="#library-canvas")
+        assert rail.region.x < canvas.region.x
+        assert rail.region.y == canvas.region.y
 
 
 @pytest.mark.asyncio
-async def test_library_mode_strip_keeps_all_mode_chips_visible():
+async def test_library_workbench_prioritizes_canvas_width():
+    # The retired browser/detail/inspector 3-pane width contract is gone
+    # (only 2 areas exist now: rail, canvas); the same "give most of the
+    # horizontal space to content, not navigation" intent survives via the
+    # rail (3fr, min 24) vs. canvas (13fr, min 40) width ratio.
     app = _build_test_app()
     host = DestinationHarness(app, "library")
     async with host.run_test(size=(140, 42)) as pilot:
         library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-contract-grid")
-        mode_bar = library.query_one("#library-mode-bar")
-        mode_label = library.query_one("#library-mode-label")
-        assert mode_bar.region.height <= 3
-        assert mode_label.region.width <= 8
-        for button in library.query(".library-mode-chip"):
-            assert button.region.x >= mode_bar.region.x
-            assert button.region.x + button.region.width <= mode_bar.region.x + mode_bar.region.width
-            assert button.region.y >= mode_bar.region.y
-            assert button.region.y + button.region.height <= mode_bar.region.y + mode_bar.region.height
+        await _wait_for_selector(library, pilot, "#library-shell-grid")
+
+        rail = library.query_one("#library-rail")
+        canvas = library.query_one("#library-canvas")
+
+        assert rail.region.width < canvas.region.width
+        assert canvas.region.width >= rail.region.width * 1.35
 
 
 @pytest.mark.asyncio
-async def test_library_workbench_prioritizes_middle_column_width():
-    app = _build_test_app()
-    host = DestinationHarness(app, "library")
-    async with host.run_test(size=(140, 42)) as pilot:
-        library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-contract-grid")
-
-        source_browser = library.query_one("#library-source-browser")
-        source_detail = library.query_one("#library-source-detail")
-        source_inspector = library.query_one("#library-source-inspector")
-
-        assert source_browser.region.width < source_detail.region.width
-        assert source_inspector.region.width < source_detail.region.width
-        assert source_detail.region.width >= source_browser.region.width * 1.35
-        assert source_detail.region.width >= source_inspector.region.width * 1.35
-
-
-@pytest.mark.asyncio
-async def test_library_source_browser_stays_content_fit_at_wide_viewport():
+async def test_library_canvas_stays_content_fit_at_wide_viewport():
     app = _build_test_app()
     host = DestinationHarness(app, "library")
     async with host.run_test(size=(212, 64)) as pilot:
         library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-contract-grid")
+        await _wait_for_selector(library, pilot, "#library-shell-grid")
 
-        source_browser = library.query_one("#library-source-browser")
-        source_detail = library.query_one("#library-source-detail")
-        source_inspector = library.query_one("#library-source-inspector")
-        source_action = library.query_one("#library-open-import-export", Button)
+        rail = library.query_one("#library-rail")
+        canvas = library.query_one("#library-canvas")
 
-        assert source_action.region.width <= source_browser.region.width
-        assert source_browser.region.width <= source_action.region.width + 8
-        assert source_detail.region.width >= source_browser.region.width * 2.5
-        assert source_inspector.region.width > source_browser.region.width
+        assert canvas.region.width >= rail.region.width * 2.5
 
 
 @pytest.mark.asyncio
 async def test_library_workbench_renders_terminal_borders():
+    # The retired browser/detail/inspector panes each carried a border plus
+    # top padding via a DEFAULT_CSS fallback (so the check held even
+    # without the app bundle stylesheet); the rail + canvas panes have no
+    # such fallback and only get their border from the bundle CSS, so this
+    # check needs the CSS-loading LibraryHarness instead of the bundle-less
+    # DestinationHarness. Their padding is horizontal-only (padding: 0 1)
+    # by design -- rows supply their own vertical spacing -- so only the
+    # border half of the original contract survives.
     app = _build_test_app()
-    host = DestinationHarness(app, "library")
+    host = LibraryHarness(app)
     async with host.run_test(size=(140, 42)) as pilot:
-        library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-contract-grid")
-        for selector in (
-            "#library-contract-grid",
-            "#library-source-browser",
-            "#library-source-detail",
-            "#library-source-inspector",
-        ):
+        library = _active_library_screen(host)
+        await _wait_for_library_shell(library, pilot)
+        for selector in ("#library-shell-grid", "#library-rail", "#library-canvas"):
             widget = library.query_one(selector)
             assert widget.styles.border_top[0], f"{selector} has no top border"
-            assert widget.styles.padding.top >= 1, f"{selector} needs readable pane padding"
 
 
 @pytest.mark.asyncio
 async def test_library_empty_state_reports_empty_with_next_action():
+    # The retired #library-status-row / #library-source-empty marker and its
+    # LIBRARY_EMPTY_COPY / LIBRARY_EMPTY_NEXT_ACTION_COPY text lived only in
+    # the never-mounted #library-action-region and never render in the rail
+    # + canvas shell (see test_destination_shells.py). The rail's zero
+    # counts plus the landing canvas purpose line are the surviving "there
+    # is nothing here yet, here's what to do" signal.
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -412,79 +421,68 @@ async def test_library_empty_state_reports_empty_with_next_action():
     host = DestinationHarness(app, "library")
     async with host.run_test(size=(140, 42)) as pilot:
         library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-source-empty")
+        await _wait_for_selector(library, pilot, "#library-canvas-landing")
 
-        status_row = str(library.query_one("#library-status-row", Static).renderable)
-        visible_text = " ".join(str(widget.renderable) for widget in library.query(Static))
-
-    assert "Empty" in status_row
-    assert "Ready" not in status_row
-    assert "Import media, create notes, or open Library Search/RAG after indexing." in visible_text
-
-
-@pytest.mark.asyncio
-async def test_library_inspector_uses_empty_state_until_item_selected():
-    app = _build_test_app()
-    app.notes_scope_service = StaticLibraryNotesScopeService([])
-    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
-    host = DestinationHarness(app, "library")
-    async with host.run_test(size=(140, 42)) as pilot:
-        library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-source-empty")
-
-        inspector_title = str(library.query_one("#library-inspector-title", Static).renderable)
-        inspector_text = " ".join(
-            str(widget.renderable)
-            for widget in library.query("#library-source-inspector Static")
+        visible_text = " ".join(
+            [
+                *(str(widget.renderable) for widget in library.query(Static)),
+                *(str(button.label) for button in library.query(Button)),
+            ]
         )
-        has_source_authority = bool(list(library.query("#library-source-authority")))
 
-    assert inspector_title == "Hub inspector"
-    assert "No source selected." in inspector_text
-    assert "Library remains a hub; Notes, Media, Search/RAG, and Study own deeper work." in inspector_text
-    assert "Notes owner: Notes screen handles editing" in inspector_text
-    assert "Source Inspector" not in inspector_text
-    assert not has_source_authority
+    assert "Notes (0)" in visible_text
+    assert "Media (0)" in visible_text
+    assert "Conversations (0)" in visible_text
+    assert "Search, pick a content type, or ingest something new." in visible_text
 
 
 @pytest.mark.asyncio
 async def test_library_source_browser_collections_action_switches_to_collections_mode():
+    # The retired #library-open-collections button and #library-mode-*
+    # chip strip are dead (they lived only in the never-mounted
+    # #library-source-browser); the Browse > Collections rail row is the
+    # surviving trigger, and its own selected-row styling plus the
+    # selection-state field are the successors of "the detail title changed
+    # and the mode chip went active".
     app = _build_test_app()
     host = DestinationHarness(app, "library")
     async with host.run_test(size=(140, 42)) as pilot:
         library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-open-collections")
+        await _wait_for_selector(library, pilot, "#library-row-browse-collections")
 
-        library.query_one("#library-open-collections", Button).press()
+        library.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(library, pilot, "#library-collections-panel")
 
-        active_mode_title = str(library.query_one("#library-active-mode-title", Static).renderable)
-        active_chip = library.query_one("#library-mode-collections", Button)
+        active_row = library.query_one("#library-row-browse-collections", Button)
+        selected_row_id = getattr(library, "_library_selected_row_id")
 
-    assert active_mode_title == "Collections mode"
-    assert active_chip.has_class("is-active")
+    assert selected_row_id == "browse-collections"
+    assert active_row.has_class("library-rail-row-selected")
 
 
 @pytest.mark.asyncio
 async def test_library_source_browser_search_action_switches_to_search_mode():
+    # The retired #library-open-search button, #library-mode-* chip strip,
+    # and #library-rag-inspector-title / #library-inspector-title Inspector
+    # column are all dead (the Inspector column lived only in the
+    # never-mounted #library-inspector-mode-region); the Browse > Search /
+    # RAG rail row is the surviving trigger, and its selected-row styling
+    # plus the selection-state field are the successors of "the detail
+    # title changed and the mode chip went active".
     app = _build_test_app()
     host = DestinationHarness(app, "library")
     async with host.run_test(size=(140, 42)) as pilot:
         library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-open-search")
+        await _wait_for_selector(library, pilot, "#library-row-browse-search")
 
-        library.query_one("#library-open-search", Button).press()
+        library.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(library, pilot, "#library-search-rag-panel")
 
-        active_mode_title = str(library.query_one("#library-active-mode-title", Static).renderable)
-        active_chip = library.query_one("#library-mode-search", Button)
-        inspector_title = str(library.query_one("#library-rag-inspector-title", Static).renderable)
-        assert not list(library.query("#library-inspector-title"))
+        active_row = library.query_one("#library-row-browse-search", Button)
+        selected_row_id = getattr(library, "_library_selected_row_id")
 
-    assert active_mode_title == "Search/RAG mode"
-    assert active_chip.has_class("is-active")
-    assert inspector_title == "Retrieval Inspector"
+    assert selected_row_id == "browse-search"
+    assert active_row.has_class("library-rail-row-selected")
 
 
 @pytest.mark.asyncio
@@ -601,15 +599,17 @@ async def test_library_service_call_awaits_coroutine_functions_without_worker(mo
             ("#console-run-inspector-state",),
             "#console-run-inspector",
         ),
-        (
-            "library",
-            lambda app: DestinationHarness(app, "library"),
-            "#library-contract-grid",
-            ("#library-source-browser", "#library-source-detail", "#library-source-inspector"),
-            ("#library-open-notes", "#library-open-media", "#library-open-search", "#library-use-in-console"),
-            ("#library-source-empty", "#library-source-error", "#library-source-loading"),
-            "#library-source-detail",
-        ),
+        # The "library" case was retired here: #library-contract-grid and its
+        # 3 panes/markers never mount in the rail + canvas shell (the
+        # #library-source-empty/-error/-loading markers lived only in the
+        # never-mounted #library-local-snapshot-region). Library's
+        # non-happy-state geometry coverage now lives in the dedicated
+        # test_library_empty_state_reports_empty_with_next_action below;
+        # the "loading" and "timeout falls back to a stable error" marker
+        # geometry checks have no successor since neither state has a
+        # distinct positioned marker anymore (see
+        # test_library_source_snapshot_times_out_to_stable_error for the
+        # underlying business-logic coverage that survives).
     ],
 )
 @pytest.mark.asyncio
@@ -617,6 +617,8 @@ async def test_core_default_empty_or_blocked_states_keep_workbench_geometry(
     route, host_factory, workbench, panes, actions, markers, marker_container
 ):
     app = _build_test_app()
+    if route == "chat":
+        _mark_console_onboarding_complete(app)
     host = host_factory(app)
     # 160 wide: the Console force-collapses its inspector rail below 150
     # columns (CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS), and this
@@ -644,61 +646,6 @@ async def test_core_default_empty_or_blocked_states_keep_workbench_geometry(
             markers,
             marker_container,
             context=f"{route} non-happy marker escaped workbench pane",
-        )
-
-
-@pytest.mark.asyncio
-async def test_library_loading_state_preserves_workbench_geometry(monkeypatch):
-    monkeypatch.setattr(
-        library_screen_module.LibraryScreen,
-        "_refresh_local_source_snapshot",
-        lambda self: None,
-    )
-    app = _build_test_app()
-    host = DestinationHarness(app, "library")
-    async with host.run_test(size=(140, 42)) as pilot:
-        library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-source-loading")
-        _assert_ascii_workbench_contract(
-            library,
-            workbench="#library-contract-grid",
-            panes=("#library-source-browser", "#library-source-detail", "#library-source-inspector"),
-            strip="#library-mode-bar",
-            strip_max_height=3,
-            actions=("#library-open-notes", "#library-open-media", "#library-open-search"),
-            height=42,
-        )
-        _assert_marker_inside_container(
-            library,
-            "#library-source-loading",
-            "#library-source-detail",
-            context="Library loading state escaped source detail pane",
-        )
-
-
-@pytest.mark.asyncio
-async def test_library_loading_state_fails_safe_when_snapshot_never_applies(monkeypatch):
-    monkeypatch.setattr(
-        library_screen_module,
-        "LIBRARY_SOURCE_SNAPSHOT_TIMEOUT_SECONDS",
-        0.01,
-    )
-    monkeypatch.setattr(
-        library_screen_module.LibraryScreen,
-        "_refresh_local_source_snapshot",
-        lambda self: None,
-    )
-    app = _build_test_app()
-    host = DestinationHarness(app, "library")
-    async with host.run_test(size=(140, 42)) as pilot:
-        library = _active_destination_screen(host)
-        await _wait_for_selector(library, pilot, "#library-source-error", timeout=1.0)
-        assert not list(library.query("#library-source-loading"))
-        _assert_marker_inside_container(
-            library,
-            "#library-source-error",
-            "#library-source-detail",
-            context="Library fallback error escaped source detail pane",
         )
 
 
@@ -1532,10 +1479,10 @@ async def test_acp_runtime_blocked_state_uses_setup_and_compatibility_columns():
 
 COMPACT_DESTINATION_CONTRACTS = {
     "home": {
-        "identity": "#home-title",
-        "workbench": "#home-dashboard-grid",
-        "object": "#home-attention-queue",
-        "detail": "#home-active-work-region",
+        "identity": "#home-header-line",
+        "workbench": "#home-triage-grid",
+        "object": "#home-rail",
+        "detail": "#home-canvas",
         "actions": ("#home-primary-action", "#home-open-details", "#home-open-chatbook-details"),
     },
     "chat": {
@@ -1546,11 +1493,20 @@ COMPACT_DESTINATION_CONTRACTS = {
         "actions": ("#console-send-message", "#console-attach-context", "#console-save-chatbook"),
     },
     "library": {
-        "identity": "#library-title",
-        "workbench": "#library-contract-grid",
-        "object": "#library-source-browser",
-        "detail": "#library-source-detail",
-        "actions": ("#library-open-search", "#library-use-in-console", "#library-open-notes"),
+        # #library-title / #library-contract-grid / #library-source-browser
+        # / #library-source-detail / #library-open-* are all retired (see
+        # test_destination_shells.py); the rail + canvas shell is the
+        # surviving 2-pane workbench, with the header line as identity and
+        # always-visible rail rows as the compact-viewport actions.
+        "identity": "#library-header-line",
+        "workbench": "#library-shell-grid",
+        "object": "#library-rail",
+        "detail": "#library-canvas",
+        "actions": (
+            "#library-row-browse-search",
+            "#library-row-browse-media",
+            "#library-row-ingest-import-export",
+        ),
     },
     "artifacts": {
         "identity": "#artifacts-title",
@@ -1672,7 +1628,14 @@ async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_
 VISIBLE_FOCUS_TARGETS = {
     "home": {"home-primary-action", "home-open-details", "home-open-in-console", "home-open-chatbook-details"},
     "chat": {"console-send-message", "console-attach-context", "console-save-chatbook", "console-run-library-rag"},
-    "library": {"library-open-notes", "library-open-media", "library-open-search", "library-use-in-console"},
+    # The retired #library-open-* buttons lived only in the never-mounted
+    # #library-source-browser; the always-visible rail rows are the
+    # surviving tab-focusable primary actions.
+    "library": {
+        "library-row-browse-search",
+        "library-row-browse-media",
+        "library-row-ingest-import-export",
+    },
     "artifacts": {
         "artifacts-open-chatbooks",
         "artifacts-open-console",
@@ -1698,6 +1661,7 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
     if route == "home":
         host = HomeHarness(app)
     elif route == "chat":
+        _mark_console_onboarding_complete(app)
         host = ConsoleHarness(app)
     else:
         host = DestinationHarness(app, route)

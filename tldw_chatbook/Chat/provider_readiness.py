@@ -102,6 +102,11 @@ def _valid_api_key(value: object) -> Optional[str]:
     return stripped or None
 
 
+def is_valid_provider_api_key(value: object) -> bool:
+    """Return whether value is a usable provider API key."""
+    return _valid_api_key(value) is not None
+
+
 def _requires_api_key(provider_key: str) -> bool:
     """Return True unless the provider is known to work without credentials."""
     return provider_key not in KEYLESS_PROVIDER_KEYS
@@ -247,3 +252,91 @@ def get_provider_readiness(
         reason="Missing API key",
         recovery=recovery,
     )
+
+
+@dataclass(frozen=True)
+class ChatApiKeyFieldState:
+    """Render + persistence state for the inline Chat-Defaults API-key input."""
+
+    value: str          # masked prefill value; "" when nothing should be shown
+    disabled: bool      # True for keyless providers or a locked/encrypted config
+    placeholder: str    # hint shown when the box is empty
+    can_persist: bool   # whether a user-entered value should be written on save
+
+
+def chat_api_key_field_state(
+    readiness: ProviderReadiness,
+    *,
+    locked: bool,
+) -> ChatApiKeyFieldState:
+    """Map provider readiness to the inline API-key field's UI/persistence state.
+
+    Args:
+        readiness: Resolved readiness for the currently selected provider.
+        locked: True when config encryption is enabled but no session password is
+            available (stored values are ciphertext and must not be shown/saved).
+
+    Returns:
+        The field state to render and the flag for whether a typed value is savable.
+    """
+    if not readiness.requires_api_key:
+        return ChatApiKeyFieldState(
+            value="",
+            disabled=True,
+            placeholder="No API key needed for this provider.",
+            can_persist=False,
+        )
+    if locked:
+        return ChatApiKeyFieldState(
+            value="",
+            disabled=True,
+            placeholder="Unlock config to edit keys.",
+            can_persist=False,
+        )
+    source = readiness.api_key_source or ""
+    if source.startswith("config:") and readiness.api_key:
+        return ChatApiKeyFieldState(
+            value=readiness.api_key,
+            disabled=False,
+            placeholder="Enter API key",
+            can_persist=True,
+        )
+    if source.startswith("env:") and readiness.env_var:
+        return ChatApiKeyFieldState(
+            value="",
+            disabled=False,
+            placeholder=f"Detected from ${readiness.env_var} — leave blank to keep it",
+            can_persist=True,
+        )
+    return ChatApiKeyFieldState(
+        value="",
+        disabled=False,
+        placeholder="Enter your API key to start using this provider",
+        can_persist=True,
+    )
+
+
+def chat_api_key_value_to_persist(
+    new_value: object,
+    field_state: ChatApiKeyFieldState,
+) -> Optional[str]:
+    """Return the API-key value to persist, or None to skip the write.
+
+    Skips when the field is non-persistable, blank, a placeholder, or unchanged
+    from the currently displayed value.
+
+    Args:
+        new_value: The raw value typed in the field.
+        field_state: The ChatApiKeyFieldState for the selected provider.
+
+    Returns:
+        The stripped value to persist, or None to skip the write.
+    """
+    if not field_state.can_persist:
+        return None
+    candidate = new_value.strip() if isinstance(new_value, str) else ""
+    if not is_valid_provider_api_key(candidate):
+        return None
+    if candidate == field_state.value:
+        return None
+    return candidate

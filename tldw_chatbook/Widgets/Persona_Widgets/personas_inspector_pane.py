@@ -6,7 +6,7 @@ import re
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, ListItem, ListView, Static
 
 from .personas_pane_messages import ConversationRowSelected
@@ -27,6 +27,13 @@ class PersonasInspectorPane(Vertical):
     PersonasInspectorPane #personas-conversations-list {
         height: auto;
         max-height: 10;
+    }
+
+    PersonasInspectorPane #personas-readiness-console {
+        width: 100%;
+        min-width: 0;
+        height: auto;
+        text-wrap: wrap;
     }
 
     PersonasInspectorPane .personas-conversation-row {
@@ -64,10 +71,31 @@ class PersonasInspectorPane(Vertical):
         self._has_selection = False
         self._is_unsaved = False
         self._selected_kind: str | None = None
+        self._console_actions_enabled = False
+        self._console_action_block_reason = "select an item"
         self._conversation_lookup: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
-        yield Static("Inspector", classes="destination-section personas-column-title")
+        """Compose the Inspector pane summary, readiness, and actions.
+
+        Returns:
+            Textual compose result for the Inspector pane.
+        """
+        with Horizontal(classes="console-rail-header"):
+            title = Static(
+                "Inspector",
+                classes="destination-section personas-column-title console-rail-title",
+            )
+            title.styles.width = "1fr"
+            yield title
+            collapse_button = Button(
+                ">",
+                id="personas-inspector-rail-collapse",
+                classes="console-rail-collapse-button",
+                compact=True,
+            )
+            collapse_button.tooltip = "Collapse Inspector rail"
+            yield collapse_button
         yield Static("Selected: none", id="personas-selected-name")
         yield Static("Type: -", id="personas-selected-kind")
         yield Static("Authority: Local", id="personas-selected-authority")
@@ -75,7 +103,7 @@ class PersonasInspectorPane(Vertical):
         yield Static("Conversations", classes="destination-section")
         yield ListView(id="personas-conversations-list")
         yield Static("Readiness", classes="destination-section")
-        yield Static("Console: Blocked - select an item", id="personas-readiness-console")
+        yield Static("Console blocked: select an item", id="personas-readiness-console")
         with Vertical(id="personas-inspector-actions"):
             yield Button(
                 "Attach to Console",
@@ -120,6 +148,7 @@ class PersonasInspectorPane(Vertical):
         self._has_selection = False
         self._is_unsaved = False
         self._selected_kind = None
+        self.set_console_actions_enabled(False, reason="select an item")
         self.query_one("#personas-selected-name", Static).update("Selected: none")
         self.query_one("#personas-selected-kind", Static).update("Type: -")
         self.query_one("#personas-selected-authority", Static).update("Authority: Local")
@@ -129,6 +158,26 @@ class PersonasInspectorPane(Vertical):
 
     def set_unsaved(self, is_unsaved: bool) -> None:
         self._is_unsaved = is_unsaved
+        self._apply_action_state()
+
+    def set_console_actions_enabled(
+        self,
+        enabled: bool,
+        *,
+        reason: str | None = None,
+    ) -> None:
+        """Set Attach/Start availability from the screen-owned Console gate.
+
+        Selection, export, and delete state stay local to the inspector, but
+        Console action availability must be pushed by ``PersonasScreen`` so
+        the visible buttons, readiness copy, and shortcuts cannot diverge.
+
+        Args:
+            enabled: Whether Console actions are currently available.
+            reason: Optional user-facing reason shown when actions are blocked.
+        """
+        self._console_actions_enabled = bool(enabled)
+        self._console_action_block_reason = "" if enabled else (reason or "unavailable")
         self._apply_action_state()
 
     def show_validation(self, errors: tuple[str, ...]) -> None:
@@ -207,25 +256,31 @@ class PersonasInspectorPane(Vertical):
         selected = self._has_selection
         unsaved = self._is_unsaved
         readiness = self.query_one("#personas-readiness-console", Static)
-        if not selected:
-            readiness.update("Console: Blocked - select an item")
-        elif unsaved:
-            readiness.update("Console: Blocked - unsaved edits")
+        if self._console_actions_enabled:
+            readiness.update("Console ready")
         else:
-            readiness.update("Console: Ready")
-        enabled = selected and not unsaved
-        tooltip = _UNSAVED_TOOLTIP if (selected and unsaved) else None
-        for button_id in (
-            "#personas-attach-to-console",
-            "#personas-start-chat",
-            "#personas-export-json",
-        ):
+            reason = self._console_action_block_reason or "unavailable"
+            readiness.update(f"Console blocked: {reason}")
+        export_enabled = selected and not unsaved
+        export_tooltip = _UNSAVED_TOOLTIP if (selected and unsaved) else None
+        console_tooltip = None
+        if not self._console_actions_enabled:
+            console_tooltip = (
+                _UNSAVED_TOOLTIP
+                if selected and unsaved
+                else f"Console action blocked: {self._console_action_block_reason}"
+            )
+        for button_id in ("#personas-attach-to-console", "#personas-start-chat"):
             button = self.query_one(button_id, Button)
-            button.disabled = not enabled
-            button.tooltip = tooltip
+            button.disabled = not self._console_actions_enabled
+            button.tooltip = console_tooltip
+        for button_id in ("#personas-export-json",):
+            button = self.query_one(button_id, Button)
+            button.disabled = not export_enabled
+            button.tooltip = export_tooltip
         png_button = self.query_one("#personas-export-png", Button)
-        png_button.disabled = not (enabled and self._selected_kind == "character")
-        png_button.tooltip = tooltip
+        png_button.disabled = not (export_enabled and self._selected_kind == "character")
+        png_button.tooltip = export_tooltip
         self.query_one("#personas-delete", Button).disabled = not selected
 
     @on(ListView.Selected, "#personas-conversations-list")

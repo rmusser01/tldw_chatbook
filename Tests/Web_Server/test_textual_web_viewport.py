@@ -82,7 +82,10 @@ def test_textual_serve_resize_patch_forces_full_terminal_repaint():
     upstream = (
         "before this.webglAddon=new p.WebglAddon,this.terminal.loadAddon(this.webglAddon),"
         "this.canvasAddon=new m.CanvasAddon,this.terminal.loadAddon(this.canvasAddon),"
-        "window.onresize=()=>{this.fit()} after"
+        "window.onresize=()=>{this.fit()} "
+        'document.querySelector("body").classList.add("-loaded") '
+        't.length>10&&document.querySelector("body").classList.add("-first-byte") '
+        "this.terminal.write(t,(()=>{this.bufferedBytes-=t.length})) after"
     )
 
     patched = serve.patch_textual_serve_viewport_js(upstream)
@@ -92,9 +95,55 @@ def test_textual_serve_resize_patch_forces_full_terminal_repaint():
     assert "ResizeObserver" in patched
     assert "this.terminal.refresh(0,this.terminal.rows-1)" in patched
     assert "this.terminal.clearTextureAtlas" in patched
+    assert "this.sendSize&&this.sendSize()" in patched
+    assert "cancelAnimationFrame(this._chatbookViewportAfterWriteRaf)" in patched
+    assert (
+        "this._chatbookViewportAfterWriteRaf=requestAnimationFrame("
+        "this._chatbookTerminalRepaint)"
+    ) in patched
     assert "new p.WebglAddon" not in patched
     assert "new m.CanvasAddon" not in patched
+    assert "this.webglAddon=null,this.canvasAddon=null," in patched
     assert patched != upstream
+
+
+def test_textual_serve_resize_patch_repaints_after_connection_and_first_byte():
+    upstream = (
+        "before this.webglAddon=new p.WebglAddon,this.terminal.loadAddon(this.webglAddon),"
+        "this.canvasAddon=new m.CanvasAddon,this.terminal.loadAddon(this.canvasAddon),"
+        "window.onresize=()=>{this.fit()} "
+        "this.terminal.write(t,(()=>{this.bufferedBytes-=t.length})) "
+        'document.querySelector("body").classList.add("-loaded") '
+        't.length>10&&document.querySelector("body").classList.add("-first-byte") after'
+    )
+
+    patched = serve.patch_textual_serve_viewport_js(upstream)
+
+    assert 'document.querySelector("body").classList.add("-loaded"),this._chatbookViewportResize()' in patched
+    assert (
+        't.length>10&&(document.querySelector("body").classList.add("-first-byte"),'
+        'this._chatbookViewportResize())'
+    ) in patched
+
+
+def test_textual_serve_resize_patch_repaints_after_terminal_writes():
+    upstream = (
+        "before this.webglAddon=new p.WebglAddon,this.terminal.loadAddon(this.webglAddon),"
+        "this.canvasAddon=new m.CanvasAddon,this.terminal.loadAddon(this.canvasAddon),"
+        "window.onresize=()=>{this.fit()} "
+        'document.querySelector("body").classList.add("-loaded") '
+        "this.terminal.write(t,(()=>{this.bufferedBytes-=t.length})) "
+        't.length>10&&document.querySelector("body").classList.add("-first-byte") after'
+    )
+
+    patched = serve.patch_textual_serve_viewport_js(upstream)
+
+    assert "this._chatbookTerminalRepaint" in patched
+    assert "this._chatbookViewportAfterWrite" in patched
+    assert (
+        "this.terminal.write(t,(()=>{this.bufferedBytes-=t.length,"
+        "this._chatbookViewportAfterWrite&&this._chatbookViewportAfterWrite()}))"
+    ) in patched
 
 
 def test_textual_serve_resize_patch_fails_closed_when_upstream_changes():
@@ -103,6 +152,35 @@ def test_textual_serve_resize_patch_fails_closed_when_upstream_changes():
     patched = serve.patch_textual_serve_viewport_js(upstream)
 
     assert patched == upstream
+
+
+@pytest.mark.parametrize(
+    "missing_hook",
+    [
+        serve._TEXTUAL_SERVE_RESIZE_HOOK,
+        serve._TEXTUAL_SERVE_CANVAS_RENDERERS,
+        serve._TEXTUAL_SERVE_WRITE_CALLBACK_HOOK,
+        serve._TEXTUAL_SERVE_LOADED_HOOK,
+        serve._TEXTUAL_SERVE_FIRST_BYTE_HOOK,
+    ],
+)
+def test_textual_serve_resize_patch_fails_closed_when_any_required_hook_is_missing(
+    missing_hook,
+):
+    upstream = (
+        "before "
+        f"{serve._TEXTUAL_SERVE_CANVAS_RENDERERS}"
+        f"{serve._TEXTUAL_SERVE_RESIZE_HOOK} "
+        f"{serve._TEXTUAL_SERVE_WRITE_CALLBACK_HOOK} "
+        f"{serve._TEXTUAL_SERVE_LOADED_HOOK} "
+        f"{serve._TEXTUAL_SERVE_FIRST_BYTE_HOOK} "
+        "after"
+    )
+    changed_upstream = upstream.replace(missing_hook, "upstream changed", 1)
+
+    patched = serve.patch_textual_serve_viewport_js(changed_upstream)
+
+    assert patched == changed_upstream
 
 
 def test_chatbook_web_server_overrides_textual_js_before_static_assets(tmp_path):

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Any, Mapping
 
+from textual import events
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Select, Static
@@ -29,13 +30,38 @@ from tldw_chatbook.Chat.console_session_settings import (
     normalize_llamacpp_base_url,
     validate_console_session_settings,
 )
+from tldw_chatbook.Utils.input_validation import validate_text_input
 
 
 MODEL_INPUT_PLACEHOLDER = "Enter model id"
+MODAL_BODY_MIN_HEIGHT = 0
+MODAL_CONTROL_HEIGHT = 3
+MODAL_LABEL_WIDTH = 16
+MODEL_CUSTOM_BUTTON_WIDTH = 18
+PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
+PROVIDER_CHOICE_INPUTS = (
+    ("Reasoning effort", "console-settings-reasoning-effort"),
+    ("Reasoning summary", "console-settings-reasoning-summary"),
+    ("Verbosity", "console-settings-verbosity"),
+    ("Thinking effort", "console-settings-thinking-effort"),
+)
+
+
+def _settings_screen_region(widget: Any) -> Any:
+    """Return a mounted settings widget region in screen coordinates.
+
+    Args:
+        widget: Textual widget or test double with a mounted region.
+
+    Returns:
+        The widget's absolute screen region when the installed Textual version
+        exposes one; otherwise the mounted widget region used by this project.
+    """
+    return getattr(widget, "screen_region", None) or widget.region
 
 
 class ConsoleSettingsInput(Input):
-    """Input field with browser-friendly select-all behavior."""
+    """Input field with browser-safe focus handoff behavior."""
 
     BINDINGS = [
         (
@@ -48,17 +74,58 @@ class ConsoleSettingsInput(Input):
         Binding("ctrl+a,super+a", "select_all", "Select all", show=False),
     ]
 
-    def on_focus(self) -> None:
-        """Select the current value after click focus settles."""
-        self.call_after_refresh(self.select_all)
+    def on_click(self, event: events.Click | None = None) -> None:
+        """Avoid trapping later Select clicks after browser text editing.
 
-    def on_click(self) -> None:
-        """Keep click-to-replace reliable in textual-web."""
+        Args:
+            event: Optional click event to forward when Textual Web redirects a
+                select click through the focused input.
+        """
         self.select_all()
+        self.release_mouse()
+        if event is None:
+            return
+        handler = getattr(self.screen, "_open_select_from_redirected_settings_click", None)
+        if callable(handler):
+            handler(event)
+
+    def on_blur(self) -> None:
+        """Avoid trapping later Select clicks after browser text editing."""
+        self.release_mouse()
 
 
 class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     """Edit a draft of the current Console session settings."""
+
+    DEFAULT_CSS = f"""
+    ConsoleSettingsModal #console-settings-body {{
+        height: 1fr;
+        min-height: {MODAL_BODY_MIN_HEIGHT};
+        overflow-y: auto;
+        overflow-x: hidden;
+    }}
+
+    ConsoleSettingsModal .console-settings-modal-section {{
+        height: auto;
+    }}
+
+    ConsoleSettingsModal .console-settings-modal-row {{
+        height: auto;
+        min-height: {MODAL_CONTROL_HEIGHT};
+    }}
+
+    ConsoleSettingsModal .console-settings-modal-label {{
+        height: {MODAL_CONTROL_HEIGHT};
+        min-height: {MODAL_CONTROL_HEIGHT};
+    }}
+
+    ConsoleSettingsModal Input,
+    ConsoleSettingsModal Select,
+    ConsoleSettingsModal Button {{
+        height: {MODAL_CONTROL_HEIGHT};
+        min-height: {MODAL_CONTROL_HEIGHT};
+    }}
+    """
 
     BINDINGS = [("escape", "dismiss", "Cancel")]
 
@@ -97,10 +164,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         uses_base_url = self._provider_uses_base_url(self._settings.provider)
         model_options = self._model_select_options(self._settings.provider, selected_model)
         has_model_options = bool(model_options)
+        use_model_select = self._should_use_model_select(
+            self._settings.provider,
+            selected_model,
+            model_options,
+        )
         readiness = build_console_settings_readiness(self._settings, app_config=self._app_config)
 
         with Vertical(id="console-settings-modal"):
-            yield Static("Console Settings", classes="console-transcript-action-row")
+            yield Static("Console Settings", classes="console-modal-header")
             yield Static(
                 self._readiness_detail(readiness.detail),
                 id="console-settings-readiness",
@@ -114,14 +186,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 markup=False,
             )
 
-            with Vertical(id="console-settings-body", classes="console-settings-body"):
+            with ScrollableContainer(id="console-settings-body", classes="console-settings-body"):
                 with Vertical(
                     id="console-settings-provider-model-section",
                     classes=self._provider_model_section_classes(),
                 ):
                     yield Static("Provider and model", classes="destination-section")
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Provider", classes="console-settings-modal-label")
+                        yield self._modal_label("Provider")
                         yield Select(
                             provider_options,
                             value=self._settings.provider,
@@ -130,16 +202,18 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Model", classes="console-settings-modal-label")
+                        yield self._modal_label("Model")
                         model_select = Select(
                             model_options or [("No configured models", "")],
                             value=selected_model or "",
                             allow_blank=False,
                             id="console-settings-model-select",
-                            disabled=not has_model_options,
+                            disabled=not use_model_select,
                             classes="console-settings-control",
                         )
-                        model_select.display = has_model_options
+                        model_select.styles.width = "1fr"
+                        model_select.styles.min_width = 0
+                        model_select.display = use_model_select
                         yield model_select
                         model_input = ConsoleSettingsInput(
                             value=selected_model or "",
@@ -148,10 +222,24 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                             disabled=has_model_options,
                             classes="console-settings-control",
                         )
-                        model_input.display = not has_model_options
+                        model_input.styles.width = "1fr"
+                        model_input.styles.min_width = 0
+                        model_input.display = not use_model_select
                         yield model_input
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Base URL", classes="console-settings-modal-label")
+                        yield self._modal_label("")
+                        model_custom = Button(
+                            "Custom model",
+                            id="console-settings-model-custom",
+                            disabled=not has_model_options,
+                        )
+                        model_custom.styles.width = MODEL_CUSTOM_BUTTON_WIDTH
+                        model_custom.styles.min_width = MODEL_CUSTOM_BUTTON_WIDTH
+                        model_custom.styles.max_width = MODEL_CUSTOM_BUTTON_WIDTH
+                        model_custom.display = has_model_options
+                        yield model_custom
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Base URL")
                         base_url_input = ConsoleSettingsInput(
                             value=base_url or "",
                             id="console-settings-base-url",
@@ -164,45 +252,104 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
                 with Vertical(classes="console-settings-modal-section"):
                     yield Static("Sampling", classes="destination-section")
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Temperature", classes="console-settings-modal-label")
+                        yield self._modal_label("Temperature")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.temperature),
                             id="console-settings-temperature",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Top P", classes="console-settings-modal-label")
+                        yield self._modal_label("Top P")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.top_p),
                             id="console-settings-top-p",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Min P", classes="console-settings-modal-label")
+                        yield self._modal_label("Min P")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.min_p),
                             id="console-settings-min-p",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Top K", classes="console-settings-modal-label")
+                        yield self._modal_label("Top K")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.top_k),
                             id="console-settings-top-k",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Max tokens", classes="console-settings-modal-label")
+                        yield self._modal_label("Max tokens")
                         yield ConsoleSettingsInput(
                             value=self._format_value(self._settings.max_tokens),
                             id="console-settings-max-tokens",
                             classes="console-settings-control",
                         )
                     with Horizontal(classes="console-settings-modal-row"):
-                        yield Static("Streaming", classes="console-settings-modal-label")
+                        yield self._modal_label("Seed")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.seed),
+                            id="console-settings-seed",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Presence")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.presence_penalty),
+                            id="console-settings-presence-penalty",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Frequency")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.frequency_penalty),
+                            id="console-settings-frequency-penalty",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Streaming")
                         yield Checkbox(
                             value=self._settings.streaming,
                             id="console-settings-streaming",
+                            classes="console-settings-control",
+                        )
+
+                with Vertical(classes="console-settings-modal-section"):
+                    yield Static("Provider-specific", classes="destination-section")
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Reasoning")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.reasoning_effort),
+                            id="console-settings-reasoning-effort",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Summary")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.reasoning_summary),
+                            id="console-settings-reasoning-summary",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Verbosity")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.verbosity),
+                            id="console-settings-verbosity",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Thinking")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.thinking_effort),
+                            id="console-settings-thinking-effort",
+                            classes="console-settings-control",
+                        )
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Budget")
+                        yield ConsoleSettingsInput(
+                            value=self._format_value(self._settings.thinking_budget_tokens),
+                            id="console-settings-thinking-budget-tokens",
                             classes="console-settings-control",
                         )
 
@@ -259,6 +406,57 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         if self._focus_model:
             self._focus_model_control()
 
+    def on_click(self, event: events.Click) -> None:
+        """Recover select clicks redirected through focused Textual Web inputs.
+
+        Args:
+            event: Click event that may have been redirected from a focused
+                settings input.
+        """
+        self._open_select_from_redirected_settings_click(event)
+
+    def _open_select_from_redirected_settings_click(self, event: events.Click) -> None:
+        """Recover settings controls when an input-held click lands on them.
+
+        Args:
+            event: Click event to recover when Textual Web keeps routing clicks
+                through a focused settings input.
+        """
+        captured_widget = self.app.mouse_captured
+        click_origin = getattr(event, "widget", None)
+        focused_widget = self.app.focused
+        screen_routed_click = click_origin is self and isinstance(focused_widget, ConsoleSettingsInput)
+        if (
+            not isinstance(captured_widget, ConsoleSettingsInput)
+            and not isinstance(click_origin, ConsoleSettingsInput)
+            and not screen_routed_click
+        ):
+            return
+        if isinstance(captured_widget, ConsoleSettingsInput):
+            captured_widget.release_mouse()
+
+        if event.button != 1 or event.screen_x is None or event.screen_y is None:
+            return
+
+        for select in self.query(Select):
+            if select.disabled or not select.display:
+                continue
+            select_region = _settings_screen_region(select)
+            if select_region.contains(event.screen_x, event.screen_y):
+                select.focus()
+                select.action_show_overlay()
+                event.stop()
+                return
+        for button in self.query(Button):
+            if button.disabled or not button.display:
+                continue
+            button_region = _settings_screen_region(button)
+            if button_region.contains(event.screen_x, event.screen_y):
+                button.focus()
+                button.press()
+                event.stop()
+                return
+
     def _has_selected_model(self) -> bool:
         try:
             return bool(self._current_model_value())
@@ -288,6 +486,13 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             classes += " console-settings-primary-section"
         return classes
 
+    def _modal_label(self, text: str) -> Static:
+        label = Static(text, classes="console-settings-modal-label")
+        label.styles.width = MODAL_LABEL_WIDTH
+        label.styles.min_width = MODAL_LABEL_WIDTH
+        label.styles.max_width = MODAL_LABEL_WIDTH
+        return label
+
     def action_dismiss(self) -> None:
         self.dismiss(None)
 
@@ -302,6 +507,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         draft = self._build_draft()
         errors = [
             *self._required_sampling_errors(),
+            *self._provider_choice_input_errors(),
             *validate_console_session_settings(draft, app_config=self._app_config),
         ]
         if errors:
@@ -329,6 +535,11 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _model_input_changed(self, event: Input.Changed) -> None:
         self._sync_readiness_display()
 
+    @on(Button.Pressed, "#console-settings-model-custom")
+    def _model_custom_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._toggle_manual_model_input()
+
     def _sync_readiness_display(self) -> None:
         draft = self._build_draft()
         readiness = build_console_settings_readiness(draft, app_config=self._app_config)
@@ -355,6 +566,14 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             min_p=self._parse_optional_float_input("console-settings-min-p"),
             top_k=self._parse_optional_int_input("console-settings-top-k"),
             max_tokens=self._parse_optional_int_input("console-settings-max-tokens"),
+            seed=self._parse_optional_int_input("console-settings-seed"),
+            presence_penalty=self._parse_optional_float_input("console-settings-presence-penalty"),
+            frequency_penalty=self._parse_optional_float_input("console-settings-frequency-penalty"),
+            reasoning_effort=self._parse_optional_choice_input("console-settings-reasoning-effort"),
+            reasoning_summary=self._parse_optional_choice_input("console-settings-reasoning-summary"),
+            verbosity=self._parse_optional_choice_input("console-settings-verbosity"),
+            thinking_effort=self._parse_optional_choice_input("console-settings-thinking-effort"),
+            thinking_budget_tokens=self._parse_optional_int_input("console-settings-thinking-budget-tokens"),
             streaming=self.query_one("#console-settings-streaming", Checkbox).value,
             persona_label=self._settings.persona_label,
             character_label=self._settings.character_label,
@@ -363,6 +582,7 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
     def _sync_model_controls(self, provider: str, current_model: str | None) -> None:
         model_select = self.query_one("#console-settings-model-select", Select)
         model_input = self.query_one("#console-settings-model-input", Input)
+        model_custom = self.query_one("#console-settings-model-custom", Button)
         current_model = normalize_console_model_value(current_model)
         model_options = self._model_select_options(provider, current_model)
         if model_options:
@@ -370,11 +590,15 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             option_values = {str(value) for _, value in model_options}
             selected = current_model if current_model in option_values else str(model_options[0][1])
             model_select.value = selected
-            model_select.disabled = False
-            model_select.display = True
+            use_model_select = self._should_use_model_select(provider, selected, model_options)
+            model_select.disabled = not use_model_select
+            model_select.display = use_model_select
             model_input.disabled = True
-            model_input.display = False
+            model_input.display = not use_model_select
             model_input.value = selected
+            model_custom.label = "Custom model"
+            model_custom.disabled = False
+            model_custom.display = True
             return
 
         fallback = current_model or ""
@@ -385,6 +609,40 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
         model_input.value = fallback
         model_input.disabled = False
         model_input.display = True
+        model_custom.label = "Custom model"
+        model_custom.disabled = True
+        model_custom.display = False
+
+    def _toggle_manual_model_input(self) -> None:
+        model_select = self.query_one("#console-settings-model-select", Select)
+        model_input = self.query_one("#console-settings-model-input", Input)
+        model_custom = self.query_one("#console-settings-model-custom", Button)
+
+        if model_input.display:
+            if model_input.disabled:
+                model_input.disabled = False
+                model_custom.label = "Model list"
+                model_input.focus()
+                self._sync_readiness_display()
+                return
+            provider = str(self.query_one("#console-settings-provider", Select).value or "")
+            current_model = normalize_console_model_value(model_input.value)
+            self._sync_model_controls(provider, current_model)
+            self._sync_readiness_display()
+            if model_select.display and not model_select.disabled:
+                model_select.focus()
+            else:
+                model_custom.focus()
+            return
+
+        model_input.value = normalize_console_model_value(model_select.value) or ""
+        model_select.display = False
+        model_select.disabled = True
+        model_input.display = True
+        model_input.disabled = False
+        model_custom.label = "Model list"
+        model_input.focus()
+        self._sync_readiness_display()
 
     def _focus_model_control(self) -> None:
         model_select = self.query_one("#console-settings-model-select", Select)
@@ -411,6 +669,47 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             (option.label, option.value)
             for option in build_console_model_options(provider, self._providers_models, None)
         ]
+
+    def _should_use_model_select(
+        self,
+        provider: str,
+        selected_model: str | None,
+        model_options: list[tuple[str, str]],
+    ) -> bool:
+        """Return whether the model list should be an interactive Select.
+
+        The approved single-model fix only applies to the steady-state local
+        runtime case where the user already has that exact model selected. Other
+        single-option states still need an interactive list because they are
+        recovery/setup flows, custom/freeform providers, or provider-switch
+        transitions where saving must capture the resolved model.
+        """
+        if not model_options:
+            return False
+        if len(model_options) > 1:
+            return True
+
+        provider_key = provider_config_key(provider)
+        if provider_key == "custom":
+            return True
+        configured_values = {str(value) for _, value in self._configured_model_select_options(provider)}
+        selected_model = normalize_console_model_value(selected_model)
+
+        if self._focus_model:
+            return True
+        if provider != self._settings.provider:
+            if provider_key in {"llama_cpp", "local_llamacpp"}:
+                return True
+            return bool(selected_model and selected_model not in configured_values)
+
+        settings_model = normalize_console_model_value(self._settings.model)
+        if not settings_model:
+            return True
+        if provider_key not in {"llama_cpp", "local_llamacpp", "openai"}:
+            return True
+        if selected_model and selected_model not in configured_values:
+            return True
+        return not selected_model or selected_model != settings_model
 
     def _set_provider_model_draft(self, provider: str, value: object) -> None:
         """Store a per-provider draft model, normalized once at this boundary."""
@@ -621,6 +920,18 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             errors.append("Top P is required.")
         return errors
 
+    def _provider_choice_input_errors(self) -> list[str]:
+        errors: list[str] = []
+        for label, input_id in PROVIDER_CHOICE_INPUTS:
+            raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+            if raw_value and not validate_text_input(
+                raw_value,
+                max_length=PROVIDER_CHOICE_INPUT_MAX_LENGTH,
+                allow_html=False,
+            ):
+                errors.append(f"{label} contains unsupported text.")
+        return errors
+
     def _parse_optional_float_input(self, input_id: str) -> object:
         raw_value = self.query_one(f"#{input_id}", Input).value.strip()
         if not raw_value:
@@ -638,3 +949,11 @@ class ConsoleSettingsModal(ModalScreen[ConsoleSessionSettings | None]):
             return int(raw_value)
         except ValueError:
             return raw_value
+
+    def _parse_optional_text_input(self, input_id: str) -> str | None:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        return raw_value or None
+
+    def _parse_optional_choice_input(self, input_id: str) -> str | None:
+        raw_value = self._parse_optional_text_input(input_id)
+        return raw_value.lower() if raw_value else None

@@ -5,6 +5,7 @@ import pytest
 import base64
 import io
 import json
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 #
 # 3rd-party Libraries
@@ -13,6 +14,8 @@ from PIL import Image
 #
 # Local Imports
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError, InputError
+import tldw_chatbook.Chat.Chat_Functions as chat_functions_module
+import tldw_chatbook.LLM_Calls.LLM_API_Calls as llm_api_calls_module
 from tldw_chatbook.Chat.Chat_Functions import (
     chat_api_call,
     chat,
@@ -61,6 +64,112 @@ def db_instance(db_path, client_id):
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 DUMMY_ANTHROPIC_API_KEY = "DUMMY_ANTHROPIC_API_KEY"
+DUMMY_HUGGINGFACE_API_KEY = "DUMMY_HUGGINGFACE_API_KEY"
+DUMMY_HUGGINGFACE_SECRET_VALUE = "DUMMY_HUGGINGFACE_SECRET_VALUE"
+
+
+def test_huggingface_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
+    captured_kwargs = {}
+
+    def fake_huggingface_handler(**kwargs):
+        captured_kwargs.update(kwargs)
+        return "OK"
+
+    monkeypatch.setitem(
+        chat_functions_module.API_CALL_HANDLERS,
+        "huggingface",
+        fake_huggingface_handler,
+    )
+
+    chat_functions_module.chat_api_call(
+        api_endpoint="huggingface",
+        api_key=DUMMY_HUGGINGFACE_API_KEY,
+        messages_payload=[{"role": "user", "content": "hello"}],
+        model="org/model",
+        max_tokens=12,
+    )
+
+    assert captured_kwargs["max_tokens"] == 12
+    assert "max_new_tokens" not in captured_kwargs
+
+
+def test_huggingface_router_chat_url_rejects_missing_or_non_string_base():
+    assert llm_api_calls_module._huggingface_router_chat_url(None) is None
+    assert llm_api_calls_module._huggingface_router_chat_url(443) is None
+
+
+def test_groq_chat_api_call_passes_max_tokens_to_adapter(monkeypatch):
+    captured_kwargs = {}
+
+    def fake_groq_handler(**kwargs):
+        captured_kwargs.update(kwargs)
+        return "OK"
+
+    monkeypatch.setitem(
+        chat_functions_module.API_CALL_HANDLERS,
+        "groq",
+        fake_groq_handler,
+    )
+
+    chat_functions_module.chat_api_call(
+        api_endpoint="groq",
+        api_key=DUMMY_OPENAI_API_KEY,
+        messages_payload=[{"role": "user", "content": "hello"}],
+        model="llama-3.1-8b-instant",
+        max_tokens=12,
+    )
+
+    assert captured_kwargs["max_tokens"] == 12
+
+
+def test_chat_api_call_does_not_log_api_key_fragments(monkeypatch):
+    captured_logs = []
+    sink_id = chat_functions_module.logger.add(
+        lambda message: captured_logs.append(str(message)),
+        level="DEBUG",
+    )
+
+    def fake_openai_handler(**_kwargs):
+        return "OK"
+
+    monkeypatch.setitem(
+        chat_functions_module.API_CALL_HANDLERS,
+        "openai",
+        fake_openai_handler,
+    )
+
+    secret = "prefix-secret-middle-secret-suffix"
+    try:
+        chat_functions_module.chat_api_call(
+            api_endpoint="openai",
+            api_key=secret,
+            messages_payload=[{"role": "user", "content": "hello"}],
+            model="gpt-test",
+        )
+    finally:
+        chat_functions_module.logger.remove(sink_id)
+
+    rendered_logs = "".join(captured_logs)
+    assert secret not in rendered_logs
+    assert secret[:6] not in rendered_logs
+    assert secret[-6:] not in rendered_logs
+
+
+def test_chat_provider_adapters_do_not_log_api_key_fragments():
+    modules = [
+        chat_functions_module,
+        llm_api_calls_module,
+    ]
+    suspicious_lines = []
+    for module in modules:
+        source_path = Path(module.__file__)
+        for line_number, line in enumerate(source_path.read_text().splitlines(), start=1):
+            if "API Key" not in line:
+                continue
+            if "..." in line or "[:" in line or "log_key" in line:
+                suspicious_lines.append(f"{source_path.name}:{line_number}: {line.strip()}")
+
+    assert suspicious_lines == []
 
 
 def create_base64_image():
@@ -197,6 +306,48 @@ class TestChatApiCall:
         assert kwargs["thinking_effort"] == "high"
         assert kwargs["thinking_budget_tokens"] == 4096
 
+    def test_huggingface_max_tokens_maps_to_supported_handler_kwarg(self, mock_handlers, mocker):
+        mock_huggingface_handler = mocker.MagicMock(return_value="HuggingFace response")
+        mock_huggingface_handler.__name__ = "mock_huggingface_handler"
+        mock_handlers.get.return_value = mock_huggingface_handler
+
+        chat_api_call(
+            api_endpoint="huggingface",
+            messages_payload=[{"role": "user", "content": "test"}],
+            model="openai/gpt-oss-120b",
+            max_tokens=16,
+        )
+
+        kwargs = mock_huggingface_handler.call_args.kwargs
+        assert kwargs["model"] == "openai/gpt-oss-120b"
+        assert kwargs["max_tokens"] == 16
+        assert "max_new_tokens" not in kwargs
+
+    def test_provider_json_error_body_is_not_masked_by_dispatcher_logging(self, mock_handlers, mocker):
+        class LegacyProviderError(ChatAPIError):
+            def __init__(self):
+                Exception.__init__(
+                    self,
+                    'Bad request (404). Detail: {"type":"error","error":{"type":"not_found_error"}}',
+                )
+                self.provider = "anthropic"
+                self.message = str(self)
+
+        provider_error = LegacyProviderError()
+        mock_handler = mocker.MagicMock(side_effect=provider_error)
+        mock_handler.__name__ = "mock_handler"
+        mock_handlers.get.return_value = mock_handler
+
+        with pytest.raises(LegacyProviderError) as exc_info:
+            chat_api_call(
+                "anthropic",
+                messages_payload=[{"role": "user", "content": "test"}],
+                api_key=DUMMY_ANTHROPIC_API_KEY,
+            )
+
+        assert exc_info.value is provider_error
+        assert '{"type":"error"' in exc_info.value.message
+
     def test_unsupported_endpoint_raises_error(self, mock_handlers):
         mock_handlers.get.return_value = None
         with pytest.raises(ValueError, match="Unsupported API endpoint: unsupported"):
@@ -228,7 +379,7 @@ class TestChatFunction:
             media_content=None,
             selected_parts=[],
             api_endpoint="openai",
-            api_key="sk-123",
+            api_key=DUMMY_OPENAI_API_KEY,
             model="gpt-4",
             temperature=0.7,
             custom_prompt="Be brief."
@@ -258,7 +409,7 @@ class TestChatFunction:
             media_content={"summary": "This is a summary."},
             selected_parts=["summary"],
             api_endpoint="openai",
-            api_key="sk-123",
+            api_key=DUMMY_OPENAI_API_KEY,
             model="gpt-4-vision-preview",
             temperature=0.5,
             current_image_input={'base64_data': b64_img, 'mime_type': 'image/png'},
@@ -290,7 +441,7 @@ class TestChatFunction:
             media_content=None,
             selected_parts=[],
             api_endpoint="deepseek",  # The endpoint that needs adaptation
-            api_key="sk-123",
+            api_key=DUMMY_OPENAI_API_KEY,
             model="deepseek-chat",
             temperature=0.7,
             custom_prompt=None,
@@ -399,6 +550,88 @@ class TestProviderRequestPayloads:
         assert "response.output_text.delta" not in combined
         assert chunks[-1] == "data: [DONE]\n\n"
 
+    def test_huggingface_v1_base_url_uses_chat_completions_path_once(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        response_data = {
+            "id": "hf_test",
+            "choices": [{"message": {"content": "OK"}}],
+        }
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "huggingface_api": {
+                    "api_base_url": "https://router.huggingface.co/v1",
+                    "api_timeout": 30,
+                    "api_retries": 0,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, response_data),
+        )
+
+        response = LLM_API_Calls.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_HUGGINGFACE_API_KEY,
+            model="openai/gpt-oss-120b",
+            streaming=False,
+            max_tokens=8,
+        )
+
+        assert captured["url"] == "https://router.huggingface.co/v1/chat/completions"
+        assert captured["json"]["model"] == "openai/gpt-oss-120b"
+        assert captured["json"]["max_tokens"] == 8
+        assert response == response_data
+
+    def test_huggingface_debug_logs_do_not_include_api_key(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        debug_messages = []
+        response_data = {
+            "id": "hf_test",
+            "choices": [{"message": {"content": "OK"}}],
+        }
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "huggingface_api": {
+                    "api_base_url": "https://router.huggingface.co/v1",
+                    "api_chat_path": "chat/completions",
+                    "api_timeout": 30,
+                    "api_retries": 0,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(captured, response_data),
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.logger,
+            "debug",
+            lambda message, *args, **kwargs: debug_messages.append(str(message)),
+        )
+
+        LLM_API_Calls.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_HUGGINGFACE_SECRET_VALUE,
+            model="openai/gpt-oss-120b",
+            streaming=False,
+            max_tokens=8,
+        )
+
+        combined_debug = "\n".join(debug_messages)
+        assert DUMMY_HUGGINGFACE_SECRET_VALUE not in combined_debug
+        assert f"Bearer {DUMMY_HUGGINGFACE_SECRET_VALUE}" not in combined_debug
+
     def test_anthropic_thinking_omits_incompatible_sampling_params(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
@@ -439,6 +672,89 @@ class TestProviderRequestPayloads:
         assert "temperature" not in captured["json"]
         assert "top_p" not in captured["json"]
         assert "top_k" not in captured["json"]
+
+    def test_anthropic_modern_models_do_not_send_temperature_and_top_p_together(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        warnings = []
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {"anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}},
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-haiku-4-5-20251001",
+                    "content": [{"type": "text", "text": "modern answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+        monkeypatch.setattr(LLM_API_Calls.logger, "warning", lambda message, *args, **kwargs: warnings.append(str(message)))
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_ANTHROPIC_API_KEY,
+            model="claude-haiku-4-5-20251001",
+            streaming=False,
+            temp=0.6,
+            topp=0.95,
+            topk=50,
+            max_tokens=64,
+        )
+
+        assert captured["json"]["temperature"] == 0.6
+        assert "top_p" not in captured["json"]
+        assert captured["json"]["top_k"] == 50
+        assert any("top_p" in warning and "temperature" in warning for warning in warnings)
+
+    def test_anthropic_explicit_top_p_omits_default_temperature(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "anthropic_api": {
+                    "api_base_url": "https://api.anthropic.test/v1",
+                    "temperature": 0.7,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-haiku-4-5-20251001",
+                    "content": [{"type": "text", "text": "top-p answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_anthropic(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key=DUMMY_ANTHROPIC_API_KEY,
+            model="claude-haiku-4-5-20251001",
+            streaming=False,
+            topp=0.91,
+            max_tokens=64,
+        )
+
+        assert captured["json"]["top_p"] == 0.91
+        assert "temperature" not in captured["json"]
 
     def test_anthropic_thinking_effort_maps_to_budget_tokens(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
@@ -548,6 +864,120 @@ class TestProviderRequestPayloads:
         )
 
         assert captured["json"]["thinking"] == {"type": "adaptive", "effort": "high"}
+
+    def test_huggingface_legacy_router_base_uses_openai_compatible_router_url(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "huggingface_api": {
+                    "api_base_url": "https://router.huggingface.co/hf-inference/models",
+                    "streaming": False,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+                },
+            ),
+        )
+
+        response = LLM_API_Calls.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="hf_test",
+            model="/openai/gpt-oss-120b",
+            streaming=False,
+            max_tokens=64,
+        )
+
+        assert captured["url"] == "https://router.huggingface.co/v1/chat/completions"
+        assert captured["json"]["max_tokens"] == 64
+        assert response["choices"][0]["message"]["content"] == "OK"
+
+    def test_huggingface_router_base_with_case_and_port_normalizes(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "huggingface_api": {
+                    "api_base_url": "https://ROUTER.HUGGINGFACE.CO:443/hf-inference/models",
+                    "streaming": False,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="hf_test",
+            model="openai/gpt-oss-120b",
+            streaming=False,
+            max_tokens=64,
+        )
+
+        assert captured["url"] == "https://ROUTER.HUGGINGFACE.CO:443/v1/chat/completions"
+
+    def test_huggingface_none_router_base_uses_safe_default(self, monkeypatch):
+        from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+        captured = {}
+        monkeypatch.setattr(
+            LLM_API_Calls,
+            "load_settings",
+            lambda: {
+                "huggingface_api": {
+                    "use_router_url_format": True,
+                    "router_base_url": None,
+                    "streaming": False,
+                }
+            },
+        )
+        monkeypatch.setattr(
+            LLM_API_Calls.requests,
+            "Session",
+            lambda: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+                },
+            ),
+        )
+
+        LLM_API_Calls.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "test"}],
+            api_key="hf_test",
+            model="openai/gpt-oss-120b",
+            streaming=False,
+            max_tokens=64,
+        )
+
+        assert captured["url"] == "https://router.huggingface.co/v1/chat/completions"
 
 
 @pytest.mark.integration

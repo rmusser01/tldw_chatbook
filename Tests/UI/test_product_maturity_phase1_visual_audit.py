@@ -29,12 +29,12 @@ PHASE_1_README = Path("Docs/superpowers/qa/product-maturity/phase-1/README.md")
 TASK = Path("backlog/tasks/task-8.5 - Product-Maturity-Phase-1.5-Visual-Broken-State-Audit.md")
 TOP_LEVEL_DESTINATION_IDS = tuple(destination.destination_id for destination in SHELL_DESTINATION_ORDER)
 DESTINATION_BODY_SELECTORS: dict[str, tuple[str, ...]] = {
-    "home": ("#home-dashboard",),
+    "home": ("#home-triage-grid",),
     # The live-work readiness card only mounts while a launch is pending and
     # the legacy #chat-window surface is no longer composed; pin the
     # always-present control bar + native session surface instead.
     "console": ("#console-control-bar", "#console-session-surface"),
-    "library": ("#library-shell",),
+    "library": ("#library-shell-grid",),
     "artifacts": ("#artifacts-shell",),
     "personas": ("#personas-shell",),
     "watchlists_collections": ("#watchlists-collections-shell",),
@@ -219,5 +219,4 @@ async def test_clean_run_top_level_visual_snapshots_survive_terminal_size(
 
 def test_visual_audit_destination_body_selectors_cover_top_level_destinations() -> None:
     assert set(DESTINATION_BODY_SELECTORS) == set(TOP_LEVEL_DESTINATION_IDS)
-
 

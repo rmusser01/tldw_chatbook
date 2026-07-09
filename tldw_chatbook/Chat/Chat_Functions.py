@@ -191,6 +191,7 @@ PROVIDER_PARAM_MAP = {
         'streaming': 'streaming',
         'maxp': 'maxp',
         'model':'model', # Groq also uses top_p, handled by chat_with_groq
+        'max_tokens': 'max_tokens',
         'logit_bias': 'logit_bias',
         'presence_penalty': 'presence_penalty',
         'frequency_penalty': 'frequency_penalty',
@@ -291,7 +292,7 @@ PROVIDER_PARAM_MAP = {
         'system_message': 'system_message',
         'streaming': 'streaming',
         'model':'model',
-        'max_tokens': 'max_new_tokens',  # Common for TGI
+        'max_tokens': 'max_tokens',
         'topp': 'top_p',
         'topk': 'top_k',
         'seed': 'seed',
@@ -810,8 +811,8 @@ def chat_api_call(
         if generic_param_name == 'prompt' and endpoint_lower == 'cohere':
              pass # Specific handling for Cohere's prompt is assumed to be within chat_with_cohere
 
-    if call_kwargs.get(params_map.get('api_key', 'api_key')) and isinstance(call_kwargs.get(params_map.get('api_key', 'api_key')), str) and len(call_kwargs.get(params_map.get('api_key', 'api_key'))) > 8:
-         logger.info(f"Debug - Chat API Call - API Key: {call_kwargs[params_map.get('api_key', 'api_key')][:4]}...{call_kwargs[params_map.get('api_key', 'api_key')][-4:]}")
+    if call_kwargs.get(params_map.get('api_key', 'api_key')):
+         logger.info("Debug - Chat API Call - API key provided.")
 
     # Add provider_name to kwargs only for handlers that support it
     # Some local providers use this for dynamic configuration loading
@@ -847,7 +848,7 @@ def chat_api_call(
 
         # Log safely first
         try:
-            logger.error("%s. Details: %s", log_message_base, error_text[:500], exc_info=False)
+            logger.opt(exception=False).error("{}. Details: {}", log_message_base, error_text[:500])
         except Exception as log_e:
             logger.error(f"Error during logging HTTPError details: {log_e}")
 
@@ -877,9 +878,13 @@ def chat_api_call(
         # This catches cases where the handler itself has already processed an error
         # (e.g. non-HTTP error, or it decided to raise a specific Chat*Error type)
         # and raises one of our custom exceptions.
-        logger.error(
-            f"Handler for {endpoint_lower} directly raised: {type(e_chat_direct).__name__} - {e_chat_direct.message}",
-            exc_info=True if e_chat_direct.status_code >= 500 else False)
+        status_code = getattr(e_chat_direct, "status_code", 0)
+        logger.opt(exception=isinstance(status_code, int) and status_code >= 500).error(
+            "Handler for {} directly raised: {} - {}",
+            endpoint_lower,
+            type(e_chat_direct).__name__,
+            e_chat_direct.message,
+        )
         raise e_chat_direct  # Re-raise the specific error
     except (ValueError, TypeError, KeyError) as e:
         logger.error(f"Value/Type/Key error during chat API call setup for {endpoint_lower}: {e}", exc_info=True)
@@ -1174,7 +1179,7 @@ def chat(
             logging.debug(f"  Msg {i}: Role: {msg_p['role']}, Content: [{', '.join(content_log)}]")
 
         logging.debug(f"Debug - Chat Function - Temperature: {temperature}")
-        logging.debug(f"Debug - Chat Function - API Key: {api_key[:10] if api_key else 'None'}")
+        logging.debug("Debug - Chat Function - API key provided: %s", bool(api_key))
         logging.debug(f"Debug - Chat Function - Prompt: {custom_prompt}")
 
         #####################################################################

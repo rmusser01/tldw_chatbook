@@ -14,6 +14,9 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-004](004-settings-storage-defaults-restart-boundary.md) | Accepted | Keep Settings storage defaults persisted under `database` config while active storage handles remain restart-boundary owned. |
 | [ADR-005](005-console-workspace-server-readiness.md) | Accepted | Keep Console workspace switching local-first while exposing honest server-readiness, handoff, runtime, and ACP task/run states behind adapter boundaries. |
 | [ADR-006](006-provider-aware-generation-settings.md) | Accepted | Keep Settings as the owner of persisted generation defaults while Console resolves effective session settings and provider adapters translate sampler/thinking controls into provider-specific request payloads. |
+| [ADR-009](009-local-skill-trust-boundary.md) | Accepted | Use a passphrase-rooted authenticated trust boundary with logical quarantine for Chatbook-managed local skills. |
+| [ADR-010](010-console-conversation-local-marks.md) | Accepted | Keep Console conversation stars as durable local-only marks outside conversation metadata, sync, server payloads, and chat metadata mirror reports. |
+| [ADR-011](011-chatbook-workbench-ui-system.md) | Accepted | Adopt a shared Textual-native Workbench UI System with stable composition, explicit state, visible workflow controls, responsiveness gates, and route-owner migration policy. |
 
 ## Historical Decision Material
 

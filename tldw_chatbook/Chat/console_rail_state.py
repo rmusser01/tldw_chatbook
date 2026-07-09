@@ -7,11 +7,14 @@ from dataclasses import dataclass
 import re
 from typing import Any
 
+from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSED
+
 CONSOLE_RAIL_LEFT_DEFAULT_OPEN = True
 CONSOLE_RAIL_RIGHT_DEFAULT_OPEN = False
+CONSOLE_RAIL_SECTION_IDS = ("session", "context", "model", "details")
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
-CONSOLE_RAIL_CONTEXT_LABEL = "Context >"
-CONSOLE_RAIL_INSPECTOR_LABEL = "< Inspector"
+CONSOLE_RAIL_CONTEXT_LABEL = f"Context {GLYPH_COLLAPSED}"
+CONSOLE_RAIL_INSPECTOR_LABEL = f"{GLYPH_COLLAPSE_LEFT} Inspector"
 
 _PERSISTENCE_PREFIX = "console_rail_state"
 _INVALID_KEY_RUN_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -64,6 +67,10 @@ class ConsoleRailPreferences:
 
     left_open: bool = CONSOLE_RAIL_LEFT_DEFAULT_OPEN
     right_open: bool = CONSOLE_RAIL_RIGHT_DEFAULT_OPEN
+    session_open: bool = True
+    context_open: bool = True
+    model_open: bool = True
+    details_open: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,10 @@ class ConsoleRailState:
     right_badge: str = ""
     persistence_key: str = ""
     right_forced_collapsed: bool = False
+    session_open: bool = True
+    context_open: bool = True
+    model_open: bool = True
+    details_open: bool = False
 
 
 def _sanitize_key_part(value: Any) -> str:
@@ -153,6 +164,48 @@ def build_console_rail_preference_key(
     )
 
 
+def collect_prunable_console_rail_keys(
+    stored_keys: Any,
+    *,
+    live_scope_ids: Any,
+) -> list[str]:
+    """Return stored rail-preference keys whose scope is no longer live.
+
+    A key is prunable only when it matches the canonical
+    ``console_rail_state:<workspace>:<scope>`` shape and its scope id is
+    neither the reserved ``global`` scope nor present in ``live_scope_ids``.
+    Unrecognized key shapes are always kept.
+
+    Args:
+        stored_keys: Iterable of stored config key strings (non-string
+            entries are ignored). ``None`` is treated as empty.
+        live_scope_ids: Iterable of live scope ids (conversation ids plus
+            open session ids), matched after the module's key sanitization.
+            ``None`` is treated as empty.
+
+    Returns:
+        The subset of ``stored_keys`` safe to delete, order-preserved.
+    """
+    live_sanitized = {
+        sanitized
+        for raw in (live_scope_ids or ())
+        for sanitized in (_sanitize_optional_key_part(raw),)
+        if sanitized
+    }
+    prunable: list[str] = []
+    for key in (stored_keys or ()):
+        if not isinstance(key, str):
+            continue
+        parts = key.split(":")
+        if len(parts) != 3 or parts[0] != _PERSISTENCE_PREFIX:
+            continue
+        scope_id = parts[2]
+        if scope_id == "global" or scope_id in live_sanitized:
+            continue
+        prunable.append(key)
+    return prunable
+
+
 def _coerce_bool(value: Any, fallback: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -183,6 +236,10 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
     return ConsoleRailPreferences(
         left_open=_coerce_bool(raw.get("left_open"), defaults.left_open),
         right_open=_coerce_bool(raw.get("right_open"), defaults.right_open),
+        session_open=_coerce_bool(raw.get("session_open"), defaults.session_open),
+        context_open=_coerce_bool(raw.get("context_open"), defaults.context_open),
+        model_open=_coerce_bool(raw.get("model_open"), defaults.model_open),
+        details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
     )
 
 
@@ -193,6 +250,10 @@ def serialize_console_rail_preferences(
     return {
         "left_open": bool(preferences.left_open),
         "right_open": bool(preferences.right_open),
+        "session_open": bool(preferences.session_open),
+        "context_open": bool(preferences.context_open),
+        "model_open": bool(preferences.model_open),
+        "details_open": bool(preferences.details_open),
     }
 
 
@@ -394,4 +455,8 @@ def build_console_rail_state(
         ),
         persistence_key=preference_key.value,
         right_forced_collapsed=right_forced_collapsed,
+        session_open=preferences.session_open,
+        context_open=preferences.context_open,
+        model_open=preferences.model_open,
+        details_open=preferences.details_open,
     )

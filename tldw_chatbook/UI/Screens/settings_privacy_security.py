@@ -32,6 +32,21 @@ SENSITIVE_CONFIG_KEY_PATTERNS = (
     "_secret",
     "_password",
 )
+SAFE_SKILL_TRUST_STATUSES = frozenset(
+    {
+        "trusted",
+        "trust_uninitialized",
+        "trust_locked",
+        "quarantined_modified",
+        "quarantined_added",
+        "quarantined_deleted",
+        "quarantined_manifest_error",
+        "quarantined_unsupported_path",
+        "unavailable",
+        "unavailable_error",
+    }
+)
+MAX_SKILL_TRUST_STATUS_CHARS = 80
 
 
 @dataclass(frozen=True)
@@ -48,6 +63,10 @@ class SettingsPrivacyPosture:
         redaction_active: Whether visible privacy output redacts raw secret values.
         data_boundary: User-facing local data boundary summary.
         server_boundary: User-facing server token boundary summary.
+        skill_trust_enabled: Whether local skill trust service is available.
+        skill_trust_status: Redacted local skill trust aggregate status.
+        skill_trust_keyring_convenience_enabled: Whether keyring convenience is enabled.
+        skill_trust_reduced_rollback_protection: Whether rollback protection is reduced.
     """
 
     encryption_enabled: bool
@@ -61,18 +80,24 @@ class SettingsPrivacyPosture:
         "local data stays local unless explicit server handoff or sync is enabled"
     )
     server_boundary: str = "server tokens are reported as configured/missing only"
+    skill_trust_enabled: bool = False
+    skill_trust_status: str = "unavailable"
+    skill_trust_keyring_convenience_enabled: bool = False
+    skill_trust_reduced_rollback_protection: bool = False
 
 
 def build_settings_privacy_posture(
     app_config: object,
     *,
     environ: Mapping[str, str] | None = None,
+    skill_trust: Mapping[str, object] | None = None,
 ) -> SettingsPrivacyPosture:
     """Build a redacted Privacy & Security posture from config and environment.
 
     Args:
         app_config: The application configuration mapping to inspect.
         environ: Optional environment mapping. Defaults to ``os.environ``.
+        skill_trust: Optional redacted local skill trust posture mapping.
 
     Returns:
         A posture object containing only counts and status booleans.
@@ -91,6 +116,7 @@ def build_settings_privacy_posture(
         app_config,
         env,
     )
+    trust = skill_trust if isinstance(skill_trust, Mapping) else {}
     return SettingsPrivacyPosture(
         encryption_enabled=encryption_enabled,
         sensitive_config_fields=_sensitive_config_field_count(app_config),
@@ -98,6 +124,14 @@ def build_settings_privacy_posture(
         provider_env_missing=env_missing,
         provider_env_configured=env_total,
         provider_config_secrets=_provider_config_secret_count(app_config),
+        skill_trust_enabled=_safe_bool(trust.get("enabled")),
+        skill_trust_status=_safe_skill_trust_status(trust.get("trust_status")),
+        skill_trust_keyring_convenience_enabled=_safe_bool(
+            trust.get("keyring_convenience_enabled")
+        ),
+        skill_trust_reduced_rollback_protection=_safe_bool(
+            trust.get("reduced_rollback_protection")
+        ),
     )
 
 
@@ -124,10 +158,33 @@ def build_privacy_posture_rows(posture: SettingsPrivacyPosture) -> tuple[str, ..
             f"{posture.provider_env_configured} configured"
         ),
         f"Provider config secrets: {posture.provider_config_secrets} present",
+        (
+            "Skill trust: "
+            f"{posture.skill_trust_status if posture.skill_trust_enabled else 'disabled'}"
+        ),
+        (
+            "Skill trust keyring convenience: enabled"
+            if posture.skill_trust_keyring_convenience_enabled
+            else "Skill trust keyring convenience: disabled"
+        ),
+        (
+            "Skill trust rollback protection: reduced"
+            if posture.skill_trust_reduced_rollback_protection
+            else "Skill trust rollback protection: full"
+        ),
         f"Data boundary: {posture.data_boundary}",
         f"Server boundary: {posture.server_boundary}",
         "Privacy safety: no secret values were printed or written.",
     )
+
+
+def _safe_skill_trust_status(value: object) -> str:
+    status = str(value or "unavailable").strip()[:MAX_SKILL_TRUST_STATUS_CHARS]
+    return status if status in SAFE_SKILL_TRUST_STATUSES else "unavailable"
+
+
+def _safe_bool(value: object) -> bool:
+    return value is True
 
 
 def _is_sensitive_config_key(key: object) -> bool:

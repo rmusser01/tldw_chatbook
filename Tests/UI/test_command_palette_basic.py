@@ -73,12 +73,14 @@ def test_tab_navigation_provider_basic():
 def test_constants_available():
     """Test that tab constants are available."""
     try:
-        from tldw_chatbook.Constants import TAB_CHAT, TAB_NOTES, TAB_SEARCH
-        
+        from tldw_chatbook.Constants import ALL_TABS, TAB_CHAT, TAB_SEARCH
+
         assert TAB_CHAT == "chat"
-        assert TAB_NOTES == "notes" 
         assert TAB_SEARCH == "search"
-        
+        # Notes is retired as a standalone tab -- it now lives entirely
+        # inside Library.
+        assert "notes" not in ALL_TABS
+
     except ImportError:
         pytest.skip("Constants not available")
 

@@ -97,7 +97,7 @@ class CCPLoadingWidget(Static):
 
 class LoadingManager:
     """
-    Manages loading states for the CCP window.
+    Manages loading states for the Personas screen.
     Follows Textual's notification patterns.
     """
     
@@ -106,7 +106,7 @@ class LoadingManager:
         Initialize the loading manager.
         
         Args:
-            window: Reference to the CCP window
+            window: Reference to the Personas screen
         """
         self.window = window
         self.active_operations = {}
@@ -119,7 +119,7 @@ class LoadingManager:
             if not self._loading_widget:
                 self._loading_widget = CCPLoadingWidget()
                 await self.window.mount(self._loading_widget)
-                logger.debug("Loading widget mounted to CCP window")
+                logger.debug("Loading widget mounted to Personas screen")
         except Exception as e:
             logger.error(f"Failed to setup loading widget: {e}")
     
@@ -143,13 +143,19 @@ class LoadingManager:
             # Stop loading
             await self.stop_loading(operation_id)
     
-    async def start_loading(self, text: str = "Loading...", operation_id: str = None) -> str:
+    async def start_loading(
+        self,
+        text: str = "Loading...",
+        operation_id: str = None,
+        notify: bool = True,
+    ) -> str:
         """
         Start a loading operation.
         
         Args:
             text: The loading message
             operation_id: Unique ID for this operation
+            notify: Whether to show a user-facing notification
             
         Returns:
             The operation ID
@@ -164,7 +170,7 @@ class LoadingManager:
             self._loading_widget.start_loading(text)
         
         # Also use Textual's notify for important operations
-        if hasattr(self.window, 'notify'):
+        if notify and hasattr(self.window, 'notify'):
             self.window.notify(f"⏳ {text}", timeout=2)
         
         logger.debug(f"Started loading operation: {operation_id} - {text}")
@@ -204,8 +210,12 @@ class LoadingManager:
                 self._loading_widget.update_text(text)
 
 
-def with_loading(loading_text: str = "Processing...", success_text: str = "Complete!", 
-                 error_text: str = "Operation failed"):
+def with_loading(
+    loading_text: str = "Processing...",
+    success_text: str = "Complete!",
+    error_text: str = "Operation failed",
+    notify: bool = True,
+):
     """
     Decorator to automatically show loading indicators for async operations.
     
@@ -213,6 +223,7 @@ def with_loading(loading_text: str = "Processing...", success_text: str = "Compl
         loading_text: Text to show while loading
         success_text: Text to show on success
         error_text: Text to show on error
+        notify: Whether to show user-facing notifications
     
     Usage:
         @with_loading("Saving character...", "Character saved!", "Failed to save character")
@@ -235,20 +246,20 @@ def with_loading(loading_text: str = "Processing...", success_text: str = "Compl
             
             try:
                 # Start loading
-                await loading_manager.start_loading(loading_text, operation_id)
+                await loading_manager.start_loading(loading_text, operation_id, notify=notify)
                 
                 # Run the actual function
                 result = await func(self, *args, **kwargs)
                 
                 # Show success notification
-                if hasattr(self.window, 'notify'):
+                if notify and hasattr(self.window, 'notify'):
                     self.window.notify(f"✅ {success_text}", severity="information", timeout=2)
                 
                 return result
                 
             except Exception as e:
                 # Show error notification
-                if hasattr(self.window, 'notify'):
+                if notify and hasattr(self.window, 'notify'):
                     self.window.notify(f"❌ {error_text}: {str(e)}", severity="error", timeout=4)
                 logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
                 raise

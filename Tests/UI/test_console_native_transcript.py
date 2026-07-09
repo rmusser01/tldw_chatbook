@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageActionService,
     ConsoleSaveDestination,
 )
+from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Widgets.Console.console_save_as_modal import ConsoleSaveAsModal
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
@@ -236,7 +237,12 @@ async def test_console_transcript_empty_state_accepts_setup_copy():
     async with app.run_test() as pilot:
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
 
-        transcript.sync_empty_state("Choose a model in Console Settings to start chatting.")
+        transcript.sync_empty_state(
+            ConsoleSetupCardState(
+                mode="ready_line",
+                body_copy="Choose a model in Console Settings to start chatting.",
+            )
+        )
         await pilot.pause()
 
         empty_state = transcript.query_one(".console-transcript-empty-state", Static)
@@ -305,6 +311,18 @@ def test_console_transcript_action_row_stays_within_terminal_width_budget():
 
     assert action_row == "Copy Edit Save as... ♻ ---> 👍 👎 🗑"
     assert len(action_row) <= 48
+
+
+def test_console_transcript_selected_message_explains_icon_actions():
+    message = ConsoleChatMessage(role=ConsoleMessageRole.ASSISTANT, content="answer", id="m1")
+    transcript = ConsoleTranscript()
+    transcript.set_messages([message])
+    transcript.select_message("m1")
+
+    rendered = transcript.to_plain_text(width=80)
+
+    assert "Copy Edit Save as... ♻ ---> 👍 👎 🗑" in rendered
+    assert "Guide: ♻ Regenerate  ---> Continue  👍/👎 Rate  🗑 Delete" in rendered
 
 
 def test_console_transcript_variant_navigation_changes_displayed_content():
@@ -402,6 +420,7 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
     assert "👍" in text
     assert "👎" in text
     assert "🗑" in text
+    assert "Guide: ♻ Regenerate" in text
     assert "|" not in text
 
 
@@ -534,7 +553,17 @@ async def test_console_mounts_native_transcript_region():
 
 @pytest.mark.asyncio
 async def test_console_tab_reaches_major_console_screen_regions():
+    """Tab traversal reaches the major Console regions in the post-onboarding state.
+
+    First-run focus is intentionally owned by the blocking setup modal (see
+    ``ConsoleSetupModal.is_blocking``), which traps Tab until setup completes.
+    That is by design and covered separately. This test marks onboarding
+    complete (the same ``first_send_completed`` flag the app persists after a
+    real first send) so the modal renders in its non-blocking "quiet" mode
+    and Tab is free to reach the workbench regions during normal use.
+    """
     app = _build_test_app()
+    app.app_config.setdefault("console", {})["onboarding"] = {"first_send_completed": True}
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:

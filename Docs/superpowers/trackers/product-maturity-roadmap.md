@@ -36,6 +36,10 @@ Track product-depth maturity after Unified Shell Phase 6 so rendered screens, cl
 - Phase 3.7 verifies the next source-selected Study generation contract: queued server study-pack jobs can be observed into completed pack metadata and visible reusable Study dashboard state.
 - Gate 1.6 / Phase 3.8 verifies Library-native Search/RAG: Library owns the query/evidence workflow, retrieval results preserve snippets/citations/source authority, selected evidence stages into Console, and Console can invoke Library RAG or show a recoverable blocked state.
 - Phase 3.9 verifies the Library Collections IA split: Watchlists is the top-level monitored-source destination, Collections is discoverable and locally manageable inside Library, sync is shown as local-only or sync-unavailable, and citations/snippets remain later-stage Library/Search/RAG work.
+- TASK-89.8 closes the post-release Library content-hub epic with actual-use CDP/Textual-web QA across Content Hub, Search/RAG, Import/Export, Workspaces, Collections, Conversations, Study, Flashcards, and Quizzes; visual acceptance was approved from the rendered screenshots.
+- TASK-134 verifies the Library Source Workbench Stage A shell hierarchy with rendered CDP/Textual-web evidence: `Docs/superpowers/qa/library-source-workbench-stage-a/2026-06-24-library-source-workbench-stage-a.md`.
+- TASK-135 verifies the Library Source Workbench Stage B hub inventory rows with rendered CDP/Textual-web evidence: `Docs/superpowers/qa/library-source-workbench-stage-b/2026-06-24-library-source-workbench-stage-b.md`.
+- TASK-136 verifies the Library Source Workbench Stage C Search/RAG retrieval workbench with rendered CDP/Textual-web evidence: `Docs/superpowers/qa/library-source-workbench-stage-c/2026-06-25-library-source-workbench-stage-c.md`.
 - The destination visual parity correction verifies the approved mounted shell geometry for Home, Console, Library, Artifacts, Personas, Watchlists, Schedules, Workflows, MCP, ACP, Skills, and Settings at `140x42` and `100x32`.
 - Phase 3 parent closeout verifies all tracked Knowledge/Study gates and the destination visual parity correction are indexed, tested, and closed with no open P0/P1 findings.
 - Phase 5.4 verifies that Library Collections surfaces read-only sync mirror dry-run status and diagnostics from existing sync contracts without enabling write sync, mutation replay, or automatic merge behavior.
@@ -214,6 +218,8 @@ Post-release feature tranche status:
 | Phase 6.6 | `Docs/superpowers/qa/product-maturity/phase-6/2026-05-16-phase-6-6-packaging-config-data-safety.md` | verified; TASK-13.6 done |
 | Phase 6.7 | `Docs/superpowers/qa/product-maturity/phase-6/2026-05-16-phase-6-7-release-closeout.md` | verified; TASK-13.7 done |
 | Post-release Workspaces and Library depth | `Docs/superpowers/qa/product-maturity/post-release-ux-hci/2026-05-23-workspaces-library-depth.md` | verified; TASK-60.4.3 done |
+| Library content hub actual-use closeout | `Docs/superpowers/qa/library-content-hub-closeout/2026-06-22-library-content-hub-actual-use-closeout.md` | verified; TASK-89 and TASK-89.8 done |
+| Library Source Workbench Stage C Search/RAG | `Docs/superpowers/qa/library-source-workbench-stage-c/2026-06-25-library-source-workbench-stage-c.md` | verified; TASK-136 done |
 
 ## Phase Overview
 

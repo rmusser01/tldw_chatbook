@@ -399,7 +399,14 @@ def test_console_rail_preferences_accept_boolean_strings_case_insensitively():
 def test_console_rail_preferences_serialize_to_public_dict_shape():
     assert serialize_console_rail_preferences(
         ConsoleRailPreferences(left_open=False, right_open=True),
-    ) == {"left_open": False, "right_open": True}
+    ) == {
+        "left_open": False,
+        "right_open": True,
+        "session_open": True,
+        "context_open": True,
+        "model_open": True,
+        "details_open": False,
+    }
 
 
 def test_console_rail_badges_do_not_mutate_open_booleans():
@@ -438,3 +445,42 @@ def test_console_rail_state_compact_width_collapses_right_rail_effectively():
     assert state.right_open is False
     assert state.preferred_right_open is True
     assert state.right_forced_collapsed is True
+
+
+def test_console_rail_section_defaults():
+    from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS
+    prefs = ConsoleRailPreferences()
+    assert CONSOLE_RAIL_SECTION_IDS == ("session", "context", "model", "details")
+    assert prefs.session_open is True
+    assert prefs.context_open is True
+    assert prefs.model_open is True
+    assert prefs.details_open is False
+
+
+def test_coerce_console_rail_preferences_reads_section_fields():
+    coerced = coerce_console_rail_preferences(
+        {"left_open": True, "details_open": "true", "model_open": "off"}
+    )
+    assert coerced.details_open is True
+    assert coerced.model_open is False
+    assert coerced.session_open is True  # missing key -> default
+
+
+def test_serialize_console_rail_preferences_round_trips_sections():
+    prefs = ConsoleRailPreferences(details_open=True, context_open=False)
+    serialized = serialize_console_rail_preferences(prefs)
+    assert serialized["details_open"] is True
+    assert serialized["context_open"] is False
+    assert coerce_console_rail_preferences(serialized) == prefs
+
+
+def test_build_console_rail_state_carries_section_flags():
+    key = build_console_rail_preference_key(workspace_id="ws", session_id="s")
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"details_open": True, "session_open": False},
+    )
+    assert state.details_open is True
+    assert state.session_open is False
+    assert state.context_open is True
+    assert state.model_open is True

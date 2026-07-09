@@ -15,7 +15,6 @@ from textual.widgets import Button, Input, Static
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     RaisingLibraryNotesScopeService,
-    RaisingPersonasScopeService,
     RaisingSkillsScopeService,
     RaisingWatchlistsScopeService,
     StaticLibraryConversationScopeService,
@@ -177,25 +176,30 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
                 lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
                 context="console setup route",
             )
-            # In a clean run no model is selected yet, so the setup blocker is
-            # the model choice, surfaced as the "Choose Model" settings action.
-            # The persistent blocker strip is reserved for API-key-class
-            # blockers by design and stays hidden here.
+            # In a clean run the default model may be preselected, but the
+            # session settings action and setup card remain the
+            # recovery/control surfaces.
             await _wait_until(
                 pilot,
-                lambda: any(
-                    b.display and str(b.label) == "Choose Model"
-                    for b in app.screen.query("#console-settings-open")
-                ),
-                context="console provider setup blocker",
+                lambda: "Choose model" in _screen_text(app)
+                or "Open Settings" in _screen_text(app),
+                context="console provider setup controls",
             )
             assert (
                 app.screen._console_provider_blocker_copy()
                 == "Provider setup needed: choose a model"
             )
-            blocker_strip = app.screen.query("#console-provider-blocker")
-            assert blocker_strip and blocker_strip[0].display is False
-            assert app.screen.query_one("#console-open-provider-settings", Button)
+            # The shared Workbench recovery banner stays hidden — the setup
+            # card's action button is the recovery/control surface now
+            # (Phase 2 spec, section 2).
+            recovery_callout = app.screen.query("#workbench-recovery-callout")
+            assert recovery_callout and recovery_callout[0].display is False
+            recovery_action = app.screen.query_one("#workbench-recovery-action", Button)
+            assert recovery_action.display is False
+            card_action = app.screen.query_one("#console-setup-modal-action", Button)
+            assert card_action.display is True
+            assert str(card_action.label) == "Choose model"
+            assert not list(app.screen.query("#console-open-provider-settings"))
             assert "More: Ctrl+P" in _screen_text(app)
 
             await app.handle_screen_navigation(NavigateToScreen("acp"))
@@ -260,12 +264,6 @@ async def test_optional_dependency_missing_state_exposes_owner_and_setup_action(
             "library-error",
         ),
         (
-            "personas",
-            "#personas-attach-to-console",
-            "Personas service unavailable; retry Personas later.",
-            "personas-error",
-        ),
-        (
             "watchlists_collections",
             "#wc-attach-to-console",
             "Watchlists services unavailable; retry Watchlists later.",
@@ -292,9 +290,6 @@ async def test_service_unavailable_states_disable_false_console_handoffs(
         app.media_reading_scope_service = StaticLibraryMediaScopeService([])
         app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
         wait_for_snapshot = _wait_for_library_snapshot
-    elif setup == "personas-error":
-        app.character_persona_scope_service = RaisingPersonasScopeService()
-        wait_for_snapshot = _wait_for_personas_snapshot
     elif setup == "wc-error":
         app.watchlist_scope_service = RaisingWatchlistsScopeService()
         app.collections_feeds_scope_service = StaticReadItLaterScopeService([])
@@ -317,3 +312,17 @@ async def test_service_unavailable_states_disable_false_console_handoffs(
         assert "unavailable" in str(button.tooltip).lower()
 
 
+@pytest.mark.asyncio
+async def test_personas_default_state_disables_false_console_handoff() -> None:
+    """Personas starts local-first; Console attach stays blocked until selection."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "personas")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _wait_for_personas_snapshot(screen, pilot)
+        button = screen.query_one("#personas-attach-to-console", Button)
+
+        visible_text = _visible_text(screen)
+        assert "Console blocked: select an item" in visible_text
+        assert button.disabled is True

@@ -76,13 +76,15 @@ from .config import (
     get_writing_db_path,
 )
 from .Logging_Config import configure_application_logging
-from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_LOGS, TAB_NOTES, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
+from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_LOGS, TAB_STATS, TAB_TOOLS_SETTINGS, TAB_CUSTOMIZE, \
     TAB_INGEST, TAB_LLM, TAB_MEDIA, TAB_SEARCH, TAB_EVALS, TAB_LIBRARY, TAB_ARTIFACTS, TAB_PERSONAS, TAB_WATCHLISTS_COLLECTIONS, \
     TAB_SCHEDULES, TAB_WORKFLOWS, TAB_MCP, TAB_ACP, TAB_SKILLS, TAB_SETTINGS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
+    LIBRARY_NAV_CONTEXT_MODE, LIBRARY_NAV_CONTEXT_NOTE_ID, LIBRARY_NAV_CONTEXT_NOTES_CREATE, \
     get_tab_display_label
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.conversation_local_marks_service import ConversationLocalMarksService
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_live_work import (
     ConsoleLiveWorkLaunch,
@@ -120,6 +122,7 @@ from tldw_chatbook.Prompt_Management import (
 from tldw_chatbook.Utils.Emoji_Handling import get_char, EMOJI_TITLE_BRAIN, FALLBACK_TITLE_BRAIN, supports_emoji
 from tldw_chatbook.Utils.log_widget_manager import LogWidgetManager
 from tldw_chatbook.Utils.ui_helpers import UIHelpers
+from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Event_Handlers.worker_handlers import (
     WorkerHandlerRegistry, ChatWorkerHandler, ServerWorkerHandler,
@@ -142,7 +145,6 @@ from .Event_Handlers import (
     llm_nav_events, media_events, notes_events, app_lifecycle, tab_events,
     search_events, subscription_events,
 )
-from .Event_Handlers.tab_initializers.notes_tab_initializer import NotesTabInitializer
 from .Event_Handlers.Chat_Events import chat_events as chat_handlers, chat_events_sidebar, chat_events_worldbooks, \
     chat_events_dictionaries
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_events
@@ -202,7 +204,6 @@ from .LLM_Calls.LLM_API_Calls_Local import (
 from tldw_chatbook.config import get_chachanotes_db_path, settings, get_chachanotes_db_lazy
 from .UI.Navigation.main_navigation import NavigateToScreen
 from .UI.Navigation.screen_registry import resolve_screen_target
-from .UI.Screens.notes_scope_models import WorkspaceSubview
 from .UI.Screens.media_runtime_state import MediaRuntimeState
 from .UI.Screens.study_scope_models import StudyScopeContext
 # Ingest UI has been rebuilt to use an internal TabbedContent (local/remote)
@@ -217,6 +218,7 @@ from .UI.Customize_Window import CustomizeWindow
 from .UI.Tab_Bar import TabBar
 from .UI.Tab_Links import TabLinks
 from .UI.Tab_Dropdown import TabDropdown
+from .UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Chat_Grammars_Interop import (
     ChatGrammarsScopeService,
     LocalChatGrammarsService,
@@ -270,7 +272,17 @@ from tldw_chatbook.Research_Interop import (
 )
 from tldw_chatbook.Server_Runtime_Interop import ServerRuntimeScopeService, ServerRuntimeService
 from tldw_chatbook.Sharing_Interop import ServerSharingService, SharingScopeService
-from tldw_chatbook.Skills_Interop import LocalSkillsService, ServerSkillsService, SkillsScopeService
+from tldw_chatbook.Skills_Interop import (
+    LocalSkillsService,
+    ServerSkillsService,
+    SkillTrustService,
+    SkillsScopeService,
+)
+from tldw_chatbook.Skills_Interop.skill_trust_store import (
+    SkillTrustStore,
+    build_default_skill_trust_key_cache,
+    build_skill_trust_marker_store_with_fallback,
+)
 from tldw_chatbook.Sync_Interop import (
     LocalFirstSyncService,
     ManualSyncControlService,
@@ -343,7 +355,6 @@ SEARCH_NAV_EMBEDDINGS_MANAGE = "search-nav-embeddings-manage"
 CACHEABLE_SCREEN_ROUTES = {
     TAB_CHAT,
     TAB_LIBRARY,
-    TAB_NOTES,
     TAB_MEDIA,
     TAB_SEARCH,
     TAB_SETTINGS,
@@ -466,9 +477,14 @@ class ThemeProvider(Provider):
             self.app.notify(f"Failed to apply theme: {e}", severity="error")
 
 
-def _navigate_via_screen(app: App, route: str, success_message: str) -> None:
+def _navigate_via_screen(
+    app: App,
+    route: str,
+    success_message: str,
+    screen_context: dict[str, object] | None = None,
+) -> None:
     """Navigate through the screen router so palette commands work in shell mode."""
-    app.post_message(NavigateToScreen(route))
+    app.post_message(NavigateToScreen(route, screen_context))
     app.notify(success_message, severity="information")
 
 
@@ -489,7 +505,6 @@ class TabNavigationProvider(Provider):
         TAB_SKILLS: "Open Skills for Agent Skills discovery, validation, and attachments",
         TAB_SETTINGS: "Open global preferences, appearance, accounts, storage, and app behavior",
         TAB_CCP: "Switch to Personas for characters, personas, prompts, dictionaries, and world books",
-        TAB_NOTES: "Switch to notes management",
         TAB_MEDIA: "Switch to media library",
         TAB_SEARCH: "Switch to search and RAG",
         TAB_INGEST: "Switch to content ingestion",
@@ -744,7 +759,12 @@ class QuickActionsProvider(Provider):
             elif action_id == "new_character":
                 _navigate_via_screen(self.app, TAB_PERSONAS, "Opened Personas for character setup")
             elif action_id == "new_note":
-                _navigate_via_screen(self.app, TAB_NOTES, "Opened Notes for a new note")
+                _navigate_via_screen(
+                    self.app,
+                    TAB_LIBRARY,
+                    "Opened Library for a new note",
+                    {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True},
+                )
             elif action_id == "search_all":
                 _navigate_via_screen(self.app, TAB_SEARCH, "Opened Search/RAG")
             elif action_id == "import_media":
@@ -1115,7 +1135,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     CSS_PATH = str(Path(__file__).parent / "css/tldw_cli_modular.tcss")
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit App", show=True),
-        Binding("ctrl+p", "command_palette", "Palette Menu", show=True)
+        Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
+        Binding("f1", "show_workbench_help", "Help", show=True),
+        Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
     ]
     COMMANDS = App.COMMANDS | {
         ThemeProvider,
@@ -1125,7 +1147,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         SettingsProvider,
         CharacterProvider,
         MediaProvider,
-        DeveloperProvider
+        DeveloperProvider,
+        ConsoleCommandProvider,
     }
 
     ALL_INGEST_VIEW_IDS = INGEST_VIEW_IDS
@@ -1166,11 +1189,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Resolve legacy app-level queries against the active pushed screen when needed."""
         try:
             return super().query_one(selector, expect_type)
-        except NoMatches:
+        except NoMatches as error:
             try:
                 active_screen = self.screen
-            except Exception:
-                raise
+            except Exception as screen_error:
+                raise screen_error from error
             return active_screen.query_one(selector, expect_type)
 
     # RAG expansion provider reactive
@@ -1184,6 +1207,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     _db_size_status_widget: Optional[AppFooterStatus] = None
     # DB size update timer moved to DBStatusManager
     _token_count_update_timer: Optional[Timer] = None
+    ui_responsiveness_monitor: UIResponsivenessMonitor | None = None
+    _ui_responsiveness_heartbeat_timer: Optional[Timer] = None
 
     # Reactives for sidebar
     chat_sidebar_collapsed: reactive[bool] = reactive(True)
@@ -1383,6 +1408,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self.client_id = CLI_APP_CLIENT_ID
         self.prompts_client_id = "tldw_tui_client_v1" # Store client ID for prompts service
         self.db_status_manager = DBStatusManager(self)  # Initialize database status manager
+        self.ui_responsiveness_monitor = UIResponsivenessMonitor(
+            enabled=bool(get_cli_setting("diagnostics", "ui_responsiveness_enabled", True)),
+            heartbeat_interval_seconds=1.0,
+        )
         self._wire_server_context_provider()
         self._startup_phases["basic_init"] = time.perf_counter() - phase_start
         log_histogram("app_startup_phase_duration_seconds", self._startup_phases["basic_init"], 
@@ -1586,7 +1615,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         self._wire_research_services()
         self._wire_character_persona_services()
         self._wire_chat_conversation_services()
-        self._notes_tab_initializer = NotesTabInitializer(self)
 
         # --- Create the master handler map ---
         # This one-time setup makes the dispatcher clean and fast.
@@ -1642,14 +1670,24 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def open_notes_workspace(
         self,
         workspace_id: str,
-        subview: WorkspaceSubview = WorkspaceSubview.DETAILS,
+        subview: Any = None,
     ) -> None:
+        """Return to Library's Notes list after leaving it for another screen.
+
+        The standalone Notes tab's per-workspace scope has no equivalent in
+        Library, which browses notes as a flat list -- this always re-opens
+        the shared Library Notes list rather than any workspace-scoped view.
+
+        Args:
+            workspace_id: The retired Notes tab's workspace identifier.
+                Accepted for backward compatibility with existing callers
+                (e.g. Study's "back to workspace" action) but no longer
+                applied.
+            subview: The retired Notes tab's workspace subview. Accepted for
+                backward compatibility; no longer applied.
+        """
         self.invalidate_screen_cache()
-        self.pending_notes_workspace_context = {
-            "workspace_id": workspace_id,
-            "subview": subview,
-        }
-        self.post_message(NavigateToScreen(TAB_NOTES))
+        self.post_message(NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "notes"}))
 
     def open_chat_with_handoff(self, payload: ChatHandoffPayload) -> None:
         if not get_cli_setting("chat_defaults", "enable_tabs", True):
@@ -1858,6 +1896,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.chachanotes_db,
                 rag_context_store_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
             )
+            if getattr(self, "chachanotes_db", None) is not None
+            else None
+        )
+        self.conversation_local_marks_service = (
+            ConversationLocalMarksService(self.chachanotes_db)
             if getattr(self, "chachanotes_db", None) is not None
             else None
         )
@@ -2402,9 +2445,26 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 client=None,
                 policy_enforcer=self.service_policy_enforcer,
             )
+        local_skills_store_dir = get_user_data_dir() / "skills"
+        skill_trust_marker_store, reduced_rollback_protection = (
+            build_skill_trust_marker_store_with_fallback(
+                fallback_marker_path=local_skills_store_dir / "trust" / "generation_marker.json"
+            )
+        )
+        self.local_skill_trust_service = SkillTrustService(
+            skills_dir=local_skills_store_dir / "skills",
+            trust_store=SkillTrustStore(
+                store_dir=local_skills_store_dir / "trust",
+                marker_store=skill_trust_marker_store,
+            ),
+            key_cache=build_default_skill_trust_key_cache(),
+            keyring_convenience_enabled=False,
+            reduced_rollback_protection=reduced_rollback_protection,
+        )
         self.local_skills_service = LocalSkillsService(
-            store_dir=get_user_data_dir() / "skills",
+            store_dir=local_skills_store_dir,
             policy_enforcer=self.service_policy_enforcer,
+            trust_service=self.local_skill_trust_service,
         )
         self.skills_scope_service = SkillsScopeService(
             local_service=self.local_skills_service,
@@ -3134,6 +3194,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _create_main_ui_widgets(self) -> List[Widget]:
         """Create the main UI widgets (called after splash screen or immediately if disabled)."""
         widgets = []
+        self._start_ui_responsiveness_monitor()
         
         # ALWAYS use screen-based navigation now
         logger.info("Using screen-based navigation - skipping widget creation")
@@ -3164,6 +3225,104 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Screen-based navigation is used exclusively - no tab-based UI components needed
         return widgets
+
+    def _start_ui_responsiveness_monitor(self) -> None:
+        """Start the low-cost UI responsiveness heartbeat."""
+        interval_seconds = 1.0
+        try:
+            if self.ui_responsiveness_monitor is None:
+                enabled = bool(
+                    get_cli_setting("diagnostics", "ui_responsiveness_enabled", True)
+                )
+                self.ui_responsiveness_monitor = UIResponsivenessMonitor(
+                    enabled=enabled,
+                    heartbeat_interval_seconds=interval_seconds,
+                )
+            if not self.ui_responsiveness_monitor.enabled:
+                return
+            self.ui_responsiveness_monitor.record_timer_created("ui-heartbeat")
+            if getattr(self, "_ui_responsiveness_heartbeat_timer", None) is None:
+                self.ui_responsiveness_monitor.reset_heartbeat_baseline()
+                self._ui_responsiveness_heartbeat_timer = self.set_interval(
+                    interval_seconds,
+                    self._record_ui_heartbeat,
+                )
+        except Exception as exc:
+            logger.debug(f"UI responsiveness heartbeat setup skipped: {exc}")
+
+    def _record_ui_heartbeat(self) -> None:
+        """Record event-loop heartbeat drift without affecting UI behavior."""
+        try:
+            monitor = self.ui_responsiveness_monitor
+            if monitor is not None:
+                monitor.heartbeat()
+        except Exception as exc:
+            logger.debug(f"UI responsiveness heartbeat skipped: {exc}")
+
+    def _stop_ui_responsiveness_monitor(self) -> None:
+        """Stop the UI responsiveness heartbeat timer if it is active."""
+        timer = getattr(self, "_ui_responsiveness_heartbeat_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception as exc:
+                logger.debug(f"UI responsiveness heartbeat stop skipped: {exc}")
+            finally:
+                self._ui_responsiveness_heartbeat_timer = None
+        try:
+            monitor = self.ui_responsiveness_monitor
+            if monitor is not None:
+                monitor.record_timer_stopped("ui-heartbeat")
+        except Exception:
+            return
+
+    def _record_ui_responsiveness_timer_created(self, name: str) -> None:
+        """Best-effort timer diagnostic hook."""
+        try:
+            monitor = self.ui_responsiveness_monitor
+            if monitor is not None:
+                monitor.record_timer_created(name)
+        except Exception:
+            return
+
+    def _record_ui_responsiveness_timer_stopped(self, name: str) -> None:
+        """Best-effort timer diagnostic stop hook."""
+        try:
+            monitor = self.ui_responsiveness_monitor
+            if monitor is not None:
+                monitor.record_timer_stopped(name)
+        except Exception:
+            return
+
+    def _stop_footer_status_timers(self) -> None:
+        """Stop footer status timers and clear their diagnostic entries."""
+        timer = getattr(self, "_token_count_update_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception as exc:
+                logger.debug(f"Footer token timer stop skipped: {exc}")
+            finally:
+                self._token_count_update_timer = None
+        self._record_ui_responsiveness_timer_stopped("footer-db-size-periodic")
+        self._record_ui_responsiveness_timer_stopped("footer-token-periodic")
+
+    def _record_footer_timer_created(self, name: str) -> None:
+        """Record footer timer creation without making diagnostics mandatory."""
+        record_timer = getattr(
+            self,
+            "_record_ui_responsiveness_timer_created",
+            None,
+        )
+        try:
+            if callable(record_timer):
+                record_timer(name)
+                return
+            monitor = getattr(self, "ui_responsiveness_monitor", None)
+            if monitor is not None:
+                monitor.record_timer_created(name)
+        except Exception:
+            return
 
     def _resolve_screen_navigation_target(self, target: str):
         """Normalize navigation aliases to a routed screen id and canonical current_tab value."""
@@ -3215,7 +3374,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             destination.destination_id
             for destination in SHELL_DESTINATION_ORDER
         }
-        legacy_aliases = {"conversation", "llm", "subscription", "subscriptions", "tools_settings"}
+        legacy_aliases = {"conversation", "llm", "subscription", "subscriptions", "tools_settings", "notes"}
         return set(ALL_TABS) | shell_routes | legacy_aliases
 
     def _normalize_initial_tab_from_config(self, configured_route: str | None) -> str:
@@ -3244,8 +3403,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         requested_screen = message.screen_name
         screen_name, current_tab_value, screen_class = self._resolve_screen_navigation_target(requested_screen)
         logger.info(f"Navigating to screen: {requested_screen}")
-        previous_tab = self.current_tab
-        
+
         # Save state of current screen before switching
         current_screen = self.screen
         if current_screen and hasattr(current_screen, 'save_state'):
@@ -3263,9 +3421,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 logger.error(f"Error saving screen state: {e}")
         
         if screen_class:
-            if previous_tab == TAB_NOTES and previous_tab != current_tab_value:
-                await self._notes_tab_initializer.on_tab_hidden()
-
             new_screen = self._get_or_create_navigation_screen(screen_name, screen_class)
             
             # Restore state if available
@@ -4562,6 +4717,18 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     def _schedule_footer_status_updates(self) -> None:
         """Wire footer DB/token status updates after UI readiness."""
 
+        def record_footer_timer(name: str) -> None:
+            record_timer = getattr(self, "_record_footer_timer_created", None)
+            try:
+                if callable(record_timer):
+                    record_timer(name)
+                    return
+                monitor = getattr(self, "ui_responsiveness_monitor", None)
+                if monitor is not None:
+                    monitor.record_timer_created(name)
+            except Exception:
+                return
+
         try:
             self._db_size_status_widget = self.query_one(AppFooterStatus)
             self.loguru_logger.info("AppFooterStatus widget instance acquired.")
@@ -4571,9 +4738,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.update_db_sizes,
             )
             self.db_status_manager.start_periodic_updates(120)
+            record_footer_timer("footer-db-size-periodic")
             self.loguru_logger.info("DB size update timer started for AppFooterStatus (interval: 2 minutes).")
 
             self.set_timer(0.5, self.update_token_count_display)
+            record_footer_timer("footer-token-periodic")
             self._token_count_update_timer = self.set_interval(
                 10,
                 lambda: self.call_after_refresh(self.update_token_count_display),
@@ -4715,6 +4884,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Stop DB Size Update Timer ---
         self.db_status_manager.stop_periodic_updates()
+        self._stop_footer_status_timers()
         self.loguru_logger.info("DB size update timer stopped.")
         # --- End Stop DB Size Update Timer ---
 
@@ -4729,6 +4899,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         import asyncio
         logging.info("--- App Unmounting ---")
         self._ui_ready = False
+        self._stop_ui_responsiveness_monitor()
         
         # Stop all background services and threads
         try:
@@ -4843,6 +5014,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # Stop DB size update timer on unmount as well, if not already handled by shutdown_request
         self.db_status_manager.stop_periodic_updates()
+        self._stop_footer_status_timers()
         self.loguru_logger.info("DB size update timer stopped during unmount.")
 
         # Find and remove file handler (more robustly)
@@ -4982,9 +5154,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
         # --- Hide Old Tab ---
         if old_tab and old_tab != new_tab:
-            if old_tab == TAB_NOTES:
-                self.call_after_refresh(self._notes_tab_initializer.on_tab_hidden)
-
             # Update navigation UI to remove active state from old tab
             use_dropdown = get_cli_setting("general", "use_dropdown_navigation", False)
             use_links = get_cli_setting("general", "use_link_navigation", True)
@@ -5051,18 +5220,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             # Update word count and token count in footer based on tab
             try:
                 footer = self.query_one("AppFooterStatus")
-                if new_tab == "notes":
-                    # Get current word count from notes editor
-                    try:
-                        notes_editor = self.query_one("#notes-editor-area", TextArea)
-                        text = notes_editor.text
-                        word_count = len(text.split()) if text else 0
-                        footer.update_word_count(word_count)
-                    except QueryError:
-                        footer.update_word_count(0)
-                    # Clear token count when on notes tab
-                    footer.update_token_count("")
-                elif new_tab == TAB_CHAT:
+                if new_tab == TAB_CHAT:
                     # Clear word count when on chat tab
                     footer.update_word_count(0)
                     # Update token count immediately
@@ -5126,8 +5284,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             
             # Call immediately after refresh
             self.call_after_refresh(populate_ccp_widgets)
-        elif new_tab == TAB_NOTES:
-            self.call_after_refresh(self._notes_tab_initializer.on_tab_shown)
         elif new_tab == TAB_MEDIA:
             def activate_media_initial_view():
                 try:
@@ -5865,7 +6021,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             window_id_map = {
                 TAB_CHAT: "chat-window",
                 TAB_CCP: "conversations_characters_prompts-window",
-                TAB_NOTES: "notes-window",
                 TAB_MEDIA: "media-window",
                 TAB_SEARCH: "search-window",
                 TAB_INGEST: "ingest-window",
@@ -6697,6 +6852,32 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 timeout=5
             )
     
+    async def action_show_workbench_help(self) -> None:
+        """Delegate contextual help to the active Workbench screen."""
+        handler = getattr(self.screen, "action_show_workbench_help", None)
+        if callable(handler):
+            result = handler()
+            if inspect.isawaitable(result):
+                await result
+            return
+        self.notify(
+            "No contextual help is available for this screen.",
+            severity="information",
+        )
+
+    async def action_focus_next_workbench_pane(self) -> None:
+        """Delegate pane focus cycling to the active Workbench screen."""
+        handler = getattr(self.screen, "action_focus_next_workbench_pane", None)
+        if callable(handler):
+            result = handler()
+            if inspect.isawaitable(result):
+                await result
+            return
+        self.notify(
+            "No workbench pane focus target is available.",
+            severity="information",
+        )
+
     def action_quit(self) -> None:
         """Handle application quit - save persistent caches before exiting."""
         loguru_logger.info("Application quit initiated")
@@ -7254,8 +7435,8 @@ def main_cli_runner():
     # If --serve flag is provided, run as web server
     if args.serve:
         # Check if web server dependencies are available
-        from .Utils.optional_deps import DEPENDENCIES_AVAILABLE
-        if not DEPENDENCIES_AVAILABLE.get('web', False):
+        from .Web_Server.serve import check_web_server_available, run_web_server
+        if not check_web_server_available():
             loguru_logger.error("\n" + "="*60)
             loguru_logger.error("Web server feature is not available!")
             loguru_logger.error("="*60)
@@ -7266,9 +7447,7 @@ def main_cli_runner():
             loguru_logger.error("  pip install -e \".[web]\"")
             loguru_logger.error("\n" + "="*60 + "\n")
             return
-        
-        from .Web_Server.serve import run_web_server
-        
+
         loguru_logger.info("Starting tldw_chatbook in web server mode")
         run_web_server(
             host=args.host,

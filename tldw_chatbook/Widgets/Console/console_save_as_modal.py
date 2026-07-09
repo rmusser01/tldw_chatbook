@@ -41,13 +41,34 @@ class ConsoleSaveAsModal(ModalScreen[str | None]):
 
     BINDINGS = [("escape", "dismiss", "Close")]
 
-    def __init__(self, *, destinations: list[ConsoleSaveDestination]) -> None:
+    def __init__(
+        self,
+        *,
+        destinations: list[ConsoleSaveDestination],
+        message_role: str = "Message",
+        message_excerpt: str = "",
+    ) -> None:
         super().__init__()
         self.destinations = destinations
+        self.message_role = message_role.strip() or "Message"
+        self.message_excerpt = message_excerpt.strip()
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-save-as-modal"):
-            yield Static("Save as...", classes="console-transcript-action-row")
+            yield Static("Save as...", classes="console-modal-header")
+            yield Static(
+                f"Saving selected {self.message_role} message",
+                id="console-save-as-context",
+                classes="console-save-as-context",
+                markup=False,
+            )
+            if self.message_excerpt:
+                yield Static(
+                    f"Excerpt: {self.message_excerpt}",
+                    id="console-save-as-excerpt",
+                    classes="console-save-as-context",
+                    markup=False,
+                )
             if not any(destination.available for destination in self.destinations):
                 yield Static(
                     "No Save as destinations are wired for selected messages yet.",

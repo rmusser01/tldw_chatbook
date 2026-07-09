@@ -303,3 +303,110 @@ def test_dashboard_item_statuses_gate_matching_controls():
     assert "home-open-details" in control_ids
     assert "home-pause" not in control_ids
     assert "home-open-in-console" not in control_ids
+
+
+from datetime import datetime, timezone
+
+from tldw_chatbook.Home.dashboard_state import build_home_triage_state
+
+_NOW = datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _items_input(**overrides) -> HomeDashboardInput:
+    defaults = dict(
+        model_ready=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="wf:approve-1",
+                title="Approval: publish chatbook",
+                source="Workflows",
+                status="pending_approval",
+                detail_route="workflows",
+                console_available=True,
+                updated_at="2026-07-04T11:57:00+00:00",
+            ),
+            HomeActiveWorkItem(
+                item_id="watch:run-1",
+                title="Watchlist sweep",
+                source="Watchlists",
+                status="running",
+                detail_route="watchlists",
+                updated_at="2026-07-04T12:00:00+00:00",
+            ),
+            HomeActiveWorkItem(
+                item_id="sched:fail-1",
+                title="Retry: ingest failure",
+                source="Schedules",
+                status="failed",
+                detail_route="schedules",
+                updated_at="2026-07-04T11:00:00+00:00",
+            ),
+        ),
+    )
+    defaults.update(overrides)
+    return HomeDashboardInput(**defaults)
+
+
+def test_triage_sections_split_by_status_with_ages():
+    triage = build_home_triage_state(_items_input(), now=_NOW)
+    by_id = {section.section_id: section for section in triage.sections}
+    attention = by_id["attention"]
+    running = by_id["running"]
+    assert attention.title == "Needs Attention"
+    assert attention.count == 2  # approval + failed
+    titles = [row.title for row in attention.rows]
+    assert "Approval: publish chatbook" in titles
+    assert "Retry: ingest failure" in titles
+    approval_row = next(r for r in attention.rows if r.row_id == "wf:approve-1")
+    assert approval_row.age_label == "3m"
+    assert approval_row.glyph == "\u25cf"
+    assert running.count == 1
+    assert running.rows[0].age_label == "now"
+
+
+def test_triage_header_line_formats():
+    triage = build_home_triage_state(_items_input(), now=_NOW)
+    assert triage.header_line == "Home | Ready \u00b7 Local"
+    blocked = build_home_triage_state(
+        _items_input(model_ready=False, runtime_source="server", server_label="lab"),
+        now=_NOW,
+    )
+    assert blocked.header_line == "Home | Blocked \u00b7 Server: lab"
+
+
+def test_triage_default_selection_prefers_attention_and_builds_canvas():
+    triage = build_home_triage_state(_items_input(), now=_NOW)
+    assert triage.selected_row_id == "wf:approve-1"
+    assert triage.canvas.title == "Approval: publish chatbook"
+    action_ids = [a.control_id for a in triage.canvas.actions]
+    assert "home-approve" in action_ids and "home-reject" in action_ids
+    assert triage.canvas.next_action_is_canvas is False
+
+
+def test_triage_explicit_selection_and_missing_age_blank():
+    triage = build_home_triage_state(
+        _items_input(
+            active_work_items=(
+                HomeActiveWorkItem(
+                    item_id="x:1",
+                    title="No timestamp item",
+                    source="ACP",
+                    status="running",
+                ),
+            )
+        ),
+        selected_row_id="x:1",
+        now=_NOW,
+    )
+    assert triage.selected_row_id == "x:1"
+    assert triage.sections[1].rows[0].age_label == ""
+
+
+def test_triage_empty_input_makes_next_action_the_canvas():
+    triage = build_home_triage_state(HomeDashboardInput(model_ready=True), now=_NOW)
+    assert all(section.count == 0 for section in triage.sections[:2])
+    assert triage.canvas.next_action_is_canvas is True
+    assert triage.canvas.next_action.label
+    by_id = {s.section_id: s for s in triage.sections}
+    assert by_id["attention"].empty_copy == "No approvals or failures pending."
+    assert triage.details_lines  # system status relocated here

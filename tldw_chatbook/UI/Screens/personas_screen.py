@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import json
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -14,19 +13,19 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import QueryError
+from textual.timer import Timer
 from textual.widgets import Button, Input, ListView, Static, TextArea
 
 from ...Character_Chat.Character_Chat_Lib import (
     export_character_card_to_json,
     export_character_card_to_png,
-    replace_placeholders,
     validate_character_book,
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
-from ...Chat.console_chat_models import ConsoleProviderSelection
-from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...tldw_api import PersonaProfileCreate, PersonaProfileUpdate
+from ...Utils.path_validation import validate_path_simple
+from ...Widgets.Console.console_rail_handle import ConsoleRailHandle
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import PersonaProfileCardWidget
@@ -49,6 +48,7 @@ from ...Widgets.Persona_Widgets.personas_messages import (
 )
 from ...Widgets.Persona_Widgets.personas_pane_messages import (
     CharacterEditorCancelled,
+    CharacterImageUploadRequested,
     CharacterSaveRequested,
     ConversationRowSelected,
     EditCharacterRequested,
@@ -62,17 +62,20 @@ from ...Widgets.Persona_Widgets.personas_pane_messages import (
 )
 from ...Widgets.Persona_Widgets.personas_preview_pane import PersonasPreviewPane
 from ...Widgets.Persona_Widgets.personas_state import MODE_LABELS, PersonasWorkbenchState
+from ...Widgets.workbench_focus import WorkbenchPaneTarget, focus_relative_workbench_pane
 from ..CCP_Modules import ccp_character_handler
 from ..CCP_Modules.ccp_character_handler import CCPCharacterHandler
+from ..CCP_Modules.ccp_enhanced_handlers import setup_ccp_enhancements
 from ..CCP_Modules.ccp_messages import CharacterMessage
 from ..CCP_Modules.ccp_persona_handler import CCPPersonaHandler
+from .destination_recovery import DestinationRecoveryState
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.shortcut_context import ShortcutAction, ShortcutContext
 from ..Persona_Modules.personas_conversations_controller import (
     _CONVERSATION_VIEW_ID,
-    _HANDOFF_TRANSCRIPT_CHAR_LIMIT,
     PersonasConversationsController,
 )
+from ..Persona_Modules.personas_preview_controller import PersonasPreviewController
 
 
 logger = logger.bind(module="PersonasScreen")
@@ -82,6 +85,18 @@ logger = logger.bind(module="PersonasScreen")
 MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "prompts", "dictionaries", "lore")
 
 PLACEHOLDER_COPY = "This mode is not available yet. Characters and Personas are the supported modes."
+PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
+PERSONAS_AVATAR_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
+PERSONAS_AVATAR_IMAGE_SUFFIX_COPY = "PNG, JPG, JPEG, WEBP, or GIF"
+PERSONAS_AVATAR_MAX_BYTES = 5 * 1024 * 1024
+PERSONAS_AVATAR_MAX_SIZE_COPY = "5 MB"
+
+# 80-column terminals need a tighter three-pane split than the default
+# 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
+# task can replace it without changing pane widgets.
+PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH = 90
+PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH = 13
+PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH = 11
 
 #: Center-area widgets toggled by ``_show_center``.
 _CENTER_VIEW_IDS: tuple[str, ...] = (
@@ -110,6 +125,15 @@ class PersonasScreen(BaseAppScreen):
     # Esc inside an editor TextArea is cancel-with-guard by design (the
     # unsaved-changes dialog prompts before anything is discarded).
     BINDINGS = [
+        *BaseAppScreen.BINDINGS,
+        Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
+        Binding(
+            "shift+f6",
+            "focus_previous_workbench_pane",
+            "Previous pane",
+            show=False,
+            priority=True,
+        ),
         Binding("ctrl+n", "personas_new", "New"),
         Binding("ctrl+f", "personas_search", "Search"),
         Binding("ctrl+enter", "personas_attach", "Attach"),
@@ -130,6 +154,36 @@ class PersonasScreen(BaseAppScreen):
         Binding("left_square_bracket", "personas_mode_cycle(-1)", "Prev mode", show=False),
         Binding("right_square_bracket", "personas_mode_cycle(1)", "Next mode", show=False),
     ]
+    _WORKBENCH_FOCUS_TARGETS = (
+        WorkbenchPaneTarget(
+            "personas-library-rail-handle",
+            ("personas-library-rail-open",),
+        ),
+        WorkbenchPaneTarget(
+            "personas-library-pane",
+            (
+                "personas-library-search",
+                "personas-library-rail-collapse",
+                "personas-library-new",
+            ),
+        ),
+        WorkbenchPaneTarget(
+            "personas-work-area",
+            ("personas-preview-input", "personas-preview-toggle"),
+        ),
+        WorkbenchPaneTarget(
+            "personas-inspector-pane",
+            (
+                "personas-conversations-list",
+                "personas-inspector-rail-collapse",
+                "personas-attach-to-console",
+            ),
+        ),
+        WorkbenchPaneTarget(
+            "personas-inspector-rail-handle",
+            ("personas-inspector-rail-open",),
+        ),
+    )
 
     # Baseline workbench geometry so the screen renders correctly even without
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
@@ -197,6 +251,28 @@ class PersonasScreen(BaseAppScreen):
         width: 2fr;
     }
 
+    #personas-workbench.personas-workbench-compact {
+        padding: 0;
+    }
+
+    #personas-library-pane.personas-workbench-compact-pane {
+        width: 1fr;
+        min-width: 16;
+        padding: 0 1;
+    }
+
+    #personas-work-area.personas-workbench-compact-pane {
+        width: 3fr;
+        min-width: 34;
+        padding: 0 1;
+    }
+
+    #personas-inspector-pane.personas-workbench-compact-pane {
+        width: 1fr;
+        min-width: 22;
+        padding: 0 1;
+    }
+
     #personas-detail-stack {
         width: 100%;
         height: 1fr;
@@ -244,29 +320,32 @@ class PersonasScreen(BaseAppScreen):
         self._io_dialog_active: bool = False
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
+        self._character_editor_generation: int = 0
         self._profile_save_inflight: bool = False
         self._characters: list[dict] = []
         self._profiles: list[dict] = []
+        self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
+        self._search_debounce_timer: Timer | None = None
         # Serializes library renders: the pane's update_rows has two
         # suspension points, so interleaved renders could double-mount rows.
         self._render_lock = asyncio.Lock()
-        # Ephemeral preview conversation: in-memory only, never persisted.
-        self._preview_history: list[dict[str, str]] = []
-        # Monotonic generation for the preview: every reset/reseed bumps it,
-        # invalidating in-flight preview workers whose snapshot is older
-        # (the selection key alone cannot catch a Reset of the SAME selection).
-        self._preview_generation: int = 0
-        # Character id whose greeting last seeded the preview; the
-        # CharacterMessage.Loaded handler uses it to avoid double-seeding.
-        self._preview_seeded_for: str | None = None
-        self._preview_gateway: ConsoleProviderGateway | None = None
+        self._workbench_compact: bool | None = None
+        self._library_rail_collapsed: bool = False
+        self._inspector_rail_collapsed: bool = False
         self.character_handler = CCPCharacterHandler(self)
         self.persona_handler = CCPPersonaHandler(self)
         self.conversations = PersonasConversationsController(self)
+        self.preview = PersonasPreviewController(self)
+        setup_ccp_enhancements(self)
 
     # ===== Compose =====
 
     def compose_content(self) -> ComposeResult:
+        """Compose the Personas destination shell and workbench rails.
+
+        Returns:
+            Textual compose result for the Personas content tree.
+        """
         with Vertical(id="personas-shell"):
             yield Static(
                 self._title_text(),
@@ -297,10 +376,28 @@ class PersonasScreen(BaseAppScreen):
                         tooltip=f"Switch the workbench to {MODE_LABELS[mode]}.",
                     )
             with Horizontal(id="personas-workbench", classes="ds-panel destination-workbench"):
-                yield PersonasLibraryPane(
+                library_handle = ConsoleRailHandle(
+                    label="Library",
+                    button_id="personas-library-rail-open",
+                    badge_id="personas-library-rail-badge",
+                    side="left",
+                    id="personas-library-rail-handle",
+                )
+                library_handle.styles.width = PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH
+                library_handle.styles.min_width = PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH
+                library_handle.styles.max_width = PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH
+                if not self._library_rail_collapsed:
+                    library_handle.display = False
+                yield library_handle
+
+                library_pane = PersonasLibraryPane(
                     id="personas-library-pane",
                     classes="destination-workbench-pane",
                 )
+                if self._library_rail_collapsed:
+                    library_pane.display = False
+                yield library_pane
+
                 with Vertical(id="personas-work-area", classes="destination-workbench-pane"):
                     with Container(id="personas-detail-stack"):
                         yield PersonasCharacterCardWidget()
@@ -320,13 +417,38 @@ class PersonasScreen(BaseAppScreen):
                         yield PersonasConversationTranscriptWidget()
                         yield Static(PLACEHOLDER_COPY, id="personas-mode-placeholder")
                     yield PersonasPreviewPane(id="personas-preview-pane")
-                yield PersonasInspectorPane(
+
+                inspector_pane = PersonasInspectorPane(
                     id="personas-inspector-pane",
                     classes="destination-workbench-pane ds-inspector",
                 )
+                if self._inspector_rail_collapsed:
+                    inspector_pane.display = False
+                yield inspector_pane
+
+                inspector_handle = ConsoleRailHandle(
+                    label="Inspector",
+                    button_id="personas-inspector-rail-open",
+                    badge_id="personas-inspector-rail-badge",
+                    side="right",
+                    id="personas-inspector-rail-handle",
+                )
+                inspector_handle.styles.width = PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH
+                inspector_handle.styles.min_width = PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH
+                inspector_handle.styles.max_width = PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH
+                if not self._inspector_rail_collapsed:
+                    inspector_handle.display = False
+                yield inspector_handle
 
     async def on_mount(self) -> None:
         super().on_mount()
+        loading_manager = getattr(self, "loading_manager", None)
+        setup_loading = getattr(loading_manager, "setup", None)
+        if callable(setup_loading):
+            await setup_loading()
+        self._sync_responsive_workbench()
+        self._sync_personas_rails()
+        self._sync_personas_rail_tooltips()
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
         self._show_center(None)
         await self.character_handler.refresh_character_list()
@@ -334,15 +456,63 @@ class PersonasScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         super().on_unmount()
+        self._cancel_search_debounce()
         self._clear_footer_shortcuts()
-        # Release the preview gateway's HTTP client; unmount must not crash.
-        gateway = self._preview_gateway
-        self._preview_gateway = None
-        if gateway is not None:
+        await self.preview.close_gateway()
+
+    def on_resize(self, event: Any) -> None:
+        """Refresh compact workbench classes after terminal size changes.
+
+        Args:
+            event: Textual resize event emitted when the screen size changes.
+        """
+        self._sync_responsive_workbench()
+
+    def _sync_responsive_workbench(self) -> None:
+        compact = self.size.width <= PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH
+        if self._workbench_compact == compact:
+            return
+        try:
+            workbench = self.query_one("#personas-workbench")
+        except QueryError:
+            return
+        self._workbench_compact = compact
+        workbench.set_class(compact, "personas-workbench-compact")
+        for pane_id in (
+            "#personas-library-pane",
+            "#personas-work-area",
+            "#personas-inspector-pane",
+        ):
             try:
-                await gateway.aclose()
-            except Exception:
-                logger.warning("Could not close the preview provider gateway.", exc_info=True)
+                self.query_one(pane_id).set_class(compact, "personas-workbench-compact-pane")
+            except QueryError:
+                continue
+
+    def _sync_personas_rails(self) -> None:
+        """Mirror Console/Notes collapsible rails for Library and Inspector."""
+        if not self.is_mounted:
+            return
+        try:
+            library_open = not self._library_rail_collapsed
+            inspector_open = not self._inspector_rail_collapsed
+            self.query_one("#personas-library-pane").display = library_open
+            self.query_one("#personas-library-rail-handle").display = not library_open
+            self.query_one("#personas-inspector-pane").display = inspector_open
+            self.query_one("#personas-inspector-rail-handle").display = not inspector_open
+        except QueryError:
+            return
+
+    def _sync_personas_rail_tooltips(self) -> None:
+        """Set Personas-specific collapsed rail tooltips on shared handles."""
+        try:
+            self.query_one("#personas-library-rail-open", Button).tooltip = (
+                "Open Library rail"
+            )
+            self.query_one("#personas-inspector-rail-open", Button).tooltip = (
+                "Open Inspector rail"
+            )
+        except QueryError:
+            return
 
     # ===== Library rendering =====
 
@@ -371,9 +541,38 @@ class PersonasScreen(BaseAppScreen):
             if record.get("id") is not None
         )
 
-    async def _render_library_rows(self) -> None:
-        query = self.state.search_query
+    def _library_render_snapshot_is_current(
+        self,
+        *,
+        expected_query: str | None = None,
+        expected_mode: str | None = None,
+    ) -> bool:
+        """Return whether a delayed library render still matches live state."""
+
+        has_snapshot = expected_query is not None or expected_mode is not None
+        if has_snapshot and not self.is_mounted:
+            return False
+        if expected_mode is not None and expected_mode != self.state.active_mode:
+            return False
+        if expected_query is not None and expected_query != self.state.search_query:
+            return False
+        return True
+
+    async def _render_library_rows(
+        self,
+        *,
+        expected_query: str | None = None,
+        expected_mode: str | None = None,
+    ) -> None:
+        if not self._library_render_snapshot_is_current(
+            expected_query=expected_query,
+            expected_mode=expected_mode,
+        ):
+            return
+
+        query = expected_query if expected_query is not None else self.state.search_query
         total = len(self._characters)
+        filtered_total_unbounded = False
         if query:
             if total >= self.LIBRARY_FTS_THRESHOLD:
                 # Large library: use FTS so the full DB corpus is searched
@@ -384,6 +583,7 @@ class PersonasScreen(BaseAppScreen):
                 matched = await asyncio.to_thread(
                     ccp_character_handler.search_characters_fts, query
                 )
+                filtered_total_unbounded = True
             else:
                 # Small library: filter in-memory, case-insensitively on name.
                 q_lower = query.lower()
@@ -392,10 +592,26 @@ class PersonasScreen(BaseAppScreen):
         else:
             matched = self._characters
             filtered = False
+        if not self._library_render_snapshot_is_current(
+            expected_query=expected_query,
+            expected_mode=expected_mode,
+        ):
+            return
         async with self._render_lock:
+            if not self._library_render_snapshot_is_current(
+                expected_query=expected_query,
+                expected_mode=expected_mode,
+            ):
+                return
             rows = self._build_library_rows(matched, "character")
             library = self.query_one(PersonasLibraryPane)
-            await library.update_rows(rows, total=total, noun="characters", filtered=filtered)
+            await library.update_rows(
+                rows,
+                total=total,
+                noun="characters",
+                filtered=filtered,
+                filtered_total_unbounded=filtered_total_unbounded,
+            )
             if self.state.selected_entity_kind == "character" and self.state.selected_entity_id:
                 library.mark_active_row("character", self.state.selected_entity_id)
 
@@ -407,14 +623,39 @@ class PersonasScreen(BaseAppScreen):
                 return record
         return None
 
+    def _profile_list_recovery_state(self, exc: Exception) -> DestinationRecoveryState:
+        """Build recovery copy when persona profile listing is unavailable."""
+
+        reason = str(exc).strip() or "The current backend did not return persona profiles."
+        disabled_tooltip = (
+            f"{reason} Retry Personas or use Characters until persona profiles are available."
+        )
+        return DestinationRecoveryState(
+            status_label="Persona profiles unavailable",
+            unavailable_what="Browse persona profiles in Personas",
+            why=reason,
+            next_action=(
+                "Check the current runtime backend or retry after persona profile support is available"
+            ),
+            recovery_action="Retry Personas or use Characters",
+            authority_owner="persona scope service",
+            stable_selector="personas-service-error",
+            disabled_tooltip=disabled_tooltip,
+        )
+
     @work(exclusive=True, group="personas-list-refresh")
     async def _refresh_profile_rows_worker(self) -> None:
         """Fetch persona profile rows and render them while still in Personas mode."""
         try:
-            profiles = await self.persona_handler.refresh_persona_list()
-        except Exception:
+            profiles = await self.persona_handler.refresh_persona_list(
+                raise_on_unavailable=True
+            )
+        except Exception as exc:
             logger.warning("Could not refresh the persona profile list.", exc_info=True)
+            self._profile_lookup_recovery_state = self._profile_list_recovery_state(exc)
             profiles = []
+        else:
+            self._profile_lookup_recovery_state = None
         self._profiles = [dict(record) for record in (profiles or [])]
         self._update_status_row()
         if not self.is_mounted or self.state.active_mode != "personas":
@@ -426,8 +667,19 @@ class PersonasScreen(BaseAppScreen):
             # Tolerate refreshes that race screen teardown.
             logger.warning("Could not render the persona profile rows.", exc_info=True)
 
-    async def _render_profile_rows(self) -> None:
-        query = self.state.search_query
+    async def _render_profile_rows(
+        self,
+        *,
+        expected_query: str | None = None,
+        expected_mode: str | None = None,
+    ) -> None:
+        if not self._library_render_snapshot_is_current(
+            expected_query=expected_query,
+            expected_mode=expected_mode,
+        ):
+            return
+
+        query = expected_query if expected_query is not None else self.state.search_query
         total = len(self._profiles)
         if query:
             q_lower = query.lower()
@@ -437,25 +689,83 @@ class PersonasScreen(BaseAppScreen):
             matched = self._profiles
             filtered = False
         async with self._render_lock:
+            if not self._library_render_snapshot_is_current(
+                expected_query=expected_query,
+                expected_mode=expected_mode,
+            ):
+                return
             rows = self._build_library_rows(matched, "persona_profile")
             library = self.query_one(PersonasLibraryPane)
-            await library.update_rows(rows, total=total, noun="persona profiles", filtered=filtered)
+            recovery_state = self._profile_lookup_recovery_state
+            await library.update_rows(
+                rows,
+                total=total,
+                noun="persona profiles",
+                filtered=filtered,
+                recovery_copy=(
+                    recovery_state.visible_copy if recovery_state is not None else None
+                ),
+                recovery_id=(
+                    recovery_state.stable_selector
+                    if recovery_state is not None
+                    else "personas-library-recovery"
+                ),
+            )
             if self.state.selected_entity_kind == "persona_profile" and self.state.selected_entity_id:
                 library.mark_active_row("persona_profile", self.state.selected_entity_id)
 
     @on(PersonaSearchChanged)
-    async def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
+    def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
         message.stop()
         # Search does not change selection or center pane — no unsaved guard needed.
         self.state.search_query = message.query.strip()
-        if self.state.active_mode == "characters":
+        self._cancel_search_debounce()
+        query = self.state.search_query
+        mode = self.state.active_mode
+        self._search_debounce_timer = self.set_timer(
+            PERSONAS_SEARCH_DEBOUNCE_SECONDS,
+            lambda: self._start_debounced_search_render(query=query, mode=mode),
+        )
+
+    def _cancel_search_debounce(self) -> None:
+        """Cancel a pending search render when newer state supersedes it."""
+
+        if self._search_debounce_timer is not None:
+            self._search_debounce_timer.stop()
+            self._search_debounce_timer = None
+
+    def _start_debounced_search_render(self, *, query: str, mode: str) -> None:
+        """Start the debounced render after the active timer has fired."""
+
+        self._search_debounce_timer = None
+        self.run_worker(
+            self._render_search_query(query=query, mode=mode),
+            exclusive=True,
+            group="personas-library-search",
+        )
+
+    async def _render_search_query(self, *, query: str, mode: str) -> None:
+        """Render the latest debounced library search for the active mode."""
+
+        if not self._library_render_snapshot_is_current(
+            expected_query=query,
+            expected_mode=mode,
+        ):
+            return
+        if mode == "characters":
             try:
-                await self._render_library_rows()
+                await self._render_library_rows(
+                    expected_query=query,
+                    expected_mode=mode,
+                )
             except Exception:
                 logger.warning("Could not re-render character rows after search.", exc_info=True)
-        elif self.state.active_mode == "personas":
+        elif mode == "personas":
             try:
-                await self._render_profile_rows()
+                await self._render_profile_rows(
+                    expected_query=query,
+                    expected_mode=mode,
+                )
             except Exception:
                 logger.warning("Could not re-render profile rows after search.", exc_info=True)
 
@@ -511,7 +821,32 @@ class PersonasScreen(BaseAppScreen):
             return
         await self._run_guarded(lambda: self._apply_mode(mode))
 
+    @on(Button.Pressed, "#personas-library-rail-collapse")
+    def _handle_library_rail_collapse(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._library_rail_collapsed = True
+        self._sync_personas_rails()
+
+    @on(Button.Pressed, "#personas-library-rail-open")
+    def _handle_library_rail_open(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._library_rail_collapsed = False
+        self._sync_personas_rails()
+
+    @on(Button.Pressed, "#personas-inspector-rail-collapse")
+    def _handle_inspector_rail_collapse(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._inspector_rail_collapsed = True
+        self._sync_personas_rails()
+
+    @on(Button.Pressed, "#personas-inspector-rail-open")
+    def _handle_inspector_rail_open(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._inspector_rail_collapsed = False
+        self._sync_personas_rails()
+
     async def _apply_mode(self, mode: str) -> None:
+        self._cancel_search_debounce()
         self.state.switch_mode(mode)
         # switch_mode does not reset search_query; clear it explicitly and
         # reset the Input widget so the library starts unfiltered in the new mode.
@@ -530,12 +865,13 @@ class PersonasScreen(BaseAppScreen):
         library.set_mode(mode)
         # clear_selection empties the conversations panel; drop the caches too.
         self.conversations.reset()
-        await self._reset_preview("")
+        await self.preview.reset("")
         await self.query_one(PersonasInspectorPane).clear_selection()
         if mode == "characters":
             await self._render_library_rows()
             self._show_center(None)
         elif mode == "personas":
+            self._profile_lookup_recovery_state = None
             await library.update_rows((), total=0, noun="persona profiles")
             self._show_center(None)
             self._refresh_profile_rows_worker()
@@ -610,6 +946,7 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_selection(name=entity_name, kind="character", authority="Local")
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        self._sync_inspector_console_actions()
         # Drop any previous character's rows immediately and show a loading
         # placeholder; the worker fills the panel in once the listing returns
         # (or replaces the placeholder with the empty-state copy).
@@ -623,14 +960,11 @@ class PersonasScreen(BaseAppScreen):
         # this character's full card (re-selection), seed now; otherwise clear
         # the preview and let the CharacterMessage.Loaded handler seed it.
         record = self._full_character_record(entity_id)
-        if record is not None:
-            greeting = replace_placeholders(
-                str(record.get("first_message") or ""), entity_name, "User"
-            )
-            await self._reset_preview(greeting)
-            self._preview_seeded_for = entity_id
-        else:
-            await self._reset_preview("")
+        await self.preview.reset_for_character(
+            character_id=entity_id,
+            character_name=entity_name,
+            record=record,
+        )
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
         self.state.select_entity(
@@ -647,11 +981,12 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_selection(name=entity_name, kind="persona_profile", authority="Local")
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        self._sync_inspector_console_actions()
         # Persona profiles have no conversation linkage in the local data.
         self.conversations.reset()
         await inspector.show_conversations(())
         # Profiles have no first_message concept; start the preview empty.
-        await self._reset_preview("")
+        await self.preview.reset("")
 
     # ===== Saved conversations =====
 
@@ -744,6 +1079,32 @@ class PersonasScreen(BaseAppScreen):
             and not self.state.has_unsaved_changes
         )
 
+    def _console_action_block_reason(self) -> str:
+        """Return a readable reason for a blocked screen-owned Console action.
+
+        Returns:
+            Human-readable block reason suitable for inspector readiness copy.
+        """
+        if self.state.has_unsaved_changes:
+            return "unsaved edits"
+        if not self.state.selected_entity_id:
+            return "select an item"
+        if self.state.selected_entity_kind not in ("character", "persona_profile"):
+            return "select a character or persona"
+        return "unavailable"
+
+    def _sync_inspector_console_actions(self) -> None:
+        """Push the single screen-owned Console gate into the inspector pane."""
+        try:
+            inspector = self.query_one(PersonasInspectorPane)
+        except QueryError:
+            return
+        allowed = self._console_action_allowed()
+        inspector.set_console_actions_enabled(
+            allowed,
+            reason=None if allowed else self._console_action_block_reason(),
+        )
+
     async def _selection_handoff_body(self) -> str | None:
         """Readable card summary for the selected item, or ``None`` when stale."""
         kind = self.state.selected_entity_kind
@@ -832,288 +1193,28 @@ class PersonasScreen(BaseAppScreen):
         event.stop()
         await self._attach_selection_to_console(intent="start_chat")
 
-    # ===== Ephemeral preview conversation =====
-    #
-    # The preview is in-memory only: history lives on the screen, the
-    # transcript lives in the pane, and the provider call goes straight
-    # through the Console gateway. Nothing is ever written to a database.
-
-    def _invalidate_preview(self) -> None:
-        """Drop the preview history and invalidate in-flight preview replies.
-
-        Every path that clears the history (Reset, mode switch, selection
-        change, greeting reseed) must come through here so a late-landing
-        reply can never be appended to the cleared state: the generation bump
-        makes any running worker's snapshot stale, and the group cancel stops
-        the stream outright instead of letting it finish for nothing.
-        """
-        self._preview_generation += 1
-        self.workers.cancel_group(self, "personas-preview")
-        self._preview_history.clear()
-
-    async def _reset_preview(self, greeting: str) -> None:
-        """Clear the preview history and reseed the pane's transcript."""
-        self._invalidate_preview()
-        self._preview_seeded_for = None
-        try:
-            await self.query_one(PersonasPreviewPane).seed_greeting(greeting)
-        except QueryError:
-            # Tolerate calls that race screen teardown.
-            pass
-
     @on(CharacterMessage.Loaded)
     async def _handle_character_loaded(self, message: CharacterMessage.Loaded) -> None:
-        """Seed the preview greeting once the load worker delivers the card.
-
-        ``load_character`` only schedules a thread worker, so
-        ``_select_character`` usually cannot read ``first_message``
-        synchronously; the handler posts ``CharacterMessage.Loaded`` (with the
-        full card) to this screen when the load completes.
-        """
         message.stop()
-        character_id = str(message.character_id)
-        # Staleness check: only the current character selection, in
-        # Characters mode, may seed the preview.
-        if (
-            self.state.active_mode != "characters"
-            or self.state.selected_entity_kind != "character"
-            or str(self.state.selected_entity_id or "") != character_id
-        ):
-            return
-        try:
-            pane = self.query_one(PersonasPreviewPane)
-        except QueryError:
-            return
-        # Seeding rule: seed only when the pane transcript is empty OR the
-        # loaded id differs from the last-seeded id. A re-load of the same
-        # already-previewed character (e.g. after a save) mid-conversation
-        # must not wipe the in-progress preview, and the instant path in
-        # _select_character must not be double-seeded.
-        if self._preview_seeded_for == character_id and pane.transcript_text():
-            return
-        record = dict(message.card_data or {})
-        name = str(record.get("name") or self.state.selected_entity_name or "")
-        greeting = replace_placeholders(
-            str(record.get("first_message") or ""), name, "User"
+        await self.preview.handle_character_loaded(
+            character_id=str(message.character_id),
+            card_data=message.card_data,
         )
-        # Greeting reseed implies fresh preview state (history + workers).
-        self._invalidate_preview()
-        await pane.seed_greeting(greeting)
-        self._preview_seeded_for = character_id
-
-    def _ensure_preview_gateway(self) -> ConsoleProviderGateway:
-        """Lazy singleton gateway, config-injected like the Console screen's."""
-        if self._preview_gateway is None:
-            self._preview_gateway = ConsoleProviderGateway(
-                config_provider=lambda: getattr(self.app_instance, "app_config", {}) or {},
-            )
-        return self._preview_gateway
-
-    def _preview_system_prompt(self) -> str:
-        """System prompt for the preview call; draft-aware while editing.
-
-        An open character edit session previews the editor's CURRENT form
-        data (the point of the pane); otherwise the selected full character
-        record or persona profile record is used.
-        """
-        record: dict = {}
-        if self.state.active_mode == "characters":
-            if self._edit_mode in ("edit", "create"):
-                try:
-                    record = self.query_one(PersonasCharacterEditorWidget).get_character_data() or {}
-                except Exception:
-                    logger.warning("Could not collect editor data for the preview.", exc_info=True)
-                    record = {}
-            else:
-                record = self._full_character_record(str(self.state.selected_entity_id or "")) or {}
-        elif self.state.active_mode == "personas":
-            record = self._profile_record(self.state.selected_entity_id) or {}
-        parts = [
-            str(record.get(key) or "").strip()
-            for key in ("system_prompt", "personality", "description", "scenario")
-        ]
-        prompt = "\n".join(part for part in parts if part)
-        return prompt or "Stay in character."
 
     @on(PreviewReplyRequested)
     def _handle_preview_reply(self, message: PreviewReplyRequested) -> None:
         message.stop()
-        self._preview_history.append({"role": "user", "content": message.user_message})
-        self._run_preview_reply()
-
-    def _pop_orphaned_preview_user_turn(self) -> None:
-        """Drop a trailing unanswered user entry from the preview history.
-
-        Called on failure paths: _handle_preview_reply appends the user turn
-        before the worker runs, so a failed reply would otherwise leave an
-        orphan that makes a retry send the message twice. The transcript line
-        is deliberately LEFT visible - the user really did say it; only the
-        provider-facing history is corrected.
-        """
-        if self._preview_history and self._preview_history[-1].get("role") == "user":
-            self._preview_history.pop()
-
-    @work(exclusive=True, group="personas-preview")
-    async def _run_preview_reply(self) -> None:
-        """Resolve the configured provider and stream one preview reply."""
-        pane = self.query_one(PersonasPreviewPane)
-        config = getattr(self.app_instance, "app_config", {}) or {}
-        defaults = config.get("character_defaults", {}) or {}
-        provider = str(defaults.get("provider") or "")
-        model = str(defaults.get("model") or "")
-        selection = ConsoleProviderSelection(provider=provider, explicit_model=model or None)
-        gateway = self._ensure_preview_gateway()
-        # Staleness snapshot: the selection key catches selection moves; the
-        # generation catches a Reset/reseed of the SAME selection, which
-        # clears the history without changing the key. _invalidate_preview
-        # also cancels this worker group, but the snapshot guards any window
-        # where the cancellation has not landed yet.
-        selection_key = (self.state.selected_entity_kind, self.state.selected_entity_id)
-        generation = self._preview_generation
-
-        def _stale() -> bool:
-            return (
-                not self.is_mounted
-                or generation != self._preview_generation
-                or (self.state.selected_entity_kind, self.state.selected_entity_id)
-                != selection_key
-            )
-
-        try:
-            resolution = await gateway.resolve_for_send(selection)
-        except Exception:
-            logger.error("Preview provider resolution failed.", exc_info=True)
-            if not _stale():
-                self._pop_orphaned_preview_user_turn()
-                pane.set_status("Provider error - try again or configure in Settings")
-            return
-        if not resolution.ready:
-            if not _stale():
-                self._pop_orphaned_preview_user_turn()
-                pane.set_status(
-                    resolution.visible_copy or "Provider unavailable - configure in Settings"
-                )
-            return
-        pane.set_status("Running")
-        # An exclusive-cancelled predecessor may have left a half-streamed
-        # reply line behind; this run owns the transcript now, so drop it.
-        await pane.discard_partial_reply()
-        # Coalesce consecutive user turns: an exclusive-cancelled predecessor
-        # worker (double-fired Test Reply) leaves [user, user] in the history,
-        # which strict providers reject; join them into one message instead.
-        history: list[dict[str, str]] = []
-        for entry in self._preview_history:
-            if history and entry["role"] == "user" and history[-1]["role"] == "user":
-                history[-1] = {
-                    "role": "user",
-                    "content": f"{history[-1]['content']}\n{entry['content']}",
-                }
-            else:
-                history.append(dict(entry))
-        messages = [
-            {"role": "system", "content": self._preview_system_prompt()}
-        ] + history
-        async def _consume(res: Any) -> str | None:
-            """Render one provider stream into the pane; None means stale-abort."""
-            consumed = ""
-            opened = False
-            async for chunk in gateway.stream_chat(res, messages):
-                if _stale():
-                    # The selection changed or the preview was reset while the
-                    # provider was streaming. The invalidation paths reseed the
-                    # pane (removing the partial line); the discard here only
-                    # covers the window before that reseed lands, and is a
-                    # no-op afterwards.
-                    await pane.discard_partial_reply()
-                    return None
-                consumed += chunk
-                if chunk:
-                    # Progressive rendering: the first chunk opens the reply
-                    # line, later chunks grow it in place.
-                    if not opened:
-                        pane.begin_reply()
-                        opened = True
-                    pane.append_reply_chunk(chunk)
-            return consumed
-
-        try:
-            reply = await _consume(resolution)
-        except Exception:
-            logger.error(
-                "Preview provider call failed; retrying without streaming.",
-                exc_info=True,
-            )
-            if _stale():
-                await pane.discard_partial_reply()
-                return
-            # Non-streaming fallback: retry ONCE with streaming disabled.
-            # Any half-streamed fragment belongs to the failed attempt and
-            # must not prefix the retry's rendering.
-            await pane.discard_partial_reply()
-            pane.set_status("Retrying without streaming...")
-            try:
-                retry_resolution = await gateway.resolve_for_send(
-                    dataclasses.replace(selection, streaming=False)
-                )
-                if not retry_resolution.ready:
-                    raise RuntimeError(
-                        retry_resolution.visible_copy or "provider unavailable"
-                    )
-                reply = await _consume(retry_resolution)
-            except Exception:
-                logger.error("Preview non-streaming retry failed.", exc_info=True)
-                if not _stale():
-                    # Keep the user's transcript line, but pop the unanswered
-                    # history entry so a retry does not duplicate the turn, and
-                    # remove any half-streamed reply line - the reply never
-                    # completed, so the transcript must not keep a fragment.
-                    # The orphan pop happens only HERE, after both attempts.
-                    self._pop_orphaned_preview_user_turn()
-                    await pane.discard_partial_reply()
-                    pane.set_status(
-                        "Provider error - try again or configure in Settings"
-                    )
-                return
-        if reply is None:
-            # A stale-abort inside _consume already discarded the partial line.
-            return
-        if _stale():
-            # Same staleness rule for a stream that ended after invalidation.
-            await pane.discard_partial_reply()
-            return
-        if reply:
-            # The transcript already shows the full streamed line; commit it
-            # and give the history ONE consolidated assistant entry.
-            self._preview_history.append({"role": "assistant", "content": reply})
-            pane.finalize_reply()
-            pane.set_status("Ready")
-        else:
-            # An empty stream must not add a bare "character:" line or an
-            # empty assistant history entry (no line was begun: chunks were
-            # empty or absent).
-            pane.set_status("No reply received")
+        self.preview.handle_reply_requested(message.user_message)
 
     @on(PreviewResetRequested)
     def _handle_preview_reset(self, message: PreviewResetRequested) -> None:
         message.stop()
-        # The pane already restored its transcript to the greeting; clear the
-        # history AND invalidate any in-flight reply so it cannot land late.
-        self._invalidate_preview()
+        self.preview.handle_reset()
 
     @on(PreviewOpenInConsoleRequested)
     def _handle_preview_open_console(self, message: PreviewOpenInConsoleRequested) -> None:
         message.stop()
-        transcript = self.query_one(PersonasPreviewPane).transcript_text()
-        truncated = len(transcript) > _HANDOFF_TRANSCRIPT_CHAR_LIMIT
-        staged = self._stage_handoff(
-            item_type="preview-conversation",
-            title="Personas preview conversation",
-            body=transcript[:_HANDOFF_TRANSCRIPT_CHAR_LIMIT],
-            body_truncated=truncated,
-            suggested_prompt="Continue this conversation in character.",
-        )
-        if staged:
-            self._notify("Preview conversation staged in Console.", "information")
+        self.preview.open_in_console()
 
     # ===== Create / edit =====
 
@@ -1135,6 +1236,7 @@ class PersonasScreen(BaseAppScreen):
         # Delete and the rest are wired in follow-up tasks.
 
     async def _begin_create_character(self) -> None:
+        self._character_editor_generation += 1
         self._edit_mode = "create"
         self.state.clear_selection()
         # Change-based dirty tracking: the session starts clean; the editor
@@ -1192,6 +1294,7 @@ class PersonasScreen(BaseAppScreen):
         if record is None:
             self._notify("Character data is not loaded yet.", severity="warning")
             return
+        self._character_editor_generation += 1
         self._edit_mode = "edit"
         # Change-based dirty tracking: the session starts clean; the editor
         # posts EditorContentChanged on the first real modification.
@@ -1253,14 +1356,133 @@ class PersonasScreen(BaseAppScreen):
             return dict(loaded)
         return None
 
+    def _character_editor_is_active(self) -> bool:
+        """Return whether the visible edit session is the character editor."""
+        if self._edit_mode not in ("create", "edit"):
+            return False
+        try:
+            editor = self.query_one(PersonasCharacterEditorWidget)
+        except QueryError:
+            return False
+        return editor.display is True
+
+    def _character_editor_session_token(
+        self,
+    ) -> tuple[int, str, str, str | None, str | None] | None:
+        """Return the current character edit session identity, if visible."""
+        if not self._character_editor_is_active():
+            return None
+        return (
+            self._character_editor_generation,
+            self._edit_mode,
+            self.state.active_mode,
+            self.state.selected_entity_kind,
+            self.state.selected_entity_id,
+        )
+
+    def _read_avatar_image_bytes(self, path: str) -> bytes:
+        candidate = validate_path_simple(path, require_exists=True)
+        if not candidate.is_file():
+            raise ValueError("Choose an existing avatar image file.")
+        if candidate.suffix.lower() not in PERSONAS_AVATAR_IMAGE_SUFFIXES:
+            raise ValueError(
+                f"Unsupported avatar image type. Use {PERSONAS_AVATAR_IMAGE_SUFFIX_COPY}."
+            )
+        if candidate.stat().st_size > PERSONAS_AVATAR_MAX_BYTES:
+            raise ValueError(
+                f"Avatar image must be {PERSONAS_AVATAR_MAX_SIZE_COPY} or smaller."
+            )
+        data = candidate.read_bytes()
+        if not data:
+            raise ValueError("Avatar image file is empty.")
+        return data
+
+    async def _stage_character_avatar_from_path(self, path: str) -> None:
+        session_token = self._character_editor_session_token()
+        if session_token is None:
+            self._notify("Open a character editor before uploading an avatar.", "warning")
+            return
+        try:
+            image_data = await asyncio.to_thread(self._read_avatar_image_bytes, path)
+        except ValueError as exc:
+            self._notify(str(exc), "error")
+            return
+        except OSError as exc:
+            logger.error(f"Error reading avatar image from {path}: {exc}", exc_info=True)
+            self._notify(f"Avatar upload failed: {exc}", "error")
+            return
+        if self._character_editor_session_token() != session_token:
+            logger.debug(
+                "Avatar upload result ignored because the character editor session "
+                f"changed. path={path!r}, original_session={session_token!r}, "
+                f"current_session={self._character_editor_session_token()!r}"
+            )
+            return
+        try:
+            self.query_one(PersonasCharacterEditorWidget).set_avatar_image(image_data)
+        except Exception as exc:
+            logger.error(
+                "Could not stage avatar image in editor. "
+                f"path={path!r}, edit_mode={self._edit_mode!r}, "
+                f"active_mode={self.state.active_mode!r}, "
+                f"selected_kind={self.state.selected_entity_kind!r}, "
+                f"selected_id={self.state.selected_entity_id!r}, "
+                f"image_size_bytes={len(image_data)}: {exc}",
+                exc_info=True,
+            )
+            self._notify(f"Avatar upload failed: {exc}", "error")
+            return
+        self._notify("Avatar staged. Save the character to persist it.", "information")
+
     # ===== Import / export =====
     #
     # Dialog flows run in workers (push_screen_wait requires one); the
     # path-based methods below them are dialog-free so tests can call them
-    # directly. Sync DB/file work runs via asyncio.to_thread rather than a
-    # @work(thread=True) worker (the pattern saves use) because import and
-    # export need their result awaited inline for the follow-up
-    # selection/notification steps.
+    # directly. Sync DB/file work runs via asyncio.to_thread instead of a
+    # threaded Textual worker because import and export need their result
+    # awaited inline for the follow-up selection/notification steps.
+
+    @on(CharacterImageUploadRequested)
+    def _handle_character_image_upload_requested(
+        self, message: CharacterImageUploadRequested
+    ) -> None:
+        message.stop()
+        if not self._character_editor_is_active():
+            self._notify("Open a character editor before uploading an avatar.", "warning")
+            return
+        if self._io_dialog_active:
+            logger.debug("Import/export dialog already active; ignoring avatar upload request.")
+            return
+        self._io_dialog_active = True
+        self.run_worker(self._avatar_upload_dialog_worker(), group="personas-io")
+
+    async def _avatar_upload_dialog_worker(self) -> None:
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        try:
+            picker = EnhancedFileOpen(
+                title="Upload Character Avatar",
+                filters=Filters(
+                    (
+                        "Image Files",
+                        lambda p: p.suffix.lower() in PERSONAS_AVATAR_IMAGE_SUFFIXES,
+                    ),
+                    ("PNG Files", lambda p: p.suffix.lower() == ".png"),
+                    ("JPEG Files", lambda p: p.suffix.lower() in (".jpg", ".jpeg")),
+                    ("WEBP Files", lambda p: p.suffix.lower() == ".webp"),
+                    ("GIF Files", lambda p: p.suffix.lower() == ".gif"),
+                ),
+                context="character_avatar_upload",
+            )
+            try:
+                file_path = await self.app.push_screen_wait(picker)
+            except Exception:
+                logger.warning("Could not show the avatar upload file dialog.", exc_info=True)
+                return
+            if file_path:
+                await self._stage_character_avatar_from_path(str(file_path))
+        finally:
+            self._io_dialog_active = False
 
     async def _open_import_dialog(self) -> None:
         """Continuation for the guarded import action: launch the dialog worker."""
@@ -1279,8 +1501,16 @@ class PersonasScreen(BaseAppScreen):
             picker = EnhancedFileOpen(
                 title="Import Character Card",
                 filters=Filters(
-                    ("Character Cards", lambda p: p.suffix.lower() in (".json", ".png")),
+                    (
+                        "Character Cards",
+                        lambda p: p.suffix.lower()
+                        in (".json", ".md", ".markdown", ".png"),
+                    ),
                     ("JSON Files", lambda p: p.suffix.lower() == ".json"),
+                    (
+                        "Markdown Files",
+                        lambda p: p.suffix.lower() in (".md", ".markdown"),
+                    ),
                     ("PNG Files (with embedded data)", lambda p: p.suffix.lower() == ".png"),
                     ("All Files", lambda p: True),
                 ),
@@ -1614,7 +1844,7 @@ class PersonasScreen(BaseAppScreen):
             # clear_selection on the inspector also empties the conversations
             # panel; drop the controller caches and the ephemeral preview too.
             self.conversations.reset()
-            await self._reset_preview("")
+            await self.preview.reset("")
             await self.query_one(PersonasInspectorPane).clear_selection()
             self._show_center(None)
             self._register_footer_shortcuts()
@@ -1658,30 +1888,30 @@ class PersonasScreen(BaseAppScreen):
             # editing state instead of duplicating the error detail.
             self.query_one(PersonasInspectorPane).show_validation_editing()
             return
-        # Snapshot UI-thread state here; the worker thread must not read it.
+        # Snapshot UI-thread state here; the background persistence call must
+        # not read mutable screen state.
         self._save_character_worker(data, self.state.selected_entity_id, self._edit_mode)
 
-    @work(thread=True, exclusive=True, group="personas-save")
-    def _save_character_worker(self, data: dict, selected_id: str | None, edit_mode: str) -> None:
+    @work(exclusive=True, group="personas-save")
+    async def _save_character_worker(self, data: dict, selected_id: str | None, edit_mode: str) -> None:
         """Persist via the legacy module-level helpers off the UI thread."""
         try:
-            if edit_mode == "create" or not selected_id:
-                saved_id = ccp_character_handler.create_character(data)
-                if not saved_id:
-                    raise RuntimeError("Character creation returned no id.")
-            else:
+            def persist_character() -> str:
+                if edit_mode == "create" or not selected_id:
+                    created_id = ccp_character_handler.create_character(data)
+                    if not created_id:
+                        raise RuntimeError("Character creation returned no id.")
+                    return str(created_id)
                 if not ccp_character_handler.update_character(selected_id, data):
                     raise RuntimeError(f"Character update failed for id {selected_id}.")
-                saved_id = selected_id
+                return str(selected_id)
+
+            saved_id = await asyncio.to_thread(persist_character)
         except Exception as exc:
             logger.error(f"Error saving character: {exc}", exc_info=True)
-            self.app.call_from_thread(
-                self._notify, f"Save failed: {exc}", "error"
-            )
+            self._notify(f"Save failed: {exc}", "error")
             return
-        self.app.call_from_thread(
-            self._after_character_save, str(saved_id), str(data.get("name") or "")
-        )
+        await self._after_character_save(saved_id, str(data.get("name") or ""))
 
     async def _after_character_save(self, saved_id: str, submitted_name: str = "") -> None:
         if not self.is_mounted or self.state.active_mode != "characters":
@@ -1693,6 +1923,7 @@ class PersonasScreen(BaseAppScreen):
             except Exception:
                 logger.warning("Could not refresh characters after a late save.", exc_info=True)
             return
+        self._character_editor_generation += 1
         self._edit_mode = "view"
         self._set_active_row_unsaved(False)
         await self.character_handler.refresh_character_list()
@@ -1704,6 +1935,7 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_selection(name=name, kind="character", authority="Local")
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        self._sync_inspector_console_actions()
         self.query_one(PersonasLibraryPane).mark_active_row("character", saved_id)
         if record is not None:
             await self.character_handler.load_character(saved_id)
@@ -1782,12 +2014,19 @@ class PersonasScreen(BaseAppScreen):
 
     async def _after_profile_save(self, saved: dict) -> None:
         # Refresh the cached profile list tolerantly even when the user has
-        # already left the screen or switched modes during the save.
         try:
-            profiles = await self.persona_handler.refresh_persona_list()
-            self._profiles = [dict(record) for record in (profiles or [])]
-        except Exception:
+            profiles = await self.persona_handler.refresh_persona_list(
+                raise_on_unavailable=True
+            )
+        except Exception as exc:
             logger.warning("Could not refresh persona profiles after a save.", exc_info=True)
+            self._profile_lookup_recovery_state = self._profile_list_recovery_state(exc)
+            profiles = []
+        else:
+            self._profile_lookup_recovery_state = None
+        self._profiles = [dict(record) for record in (profiles or [])]
+        self._update_status_row()
+        self._update_status_row()
         if not self.is_mounted or self.state.active_mode != "personas":
             # Leave the selection, inspector, and center pane alone.
             return
@@ -1803,6 +2042,7 @@ class PersonasScreen(BaseAppScreen):
         inspector.show_selection(name=name, kind="persona_profile", authority="Local")
         inspector.set_unsaved(False)
         inspector.show_validation(())
+        self._sync_inspector_console_actions()
         await self._render_profile_rows()
         self.query_one(PersonaProfileCardWidget).show_persona(saved)
         self._show_center("#ccp-persona-card-view")
@@ -1822,6 +2062,7 @@ class PersonasScreen(BaseAppScreen):
         await self._run_guarded(_finish)
 
     def _finish_cancel_edit(self) -> None:
+        self._character_editor_generation += 1
         self._edit_mode = "view"
         self.state.has_unsaved_changes = False
         inspector = self.query_one(PersonasInspectorPane)
@@ -2079,6 +2320,22 @@ class PersonasScreen(BaseAppScreen):
         except QueryError:
             pass
 
+    def action_focus_next_workbench_pane(self) -> None:
+        """F6: move focus to the next Personas workbench pane."""
+        focus_relative_workbench_pane(
+            self,
+            self._WORKBENCH_FOCUS_TARGETS,
+            direction=1,
+        )
+
+    def action_focus_previous_workbench_pane(self) -> None:
+        """Shift+F6: move focus to the previous Personas workbench pane."""
+        focus_relative_workbench_pane(
+            self,
+            self._WORKBENCH_FOCUS_TARGETS,
+            direction=-1,
+        )
+
     def _focus_conversations_list(self) -> None:
         """Focus the inspector's conversations list (transcript Back path)."""
         if self._focus_steal_blocked():
@@ -2130,6 +2387,7 @@ class PersonasScreen(BaseAppScreen):
         # editing/selection state, which are also the transitions the live
         # header reflects; refresh the title here so the two stay in lockstep.
         self._update_title()
+        self._sync_inspector_console_actions()
         try:
             footer = self.app.query_one("AppFooterStatus")
         except QueryError:

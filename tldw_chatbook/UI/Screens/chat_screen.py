@@ -1,12 +1,13 @@
 """Chat screen implementation with comprehensive state management."""
 
-from dataclasses import replace
+from collections.abc import Mapping
+from dataclasses import asdict, replace
 from datetime import datetime
 import inspect
 import os
 from pathlib import Path
 import re
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
 import uuid
 
 import toml
@@ -14,9 +15,11 @@ from loguru import logger
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.events import Click, Key, MouseUp, Paste
+from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widgets import Button, Static, TextArea, Select, Collapsible, Input
 
@@ -35,9 +38,12 @@ from ...Chat.console_chat_controller import ConsoleChatController
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     DEFAULT_CONSOLE_SESSION_TITLE,
+    ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleProviderSelection,
     ConsoleRunStatus,
+    ConsoleVariant,
+    ConsoleVariantSet,
     ConsoleWorkspaceContext,
     ConsoleStagedSource,
 )
@@ -47,11 +53,12 @@ from ...Chat.console_session_settings import (
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
     build_console_context_estimate,
+    build_console_model_section_lines,
     build_default_console_session_settings,
     build_console_settings_readiness,
     build_console_settings_summary_state,
 )
-from ...Chat.console_chat_store import ConsoleChatStore
+from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_provider_gateway import (
     DEFAULT_LLAMACPP_BASE_URL,
     ConsoleProviderGateway,
@@ -65,10 +72,16 @@ from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_REVIEW_TOOL_CALL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleControlState,
+    ConsoleDisplayRow,
     ConsoleInspectorState,
     ConsoleStagedContextState,
     build_console_evidence_display_state,
     coerce_non_negative_int,
+)
+from ...Chat.console_onboarding_state import (
+    ConsoleSetupCardState,
+    build_console_setup_card_state,
+    coerce_console_first_send_completed,
 )
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.chat_models import ChatSessionData
@@ -79,12 +92,15 @@ from ...Chat.console_live_work import (
     ConsoleLiveWorkSourceReadinessState,
     ConsoleLiveWorkStatusCardState,
 )
+from ...Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSE_RIGHT
 from ...Chat.console_rail_state import (
+    CONSOLE_RAIL_SECTION_IDS,
     ConsoleRailPreferences,
     ConsoleRailState,
     build_console_rail_preference_key,
     build_console_rail_state,
     coerce_console_rail_preferences,
+    collect_prunable_console_rail_keys,
     serialize_console_rail_preferences,
 )
 from ...config import (
@@ -93,6 +109,7 @@ from ...config import (
     MIN_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
     coerce_bool_setting,
     coerce_int_setting,
+    delete_settings_from_cli_config,
     get_cli_providers_and_models,
     save_setting_to_cli_config,
 )
@@ -100,6 +117,7 @@ from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
 )
+from ...Notes.notes_scope_service import ScopeType
 from ...Constants import TAB_SETTINGS
 from ...Utils.chat_diagnostics import ChatDiagnostics
 from ...Utils.console_background_effects import (
@@ -107,7 +125,18 @@ from ...Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...UI.Workbench import (
+    CommandStrip,
+    DestinationHeader,
+    ModeStrip,
+    RecoveryCallout,
+    WorkbenchActionRequested,
+    WorkbenchHelpPanel,
+    WorkbenchHelpState,
+)
+from ...UI.Workbench.focus import WorkbenchFocusRegistry
 from ...state.ui_state import UIState
+from ...Widgets.AppFooterStatus import AppFooterStatus
 from ...Widgets.Chat_Widgets.chat_tab_container import ChatTabContainer
 from ...Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 from ...Widgets.Console import (
@@ -121,16 +150,42 @@ from ...Widgets.Console import (
     ConsoleSessionSurface,
     ConsoleSettingsModal,
     ConsoleSettingsSummary,
+    ConsoleSetupModal,
     ConsoleStagedContextTray,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
+from ...Widgets.Console.console_model_popover import (
+    CONSOLE_POPOVER_OPEN_FULL_SETTINGS,
+    ConsoleModelPopover,
+)
+from ...Widgets.Console.console_rail_section import (
+    CONSOLE_RAIL_SECTION_TOGGLE_PREFIX,
+    ConsoleRailSectionHeader,
+)
+from ...Widgets.Console.console_session_switcher_modal import (
+    ConsoleSessionSwitcherModal,
+    ConsoleSwitcherChoice,
+)
+from ...Widgets.Console.console_workspace_details import ConsoleWorkspaceDetailsTray
+from ...Widgets.Console.console_workbench_state import build_console_workbench_state
 from ...Workspaces.display_state import (
+    CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
+    ConsoleWorkspaceConversationRow,
+    ConsoleWorkspaceConversationSectionState,
     ConsoleWorkspaceContextState,
     build_console_workspace_state,
+    console_workspace_conversation_result_copy,
 )
-from ...Workspaces import DEFAULT_WORKSPACE_ID
+from ...Workspaces import (
+    CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+    ConsoleConversationBrowserInputRow,
+    ConsoleConversationBrowserRow,
+    DEFAULT_WORKSPACE_ID,
+    WorkspaceRecord,
+    build_console_conversation_browser_state,
+)
 from ...Widgets.compact_model_bar import CompactModelBar
 from ..Views.RAGSearch.search_handoff import build_library_rag_console_live_work_payload
 
@@ -151,10 +206,33 @@ CONSOLE_FRAME_BORDER = ("solid", CONSOLE_FRAME_COLOR)
 CONSOLE_QUIET_FRAME_BORDER = ("none", CONSOLE_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
-CONSOLE_PROVIDER_ADD_API_KEY_LABEL = "Add API Key"
+CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Configure API+API Key"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
-
-
+NATIVE_CONSOLE_STATE_VERSION = "1.0"
+CONSOLE_FOCUS_REGISTRY = WorkbenchFocusRegistry(
+    (
+        "console-left-rail",
+        "console-transcript-surface",
+        "console-right-rail",
+        "console-native-composer",
+    )
+)
+CONSOLE_FOCUS_TARGETS_BY_PANE = {
+    "console-left-rail": ("console-context-rail-collapse", "console-left-rail"),
+    "console-transcript-surface": (
+        "console-native-transcript",
+        "console-transcript-surface",
+    ),
+    "console-right-rail": ("console-inspector-rail-collapse", "console-right-rail"),
+    "console-native-composer": ("console-native-composer",),
+}
+CONSOLE_WORKBENCH_SHORTCUTS = (
+    ("F6", "next pane"),
+    ("Shift+F6", "previous pane"),
+    ("F1", "help"),
+    ("Enter", "send"),
+    ("Ctrl+P", "palette"),
+)
 def _is_empty_select_value(value: Any) -> bool:
     """Return True for Textual's blank/null select sentinels."""
     return value is None or value == Select.BLANK or str(value).startswith("Select.")
@@ -173,6 +251,42 @@ def _derive_tab_title(tab_state: TabState) -> str:
         fallback_title=tab_state.title,
         character_id=tab_state.character_id,
     )
+
+
+def _character_session_identity_from_handoff(
+    payload: ChatHandoffPayload,
+) -> tuple[int, str, str] | None:
+    """Return character session identity for Personas Start Chat handoffs.
+
+    Args:
+        payload: Handoff payload staged by a source screen.
+
+    Returns:
+        A tuple of `(character_id, character_name, assistant_id)` when the
+        payload represents a Personas character Start Chat handoff; otherwise
+        `None`.
+    """
+    metadata = payload.metadata or {}
+    if (
+        str(metadata.get("intent") or "").strip() != "start_chat"
+        or str(metadata.get("selected_kind") or "").strip() != "character"
+    ):
+        return None
+
+    raw_record_id = metadata.get("selected_record_id")
+    character_id_text = "" if raw_record_id is None else str(raw_record_id).strip()
+    if not character_id_text:
+        target_id = str(metadata.get("selected_target_id") or "").strip()
+        match = re.search(r"(?:^|:)character:(\d+)$", target_id)
+        if match:
+            character_id_text = match.group(1)
+    if not character_id_text.isdecimal():
+        return None
+
+    character_id = int(character_id_text)
+    character_name = str(metadata.get("selected_name") or payload.title or "").strip()
+    assistant_id = str(character_id)
+    return character_id, character_name, assistant_id
 
 
 def _source_mentions_rag(source: Any) -> bool:
@@ -226,6 +340,70 @@ class ChatScreen(BaseAppScreen):
     This screen preserves all chat state including tabs, messages,
     input text, and UI preferences when navigating away and returning.
     """
+
+    BINDINGS = [
+        # Textual's Screen base class binds tab/shift+tab to the "app."-namespaced
+        # focus_next/focus_previous actions, which always dispatch to App.action_focus_next
+        # (never to a Screen override of the same name). Re-declaring the keys here without
+        # the "app." prefix replaces those merged bindings for this screen, so the actions
+        # below run on ChatScreen and can trap focus inside the blocking Console setup modal
+        # instead of tunnelling into the workbench beneath it. The inherited tab/shift+tab
+        # entries are dropped from the ``BaseAppScreen.BINDINGS`` spread below (rather than
+        # simply appended after them): Textual merges same-class BINDINGS entries that share
+        # a key into one list checked in declaration order, so keeping both would let the
+        # inherited "app.focus_next"/"app.focus_previous" entries win every time.
+        *(
+            binding
+            for binding in BaseAppScreen.BINDINGS
+            if binding.key not in ("tab", "shift+tab")
+        ),
+        Binding("tab", "focus_next", "Focus Next", show=False),
+        Binding("shift+tab", "focus_previous", "Focus Previous", show=False),
+        Binding("f1", "show_workbench_help", "Help", show=False),
+        Binding("f6", "focus_next_workbench_pane", "Next pane", show=False, priority=True),
+        Binding(
+            "shift+f6",
+            "focus_previous_workbench_pane",
+            "Previous pane",
+            show=False,
+            priority=True,
+        ),
+        Binding("ctrl+k", "open_console_session_switcher", "Switch session", show=True),
+        Binding("alt+m", "open_console_model_popover", "Model", show=True),
+        # NOT priority: widget-level escapes (transcript clear-selection, modal
+        # dismiss) must keep winning before this screen-level fallback runs.
+        Binding("escape", "focus_console_composer_home", "Composer", show=False),
+        Binding("ctrl+t", "new_console_tab", "New tab", show=True),
+        Binding("alt+1", "jump_console_tab(1)", "Tab 1", show=False),
+        Binding("alt+2", "jump_console_tab(2)", "Tab 2", show=False),
+        Binding("alt+3", "jump_console_tab(3)", "Tab 3", show=False),
+        Binding("alt+4", "jump_console_tab(4)", "Tab 4", show=False),
+        Binding("alt+5", "jump_console_tab(5)", "Tab 5", show=False),
+        Binding("alt+6", "jump_console_tab(6)", "Tab 6", show=False),
+        Binding("alt+7", "jump_console_tab(7)", "Tab 7", show=False),
+        Binding("alt+8", "jump_console_tab(8)", "Tab 8", show=False),
+        Binding("alt+9", "jump_console_tab(9)", "Tab 9", show=False),
+    ]
+
+    def action_focus_next(self) -> None:
+        """Move focus to the next widget, trapping Tab inside a blocking modal.
+
+        While the Console setup modal is blocking the workbench, this keeps
+        focus cycling within the modal's own focusables instead of letting
+        Tab tunnel into rail/transcript/composer controls hidden beneath it.
+        """
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        self.focus_next()
+
+    def action_focus_previous(self) -> None:
+        """Move focus to the previous widget, trapping Shift+Tab inside a blocking modal.
+
+        Mirrors ``action_focus_next`` for the reverse direction.
+        """
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        self.focus_previous()
     
     @on(Select.Changed, "#chat-api-provider")
     async def handle_provider_change(self, event: Select.Changed) -> None:
@@ -293,6 +471,62 @@ class ChatScreen(BaseAppScreen):
         """Mirror sidebar temperature changes into the compact shell controls."""
         self._sync_compact_shell_controls(temperature=event.value)
 
+    @on(Input.Changed, "#console-workspace-conversation-search")
+    def on_console_workspace_conversation_search_changed(self, event: Input.Changed) -> None:
+        """Debounce grouped conversation-browser search in the Console rail."""
+        event.stop()
+        event_input = getattr(event, "input", None)
+        if getattr(event_input, "disabled", False):
+            return
+        next_query = str(event.value or "")
+        if next_query == self._console_conversation_browser_query:
+            return
+        self._console_conversation_browser_query = next_query
+        self._console_workspace_conversation_query = self._console_conversation_browser_query
+        self._console_conversation_browser_search_token += 1
+        self._console_workspace_conversation_search_token = (
+            self._console_conversation_browser_search_token
+        )
+        token = self._console_conversation_browser_search_token
+        query = self._console_conversation_browser_query
+        if self._console_conversation_browser_search_timer is not None:
+            self._console_conversation_browser_search_timer.stop()
+            self._console_conversation_browser_search_timer = None
+        if self._console_workspace_conversation_search_timer is not None:
+            self._console_workspace_conversation_search_timer.stop()
+            self._console_workspace_conversation_search_timer = None
+        if not query.strip():
+            self._console_conversation_browser_rows = ()
+            self._console_conversation_browser_total = None
+            self._console_conversation_browser_error = ""
+            self._sync_console_workspace_context()
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+            return
+        self._console_conversation_browser_rows = self._filter_console_browser_rows_for_query(
+            self._merge_console_browser_rows(
+                self._native_console_browser_rows(),
+                self._membership_console_browser_rows(),
+            ),
+            query,
+        )
+        self._console_conversation_browser_total = None
+        self._console_conversation_browser_error = ""
+        self._sync_console_workspace_context()
+        self._console_conversation_browser_search_timer = self.set_timer(
+            0.2,
+            lambda: self.run_worker(
+                self._refresh_console_conversation_browser_search(
+                    query,
+                    token,
+                ),
+                group="console-workspace-conversation-search",
+                exclusive=True,
+            ),
+        )
+        self._console_workspace_conversation_search_timer = (
+            self._console_conversation_browser_search_timer
+        )
+
     @on(Select.Changed, "#compact-api-provider")
     def on_console_compact_provider_changed(self, event: Select.Changed) -> None:
         """Mirror native compact provider changes into Console-owned labels."""
@@ -331,13 +565,10 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self._set_console_rail_preference(right_open=True)
 
-    async def on_console_settings_open(self, event: Button.Pressed) -> None:
+    async def _open_console_settings(self, *, focus_model: bool = False) -> None:
         """Open Console session settings for the active native session."""
-        event.stop()
         settings = self._ensure_active_console_session_settings()
         controller = self._ensure_console_chat_controller()
-        summary_state = self._build_console_settings_summary_state()
-        recovery_label, _recovery_target, _recovery_tooltip = self._console_provider_recovery_action()
         modal = ConsoleSettingsModal(
             settings=settings,
             app_config=getattr(self.app_instance, "app_config", {}) or {},
@@ -347,11 +578,7 @@ class ChatScreen(BaseAppScreen):
             ),
             context_estimate=self._active_console_settings_context_estimate(),
             can_save=controller.run_state.is_send_allowed,
-            focus_model=(
-                self._is_console_choose_model_action(summary_state.action_label)
-                or self._is_console_choose_model_action(event.button.label)
-                or self._is_console_choose_model_action(recovery_label)
-            ),
+            focus_model=focus_model,
         )
 
         def _apply_modal_result(result: ConsoleSessionSettings | None) -> None:
@@ -361,6 +588,204 @@ class ChatScreen(BaseAppScreen):
             self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
         self.app.push_screen(modal, callback=_apply_modal_result)
+
+    async def on_console_settings_open(self, event: Button.Pressed) -> None:
+        """Open Console session settings for the active native session."""
+        event.stop()
+        summary_state = self._build_console_settings_summary_state()
+        recovery_label, _recovery_target, _recovery_tooltip = self._console_provider_recovery_action()
+        await self._open_console_settings(
+            focus_model=(
+                self._is_console_choose_model_action(summary_state.action_label)
+                or self._is_console_choose_model_action(event.button.label)
+                or self._is_console_choose_model_action(recovery_label)
+            )
+        )
+
+    @on(WorkbenchActionRequested)
+    async def on_console_workbench_action_requested(
+        self,
+        event: WorkbenchActionRequested,
+    ) -> None:
+        """Route visible Workbench actions through Console-owned helpers."""
+        event.stop()
+        action_id = event.action_id
+        if action_id == "new-tab":
+            await self._create_native_console_session_from_active_context()
+        elif action_id == "settings":
+            await self._open_console_settings(focus_model=False)
+        elif action_id == "attach-context":
+            self._set_console_rail_preference(left_open=True)
+        elif action_id == "run-library-rag":
+            self._run_console_library_rag_from_visible_action()
+        elif action_id == "save-chatbook":
+            self._save_console_chatbook_from_visible_action()
+        elif action_id == "send":
+            await self._send_console_message_from_visible_action()
+        elif action_id == "stop":
+            await self._stop_console_generation_from_visible_action()
+        elif action_id == "help":
+            await self.action_show_workbench_help()
+        elif action_id == "provider-recovery":
+            await self._open_console_provider_recovery()
+
+    async def action_show_workbench_help(self) -> None:
+        """Open contextual help for visible Console Workbench actions."""
+        control_state = self._build_console_control_state(
+            self._pending_console_launch_context
+        )
+        workbench_state = self._build_console_workbench_state(control_state)
+        self.app.push_screen(
+            WorkbenchHelpPanel(
+                WorkbenchHelpState(
+                    route_id=workbench_state.route_id,
+                    title="Console",
+                    actions=workbench_state.actions,
+                    shortcuts=CONSOLE_WORKBENCH_SHORTCUTS,
+                )
+            )
+        )
+
+    async def action_focus_next_workbench_pane(self) -> None:
+        """Move focus to the next visible Console Workbench pane."""
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        hidden = {
+            pane_id
+            for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
+            if not self._is_console_widget_displayed(pane_id)
+        }
+        current = self._console_workbench_focus_id_for_widget(self.app.focused)
+        target_id = CONSOLE_FOCUS_REGISTRY.next_after(current, hidden=hidden)
+        if target_id is None:
+            return
+        self._focus_console_workbench_target(target_id)
+
+    async def action_focus_previous_workbench_pane(self) -> None:
+        """Move focus to the previous visible Console Workbench pane."""
+        if self._focus_console_setup_modal_if_blocking():
+            return
+        hidden = {
+            pane_id
+            for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order
+            if not self._is_console_widget_displayed(pane_id)
+        }
+        current = self._console_workbench_focus_id_for_widget(self.app.focused)
+        target_id = CONSOLE_FOCUS_REGISTRY.previous_before(current, hidden=hidden)
+        if target_id is None:
+            return
+        self._focus_console_workbench_target(target_id)
+
+    def _console_workbench_density(self) -> str:
+        """Return the supported Console Workbench density from app config."""
+        app_config = getattr(self.app_instance, "app_config", {}) or {}
+        appearance = app_config.get("appearance", {})
+        if not isinstance(appearance, dict):
+            return "normal"
+        density = str(
+            appearance.get("ui_density", appearance.get("density", "normal")) or ""
+        ).strip().lower()
+        return "compact" if density == "compact" else "normal"
+
+    def _is_console_widget_displayed(self, widget_id: str) -> bool:
+        """Return True when a Console focus target and its parents are visible."""
+        try:
+            current = self.query_one(f"#{widget_id}")
+        except QueryError:
+            return False
+        while current is not None:
+            if current.display is False or current.styles.display == "none":
+                return False
+            current = getattr(current, "parent", None)
+        return True
+
+    def _console_workbench_focus_id_for_widget(
+        self,
+        focused: object | None,
+    ) -> str | None:
+        """Return the owning Console Workbench pane id for a focused widget."""
+        current = focused
+        while current is not None:
+            current_id = getattr(current, "id", None)
+            if current_id in CONSOLE_FOCUS_REGISTRY.pane_order:
+                return str(current_id)
+            current = getattr(current, "parent", None)
+        return None
+
+    def _focus_console_workbench_target(self, widget_id: str) -> None:
+        """Focus a visible Console Workbench target if it is available."""
+        for target_id in CONSOLE_FOCUS_TARGETS_BY_PANE.get(widget_id, (widget_id,)):
+            if not self._is_console_widget_displayed(target_id):
+                continue
+            try:
+                widget = self.query_one(f"#{target_id}")
+            except QueryError:
+                continue
+            widget.can_focus = True
+            widget.focus()
+            self._last_console_workbench_focus_id = widget_id
+            return
+
+    def _focus_console_setup_modal_if_blocking(self) -> bool:
+        """Trap pane cycling on the setup modal while it blocks the workbench."""
+        if not self._console_setup_modal_blocking():
+            return False
+        try:
+            modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
+        except QueryError:
+            return False
+        modal.focus_primary_action()
+        return True
+
+    def _ensure_console_workbench_targets_focusable(self) -> None:
+        """Make mounted visible Console Workbench focus targets focusable."""
+        for pane_id in CONSOLE_FOCUS_REGISTRY.pane_order:
+            for widget_id in CONSOLE_FOCUS_TARGETS_BY_PANE.get(pane_id, (pane_id,)):
+                if not self._is_console_widget_displayed(widget_id):
+                    continue
+                try:
+                    self.query_one(f"#{widget_id}").can_focus = True
+                except QueryError:
+                    continue
+
+    def _restore_console_workbench_focus(self) -> None:
+        """Restore focus to a visible Console Workbench pane after activation."""
+        if self._focus_console_setup_modal_if_blocking():
+            self._apply_console_setup_block(True)
+            return
+        self._ensure_console_workbench_targets_focusable()
+        current = self._console_workbench_focus_id_for_widget(self.app.focused)
+        if current is not None and self._is_console_widget_displayed(current):
+            self._last_console_workbench_focus_id = current
+            return
+        for widget_id in (
+            self._last_console_workbench_focus_id,
+            "console-native-composer",
+            "console-transcript-surface",
+        ):
+            if widget_id and self._is_console_widget_displayed(widget_id):
+                self._focus_console_workbench_target(widget_id)
+                return
+
+    def _register_console_footer_shortcuts(self) -> None:
+        """Register Console Workbench shortcuts with the app footer if mounted."""
+        try:
+            footer = self.app.query_one(AppFooterStatus)
+        except QueryError:
+            return
+        set_shortcuts = getattr(footer, "set_workbench_shortcuts", None)
+        if callable(set_shortcuts):
+            set_shortcuts(source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS)
+
+    def _clear_console_footer_shortcuts(self) -> None:
+        """Clear Console Workbench shortcuts from the app footer if mounted."""
+        try:
+            footer = self.app.query_one(AppFooterStatus)
+        except QueryError:
+            return
+        clear_shortcuts = getattr(footer, "clear_shortcut_context", None)
+        if callable(clear_shortcuts):
+            clear_shortcuts(source="console")
 
     def _open_console_session_rename_modal(self, session_id: str) -> None:
         """Open a modal for viewing and editing the active Console tab title."""
@@ -390,6 +815,154 @@ class ChatScreen(BaseAppScreen):
             ConsoleRenameSessionModal(title=session.title),
             callback=_apply_rename,
         )
+
+    def action_open_console_session_switcher(self) -> None:
+        """Open the Ctrl+K fuzzy session switcher."""
+        if self._console_setup_modal_blocking():
+            return
+        rows = [
+            *self._native_console_browser_rows(),
+            *self._membership_console_browser_rows(),
+        ]
+        persisted_rows, _total, _error = self._sync_persisted_console_browser_rows()
+        rows.extend(persisted_rows)
+        self.app.push_screen(
+            ConsoleSessionSwitcherModal(rows=tuple(rows)),
+            callback=self._apply_console_switcher_choice,
+        )
+
+    async def action_open_console_model_popover(self) -> None:
+        """Open the Alt+M quick provider/model/temperature/streaming popover."""
+        if self._console_setup_modal_blocking():
+            return
+        settings = self._ensure_active_console_session_settings()
+        providers_models = await self._providers_models_for_console_settings(
+            settings.provider,
+            current_model=settings.model,
+        )
+        self.app.push_screen(
+            ConsoleModelPopover(settings=settings, providers_models=providers_models),
+            callback=self._apply_console_model_popover_result,
+        )
+
+    def _apply_console_model_popover_result(
+        self, result: "ConsoleSessionSettings | str | None"
+    ) -> None:
+        """Apply the popover result: sentinel opens full settings, else replaces settings.
+
+        Args:
+            result: Popover result, full-settings sentinel, or ``None`` on cancel.
+        """
+        if result is None:
+            return
+        if result == CONSOLE_POPOVER_OPEN_FULL_SETTINGS:
+            self.run_worker(self._open_console_settings(), exclusive=False)
+            return
+        self._replace_active_console_session_settings(result)
+
+    def action_focus_console_composer_home(self) -> None:
+        """Return keyboard focus to the Console composer (Escape, non-priority).
+
+        Deliberately not ``priority=True`` so widget-level escapes — transcript
+        selection-clear, and any pushed modal's own dismiss binding — are
+        resolved first as the key event bubbles up; this screen-level action
+        only fires once nothing closer to focus has claimed Escape.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self._focus_console_composer_if_needed(force=True)
+
+    def action_new_console_tab(self) -> None:
+        """Open a new native Console session tab from the active context (Ctrl+T)."""
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(self._create_native_console_session_from_active_context(), exclusive=False)
+
+    def action_open_console_session_settings(self) -> None:
+        """Open the full Console session settings modal, guarded by the setup modal.
+
+        Routes the command-palette "Console: Session settings…" entry through
+        the same blocking check every other Console action honors, instead of
+        the palette calling ``_open_console_settings`` directly and bypassing
+        the first-run setup modal.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        self.run_worker(self._open_console_settings(), exclusive=False)
+
+    async def action_jump_console_tab(self, number: int) -> None:
+        """Jump directly to the Nth native Console session tab (Alt+1..9).
+
+        Args:
+            number: One-based session tab number to activate.
+        """
+        if self._console_setup_modal_blocking():
+            return
+        store = self._ensure_console_chat_store()
+        sessions = store.sessions()
+        if not (1 <= number <= len(sessions)):
+            return
+        await self._activate_native_console_session(sessions[number - 1].id)
+
+    async def _activate_native_console_session(self, session_id: str) -> None:
+        """Activate a native Console session through the shared activation sequence.
+
+        Set the active workspace, switch the native session, await the UI
+        sync, then force composer focus. Shared by the session-tab click
+        handler, the Ctrl+K switcher callback, and Alt+1..9 tab-jump so all
+        three entry points follow one activation path.
+
+        Args:
+            session_id: Native Console session id to activate.
+        """
+        controller = self._ensure_console_chat_controller()
+        if controller.store.active_session_id != session_id:
+            self._set_active_workspace_for_console_session(session_id)
+            controller.switch_session(session_id)
+            await self._sync_native_console_chat_ui()
+        self._focus_console_composer_if_needed(force=True)
+
+    async def _apply_console_switcher_choice(
+        self, choice: ConsoleSwitcherChoice | None
+    ) -> None:
+        """Apply a switcher selection through the shared native-session activation helper.
+
+        Mirrors the session-tab click handler and Alt+1..9 tab-jump: all three
+        call ``_activate_native_console_session`` so there is one activation
+        sequence (set workspace, switch, sync UI, focus composer) shared
+        across Console session-selection entry points.
+
+        Args:
+            choice: Switcher result, or ``None`` if the switcher was cancelled.
+        """
+        if choice is None:
+            return
+        entry = choice.entry
+        if choice.kind == "rename" and entry.native_session_id:
+            self._open_console_session_rename_modal(entry.native_session_id)
+            return
+        if choice.kind != "activate":
+            return
+        if entry.native_session_id:
+            await self._activate_native_console_session(entry.native_session_id)
+            return
+        if entry.conversation_id:
+            await self._resume_console_workspace_conversation(
+                entry.conversation_id,
+                target_scope_type=entry.scope_type or None,
+                target_workspace_id=entry.workspace_id,
+            )
+
+    async def _create_native_console_session_from_active_context(self) -> None:
+        """Create and focus a native Console session in the active workspace context."""
+        self._ensure_console_chat_controller().new_session(
+            settings=(
+                self._active_console_session_settings()
+                or self._default_console_session_settings()
+            ),
+        )
+        await self._sync_native_console_chat_ui()
+        self._focus_console_composer_if_needed(force=True)
 
     @on(Button.Pressed, "#console-change-workspace")
     def on_console_change_workspace(self, event: Button.Pressed) -> None:
@@ -466,19 +1039,51 @@ class ChatScreen(BaseAppScreen):
         self._console_control_model: Optional[Any] = None
         self._console_library_rag_query = ""
         self._console_chat_store: ConsoleChatStore | None = None
+        self._console_rail_prune_dispatched = False
+        self._console_workspace_conversation_query = ""
+        self._console_workspace_conversation_search_timer: Any | None = None
+        self._console_workspace_conversation_search_token = 0
+        self._console_workspace_conversation_search_rows: tuple[
+            ConsoleWorkspaceConversationRow, ...
+        ] = ()
+        self._console_workspace_conversation_search_total: int | None = None
+        self._console_workspace_conversation_search_error = ""
+        self._console_workspace_conversation_workspace_id: str | None = None
+        self._console_conversation_browser_query = ""
+        self._console_conversation_browser_search_timer: Any | None = None
+        self._console_conversation_browser_search_token = 0
+        self._console_conversation_browser_rows: tuple[
+            ConsoleConversationBrowserInputRow, ...
+        ] = ()
+        self._console_conversation_browser_total: int | None = None
+        self._console_conversation_browser_error = ""
         self._console_visible_draft_session_id: str | None = None
         self._console_provider_gateway: Any | None = None
         self._console_chat_controller: ConsoleChatController | None = None
         self._console_message_action_service = ConsoleMessageActionService()
         self._console_model_option_warnings: dict[tuple[str, str], str] = {}
         self._last_console_action: ConsoleActionResult | None = None
+        self._pending_console_delete_message_id: str | None = None
         self._console_transcript_sync_timer: Any | None = None
         self._console_sync_in_progress = False
         self._console_sync_requested = False
         self._last_native_transcript_refresh_key: tuple[int, tuple[Any, ...]] | None = None
+        self._last_console_workbench_focus_id: str | None = None
+        self._last_console_control_state: ConsoleControlState | None = None
+        self._last_console_workbench_state: Any | None = None
+        self._last_console_rail_state: ConsoleRailState | None = None
         self._console_guidance_dismissed = False
+        self._console_first_send_completed_cached: bool | None = None
         self.ui_state = UIState()
         self._load_sidebar_state()
+
+    def _provider_readiness_app_config(self) -> Any:
+        """Return app config for provider-readiness checks."""
+        try:
+            app_config = getattr(self.app, "app_config")
+        except (AttributeError, NoActiveAppError):
+            return getattr(self.app_instance, "app_config", {}) or {}
+        return app_config or {}
 
     def _ensure_chat_window(self) -> ChatWindowEnhanced:
         if self.chat_window is None:
@@ -502,6 +1107,49 @@ class ChatScreen(BaseAppScreen):
         else:
             self.console_session_surface.sync_background_effect_settings(settings)
         return self.console_session_surface
+
+    def _ui_responsiveness_monitor(self) -> Any | None:
+        """Return the app-level UI diagnostics monitor when available."""
+        try:
+            return getattr(self.app_instance, "ui_responsiveness_monitor", None)
+        except Exception:
+            return None
+
+    def _record_ui_worker_started(self, name: str) -> None:
+        """Best-effort worker diagnostic hook."""
+        monitor = self._ui_responsiveness_monitor()
+        try:
+            if monitor is not None:
+                monitor.record_worker_started(name)
+        except Exception:
+            return
+
+    def _record_ui_worker_finished(self, name: str) -> None:
+        """Best-effort worker diagnostic hook."""
+        monitor = self._ui_responsiveness_monitor()
+        try:
+            if monitor is not None:
+                monitor.record_worker_finished(name)
+        except Exception:
+            return
+
+    def _record_ui_timer_created(self, name: str) -> None:
+        """Best-effort timer diagnostic hook."""
+        monitor = self._ui_responsiveness_monitor()
+        try:
+            if monitor is not None:
+                monitor.record_timer_created(name)
+        except Exception:
+            return
+
+    def _record_ui_timer_stopped(self, name: str) -> None:
+        """Best-effort timer diagnostic hook."""
+        monitor = self._ui_responsiveness_monitor()
+        try:
+            if monitor is not None:
+                monitor.record_timer_stopped(name)
+        except Exception:
+            return
 
     def _consume_pending_console_launch(self) -> Optional[ConsoleLiveWorkLaunch]:
         """Accept one-shot live-work launch context from another destination."""
@@ -735,12 +1383,20 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _sync_console_settings_summary(self) -> None:
-        """Refresh the mounted Console settings summary if present."""
+        """Refresh the mounted Console settings summary surfaces if present."""
+        summary_state = self._build_console_settings_summary_state()
         try:
             summary = self.query_one("#console-settings-summary", ConsoleSettingsSummary)
         except (NoMatches, QueryError):
-            return
-        summary.sync_state(self._build_console_settings_summary_state())
+            pass
+        else:
+            summary.sync_state(summary_state)
+        model_line1, model_line2 = build_console_model_section_lines(summary_state)
+        try:
+            self.query_one("#console-model-section-line1", Static).update(model_line1)
+            self.query_one("#console-model-section-line2", Static).update(model_line2)
+        except (NoMatches, QueryError):
+            pass
 
     def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
         """Return explicit workspace policy context for native Console sends."""
@@ -748,7 +1404,16 @@ class ChatScreen(BaseAppScreen):
         registry_service = getattr(self.app_instance, "workspace_registry_service", None)
         if registry_service is not None:
             try:
-                active_workspace = registry_service.get_active_workspace()
+                ensure_default_workspace = getattr(
+                    registry_service,
+                    "ensure_default_workspace",
+                    None,
+                )
+                active_workspace = (
+                    ensure_default_workspace()
+                    if callable(ensure_default_workspace)
+                    else registry_service.get_active_workspace()
+                )
                 candidate = getattr(active_workspace, "workspace_id", None)
                 if candidate:
                     workspace_id = str(candidate)
@@ -779,6 +1444,44 @@ class ChatScreen(BaseAppScreen):
             active_workspace_id=workspace_id,
             staged_sources=tuple(staged_sources),
         )
+
+    def _active_console_workspace_id_for_conversation_search(self) -> str:
+        """Return the current active workspace id for Console conversation search."""
+        try:
+            workspace_id = str(
+                self._current_console_workspace_context().active_workspace_id or ""
+            ).strip()
+        except Exception:
+            logger.debug(
+                "Unable to read current workspace context for conversation search",
+                exc_info=True,
+            )
+            workspace_id = ""
+        if workspace_id:
+            return workspace_id
+        service = getattr(self.app_instance, "workspace_registry_service", None)
+        get_active_workspace = getattr(service, "get_active_workspace", None)
+        if callable(get_active_workspace):
+            try:
+                workspace = get_active_workspace()
+            except Exception:
+                logger.debug("Unable to read active workspace for conversation search", exc_info=True)
+                workspace = None
+            workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
+            if workspace_id:
+                return workspace_id
+        store = self._console_chat_store
+        if store is not None and store.workspace_context.active_workspace_id:
+            return str(store.workspace_context.active_workspace_id)
+        return ""
+
+    def _focus_console_workspace_conversation_search(self) -> None:
+        """Restore focus to the conversation search input when it is mounted."""
+        try:
+            search = self.query_one("#console-workspace-conversation-search", Input)
+        except (NoMatches, QueryError):
+            return
+        search.focus()
 
     def _build_console_provider_selection(self) -> ConsoleProviderSelection:
         """Return the effective native Console provider selection for sends."""
@@ -1197,13 +1900,178 @@ class ChatScreen(BaseAppScreen):
             return str(conversation_id) if conversation_id else None
         return self._current_console_conversation_id()
 
+    def _console_session_id_for_workspace_conversation(
+        self,
+        conversation_id: str,
+    ) -> str | None:
+        """Return an open Console session id for a workspace conversation row."""
+        target = str(conversation_id or "").strip()
+        if not target:
+            return None
+        store = self._console_chat_store
+        if store is None:
+            return None
+        if target.startswith("native:"):
+            session_id = target.removeprefix("native:")
+            if any(session.id == session_id for session in store.sessions()):
+                return session_id
+            return None
+        for session in store.sessions():
+            if str(session.persisted_conversation_id or "") == target:
+                return session.id
+        return None
+
+    @staticmethod
+    def _iter_console_tree_messages(nodes: Any) -> list[dict[str, Any]]:
+        """Return persisted conversation tree messages in visible transcript order."""
+        ordered: list[dict[str, Any]] = []
+
+        def _visit(node: Any) -> None:
+            if not isinstance(node, dict):
+                return
+            ordered.append(node)
+            children = node.get("children")
+            if isinstance(children, list) and children:
+                _visit(children[-1])
+
+        if isinstance(nodes, list):
+            for root in nodes:
+                _visit(root)
+        return ordered
+
+    @staticmethod
+    def _console_message_role_from_persisted(message: dict[str, Any]) -> ConsoleMessageRole:
+        """Return a native Console role for a persisted Chat message row."""
+        raw_role = str(message.get("role") or "").strip().lower()
+        if raw_role:
+            try:
+                return ConsoleMessageRole(raw_role)
+            except ValueError:
+                pass
+        sender = str(message.get("sender") or "").strip().lower()
+        if sender in {"user", "system", "tool"}:
+            return ConsoleMessageRole(sender)
+        return ConsoleMessageRole.ASSISTANT
+
+    def _console_messages_from_conversation_tree(
+        self,
+        tree: dict[str, Any],
+    ) -> list[ConsoleChatMessage]:
+        """Build native Console messages from a persisted conversation tree."""
+        messages: list[ConsoleChatMessage] = []
+        for row in self._iter_console_tree_messages(tree.get("root_threads")):
+            content = str(row.get("content") or "")
+            if not content:
+                continue
+            persisted_message_id = row.get("id")
+            messages.append(
+                ConsoleChatMessage(
+                    role=self._console_message_role_from_persisted(row),
+                    content=content,
+                    status="complete",
+                    persisted_message_id=(
+                        str(persisted_message_id)
+                        if persisted_message_id is not None
+                        else None
+                    ),
+                )
+            )
+        return messages
+
+    async def _resume_console_workspace_conversation(
+        self,
+        conversation_id: str,
+        *,
+        target_scope_type: str | None = None,
+        target_workspace_id: str | None = None,
+    ) -> bool:
+        """Load a persisted saved conversation into a native Console session."""
+        target = str(conversation_id or "").strip()
+        if not target:
+            return False
+        conversation_service = getattr(
+            self.app_instance,
+            "chat_conversation_scope_service",
+            None,
+        )
+        get_conversation_tree = getattr(conversation_service, "get_conversation_tree", None)
+        if not callable(get_conversation_tree):
+            self.app_instance.notify(
+                "Saved conversation resume is unavailable in this build.",
+                severity="warning",
+            )
+            return False
+
+        try:
+            maybe_tree = get_conversation_tree(target, mode="local")
+            tree = await maybe_tree if inspect.isawaitable(maybe_tree) else maybe_tree
+        except Exception:
+            logger.exception(
+                f"Unable to resume Console saved conversation: conversation_id={target}"
+            )
+            self.app_instance.notify(
+                "Unable to load this saved conversation.",
+                severity="error",
+            )
+            return False
+
+        if not isinstance(tree, dict) or not tree.get("conversation"):
+            self.app_instance.notify(
+                "Saved conversation was not found.",
+                severity="warning",
+            )
+            return False
+
+        conversation = tree.get("conversation")
+        if not isinstance(conversation, dict):
+            conversation = {}
+        store = self._ensure_console_chat_store()
+        active_workspace_id = str(store.workspace_context.active_workspace_id or "").strip()
+        persisted_workspace_id = (
+            str(conversation.get("workspace_id")).strip()
+            if conversation.get("workspace_id") is not None
+            else ""
+        )
+        target_scope = str(target_scope_type or "").strip()
+        requested_workspace_id = (
+            str(target_workspace_id).strip()
+            if target_workspace_id is not None
+            else ""
+        )
+        if target_scope == "global":
+            workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
+        else:
+            workspace_id = (
+                persisted_workspace_id
+                or requested_workspace_id
+                or active_workspace_id
+                or None
+            )
+        title = str(conversation.get("title") or "Saved conversation").strip()
+        if not title:
+            title = "Saved conversation"
+        messages = self._console_messages_from_conversation_tree(tree)
+        session = store.restore_persisted_session(
+            title=title,
+            workspace_id=workspace_id,
+            persisted_conversation_id=target,
+            messages=messages,
+            settings=self._active_console_session_settings(),
+        )
+        self._set_active_workspace_for_console_session(session.id)
+        self._sync_console_chat_core_state()
+        await self._sync_native_console_chat_ui()
+        self._focus_console_composer_if_needed(force=True)
+        return True
+
     def _build_console_workspace_context_state(
         self,
         session_data: Optional[ChatSessionData] = None,
     ) -> ConsoleWorkspaceContextState:
-        return build_console_workspace_state(
+        current_conversation = self._current_console_conversation_id(session_data)
+        state = build_console_workspace_state(
             registry_service=getattr(self.app_instance, "workspace_registry_service", None),
-            current_conversation=self._current_console_conversation_id(session_data),
+            current_conversation=current_conversation,
             server_adapter_state=getattr(
                 self.app_instance,
                 "workspace_server_adapter_state",
@@ -1214,6 +2082,1177 @@ class ChatScreen(BaseAppScreen):
                 "workspace_acp_handoff_state",
                 None,
             ),
+        )
+        state = self._with_native_console_session_rows(state)
+        return self._with_console_conversation_browser_state(
+            state,
+            current_conversation_id=current_conversation,
+        )
+
+    @staticmethod
+    def _console_workspace_row_key(row: ConsoleWorkspaceConversationRow) -> str:
+        return str(row.conversation_id or "").strip()
+
+    @staticmethod
+    def _console_browser_row_key(row: ConsoleConversationBrowserInputRow) -> str:
+        return str(row.row_key or row.conversation_id or "").strip()
+
+    @staticmethod
+    def _console_browser_row_scope_copy(row: ConsoleConversationBrowserInputRow) -> str:
+        if row.scope_type == "global":
+            return "global chats"
+        if row.workspace_id == DEFAULT_WORKSPACE_ID:
+            return "default workspace chats"
+        if row.workspace_id:
+            return f"workspace {row.workspace_label}"
+        return "chats"
+
+    @staticmethod
+    def _console_browser_row_matches_query(
+        row: ConsoleConversationBrowserInputRow,
+        normalized_query: str,
+    ) -> bool:
+        haystack = " ".join(
+            (
+                str(row.title or ""),
+                str(row.workspace_label or ""),
+                str(row.status or ""),
+                ChatScreen._console_browser_row_scope_copy(row),
+            )
+        ).lower()
+        return normalized_query in haystack
+
+    def _filter_console_browser_rows_for_query(
+        self,
+        rows: Iterable[ConsoleConversationBrowserInputRow],
+        query: str,
+    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        normalized_query = str(query or "").strip().lower()
+        row_tuple = tuple(rows)
+        if not normalized_query:
+            return row_tuple
+        return tuple(
+            row
+            for row in row_tuple
+            if self._console_browser_row_matches_query(row, normalized_query)
+        )
+
+    def _find_console_browser_row(
+        self,
+        row_key: str,
+        *,
+        conversation_id: str | None = None,
+    ) -> ConsoleConversationBrowserRow | None:
+        """Return the current grouped browser row for a rendered row key."""
+        target_row_key = str(row_key or "").strip()
+        target_conversation_id = str(conversation_id or "").strip()
+        if not target_row_key and not target_conversation_id:
+            return None
+        state = self._build_console_workspace_context_state()
+        browser = state.conversation_browser
+        if browser is None:
+            return None
+        allow_conversation_fallback = not target_row_key
+        fallback: ConsoleConversationBrowserRow | None = None
+        for section in browser.sections:
+            for row in section.rows:
+                if target_row_key and row.row_key == target_row_key:
+                    return row
+                if (
+                    allow_conversation_fallback
+                    and fallback is None
+                    and target_conversation_id
+                    and row.conversation_id == target_conversation_id
+                ):
+                    fallback = row
+            for group in section.groups:
+                for row in group.rows:
+                    if target_row_key and row.row_key == target_row_key:
+                        return row
+                    if (
+                        allow_conversation_fallback
+                        and fallback is None
+                        and target_conversation_id
+                        and row.conversation_id == target_conversation_id
+                    ):
+                        fallback = row
+        return fallback
+
+    def _activate_console_workspace_for_browser_row(
+        self,
+        row: ConsoleConversationBrowserRow,
+    ) -> None:
+        """Align active workspace context before opening a browser row."""
+        scope_type = str(row.scope_type or "").strip()
+        if scope_type == "global":
+            return
+        workspace_id = str(row.workspace_id or "").strip()
+        if not workspace_id or workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
+            return
+        registry_service = getattr(self.app_instance, "workspace_registry_service", None)
+        if registry_service is None:
+            return
+        try:
+            active_workspace = registry_service.get_active_workspace()
+            if (
+                active_workspace is None
+                or active_workspace.workspace_id != workspace_id
+            ):
+                registry_service.set_active_workspace(workspace_id)
+            self._ensure_console_chat_store().set_workspace_context(
+                self._current_console_workspace_context()
+            )
+        except Exception:
+            logger.warning(
+                "Unable to activate Console workspace for browser row",
+                exc_info=True,
+            )
+
+    def _console_session_id_for_browser_row(
+        self,
+        row: ConsoleConversationBrowserRow,
+    ) -> str | None:
+        """Return an open session matching a grouped browser row's identity."""
+        store = self._console_chat_store
+        if store is None:
+            return None
+        native_session_id = str(row.native_session_id or "").strip()
+        if native_session_id:
+            if any(session.id == native_session_id for session in store.sessions()):
+                return native_session_id
+            return None
+        row_key = str(row.row_key or "").strip()
+        if row_key.startswith("native:"):
+            return self._console_session_id_for_workspace_conversation(row_key)
+        conversation_id = str(row.conversation_id or "").strip()
+        if not conversation_id:
+            return None
+        scope_type = str(row.scope_type or "").strip()
+        expected_workspace_id = (
+            CONSOLE_GLOBAL_WORKSPACE_ID
+            if scope_type == "global"
+            else str(row.workspace_id or "").strip()
+        )
+        fallback_session_id: str | None = None
+        for session in store.sessions():
+            if str(session.persisted_conversation_id or "").strip() != conversation_id:
+                continue
+            session_workspace_id = str(session.workspace_id or "").strip()
+            if expected_workspace_id and session_workspace_id == expected_workspace_id:
+                return session.id
+            if fallback_session_id is None:
+                fallback_session_id = session.id
+        if str(row.source_kind or "").strip() == "membership" and expected_workspace_id:
+            return None
+        return fallback_session_id
+
+    @staticmethod
+    def _console_browser_display_identity(
+        row: ConsoleConversationBrowserInputRow,
+    ) -> tuple[str, str, str, str] | tuple[str, str]:
+        """Return the display identity used to dedupe grouped browser rows."""
+        conversation_id = str(row.conversation_id or "").strip()
+        if conversation_id:
+            scope_type = str(row.scope_type or "").strip() or "workspace"
+            workspace_id = (
+                ""
+                if scope_type == "global"
+                else str(row.workspace_id or "").strip()
+            )
+            return ("conversation", scope_type, workspace_id, conversation_id)
+        return ("row", ChatScreen._console_browser_row_key(row))
+
+    def _console_browser_workspace_records(self) -> tuple[WorkspaceRecord, ...]:
+        """Return all local workspace records visible to the Console browser."""
+        service = getattr(self.app_instance, "workspace_registry_service", None)
+        if service is None:
+            return ()
+        ensure_default = getattr(service, "ensure_default_workspace", None)
+        if callable(ensure_default):
+            try:
+                ensure_default()
+            except Exception:
+                logger.debug("Unable to ensure default workspace for Console browser", exc_info=True)
+        list_workspaces = getattr(service, "list_workspaces", None)
+        if not callable(list_workspaces):
+            return ()
+        try:
+            return tuple(list_workspaces())
+        except Exception:
+            logger.debug("Unable to list Console browser workspaces", exc_info=True)
+            return ()
+
+    def _console_browser_workspace_labels(self) -> dict[str, str]:
+        """Return workspace labels keyed by workspace id for browser rows."""
+        labels: dict[str, str] = {}
+        for record in self._console_browser_workspace_records():
+            workspace_id = str(record.workspace_id or "").strip()
+            if not workspace_id:
+                continue
+            labels[workspace_id] = (
+                "Chats"
+                if workspace_id == DEFAULT_WORKSPACE_ID
+                else str(record.name or workspace_id)
+            )
+        labels.setdefault(DEFAULT_WORKSPACE_ID, "Chats")
+        return labels
+
+    def _console_browser_workspace_label(
+        self,
+        workspace_id: str | None,
+        labels: dict[str, str] | None = None,
+    ) -> str:
+        """Return display label for a workspace/global browser row."""
+        if not workspace_id or workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
+            return "Chats"
+        if workspace_id == DEFAULT_WORKSPACE_ID:
+            return "Chats"
+        workspace_labels = labels if labels is not None else self._console_browser_workspace_labels()
+        return workspace_labels.get(workspace_id, workspace_id)
+
+    def _starred_console_conversation_ids(self) -> set[str]:
+        """Return locally starred durable conversation ids."""
+        service = getattr(self.app_instance, "conversation_local_marks_service", None)
+        list_marked = getattr(service, "list_marked_conversation_ids", None)
+        if not callable(list_marked):
+            return set()
+        try:
+            return {str(conversation_id) for conversation_id in list_marked()}
+        except Exception:
+            logger.debug("Unable to read local conversation stars", exc_info=True)
+            return set()
+
+    def _apply_console_browser_star_state(
+        self,
+        row: ConsoleConversationBrowserInputRow,
+        starred_ids: set[str] | None = None,
+    ) -> ConsoleConversationBrowserInputRow:
+        """Apply local star state and star eligibility to one browser row."""
+        conversation_id = str(row.conversation_id or "").strip()
+        ids = starred_ids if starred_ids is not None else self._starred_console_conversation_ids()
+        star_enabled = bool(conversation_id) and not str(row.row_key or "").startswith("native:")
+        return replace(
+            row,
+            conversation_id=conversation_id or None,
+            starred=bool(conversation_id and conversation_id in ids),
+            star_enabled=bool(star_enabled),
+        )
+
+    def _native_console_browser_rows(
+        self,
+        current_conversation_id: str | None = None,
+    ) -> list[ConsoleConversationBrowserInputRow]:
+        """Return open native Console sessions across all workspaces."""
+        store = self._console_chat_store
+        if store is None:
+            return []
+        labels = self._console_browser_workspace_labels()
+        starred_ids = self._starred_console_conversation_ids()
+        active_session_id = store.active_session_id
+        rows: list[ConsoleConversationBrowserInputRow] = []
+        for session in store.sessions():
+            session_workspace_id = str(session.workspace_id or "").strip()
+            scope_type = "global" if session_workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID else "workspace"
+            workspace_id = None if scope_type == "global" else session_workspace_id
+            persisted_id = (
+                str(session.persisted_conversation_id).strip()
+                if session.persisted_conversation_id
+                else ""
+            )
+            row_key = persisted_id or f"native:{session.id}"
+            selected = session.id == active_session_id
+            row = ConsoleConversationBrowserInputRow(
+                row_key=row_key,
+                conversation_id=persisted_id or None,
+                native_session_id=session.id,
+                title=str(session.title or "Untitled conversation"),
+                scope_type=scope_type,
+                workspace_id=workspace_id,
+                workspace_label=self._console_browser_workspace_label(workspace_id, labels),
+                status="active session" if selected else "open session",
+                selected=selected,
+                source_kind="native",
+                updated_sort=str(session.updated_at or ""),
+            )
+            rows.append(self._apply_console_browser_star_state(row, starred_ids))
+        return rows
+
+    def _membership_console_browser_rows(
+        self,
+        current_conversation_id: str | None = None,
+    ) -> list[ConsoleConversationBrowserInputRow]:
+        """Return conversation membership rows across every local workspace."""
+        service = getattr(self.app_instance, "workspace_registry_service", None)
+        list_conversations = getattr(service, "list_workspace_conversations", None)
+        if not callable(list_conversations):
+            return []
+        labels = self._console_browser_workspace_labels()
+        starred_ids = self._starred_console_conversation_ids()
+        current_conversation = current_conversation_id or self._current_console_conversation_id()
+        active_session = self._active_native_console_session()
+        active_workspace_id = (
+            str(active_session.workspace_id or "").strip()
+            if active_session is not None
+            else str(self._current_console_workspace_context().active_workspace_id or "").strip()
+        )
+        rows: list[ConsoleConversationBrowserInputRow] = []
+        for record in self._console_browser_workspace_records():
+            workspace_id = str(record.workspace_id or "").strip()
+            if not workspace_id:
+                continue
+            try:
+                memberships = list_conversations(workspace_id)
+            except Exception:
+                logger.debug(
+                    "Unable to list Console browser workspace conversations "
+                    "workspace_id={}",
+                    workspace_id,
+                    exc_info=True,
+                )
+                continue
+            for membership in memberships:
+                conversation_id = str(getattr(membership, "item_id", "") or "").strip()
+                if not conversation_id:
+                    continue
+                title = str(getattr(membership, "title", "") or conversation_id)
+                row = ConsoleConversationBrowserInputRow(
+                    row_key=f"workspace:{workspace_id}:conversation:{conversation_id}",
+                    conversation_id=conversation_id,
+                    native_session_id=None,
+                    title=title,
+                    scope_type="workspace",
+                    workspace_id=workspace_id,
+                    workspace_label=self._console_browser_workspace_label(workspace_id, labels),
+                    status=str(getattr(membership, "role", "") or "workspace-thread"),
+                    selected=bool(
+                        current_conversation
+                        and current_conversation == conversation_id
+                        and active_workspace_id == workspace_id
+                    ),
+                    source_kind="membership",
+                    updated_sort=str(getattr(membership, "created_at", "") or ""),
+                )
+                rows.append(self._apply_console_browser_star_state(row, starred_ids))
+        return rows
+
+    async def _persisted_console_browser_rows(
+        self,
+        query: str = "",
+    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
+        """Return persisted global/workspace rows for grouped browser search."""
+        services: list[tuple[Any, bool]] = []
+        scope_service = getattr(
+            self.app_instance,
+            "chat_conversation_scope_service",
+            None,
+        )
+        local_service = getattr(self.app_instance, "local_chat_conversation_service", None)
+
+        def add_service(candidate: Any, *, include_mode: bool) -> None:
+            if candidate is None:
+                return
+            if any(candidate is existing for existing, _include_mode in services):
+                return
+            services.append((candidate, include_mode))
+
+        add_service(scope_service, include_mode=True)
+        add_service(getattr(scope_service, "local_service", None), include_mode=False)
+        add_service(local_service, include_mode=False)
+        if not services:
+            return [], None, ""
+
+        labels = self._console_browser_workspace_labels()
+        scopes: list[tuple[str, str | None]] = [("global", None)]
+        scopes.extend(
+            ("workspace", str(record.workspace_id))
+            for record in self._console_browser_workspace_records()
+            if str(record.workspace_id or "").strip()
+        )
+        last_error = ""
+        for service, include_mode in services:
+            list_conversations = getattr(service, "list_conversations", None)
+            if not callable(list_conversations):
+                continue
+            rows: list[ConsoleConversationBrowserInputRow] = []
+            total_count = 0
+            saw_total = False
+            saw_result = False
+            current_conversation = self._current_console_conversation_id()
+            starred_ids = self._starred_console_conversation_ids()
+            for scope_type, workspace_id in scopes:
+                list_kwargs: dict[str, Any] = {
+                    "query": query,
+                    "scope_type": scope_type,
+                    "workspace_id": workspace_id,
+                    "limit": 25,
+                    "offset": 0,
+                }
+                if include_mode:
+                    list_kwargs["mode"] = "local"
+                try:
+                    result = list_conversations(**list_kwargs)
+                    result = await result if inspect.isawaitable(result) else result
+                except Exception as exc:
+                    if (
+                        isinstance(exc, ValueError)
+                        and "service is unavailable" in str(exc).lower()
+                    ):
+                        logger.debug("Local persisted conversation service is unavailable")
+                        last_error = ""
+                        break
+                    logger.exception(
+                        "Unable to search Console conversation browser "
+                        "query={!r} scope_type={} workspace_id={} include_mode={}",
+                        query,
+                        scope_type,
+                        workspace_id,
+                        include_mode,
+                    )
+                    return rows, None if not saw_total else total_count, (
+                        "Workspace conversation search is unavailable."
+                    )
+                saw_result = True
+                if not isinstance(result, dict):
+                    continue
+                items = result.get("items")
+                if not isinstance(items, list):
+                    items = []
+                total = result.get("total")
+                if total is None:
+                    pagination = result.get("pagination")
+                    if isinstance(pagination, dict):
+                        total = pagination.get("total")
+                try:
+                    total_count += int(total)
+                    saw_total = True
+                except (TypeError, ValueError):
+                    total_count += len(items)
+                    saw_total = True
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    conversation_id = str(item.get("id") or "").strip()
+                    if not conversation_id:
+                        continue
+                    item_scope_type = str(item.get("scope_type") or scope_type or "workspace")
+                    item_workspace_id = item.get("workspace_id", workspace_id)
+                    normalized_workspace_id = (
+                        None
+                        if item_scope_type == "global"
+                        else str(item_workspace_id or workspace_id or "").strip()
+                    )
+                    row = ConsoleConversationBrowserInputRow(
+                        row_key=conversation_id,
+                        conversation_id=conversation_id,
+                        native_session_id=None,
+                        title=str(item.get("title") or "Untitled conversation"),
+                        scope_type=item_scope_type,
+                        workspace_id=normalized_workspace_id,
+                        workspace_label=self._console_browser_workspace_label(
+                            normalized_workspace_id,
+                            labels,
+                        ),
+                        status=str(item.get("state") or "workspace-thread"),
+                        selected=bool(
+                            current_conversation and current_conversation == conversation_id
+                        ),
+                        source_kind="persisted",
+                        updated_sort=str(
+                            item.get("updated_at")
+                            or item.get("created_at")
+                            or item.get("last_updated")
+                            or ""
+                        ),
+                    )
+                    rows.append(self._apply_console_browser_star_state(row, starred_ids))
+            if saw_result:
+                return rows, total_count if saw_total else None, last_error
+        return [], None, last_error
+
+    def _sync_persisted_console_browser_rows(
+        self,
+        query: str = "",
+        current_conversation_id: str | None = None,
+    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
+        """Return persisted rows when the local listing seam is synchronous."""
+        services: list[tuple[Any, bool]] = []
+        local_service = getattr(self.app_instance, "local_chat_conversation_service", None)
+        scope_service = getattr(
+            self.app_instance,
+            "chat_conversation_scope_service",
+            None,
+        )
+
+        def add_service(candidate: Any, *, include_mode: bool) -> None:
+            if candidate is None:
+                return
+            if any(candidate is existing for existing, _include_mode in services):
+                return
+            services.append((candidate, include_mode))
+
+        add_service(local_service, include_mode=False)
+        add_service(getattr(scope_service, "local_service", None), include_mode=False)
+        add_service(scope_service, include_mode=True)
+        if not services:
+            return [], None, ""
+
+        labels = self._console_browser_workspace_labels()
+        scopes: list[tuple[str, str | None]] = [("global", None)]
+        scopes.extend(
+            ("workspace", str(record.workspace_id))
+            for record in self._console_browser_workspace_records()
+            if str(record.workspace_id or "").strip()
+        )
+        last_error = ""
+        for service, include_mode in services:
+            list_conversations = getattr(service, "list_conversations", None)
+            if not callable(list_conversations):
+                continue
+            rows: list[ConsoleConversationBrowserInputRow] = []
+            total_count = 0
+            saw_total = False
+            saw_sync_result = False
+            current_conversation = (
+                current_conversation_id or self._current_console_conversation_id()
+            )
+            starred_ids = self._starred_console_conversation_ids()
+            for scope_type, workspace_id in scopes:
+                list_kwargs: dict[str, Any] = {
+                    "query": query,
+                    "scope_type": scope_type,
+                    "workspace_id": workspace_id,
+                    "limit": 25,
+                    "offset": 0,
+                }
+                if include_mode:
+                    list_kwargs["mode"] = "local"
+                try:
+                    result = list_conversations(**list_kwargs)
+                except Exception as exc:
+                    if (
+                        isinstance(exc, ValueError)
+                        and "service is unavailable" in str(exc).lower()
+                    ):
+                        logger.debug(
+                            "Local persisted conversation service is unavailable"
+                        )
+                        last_error = ""
+                        break
+                    logger.exception(
+                        "Unable to list Console conversation browser "
+                        "query={!r} scope_type={} workspace_id={} include_mode={}",
+                        query,
+                        scope_type,
+                        workspace_id,
+                        include_mode,
+                    )
+                    return rows, None if not saw_total else total_count, (
+                        "Workspace conversation search is unavailable."
+                    )
+                if inspect.isawaitable(result):
+                    try:
+                        result.close()
+                    except AttributeError:
+                        pass
+                    continue
+                saw_sync_result = True
+                if not isinstance(result, dict):
+                    continue
+                items = result.get("items")
+                if not isinstance(items, list):
+                    items = []
+                total = result.get("total")
+                if total is None:
+                    pagination = result.get("pagination")
+                    if isinstance(pagination, dict):
+                        total = pagination.get("total")
+                try:
+                    total_count += int(total)
+                    saw_total = True
+                except (TypeError, ValueError):
+                    total_count += len(items)
+                    saw_total = True
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    conversation_id = str(item.get("id") or "").strip()
+                    if not conversation_id:
+                        continue
+                    item_scope_type = str(
+                        item.get("scope_type") or scope_type or "workspace"
+                    )
+                    item_workspace_id = item.get("workspace_id", workspace_id)
+                    normalized_workspace_id = (
+                        None
+                        if item_scope_type == "global"
+                        else str(item_workspace_id or workspace_id or "").strip()
+                    )
+                    row = ConsoleConversationBrowserInputRow(
+                        row_key=conversation_id,
+                        conversation_id=conversation_id,
+                        native_session_id=None,
+                        title=str(item.get("title") or "Untitled conversation"),
+                        scope_type=item_scope_type,
+                        workspace_id=normalized_workspace_id,
+                        workspace_label=self._console_browser_workspace_label(
+                            normalized_workspace_id,
+                            labels,
+                        ),
+                        status=str(item.get("state") or "workspace-thread"),
+                        selected=bool(
+                            current_conversation
+                            and current_conversation == conversation_id
+                        ),
+                        source_kind="persisted",
+                        updated_sort=str(
+                            item.get("updated_at")
+                            or item.get("created_at")
+                            or item.get("last_updated")
+                            or ""
+                        ),
+                    )
+                    rows.append(self._apply_console_browser_star_state(row, starred_ids))
+            if saw_sync_result:
+                return rows, total_count if saw_total else None, last_error
+        return [], None, last_error
+
+    def _merge_console_browser_rows(
+        self,
+        *row_groups: Iterable[ConsoleConversationBrowserInputRow],
+    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        """Merge browser rows with native, membership, then persisted precedence."""
+        merged: list[ConsoleConversationBrowserInputRow] = []
+        seen: set[tuple[str, ...]] = set()
+        starred_ids = self._starred_console_conversation_ids()
+        for group in row_groups:
+            for raw_row in group:
+                row = self._apply_console_browser_star_state(raw_row, starred_ids)
+                identity = self._console_browser_display_identity(row)
+                if not identity[-1] or identity in seen:
+                    continue
+                seen.add(identity)
+                merged.append(row)
+        return tuple(merged)
+
+    def _current_console_browser_rows(
+        self,
+        query: str,
+        current_conversation_id: str | None = None,
+    ) -> tuple[tuple[ConsoleConversationBrowserInputRow, ...], int | None, str]:
+        """Return current grouped browser rows plus optional search metadata."""
+        local_rows = self._merge_console_browser_rows(
+            self._native_console_browser_rows(current_conversation_id),
+            self._membership_console_browser_rows(current_conversation_id),
+        )
+        persisted_rows, persisted_total, sync_error = self._sync_persisted_console_browser_rows(
+            query,
+            current_conversation_id=current_conversation_id,
+        )
+        cached_rows = self._console_conversation_browser_rows
+        rows = self._merge_console_browser_rows(local_rows, persisted_rows, cached_rows)
+        if str(query or "").strip():
+            total = (
+                self._console_conversation_browser_total
+                if self._console_conversation_browser_total is not None
+                else persisted_total
+            )
+        else:
+            total = None
+        return rows, total, self._console_conversation_browser_error or sync_error
+
+    def _selected_console_workspace_conversation_summary(
+        self,
+        rows: list[ConsoleWorkspaceConversationRow],
+    ) -> str:
+        selected = next((row for row in rows if row.selected), None)
+        if selected is None:
+            return "No active conversation."
+        title = ConsoleWorkspaceContextTray._conversation_title(selected.title)
+        detail = ConsoleWorkspaceContextTray._conversation_detail_status(selected.status)
+        return f"{title} - {detail or 'conversation'}"
+
+    def _merge_console_workspace_rows(
+        self,
+        primary: list[ConsoleWorkspaceConversationRow],
+        secondary: list[ConsoleWorkspaceConversationRow],
+    ) -> list[ConsoleWorkspaceConversationRow]:
+        merged: list[ConsoleWorkspaceConversationRow] = []
+        seen: set[str] = set()
+        for row in primary + secondary:
+            key = self._console_workspace_row_key(row)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(row)
+        return merged
+
+    def _native_console_rows_for_workspace_search(
+        self,
+        workspace_id: str,
+        query: str,
+    ) -> list[ConsoleWorkspaceConversationRow]:
+        """Return matching open native sessions for the active workspace search."""
+        store = self._console_chat_store
+        if store is None:
+            return []
+        needle = str(query or "").strip().lower()
+        rows: list[ConsoleWorkspaceConversationRow] = []
+        active_session_id = store.active_session_id
+        for session in store.sessions():
+            selected = session.id == active_session_id
+            session_workspace_id = str(session.workspace_id or "").strip()
+            if (
+                workspace_id
+                and workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
+                and session_workspace_id != workspace_id
+                and not selected
+            ):
+                continue
+            title = str(session.title or "Untitled conversation")
+            if needle and needle not in title.lower():
+                continue
+            conversation_id = (
+                str(session.persisted_conversation_id)
+                if session.persisted_conversation_id
+                else f"native:{session.id}"
+            )
+            rows.append(
+                ConsoleWorkspaceConversationRow(
+                    conversation_id=conversation_id,
+                    title=title,
+                    status="active" if selected else "open",
+                    selected=selected,
+                )
+            )
+        return rows
+
+    def _membership_console_rows_for_workspace_search(
+        self,
+        workspace_id: str,
+        query: str,
+    ) -> list[ConsoleWorkspaceConversationRow]:
+        """Return matching workspace conversation membership rows."""
+        service = getattr(self.app_instance, "workspace_registry_service", None)
+        list_conversations = getattr(service, "list_workspace_conversations", None)
+        if not callable(list_conversations) or not workspace_id:
+            return []
+        needle = str(query or "").strip().lower()
+        try:
+            memberships = list_conversations(workspace_id)
+        except Exception:
+            logger.debug("Unable to search workspace conversation memberships", exc_info=True)
+            return []
+        rows: list[ConsoleWorkspaceConversationRow] = []
+        current_conversation = self._current_console_conversation_id()
+        for membership in memberships:
+            title = str(getattr(membership, "title", "") or getattr(membership, "item_id", ""))
+            if needle and needle not in title.lower():
+                continue
+            conversation_id = str(getattr(membership, "item_id", "") or "")
+            rows.append(
+                ConsoleWorkspaceConversationRow(
+                    conversation_id=conversation_id,
+                    title=title,
+                    status=str(getattr(membership, "role", "") or "workspace-thread"),
+                    selected=bool(current_conversation and conversation_id == current_conversation),
+                )
+            )
+        return rows
+
+    async def _persisted_console_rows_for_workspace_search(
+        self,
+        workspace_id: str,
+        query: str,
+    ) -> tuple[list[ConsoleWorkspaceConversationRow], int | None, str]:
+        """Return persisted workspace conversation search rows, total, and error copy."""
+        scope_service = getattr(
+            self.app_instance,
+            "chat_conversation_scope_service",
+            None,
+        )
+        list_conversations = getattr(scope_service, "list_conversations", None)
+        if not callable(list_conversations) or not workspace_id:
+            return [], None, ""
+        if (
+            hasattr(scope_service, "local_service")
+            and getattr(scope_service, "local_service", None) is None
+        ):
+            return [], None, ""
+        try:
+            result = list_conversations(
+                mode="local",
+                query=query,
+                scope_type="workspace",
+                workspace_id=workspace_id,
+                limit=CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
+                offset=0,
+            )
+            result = await result if inspect.isawaitable(result) else result
+        except Exception as exc:
+            if (
+                isinstance(exc, ValueError)
+                and "service is unavailable" in str(exc).lower()
+            ):
+                logger.debug("Local persisted conversation search service is unavailable")
+                return [], None, ""
+            logger.exception("Unable to search Console workspace conversations")
+            return [], None, "Workspace conversation search is unavailable."
+        if not isinstance(result, dict):
+            return [], 0, ""
+        items = result.get("items")
+        if not isinstance(items, list):
+            items = []
+        total = result.get("total")
+        if total is None:
+            pagination = result.get("pagination")
+            if isinstance(pagination, dict):
+                total = pagination.get("total")
+        try:
+            total_count = int(total)
+        except (TypeError, ValueError):
+            total_count = len(items)
+        current_conversation = self._current_console_conversation_id()
+        rows: list[ConsoleWorkspaceConversationRow] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            conversation_id = str(item.get("id") or "").strip()
+            if not conversation_id:
+                continue
+            rows.append(
+                ConsoleWorkspaceConversationRow(
+                    conversation_id=conversation_id,
+                    title=str(item.get("title") or "Untitled conversation"),
+                    status=str(item.get("state") or "workspace-thread"),
+                    selected=bool(
+                        current_conversation and current_conversation == conversation_id
+                    ),
+                )
+            )
+        return rows, total_count, ""
+
+    def _refresh_console_workspace_conversation_search_if_current(
+        self,
+        workspace_id: str,
+        query: str,
+        token: int,
+        *,
+        restore_focus: bool = False,
+    ) -> bool:
+        """Refresh search results when workspace, query, and token still match."""
+        if token != self._console_workspace_conversation_search_token:
+            return False
+        if workspace_id != self._active_console_workspace_id_for_conversation_search():
+            return False
+        if query != self._console_workspace_conversation_query:
+            return False
+        self._sync_console_workspace_context()
+        if restore_focus:
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+        return True
+
+    async def _refresh_console_workspace_conversation_search(
+        self,
+        workspace_id: str,
+        query: str,
+        token: int,
+    ) -> None:
+        """Refresh search results only if workspace and query are still current."""
+        if token != self._console_workspace_conversation_search_token:
+            return
+        if workspace_id != self._active_console_workspace_id_for_conversation_search():
+            return
+        if query != self._console_workspace_conversation_query:
+            return
+        if not str(query or "").strip():
+            self._console_workspace_conversation_search_rows = ()
+            self._console_workspace_conversation_search_total = None
+            self._console_workspace_conversation_search_error = ""
+            self._sync_console_workspace_context()
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+            return
+        native_rows = self._native_console_rows_for_workspace_search(
+            workspace_id,
+            query,
+        )
+        membership_rows = self._membership_console_rows_for_workspace_search(
+            workspace_id,
+            query,
+        )
+        local_rows = self._merge_console_workspace_rows(native_rows, membership_rows)
+        self._console_workspace_conversation_search_rows = tuple(local_rows)
+        self._console_workspace_conversation_search_total = len(local_rows)
+        self._console_workspace_conversation_search_error = ""
+        self._sync_console_workspace_context()
+        self.call_after_refresh(self._focus_console_workspace_conversation_search)
+        persisted_rows, persisted_total, error_copy = (
+            await self._persisted_console_rows_for_workspace_search(
+                workspace_id,
+                query,
+            )
+        )
+        if token != self._console_workspace_conversation_search_token:
+            return
+        if workspace_id != self._active_console_workspace_id_for_conversation_search():
+            return
+        if query != self._console_workspace_conversation_query:
+            return
+        merged = self._merge_console_workspace_rows(
+            local_rows,
+            persisted_rows,
+        )
+        result_total = persisted_total
+        if result_total is None or result_total < len(merged):
+            result_total = len(merged)
+        self._console_workspace_conversation_search_rows = tuple(merged)
+        self._console_workspace_conversation_search_total = result_total
+        self._console_workspace_conversation_search_error = error_copy
+        self._sync_console_workspace_context()
+        self.call_after_refresh(self._focus_console_workspace_conversation_search)
+
+    async def _refresh_console_workspace_conversation_search_after_selection(self) -> None:
+        """Refresh active search rows after a conversation row changes selection."""
+        query = self._console_workspace_conversation_query
+        if not query.strip():
+            return
+        if self._console_workspace_conversation_search_timer is not None:
+            self._console_workspace_conversation_search_timer.stop()
+            self._console_workspace_conversation_search_timer = None
+        self._console_workspace_conversation_search_token += 1
+        token = self._console_workspace_conversation_search_token
+        await self._refresh_console_workspace_conversation_search(
+            self._active_console_workspace_id_for_conversation_search(),
+            query,
+            token,
+        )
+
+    async def _refresh_console_conversation_browser_search(
+        self,
+        query: str,
+        token: int,
+    ) -> None:
+        """Refresh grouped browser search rows if query and token are current."""
+        if token != self._console_conversation_browser_search_token:
+            return
+        if query != self._console_conversation_browser_query:
+            return
+        if not str(query or "").strip():
+            self._console_conversation_browser_rows = ()
+            self._console_conversation_browser_total = None
+            self._console_conversation_browser_error = ""
+            self._sync_console_workspace_context()
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+            return
+
+        local_rows = self._filter_console_browser_rows_for_query(
+            self._merge_console_browser_rows(
+                self._native_console_browser_rows(),
+                self._membership_console_browser_rows(),
+            ),
+            query,
+        )
+        self._console_conversation_browser_rows = local_rows
+        self._console_conversation_browser_total = None
+        self._console_conversation_browser_error = ""
+        self._sync_console_workspace_context()
+        self.call_after_refresh(self._focus_console_workspace_conversation_search)
+
+        persisted_rows, persisted_total, error_copy = await self._persisted_console_browser_rows(
+            query
+        )
+        if token != self._console_conversation_browser_search_token:
+            return
+        if query != self._console_conversation_browser_query:
+            return
+        merged = self._merge_console_browser_rows(local_rows, persisted_rows)
+        result_total = persisted_total
+        if result_total is None or result_total < len(merged):
+            result_total = len(merged)
+        self._console_conversation_browser_rows = merged
+        self._console_conversation_browser_total = result_total
+        self._console_conversation_browser_error = error_copy
+        self._sync_console_workspace_context()
+        self.call_after_refresh(self._focus_console_workspace_conversation_search)
+
+    async def _refresh_console_conversation_browser_after_selection(self) -> None:
+        """Refresh grouped browser rows after selection/star state changes."""
+        query = self._console_conversation_browser_query
+        if not query.strip():
+            self._console_conversation_browser_rows = ()
+            self._console_conversation_browser_total = None
+            self._console_conversation_browser_error = ""
+            self._sync_console_workspace_context()
+            return
+        if self._console_conversation_browser_search_timer is not None:
+            self._console_conversation_browser_search_timer.stop()
+            self._console_conversation_browser_search_timer = None
+        self._console_conversation_browser_search_token += 1
+        self._console_workspace_conversation_search_token = (
+            self._console_conversation_browser_search_token
+        )
+        token = self._console_conversation_browser_search_token
+        await self._refresh_console_conversation_browser_search(query, token)
+
+    def _with_native_console_session_rows(
+        self,
+        state: ConsoleWorkspaceContextState,
+    ) -> ConsoleWorkspaceContextState:
+        """Include active native Console sessions in the workspace rail.
+
+        The workspace registry only knows about conversations after durable
+        persistence links them. Native Console sessions are still user-visible
+        conversations and need to remain reachable from the rail while they are
+        open, including before the first persisted message exists.
+        """
+        store = self._console_chat_store
+        if store is None:
+            return state
+
+        active_workspace_id = str(store.workspace_context.active_workspace_id or "").strip()
+        active_session_id = store.active_session_id
+        rows = list(state.conversation_rows)
+        existing_ids = {str(row.conversation_id) for row in rows}
+        native_rows: list[ConsoleWorkspaceConversationRow] = []
+        for session in store.sessions():
+            session_workspace_id = str(session.workspace_id or "").strip()
+            selected = session.id == active_session_id
+            if (
+                active_workspace_id
+                and active_workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
+                and session_workspace_id != active_workspace_id
+                and not selected
+            ):
+                continue
+
+            conversation_id = (
+                str(session.persisted_conversation_id)
+                if session.persisted_conversation_id
+                else f"native:{session.id}"
+            )
+            if conversation_id in existing_ids:
+                continue
+
+            native_rows.append(
+                ConsoleWorkspaceConversationRow(
+                    conversation_id=conversation_id,
+                    title=session.title,
+                    status="active" if selected else "open",
+                    selected=selected,
+                )
+            )
+            existing_ids.add(conversation_id)
+
+        if not native_rows:
+            return state
+        native_rows.sort(key=lambda row: 0 if row.selected else 1)
+        return replace(
+            state,
+            conversation_rows=tuple(
+                self._merge_console_workspace_rows(native_rows, rows)
+            ),
+        )
+
+    def _with_console_workspace_conversation_section(
+        self,
+        state: ConsoleWorkspaceContextState,
+    ) -> ConsoleWorkspaceContextState:
+        """Attach renderable Conversations subsection state to workspace context."""
+        workspace_id = ""
+        try:
+            workspace_id = str(
+                self._current_console_workspace_context().active_workspace_id or ""
+            ).strip()
+        except Exception:
+            workspace_id = ""
+        store = self._console_chat_store
+        if not workspace_id:
+            if store is not None and store.workspace_context.active_workspace_id:
+                workspace_id = str(store.workspace_context.active_workspace_id)
+            elif state.workspace_label.startswith("Workspace: "):
+                workspace_id = state.workspace_label.removeprefix("Workspace: ").strip()
+
+        if self._console_workspace_conversation_workspace_id != workspace_id:
+            self._console_workspace_conversation_query = ""
+            self._console_workspace_conversation_search_token += 1
+            self._console_workspace_conversation_search_rows = ()
+            self._console_workspace_conversation_search_total = None
+            self._console_workspace_conversation_search_error = ""
+            self._console_workspace_conversation_workspace_id = workspace_id
+
+        rows = list(state.conversation_rows)
+        if self._console_workspace_conversation_query.strip():
+            rows = list(self._console_workspace_conversation_search_rows)
+        selected_summary = self._selected_console_workspace_conversation_summary(rows)
+        query = self._console_workspace_conversation_query
+        result_total = (
+            self._console_workspace_conversation_search_total
+            if query.strip()
+            else None
+        )
+        if (
+            query.strip()
+            and result_total is None
+            and not self._console_workspace_conversation_search_error
+        ):
+            result_total = len(rows)
+        status_copy = console_workspace_conversation_result_copy(
+            query=query,
+            result_total_count=result_total,
+            result_limit=CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
+        )
+        section = ConsoleWorkspaceConversationSectionState(
+            workspace_id=workspace_id,
+            collapsed=self._console_workspace_conversations_collapsed(workspace_id),
+            query=query,
+            selected_summary=selected_summary,
+            rows=tuple(rows),
+            workspace_total_count=len(rows),
+            result_total_count=result_total,
+            status_copy=status_copy,
+            empty_copy=(
+                "No matches in this workspace."
+                if query.strip()
+                else state.conversation_empty_copy
+            ),
+            search_enabled=True,
+            new_conversation_enabled=state.new_conversation_enabled,
+            error_copy=self._console_workspace_conversation_search_error,
+        )
+        return replace(state, conversation_section=section)
+
+    def _with_console_conversation_browser_state(
+        self,
+        state: ConsoleWorkspaceContextState,
+        current_conversation_id: str | None = None,
+    ) -> ConsoleWorkspaceContextState:
+        """Attach grouped all-workspaces conversation browser state."""
+        marks_service = getattr(
+            self.app_instance,
+            "conversation_local_marks_service",
+            None,
+        )
+        query = self._console_conversation_browser_query
+        rows, total, error_copy = self._current_console_browser_rows(
+            query,
+            current_conversation_id=current_conversation_id,
+        )
+        browser = build_console_conversation_browser_state(
+            rows=rows,
+            active_workspace_id=self._current_console_workspace_context().active_workspace_id,
+            group_collapse_preferences=(
+                self._console_conversation_browser_collapse_preferences()
+            ),
+            query=query,
+            marks_available=marks_service is not None,
+            error_copy=error_copy or self._console_conversation_browser_error,
+            result_total_count=total,
+            result_limit=CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+        )
+        legacy_state = self._with_console_workspace_conversation_section(state)
+        return replace(
+            state,
+            conversation_browser=browser,
+            conversation_section=legacy_state.conversation_section,
         )
 
     def _console_config(self) -> dict[str, Any]:
@@ -1227,6 +3266,90 @@ class ChatScreen(BaseAppScreen):
             console_config = {}
             app_config["console"] = console_config
         return console_config
+
+    def _console_conversation_section_config(self) -> dict[str, Any]:
+        """Return mutable Console conversation-section UI preferences."""
+        console_config = self._console_config()
+        section_config = console_config.get("conversation_section")
+        if not isinstance(section_config, dict):
+            section_config = {}
+            console_config["conversation_section"] = section_config
+        return section_config
+
+    def _console_conversation_browser_config(self) -> dict[str, Any]:
+        """Return mutable grouped browser UI preferences."""
+        console_config = self._console_config()
+        browser_config = console_config.get("conversation_browser")
+        if not isinstance(browser_config, dict):
+            browser_config = {}
+            console_config["conversation_browser"] = browser_config
+        collapsed_groups = browser_config.get("collapsed_groups")
+        if not isinstance(collapsed_groups, dict):
+            browser_config["collapsed_groups"] = {}
+        return browser_config
+
+    def _console_conversation_browser_collapse_preferences(self) -> dict[str, bool]:
+        """Return persisted grouped browser collapse preferences."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            return {}
+        console_config = app_config.get("console")
+        if not isinstance(console_config, dict):
+            return {}
+        browser_config = console_config.get("conversation_browser")
+        if not isinstance(browser_config, dict):
+            return {}
+        collapsed_groups = browser_config.get("collapsed_groups")
+        if not isinstance(collapsed_groups, dict):
+            return {}
+        return {
+            str(group_id): bool(collapsed)
+            for group_id, collapsed in collapsed_groups.items()
+        }
+
+    def _set_console_conversation_browser_group_collapsed(
+        self,
+        group_id: str,
+        collapsed: bool,
+    ) -> None:
+        """Store one grouped browser collapse preference."""
+        normalized_group_id = str(group_id or "").strip()
+        if not normalized_group_id:
+            return
+        browser_config = self._console_conversation_browser_config()
+        collapsed_groups = browser_config.get("collapsed_groups")
+        if not isinstance(collapsed_groups, dict):
+            collapsed_groups = {}
+            browser_config["collapsed_groups"] = collapsed_groups
+        collapsed_groups[normalized_group_id] = bool(collapsed)
+
+    def _console_workspace_conversations_collapsed(
+        self,
+        workspace_id: str | None,
+    ) -> bool:
+        """Return stored collapse preference for one workspace."""
+        key = str(workspace_id or "global").strip() or "global"
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            return False
+        console_config = app_config.get("console")
+        if not isinstance(console_config, dict):
+            return False
+        section_config = console_config.get("conversation_section")
+        if not isinstance(section_config, dict):
+            return False
+        value = section_config.get(key)
+        return bool(value.get("collapsed")) if isinstance(value, dict) else False
+
+    def _set_console_workspace_conversations_collapsed(
+        self,
+        workspace_id: str | None,
+        collapsed: bool,
+    ) -> None:
+        """Store collapse preference for one workspace in memory."""
+        key = str(workspace_id or "global").strip() or "global"
+        section_config = self._console_conversation_section_config()
+        section_config[key] = {"collapsed": bool(collapsed)}
 
     def _console_rail_state_config(self) -> dict[str, Any]:
         """Return mutable Console rail-state config, initializing it if needed."""
@@ -1295,12 +3418,156 @@ class ChatScreen(BaseAppScreen):
         if not saved and notify_on_failure:
             self.app.call_from_thread(self._notify_console_rail_preference_save_failure)
 
+    @work(thread=True)
+    def _delete_console_rail_preference_keys(self, keys: list[str]) -> None:
+        """Remove superseded/orphaned rail preference keys off the UI thread."""
+        try:
+            delete_settings_from_cli_config("console.rail_state", keys)
+        except Exception as exc:
+            logger.warning("Failed to prune Console rail preference keys: {}", exc)
+
+    def _dispatch_console_rail_preference_prune(self) -> None:
+        """Queue the one-shot orphaned rail-preference cleanup after mount."""
+        if self._console_rail_prune_dispatched:
+            return
+        store = self._console_chat_store
+        if store is None:
+            # Sessions not restored yet; retry on a later sync so open
+            # unsaved sessions are never mistaken for orphans.
+            return
+        if getattr(self.app_instance, "chachanotes_db", None) is None:
+            # Conversation liveness cannot be established yet; retry on a
+            # later sync rather than latching and never pruning this session.
+            return
+        self._console_rail_prune_dispatched = True
+        live_scope_ids: set[str] = set()
+        for session in store.sessions():
+            live_scope_ids.add(str(session.id))
+            persisted_id = getattr(session, "persisted_conversation_id", None)
+            if persisted_id:
+                live_scope_ids.add(str(persisted_id))
+        self._prune_console_rail_preferences(live_scope_ids)
+
+    @work(thread=True)
+    def _prune_console_rail_preferences(self, live_scope_ids: set[str]) -> None:
+        """Drop rail preference sections whose conversation/session is gone.
+
+        Rail preferences accumulate one config section per scope forever
+        (deleted conversations included); this best-effort pass bounds the
+        namespace to live scopes. It refuses to prune when conversation
+        liveness cannot be established.
+        """
+        try:
+            # Peek without _console_rail_state_config(): this is a read path
+            # and must not materialize an empty rail_state table.
+            app_config = getattr(self.app_instance, "app_config", None)
+            if not isinstance(app_config, dict):
+                return
+            console_config = app_config.get("console")
+            if not isinstance(console_config, dict):
+                return
+            rail_state_config = console_config.get("rail_state")
+            if not isinstance(rail_state_config, dict) or not rail_state_config:
+                return
+            stored_keys = list(rail_state_config.keys())
+            db = getattr(self.app_instance, "chachanotes_db", None)
+            if db is None:
+                return
+            live = set(live_scope_ids)
+            offset = 0
+            page_size = 1000
+            while True:
+                rows = db.list_all_active_conversations(limit=page_size, offset=offset)
+                live.update(str(row["id"]) for row in rows if row.get("id"))
+                if len(rows) < page_size:
+                    break
+                offset += page_size
+            prunable = collect_prunable_console_rail_keys(
+                stored_keys, live_scope_ids=live
+            )
+            if not prunable:
+                return
+            if delete_settings_from_cli_config("console.rail_state", prunable):
+                # The in-memory config dict is shared with UI-thread readers
+                # and writers; mutate it back on the UI thread, not here.
+                self.app.call_from_thread(
+                    self._drop_console_rail_preference_keys_in_memory, prunable
+                )
+                logger.info(
+                    "Pruned {} orphaned Console rail preference section(s)",
+                    len(prunable),
+                )
+        except Exception as exc:
+            logger.warning("Console rail preference prune skipped: {}", exc)
+
+    def _drop_console_rail_preference_keys_in_memory(self, keys: list[str]) -> None:
+        """Remove pruned keys from the live in-memory rail-state config (UI thread)."""
+        app_config = getattr(self.app_instance, "app_config", None)
+        if not isinstance(app_config, dict):
+            return
+        console_config = app_config.get("console")
+        if not isinstance(console_config, dict):
+            return
+        rail_state_config = console_config.get("rail_state")
+        if not isinstance(rail_state_config, dict):
+            return
+        for key in keys:
+            rail_state_config.pop(key, None)
+
     def _notify_console_rail_preference_save_failure(self) -> None:
         """Notify from the UI thread when background preference persistence fails."""
         self.app_instance.notify(
             "Console rail preference is saved for this session only.",
             severity="warning",
         )
+
+    def _console_first_send_completed(self) -> bool:
+        """Return the persisted global first-send flag (cached per screen)."""
+        if self._console_first_send_completed_cached is None:
+            app_config = getattr(self.app_instance, "app_config", None)
+            raw = None
+            if isinstance(app_config, dict):
+                onboarding = app_config.get("console", {})
+                if isinstance(onboarding, dict):
+                    onboarding = onboarding.get("onboarding", {})
+                raw = (
+                    onboarding.get("first_send_completed")
+                    if isinstance(onboarding, dict)
+                    else None
+                )
+            self._console_first_send_completed_cached = coerce_console_first_send_completed(raw)
+        return self._console_first_send_completed_cached
+
+    def _record_console_first_send(self) -> None:
+        """Persist the one-time global first-send flag and refresh guidance."""
+        if self._console_first_send_completed():
+            return
+        self._console_first_send_completed_cached = True
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            console_cfg = app_config.get("console")
+            if not isinstance(console_cfg, dict):
+                console_cfg = {}
+                app_config["console"] = console_cfg
+            onboarding_cfg = console_cfg.get("onboarding")
+            if not isinstance(onboarding_cfg, dict):
+                onboarding_cfg = {}
+                console_cfg["onboarding"] = onboarding_cfg
+            onboarding_cfg["first_send_completed"] = True
+        self._save_console_onboarding_flag()
+        self._sync_console_transcript_guidance()
+
+    @work(thread=True)
+    def _save_console_onboarding_flag(self) -> None:
+        """Persist the first-send flag without blocking the UI thread."""
+        try:
+            save_setting_to_cli_config(
+                "console.onboarding",
+                "first_send_completed",
+                True,
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist Console onboarding flag: {}", exc)
 
     def _migrate_console_rail_fallback_preferences(
         self,
@@ -1328,6 +3595,10 @@ class ChatScreen(BaseAppScreen):
             preferences,
             notify_on_failure=False,
         )
+        # The session-scoped fallback is superseded by the durable key; drop
+        # it so migrations stop leaving permanent orphan sections behind.
+        rail_state_config.pop(fallback_key, None)
+        self._delete_console_rail_preference_keys([fallback_key])
 
     def _current_console_session_id(self) -> Optional[str]:
         """Return a durable external Console session scope when one is available."""
@@ -1386,12 +3657,13 @@ class ChatScreen(BaseAppScreen):
             preference_key.value,
             preference_key.fallback_value,
         )
-        return build_console_rail_state(
+        stored_preferences = self._stored_console_rail_preferences(
+            preference_key.value,
+            preference_key.fallback_value,
+        )
+        rail_state = build_console_rail_state(
             preference_key=preference_key,
-            stored_preferences=self._stored_console_rail_preferences(
-                preference_key.value,
-                preference_key.fallback_value,
-            ),
+            stored_preferences=stored_preferences,
             staged_source_count=len(workspace_context.staged_sources),
             staged_summary=staged_context_state.summary,
             workspace_label=workspace_context_state.workspace_label,
@@ -1402,6 +3674,41 @@ class ChatScreen(BaseAppScreen):
             approval_count=self._console_pending_approval_count(),
             can_save_chatbook=inspector_state.can_save_chatbook,
             available_columns=self._console_rail_available_columns(),
+        )
+        if self._should_open_standard_width_inspector(
+            rail_state=rail_state,
+            stored_preferences=stored_preferences,
+            inspector_state=inspector_state,
+        ):
+            return replace(rail_state, right_open=True, right_forced_collapsed=False)
+        return rail_state
+
+    def _should_open_standard_width_inspector(
+        self,
+        *,
+        rail_state: ConsoleRailState,
+        stored_preferences: Any,
+        inspector_state: ConsoleInspectorState,
+    ) -> bool:
+        """Return whether the 120-column Console contract should show Inspector."""
+        if rail_state.right_open:
+            return False
+        if isinstance(stored_preferences, dict) and "right_open" in stored_preferences:
+            return False
+        available_columns = self._console_rail_available_columns()
+        if available_columns is None or not 118 <= available_columns <= 128:
+            return False
+        labels = {str(row.label).strip() for row in inspector_state.rows}
+        return "Run recipe" in labels and bool(
+            labels
+            & {
+                "Blocked impact",
+                "Next action",
+                "Sources",
+                "Tools",
+                "Approvals",
+                "Artifacts",
+            }
         )
 
     def _apply_pending_launch_inspector_auto_open(
@@ -1440,6 +3747,7 @@ class ChatScreen(BaseAppScreen):
 
     def _sync_console_rail_visibility(self, rail_state: ConsoleRailState) -> None:
         """Apply Console rail visibility without recomposing the screen."""
+        self._sync_console_rail_sections(rail_state)
         for selector, label, badge in (
             (
                 "#console-context-rail-handle",
@@ -1474,6 +3782,16 @@ class ChatScreen(BaseAppScreen):
             self._sync_console_rail_descendant_visibility(widget, visible)
 
         self.refresh(layout=True)
+
+    def _sync_console_rail_visibility_if_changed(
+        self,
+        rail_state: ConsoleRailState,
+    ) -> None:
+        """Apply rail visibility only when the visible rail state changes."""
+        if rail_state == self._last_console_rail_state:
+            return
+        self._sync_console_rail_visibility(rail_state)
+        self._last_console_rail_state = rail_state
 
     @staticmethod
     def _sync_console_rail_descendant_visibility(widget: Any, visible: bool) -> None:
@@ -1511,6 +3829,7 @@ class ChatScreen(BaseAppScreen):
         *,
         left_open: bool | None = None,
         right_open: bool | None = None,
+        section_updates: Mapping[str, bool] | None = None,
         notify_on_failure: bool = True,
     ) -> ConsoleRailState:
         """Persist requested Console rail preference changes and return new state."""
@@ -1528,23 +3847,69 @@ class ChatScreen(BaseAppScreen):
         current = coerce_console_rail_preferences(
             rail_state_config.get(preference_key.value)
         )
-        next_preferences = ConsoleRailPreferences(
-            left_open=current.left_open if left_open is None else bool(left_open),
-            right_open=current.right_open if right_open is None else bool(right_open),
-        )
-        rail_state_config[preference_key.value] = serialize_console_rail_preferences(
-            next_preferences
-        )
-        self._persist_console_rail_preferences(
-            preference_key.value,
-            next_preferences,
-            notify_on_failure=notify_on_failure,
-        )
+        changes: dict[str, bool] = {}
+        if left_open is not None:
+            changes["left_open"] = bool(left_open)
+        if right_open is not None:
+            changes["right_open"] = bool(right_open)
+        for section_id, section_open in (section_updates or {}).items():
+            if section_id in CONSOLE_RAIL_SECTION_IDS:
+                changes[f"{section_id}_open"] = bool(section_open)
+        next_preferences = replace(current, **changes)
+        if next_preferences != current:
+            rail_state_config[preference_key.value] = serialize_console_rail_preferences(
+                next_preferences
+            )
+            self._persist_console_rail_preferences(
+                preference_key.value,
+                next_preferences,
+                notify_on_failure=notify_on_failure,
+            )
         if right_open is not None:
             self._pending_console_launch_auto_open_inspector = False
         rail_state = self._current_console_rail_state()
-        self._sync_console_rail_visibility(rail_state)
+        self._sync_console_rail_visibility_if_changed(rail_state)
         return rail_state
+
+    def _sync_console_rail_sections(self, rail_state: ConsoleRailState) -> None:
+        """Apply left-rail section open flags to section bodies and headers.
+
+        Stored section preferences are scoped per workspace/conversation, so a
+        runtime scope switch (for example resuming a saved conversation after a
+        relaunch) can change the effective flags without a recompose.
+        """
+        for section_id in CONSOLE_RAIL_SECTION_IDS:
+            section_open = bool(getattr(rail_state, f"{section_id}_open", True))
+            self._apply_console_rail_section_open(section_id, section_open)
+
+    def _apply_console_rail_section_open(
+        self,
+        section_id: str,
+        section_open: bool,
+    ) -> None:
+        """Sync one section's body display and header glyph to an open state."""
+        try:
+            body = self.query_one(f"#console-rail-section-body-{section_id}")
+            header = self.query_one(
+                f"#console-rail-section-header-{section_id}",
+                ConsoleRailSectionHeader,
+            )
+        except (NoMatches, QueryError):
+            return
+        body.styles.display = "block" if section_open else "none"
+        header.sync_open(section_open)
+
+    def _toggle_console_rail_section(self, section_id: str) -> None:
+        """Flip one left-rail section open state, then sync body and header."""
+        if section_id not in CONSOLE_RAIL_SECTION_IDS:
+            return
+        rail_state = self._current_console_rail_state()
+        next_open = not getattr(rail_state, f"{section_id}_open")
+        self._set_console_rail_preference(
+            section_updates={section_id: next_open},
+            notify_on_failure=False,
+        )
+        self._apply_console_rail_section_open(section_id, next_open)
 
     def _sync_console_workspace_context(
         self,
@@ -1555,11 +3920,52 @@ class ChatScreen(BaseAppScreen):
                 "#console-workspace-context",
                 ConsoleWorkspaceContextTray,
             )
-            workspace_context.sync_state(
-                self._build_console_workspace_context_state(session_data)
+            state = self._build_console_workspace_context_state(session_data)
+            workspace_context.sync_state(state)
+            try:
+                details_tray = self.query_one(
+                    "#console-workspace-details", ConsoleWorkspaceDetailsTray
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                details_tray.sync_state(state)
+            self.call_after_refresh(
+                lambda: self.run_worker(
+                    self._sync_console_legacy_workspace_context_aliases,
+                    group="console-workspace-context-legacy-aliases",
+                    exclusive=True,
+                )
             )
         except (NoMatches, QueryError):
             logger.debug("No Console workspace context tray available for sync")
+
+    async def _sync_console_legacy_workspace_context_aliases(self) -> None:
+        """Expose transitional legacy new-conversation control while grouped browser is active."""
+        try:
+            workspace_context = self.query_one(
+                "#console-workspace-context",
+                ConsoleWorkspaceContextTray,
+            )
+        except (NoMatches, QueryError):
+            return
+
+        state = self._build_console_workspace_context_state()
+
+        if not self.query("#console-new-workspace-conversation"):
+            new_button = Button(
+                "New conversation",
+                id="console-new-workspace-conversation",
+                classes="console-workspace-action",
+                compact=True,
+                disabled=not bool(state.new_conversation_enabled),
+            )
+            matches = list(self.query("#console-workspace-conversations"))
+            before_status = matches[0] if matches else None
+            if before_status is not None:
+                await workspace_context.mount(new_button, before=before_status)
+            else:
+                await workspace_context.mount(new_button)
 
     @staticmethod
     def _launch_targets_chatbook_artifact(
@@ -1638,7 +4044,7 @@ class ChatScreen(BaseAppScreen):
         explicit_provider_ready = getattr(self.app_instance, "console_provider_ready", None)
         provider_readiness = get_provider_readiness(
             (settings.provider if settings is not None else None) or provider_display,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         provider_runtime_ready = settings_readiness.native_send_supported and explicit_provider_ready is not False
         model_selected = _has_selected_text(model)
@@ -1662,8 +4068,10 @@ class ChatScreen(BaseAppScreen):
             or self._launch_targets_chatbook_artifact(pending_launch)
         )
         evidence_state = build_console_evidence_display_state(pending_launch)
-        return ConsoleInspectorState.from_values(
+        inspector_state = ConsoleInspectorState.from_values(
             live_work_title=pending_launch.title if pending_launch else None,
+            provider_label=provider_display,
+            model_label=model,
             provider_ready=provider_ready,
             provider_recovery=provider_recovery,
             rag_status=self._console_rag_source_status(pending_launch),
@@ -1679,6 +4087,128 @@ class ChatScreen(BaseAppScreen):
             approval_count=self._console_pending_approval_count(),
             can_save_chatbook=can_save_chatbook,
         )
+        setup_blocker_copy = self._console_provider_blocker_copy()
+        if setup_blocker_copy:
+            action_label, _action_target, _action_tooltip = self._console_provider_recovery_action()
+            setup_rows = (
+                ConsoleDisplayRow("Setup", "Provider configuration required", status="blocked"),
+                ConsoleDisplayRow(
+                    "Blocked impact",
+                    "Send is blocked until setup is finished.",
+                    status="blocked",
+                    recovery=setup_blocker_copy,
+                ),
+                ConsoleDisplayRow(
+                    "Next action",
+                    action_label or "Open Settings",
+                    status="blocked",
+                ),
+            )
+            inspector_state = replace(
+                inspector_state,
+                rows=setup_rows + inspector_state.rows,
+            )
+        selected_rows = self._selected_console_message_inspector_rows()
+        conversation_rows = self._selected_console_conversation_inspector_rows()
+        if conversation_rows:
+            inspector_state = replace(
+                inspector_state,
+                rows=conversation_rows + inspector_state.rows,
+            )
+        if selected_rows:
+            inspector_state = replace(
+                inspector_state,
+                rows=inspector_state.rows + selected_rows,
+            )
+        return inspector_state
+
+    def _selected_console_conversation_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
+        """Return inspector rows for the active Console conversation/session."""
+        store = self._console_chat_store
+        if store is None or store.active_session_id is None:
+            return (
+                ConsoleDisplayRow("Selected conversation", "No active conversation"),
+                ConsoleDisplayRow("Conversation source", "none"),
+            )
+
+        try:
+            active_session = store.switch_session(store.active_session_id)
+        except KeyError:
+            return (
+                ConsoleDisplayRow("Selected conversation", "No active conversation"),
+                ConsoleDisplayRow("Conversation source", "none"),
+            )
+
+        workspace_state = self._build_console_workspace_context_state()
+        workspace_label = str(workspace_state.workspace_label or "").strip()
+        if workspace_label.startswith("Workspace: "):
+            workspace_label = workspace_label.removeprefix("Workspace: ").strip()
+        workspace_label = workspace_label or str(active_session.workspace_id or "Default")
+        persisted_id = str(active_session.persisted_conversation_id or "").strip()
+        source = "saved conversation" if persisted_id else "native Console session"
+        resume_state = (
+            f"restored from {persisted_id}"
+            if persisted_id
+            else "local session, not persisted yet"
+        )
+        return (
+            ConsoleDisplayRow("Selected conversation", active_session.title),
+            ConsoleDisplayRow("Conversation source", source),
+            ConsoleDisplayRow("Workspace", workspace_label),
+            ConsoleDisplayRow("Resume state", resume_state),
+        )
+
+    def _selected_console_message_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
+        """Return inspector guidance for the currently selected transcript message."""
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            return ()
+        message_id = transcript.selected_message_id
+        if message_id is None:
+            return ()
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            return ()
+
+        rows = [
+            ConsoleDisplayRow(
+                "Selected message",
+                f"{self._console_message_role_label(message)} message",
+            ),
+            ConsoleDisplayRow(
+                "Message actions",
+                "Copy, Edit, Save as..., Regenerate, Continue, Feedback, Delete",
+            ),
+            ConsoleDisplayRow(
+                "Keyboard",
+                "Tab/Shift+Tab cycle actions; Enter activates; Esc clears selection",
+            ),
+        ]
+        if message.variants is not None:
+            rows.append(
+                ConsoleDisplayRow(
+                    "Variants",
+                    (
+                        f"{len(message.variants.variants)} variants, "
+                        f"showing {message.variants.selected_index + 1}/"
+                        f"{len(message.variants.variants)}"
+                    ),
+                )
+            )
+        excerpt = self._console_message_excerpt(message, max_length=90)
+        if excerpt:
+            rows.append(ConsoleDisplayRow("Excerpt", excerpt))
+        if self._pending_console_delete_message_id == message.id:
+            rows.append(
+                ConsoleDisplayRow(
+                    "Delete confirmation",
+                    "Press Delete again to remove this message.",
+                    status="blocked",
+                )
+            )
+        return tuple(rows)
 
     def _toggle_console_chat_sidebar(self) -> None:
         """Route Console-level compact control toggles to the embedded chat sidebar."""
@@ -1718,11 +4248,29 @@ class ChatScreen(BaseAppScreen):
         widget.styles.display = "none"
         widget.styles.height = 0
         widget.styles.min_height = 0
+        widget.styles.max_height = 0
         return widget
 
     @staticmethod
     def _collapse_console_hidden_control_bar(widget: ConsoleControlBar) -> ConsoleControlBar:
         """Keep the legacy Console control seam mounted without layout cost."""
+        widget.styles.display = "none"
+        widget.styles.height = 0
+        widget.styles.min_height = 0
+        widget.styles.max_height = 0
+        return widget
+
+    @staticmethod
+    def _compact_console_workbench_widget(widget: Any, height: int = 1) -> Any:
+        """Keep Console Workbench primitives visible without shrinking the grid."""
+        widget.styles.height = height
+        widget.styles.min_height = height
+        widget.styles.max_height = height
+        return widget
+
+    @staticmethod
+    def _hidden_console_workbench_widget(widget: Any) -> Any:
+        """Keep Console Workbench compatibility seams mounted without layout cost."""
         widget.styles.display = "none"
         widget.styles.height = 0
         widget.styles.min_height = 0
@@ -1748,6 +4296,30 @@ class ChatScreen(BaseAppScreen):
             f" | Approvals {readiness_count(control_state.approvals_label)}"
         )
 
+    def _build_console_workbench_state(self, control_state: ConsoleControlState):
+        blocker_copy = self._console_provider_blocker_copy()
+        action_label, _action_target, _action_tooltip = self._console_provider_recovery_action()
+        composer = self._console_composer_or_none()
+        has_draft = bool(composer and composer.draft_text().strip())
+        controller = self._console_chat_controller
+        run_state = getattr(controller, "run_state", None) if controller is not None else None
+        can_stop = bool(getattr(run_state, "is_stop_allowed", False))
+        run_allows_send = bool(getattr(run_state, "is_send_allowed", True))
+        can_send = (
+            has_draft
+            and not bool(self._console_setup_blocked_reason())
+            and run_allows_send
+        )
+        return build_console_workbench_state(
+            control_state=control_state,
+            provider_blocker_copy=blocker_copy,
+            provider_action_label=action_label,
+            can_send=can_send,
+            can_stop=can_stop,
+            can_save_chatbook=self._console_chatbook_action_available(),
+            density=self._console_workbench_density(),
+        )
+
     def _console_provider_blocker_copy(self) -> str:
         """Return concise Console recovery copy for provider/model setup gaps."""
         provider, model, settings = self._active_console_provider_model_display()
@@ -1761,19 +4333,37 @@ class ChatScreen(BaseAppScreen):
             return ""
         provider_readiness = get_provider_readiness(
             (settings.provider if settings is not None else None) or provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         if provider_readiness.reason == "Missing API key":
             return f"Provider setup needed: {provider} missing API key"
         return f"Provider setup needed: {settings_readiness.detail}"
 
     @staticmethod
-    def _console_empty_transcript_copy(blocker_copy: str) -> str:
-        """Return compact empty transcript copy while setup details live nearby."""
+    def _console_empty_recovery_action_copy(
+        blocker_copy: str,
+        *,
+        provider_action_label: str = "",
+        provider_action_tooltip: str = "",
+    ) -> tuple[str, str]:
+        """Return empty-state provider recovery button label and tooltip."""
         blocker = blocker_copy.strip().lower()
-        if not blocker:
-            return ""
-        return "No messages yet."
+        if provider_action_label:
+            return provider_action_label, provider_action_tooltip.strip()
+        if "choose a provider" in blocker:
+            return "Choose provider", "Choose a provider for this Console session"
+        if "choose a model" in blocker:
+            return "Choose model", "Choose a model for this Console session"
+        if "api key" in blocker:
+            return (
+                CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
+                "Configure API and API key before sending",
+            )
+        if "endpoint" in blocker:
+            return "Configure endpoint", "Configure the provider endpoint before sending"
+        if blocker:
+            return "Review settings", "Review Console provider settings before sending"
+        return "Choose model", "Choose the provider and model for this Console session."
 
     def _console_setup_blocked_reason(self) -> str:
         """Return setup-specific send blocker copy for the native composer."""
@@ -1783,10 +4373,30 @@ class ChatScreen(BaseAppScreen):
         if blocker == "provider setup needed: choose a model":
             return "Choose a model in Console Settings before sending."
         if "missing api key" in blocker:
-            return "Add API Key in Settings before sending."
+            return "Add API key in Settings > Providers & Models before sending."
         if "save the endpoint in settings" in blocker:
-            return "Save provider endpoint in Settings before sending."
+            return "Save provider endpoint in Settings > Providers & Models before sending."
         return "Finish provider setup before sending."
+
+    def _console_provider_recovery_field(self) -> str:
+        """Return the Settings Providers & Models field targeted by recovery."""
+        provider, model, settings = self._active_console_provider_model_display()
+        if not _has_selected_text(provider) or not _has_selected_text(model):
+            return ""
+
+        _effective_settings, settings_readiness = self._active_console_settings_readiness()
+        if settings_readiness.native_send_supported:
+            return ""
+
+        provider_readiness = get_provider_readiness(
+            (settings.provider if settings is not None else None) or provider,
+            self._provider_readiness_app_config(),
+        )
+        if provider_readiness.reason == "Missing API key":
+            return "api_key"
+        if settings_readiness.label == "Endpoint not saved":
+            return "endpoint"
+        return ""
 
     def _console_provider_recovery_action(self) -> tuple[str, str, str]:
         """Return the label, target, and tooltip for Console provider recovery."""
@@ -1810,13 +4420,13 @@ class ChatScreen(BaseAppScreen):
 
         provider_readiness = get_provider_readiness(
             (settings.provider if settings is not None else None) or provider,
-            getattr(self.app_instance, "app_config", {}) or {},
+            self._provider_readiness_app_config(),
         )
         if provider_readiness.reason == "Missing API key":
             return (
-                CONSOLE_PROVIDER_ADD_API_KEY_LABEL,
+                CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
                 "settings",
-                f"Add an API key for {provider}",
+                f"Configure {provider} API and API key in Settings",
             )
         if settings_readiness.label == "Endpoint not saved":
             return (
@@ -1825,23 +4435,6 @@ class ChatScreen(BaseAppScreen):
                 f"Save the {provider} endpoint in Settings",
             )
         return ("Review settings", "console", "Review this Console session's settings")
-
-    def _console_provider_recovery_strip_visible(self, blocker_copy: str) -> bool:
-        """Return whether provider recovery needs a persistent transcript row."""
-        if not blocker_copy:
-            return False
-        action_label, _action_target, _action_tooltip = self._console_provider_recovery_action()
-        return action_label not in {"Choose provider", "Choose model"}
-
-    @staticmethod
-    def _console_provider_blocker_display_copy(copy: str, action_label: str) -> str:
-        """Return visible recovery copy with an arrow for API-key setup actions."""
-        copy = copy.strip()
-        if not copy:
-            return ""
-        if action_label == CONSOLE_PROVIDER_ADD_API_KEY_LABEL:
-            return f"{copy}{CONSOLE_PROVIDER_ACTION_ARROW}"
-        return copy
 
     def _console_transcript_has_messages(self) -> bool:
         """Return whether the active Console transcript has user/session content."""
@@ -1872,6 +4465,29 @@ class ChatScreen(BaseAppScreen):
                 except Exception:
                     continue
         return False
+
+    def _active_console_transcript_has_messages(self) -> bool:
+        """Return whether the active Console session's store transcript has messages."""
+        store = self._console_chat_store
+        if store is None:
+            return False
+        session_id = store.active_session_id
+        if session_id is None:
+            return False
+        return bool(store.messages_for_session(session_id))
+
+    def _build_console_setup_card_state(self) -> ConsoleSetupCardState:
+        """Build the empty-transcript onboarding state from current readiness."""
+        settings, readiness = self._active_console_settings_readiness()
+        has_model = _has_selected_text(getattr(settings, "model", None))
+        return build_console_setup_card_state(
+            readiness=readiness,
+            provider_label=str(getattr(settings, "provider", "") or "Provider"),
+            has_model=has_model,
+            first_send_completed=self._console_first_send_completed(),
+            has_messages=self._active_console_transcript_has_messages(),
+            guidance_dismissed=self._console_guidance_dismissed,
+        )
 
     def _console_guidance_visible(self, blocker_copy: str | None = None) -> bool:
         """Return whether first-run Console guidance should still be visible."""
@@ -1916,6 +4532,12 @@ class ChatScreen(BaseAppScreen):
         """Refresh Console onboarding and provider recovery copy in place."""
         blocker_copy = self._console_provider_blocker_copy()
         guidance_visible = self._console_guidance_visible(blocker_copy)
+        action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
+        empty_action_label, empty_action_tooltip = self._console_empty_recovery_action_copy(
+            blocker_copy,
+            provider_action_label=action_label if blocker_copy else "",
+            provider_action_tooltip=action_tooltip if blocker_copy else "",
+        )
         for selector, copy in (
             ("#console-start-here", CONSOLE_START_HERE_COPY),
             ("#console-action-hints", CONSOLE_ACTION_HINTS_COPY),
@@ -1930,90 +4552,67 @@ class ChatScreen(BaseAppScreen):
                 visible=guidance_visible,
             )
 
+        card_state = self._build_console_setup_card_state()
         try:
             surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
         except QueryError:
             pass
         else:
-            empty_copy = self._console_empty_transcript_copy(blocker_copy)
             surface.sync_inline_guidance(
-                visible=bool(empty_copy),
-                copy=empty_copy,
+                card_state,
+                provider_action_label=empty_action_label,
+                provider_action_tooltip=empty_action_tooltip,
             )
 
-        try:
-            provider_strip = self.query_one("#console-provider-recovery-strip", Horizontal)
-            provider_blocker = self.query_one("#console-provider-blocker", Static)
-        except QueryError:
-            return
-        recovery_visible = self._console_provider_recovery_strip_visible(blocker_copy)
-        action_label, _action_target, action_tooltip = self._console_provider_recovery_action()
-        self._configure_console_provider_recovery_strip(
-            provider_strip,
-            provider_blocker,
-            blocker_copy,
-            visible=recovery_visible,
-            action_label=action_label,
-        )
-        try:
-            settings_button = self.query_one("#console-open-provider-settings", Button)
-        except QueryError:
-            return
-        self._configure_console_provider_settings_action(
-            settings_button,
-            visible=recovery_visible,
-            label=action_label,
-            tooltip=action_tooltip,
+        self._sync_console_setup_modal(
+            card_state,
+            action_label=empty_action_label,
+            action_tooltip=empty_action_tooltip,
         )
 
-    @staticmethod
-    def _configure_console_provider_recovery_strip(
-        strip: Horizontal,
-        blocker: Static,
-        copy: str,
+    def _sync_console_setup_modal(
+        self,
+        card_state: ConsoleSetupCardState,
         *,
-        visible: bool,
         action_label: str,
+        action_tooltip: str,
     ) -> None:
-        """Show provider recovery as one compact warning/action row."""
-        strip.styles.height = "auto" if visible else 0
-        strip.styles.min_height = 1 if visible else 0
-        strip.styles.display = "block" if visible else "none"
-        blocker.update(
-            ChatScreen._console_provider_blocker_display_copy(copy, action_label)
-            if visible
-            else ""
-        )
-        blocker.styles.display = "block" if visible else "none"
-        blocker.styles.width = "1fr"
-        blocker.styles.height = "auto" if visible else 0
-        blocker.styles.min_height = 1 if visible else 0
-        blocker.styles.margin = 0
-
-    @staticmethod
-    def _configure_console_provider_settings_action(
-        button: Button,
-        *,
-        visible: bool,
-        label: str = "Open Settings",
-        tooltip: str = "Open provider settings",
-    ) -> None:
-        """Show or hide the provider recovery action with the blocker copy."""
-        button.label = label or "Open Settings"
-        button.tooltip = tooltip
-        button.disabled = not visible
-        if visible and label == CONSOLE_PROVIDER_ADD_API_KEY_LABEL:
-            button.add_class("console-provider-api-key-action")
-        else:
-            button.remove_class("console-provider-api-key-action")
-        if visible:
-            button.styles.display = "block"
-            button.styles.height = 1
-            button.styles.min_height = 1
+        """Show/hide the blocking setup modal and keep the workbench inert."""
+        try:
+            modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
+        except QueryError:
             return
-        button.styles.display = "none"
-        button.styles.height = 0
-        button.styles.min_height = 0
+        modal.sync_card_state(
+            card_state,
+            action_label=action_label,
+            action_tooltip=action_tooltip,
+        )
+        blocking = modal.is_blocking
+        self._apply_console_setup_block(blocking)
+        if blocking:
+            self.call_after_refresh(modal.focus_primary_action)
+
+    def _console_setup_modal_blocking(self) -> bool:
+        """Return True when the first-run setup modal is covering the workbench."""
+        try:
+            modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
+        except QueryError:
+            return False
+        return bool(getattr(modal, "display", False)) and modal.is_blocking
+
+    def _apply_console_setup_block(self, blocking: bool) -> None:
+        """Disable composer focus/typing while the setup modal is up."""
+        try:
+            composer = self.query_one("#console-native-composer", ConsoleComposerBar)
+        except QueryError:
+            return
+        composer.can_focus = not blocking
+        if blocking and self._is_descendant_or_self(self.app.focused, composer):
+            # Pull keyboard focus off the covered composer so typing can't tunnel.
+            try:
+                self.query_one("#console-setup-modal", ConsoleSetupModal).focus_primary_action()
+            except QueryError:
+                composer.blur()
 
     @staticmethod
     def _frame_console_region(
@@ -2034,20 +4633,14 @@ class ChatScreen(BaseAppScreen):
         return widget
 
     @staticmethod
-    def _staged_context_frame_variant(state: ConsoleStagedContextState) -> str:
-        """Use quiet framing when the staged context tray is only an empty placeholder."""
-        return "quiet" if not state.rows and state.summary == "No staged work." else "solid"
+    def _staged_context_frame_variant(_state: ConsoleStagedContextState) -> str:
+        """Always use quiet framing; the rail frame is the single border source."""
+        return "quiet"
 
     @staticmethod
-    def _workspace_context_frame_variant(state: ConsoleWorkspaceContextState) -> str:
-        """Use quiet framing when workspace context has no actionable content."""
-        has_actions = state.change_workspace_enabled or state.new_conversation_enabled
-        has_readiness = bool(
-            state.handoff_rows
-            or state.server_readiness_label != "Server: local fallback"
-            or state.acp_handoff_label != "ACP task/run: unavailable"
-        )
-        return "solid" if state.conversation_rows or has_actions or has_readiness else "quiet"
+    def _workspace_context_frame_variant(_state: ConsoleWorkspaceContextState) -> str:
+        """Keep workspace context visually nested inside the framed left rail."""
+        return "quiet"
 
     def _render_console_live_work_source_readiness(self) -> ComposeResult:
         """Render Console source readiness when no live-work item is staged."""
@@ -2123,6 +4716,10 @@ class ChatScreen(BaseAppScreen):
     def handle_console_run_library_rag(self, event: Button.Pressed) -> None:
         """Request Library retrieval from the Console source-readiness seam."""
         event.stop()
+        self._run_console_library_rag_from_visible_action()
+
+    def _run_console_library_rag_from_visible_action(self) -> None:
+        """Request Library retrieval from the visible Console action surface."""
         query = _sanitize_console_library_rag_query(self._console_library_rag_query)
         if not query:
             self.app_instance.notify(
@@ -2222,8 +4819,46 @@ class ChatScreen(BaseAppScreen):
             rail_state,
             pending_launch,
         )
-        with Vertical(id="console-shell"):
-            yield Static(
+        workbench_state = self._build_console_workbench_state(control_state)
+        shell_classes = (
+            "workbench-frame console-workbench-frame "
+            f"density-{workbench_state.density}"
+        )
+        with Vertical(id="console-shell", classes=shell_classes):
+            yield self._hidden_console_workbench_widget(
+                DestinationHeader(
+                    workbench_state.header,
+                    id="console-workbench-header",
+                    classes="workbench-header",
+                )
+            )
+            yield self._hidden_console_workbench_widget(
+                ModeStrip(
+                    workbench_state.modes,
+                    id="console-workbench-mode-strip",
+                    classes="workbench-mode-strip",
+                )
+            )
+            yield self._hidden_console_workbench_widget(
+                CommandStrip(
+                    workbench_state.actions,
+                    id="console-workbench-command-strip",
+                    classes="workbench-command-strip",
+                )
+            )
+            yield self._compact_console_workbench_widget(
+                RecoveryCallout(
+                    workbench_state.recovery,
+                    id="workbench-recovery-callout",
+                    classes="workbench-recovery-callout",
+                ),
+                height=4,
+            )
+            # Compatibility selectors retained during Console Workbench parity:
+            # #console-title and #console-mode-bar are legacy shell seams now
+            # represented by DestinationHeader and ModeStrip. #console-control-bar
+            # remains visible as the dense Console-owned control surface.
+            yield self._hidden_static(
                 "Console",
                 id="console-title",
                 classes="destination-status-row",
@@ -2238,19 +4873,21 @@ class ChatScreen(BaseAppScreen):
                 id="console-status-row",
                 classes="destination-status-row",
             )
-            yield Static(
+            yield self._hidden_static(
                 self._console_mode_summary(control_state),
                 id="console-mode-bar",
                 classes="ds-panel",
             )
-            yield self._collapse_console_hidden_control_bar(
+            yield self._compact_console_workbench_widget(
                 ConsoleControlBar(
                     control_state,
                     self.app_instance,
+                    actions=workbench_state.actions,
                     on_sidebar_toggle_requested=self._toggle_console_chat_sidebar,
                     id="console-control-bar",
-                    classes="ds-panel console-hidden-control",
-                )
+                    classes="console-control-bar",
+                ),
+                height=2,
             )
             workspace_grid = self._frame_console_region(
                 Horizontal(id="console-workspace-grid", classes="ds-panel destination-workbench")
@@ -2275,6 +4912,7 @@ class ChatScreen(BaseAppScreen):
                     id="console-left-rail",
                     classes="console-region destination-workbench-pane",
                 )
+                left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
                 # Compact contract: left rail + main column + the collapsed
                 # inspector handle (11) must fit a 100-column terminal.
@@ -2282,7 +4920,11 @@ class ChatScreen(BaseAppScreen):
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
                 with self._frame_console_region(left_rail):
-                    with Horizontal(classes="console-rail-header"):
+                    left_rail_header = Horizontal(classes="console-rail-header")
+                    left_rail_header.styles.height = 1
+                    left_rail_header.styles.min_height = 1
+                    left_rail_header.styles.max_height = 1
+                    with left_rail_header:
                         rail_label = Static(
                             "Context",
                             id="console-context-rail-title",
@@ -2291,7 +4933,7 @@ class ChatScreen(BaseAppScreen):
                         rail_label.styles.width = "1fr"
                         yield rail_label
                         collapse_button = Button(
-                            "<",
+                            GLYPH_COLLAPSE_LEFT,
                             id="console-context-rail-collapse",
                             classes="console-rail-collapse-button",
                             compact=True,
@@ -2305,43 +4947,136 @@ class ChatScreen(BaseAppScreen):
                         id="console-left-rail-body",
                         classes="console-left-rail-body",
                     ):
-                        staged_context_tray = ConsoleStagedContextTray(
-                            staged_context_state,
-                            id="console-staged-context-tray",
-                            classes="console-left-rail-section",
+                        # Section 1: Session (workspace + conversations).
+                        yield ConsoleRailSectionHeader(
+                            "Session",
+                            section_id="session",
+                            open=rail_state.session_open,
+                            id="console-rail-section-header-session",
                         )
-                        staged_context_tray.styles.width = "100%"
-                        staged_context_tray.styles.min_width = 0
-                        staged_context_tray.styles.height = "auto"
-                        staged_context_tray.styles.min_height = 4
-                        staged_context_tray.styles.max_height = 10
-                        yield self._frame_console_region(
-                            staged_context_tray,
-                            variant=self._staged_context_frame_variant(staged_context_state),
+                        session_body = Vertical(
+                            id="console-rail-section-body-session",
+                            classes="console-rail-section-body",
                         )
+                        session_body.styles.height = "auto"
+                        if not rail_state.session_open:
+                            session_body.styles.display = "none"
+                        with session_body:
+                            workspace_context_tray = ConsoleWorkspaceContextTray(
+                                workspace_context_state,
+                                show_heading=False,
+                                id="console-workspace-context",
+                                classes="console-left-rail-section",
+                            )
+                            workspace_context_tray.styles.width = "100%"
+                            workspace_context_tray.styles.min_width = 0
+                            yield self._frame_console_region(
+                                workspace_context_tray,
+                                variant=self._workspace_context_frame_variant(
+                                    workspace_context_state
+                                ),
+                            )
 
-                        settings_summary = ConsoleSettingsSummary(
-                            self._build_console_settings_summary_state(),
-                            id="console-settings-summary",
-                            classes="console-left-rail-section console-settings-summary",
+                        # Section 2: Context (staged sources).
+                        yield ConsoleRailSectionHeader(
+                            "Context",
+                            section_id="context",
+                            open=rail_state.context_open,
+                            id="console-rail-section-header-context",
                         )
-                        settings_summary.styles.width = "100%"
-                        settings_summary.styles.min_width = 0
-                        yield self._frame_console_region(settings_summary, variant="quiet")
+                        context_body = Vertical(
+                            id="console-rail-section-body-context",
+                            classes="console-rail-section-body",
+                        )
+                        context_body.styles.height = "auto"
+                        if not rail_state.context_open:
+                            context_body.styles.display = "none"
+                        with context_body:
+                            staged_context_tray = ConsoleStagedContextTray(
+                                staged_context_state,
+                                id="console-staged-context-tray",
+                                classes="console-left-rail-section",
+                            )
+                            staged_context_tray.styles.width = "100%"
+                            staged_context_tray.styles.min_width = 0
+                            staged_context_tray.styles.height = "auto"
+                            staged_context_tray.styles.min_height = (
+                                3 if staged_context_state.is_empty else 4
+                            )
+                            staged_context_tray.styles.max_height = (
+                                6 if staged_context_state.is_empty else 10
+                            )
+                            yield self._frame_console_region(
+                                staged_context_tray,
+                                variant=self._staged_context_frame_variant(
+                                    staged_context_state
+                                ),
+                            )
 
-                        workspace_context_tray = ConsoleWorkspaceContextTray(
-                            workspace_context_state,
-                            id="console-workspace-context",
-                            classes="console-left-rail-section",
+                        # Section 3: Model (compact settings summary).
+                        yield ConsoleRailSectionHeader(
+                            "Model",
+                            section_id="model",
+                            open=rail_state.model_open,
+                            id="console-rail-section-header-model",
                         )
-                        workspace_context_tray.styles.width = "100%"
-                        workspace_context_tray.styles.min_width = 0
-                        workspace_context_tray.styles.height = "1fr"
-                        workspace_context_tray.styles.min_height = 8
-                        yield self._frame_console_region(
-                            workspace_context_tray,
-                            variant=self._workspace_context_frame_variant(workspace_context_state),
+                        model_body = Vertical(
+                            id="console-rail-section-body-model",
+                            classes="console-rail-section-body",
                         )
+                        model_body.styles.height = "auto"
+                        if not rail_state.model_open:
+                            model_body.styles.display = "none"
+                        with model_body:
+                            model_line1, model_line2 = build_console_model_section_lines(
+                                self._build_console_settings_summary_state()
+                            )
+                            line1 = Static(
+                                model_line1,
+                                id="console-model-section-line1",
+                                classes="console-model-section-line",
+                                markup=False,
+                            )
+                            yield line1
+                            line2 = Static(
+                                model_line2,
+                                id="console-model-section-line2",
+                                classes="console-model-section-line",
+                                markup=False,
+                            )
+                            yield line2
+                            configure = Button(
+                                "Configure",
+                                id="console-model-section-configure",
+                                classes="console-workspace-action",
+                                compact=True,
+                            )
+                            configure.tooltip = "Configure Console session settings"
+                            yield configure
+
+                        # Section 4: Details (storage, sync, handoff plumbing).
+                        yield ConsoleRailSectionHeader(
+                            "Details",
+                            section_id="details",
+                            open=rail_state.details_open,
+                            id="console-rail-section-header-details",
+                        )
+                        details_body = Vertical(
+                            id="console-rail-section-body-details",
+                            classes="console-rail-section-body",
+                        )
+                        details_body.styles.height = "auto"
+                        if not rail_state.details_open:
+                            details_body.styles.display = "none"
+                        with details_body:
+                            details_tray = ConsoleWorkspaceDetailsTray(
+                                workspace_context_state,
+                                id="console-workspace-details",
+                                classes="console-left-rail-section",
+                            )
+                            details_tray.styles.width = "100%"
+                            details_tray.styles.min_width = 0
+                            yield details_tray
 
                 main_column = Vertical(id="console-main-column")
                 main_column.styles.width = "13fr"
@@ -2354,45 +5089,6 @@ class ChatScreen(BaseAppScreen):
                     with transcript_region:
                         provider_blocker_copy = self._console_provider_blocker_copy()
                         guidance_visible = self._console_guidance_visible(provider_blocker_copy)
-                        recovery_visible = self._console_provider_recovery_strip_visible(
-                            provider_blocker_copy
-                        )
-                        provider_action_label, _provider_action_target, provider_action_tooltip = (
-                            self._console_provider_recovery_action()
-                        )
-                        provider_recovery_strip = Horizontal(
-                            id="console-provider-recovery-strip",
-                            classes="console-provider-recovery-strip",
-                        )
-                        with provider_recovery_strip:
-                            blocker = Static(
-                                provider_blocker_copy,
-                                id="console-provider-blocker",
-                                classes="console-provider-blocker",
-                            )
-                            self._configure_console_provider_recovery_strip(
-                                provider_recovery_strip,
-                                blocker,
-                                provider_blocker_copy,
-                                visible=recovery_visible,
-                                action_label=provider_action_label,
-                            )
-                            yield blocker
-                            provider_settings_action = Button(
-                                provider_action_label,
-                                id="console-open-provider-settings",
-                                classes="destination-action-button console-provider-settings-action",
-                                disabled=not recovery_visible,
-                                compact=True,
-                                variant="primary",
-                            )
-                            self._configure_console_provider_settings_action(
-                                provider_settings_action,
-                                visible=recovery_visible,
-                                label=provider_action_label,
-                                tooltip=provider_action_tooltip,
-                            )
-                            yield provider_settings_action
                         start_here = Static(
                             CONSOLE_START_HERE_COPY,
                             id="console-start-here",
@@ -2421,12 +5117,17 @@ class ChatScreen(BaseAppScreen):
                     id="console-right-rail",
                     classes="console-region destination-workbench-pane",
                 )
+                right_rail.can_focus = True
                 right_rail.styles.width = "4fr"
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
                 with self._frame_console_region(right_rail):
-                    with Horizontal(classes="console-rail-header"):
+                    right_rail_header = Horizontal(classes="console-rail-header")
+                    right_rail_header.styles.height = 1
+                    right_rail_header.styles.min_height = 1
+                    right_rail_header.styles.max_height = 1
+                    with right_rail_header:
                         rail_label = Static(
                             "Inspector",
                             id="console-inspector-rail-title",
@@ -2435,7 +5136,7 @@ class ChatScreen(BaseAppScreen):
                         rail_label.styles.width = "1fr"
                         yield rail_label
                         collapse_button = Button(
-                            ">",
+                            GLYPH_COLLAPSE_RIGHT,
                             id="console-inspector-rail-collapse",
                             classes="console-rail-collapse-button",
                             compact=True,
@@ -2454,6 +5155,14 @@ class ChatScreen(BaseAppScreen):
                                 inspector_state,
                                 id="console-run-inspector-state",
                             )
+                            settings_summary = ConsoleSettingsSummary(
+                                self._build_console_settings_summary_state(),
+                                id="console-settings-summary",
+                                classes="console-inspector-session-settings console-settings-summary",
+                            )
+                            settings_summary.styles.width = "100%"
+                            settings_summary.styles.min_width = 0
+                            yield settings_summary
                         if pending_launch:
                             yield from self._render_console_live_work_status_card(
                                 pending_launch
@@ -2483,6 +5192,12 @@ class ChatScreen(BaseAppScreen):
                     paste_collapse_threshold=self._console_paste_collapse_threshold(),
                 )
             )
+            # Console-scoped first-run blocker. Sits on a dedicated overlay
+            # layer over the whole Console shell so the workbench (rail,
+            # transcript, tabs, composer) is covered/inert while setup is
+            # incomplete; the app tab bar lives outside the shell and stays
+            # reachable. Hidden until a card-mode state is synced in.
+            yield ConsoleSetupModal(id="console-setup-modal")
 
     def _console_collapse_large_pastes_enabled(self) -> bool:
         """Return the app-level Console paste-collapse preference."""
@@ -2512,6 +5227,7 @@ class ChatScreen(BaseAppScreen):
         """Run diagnostics when first mounted (only once)."""
         # Call parent's on_mount
         super().on_mount()
+        self._register_console_footer_shortcuts()
         
         if not self._diagnostics_run and self.chat_window:
             self._diagnostics_run = True
@@ -2522,14 +5238,17 @@ class ChatScreen(BaseAppScreen):
         self.set_timer(0.1, self._restore_collapsible_states)
         self.set_timer(0.05, self.sync_task_resume_state)
         self.set_timer(0.15, self._consume_pending_chat_handoff)
-        self._focus_console_composer_if_needed(force=True)
         self.call_after_refresh(self._sync_native_console_chat_ui)
-        self.call_after_refresh(lambda: self._focus_console_composer_if_needed(force=True))
-        self.set_timer(0.2, self._focus_console_composer_if_needed)
+        self.call_after_refresh(self._restore_console_workbench_focus)
+        self.set_timer(0.2, self._restore_console_workbench_focus)
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        self._clear_console_footer_shortcuts()
         self._stop_console_transcript_sync_timer()
+        controller = self._console_chat_controller
+        if controller is not None:
+            await controller.shutdown()
         gateway = self._console_provider_gateway
         close = getattr(gateway, "aclose", None)
         if callable(close):
@@ -2539,6 +5258,232 @@ class ChatScreen(BaseAppScreen):
         self._console_provider_gateway = None
         self._console_chat_controller = None
         super().on_unmount()
+
+    @staticmethod
+    def _serialize_console_settings(
+        settings: ConsoleSessionSettings | None,
+    ) -> dict[str, Any] | None:
+        """Return a JSON-safe snapshot of per-session Console settings."""
+        if settings is None:
+            return None
+        return asdict(settings)
+
+    @staticmethod
+    def _restore_console_settings(
+        payload: Any,
+    ) -> ConsoleSessionSettings | None:
+        """Return per-session Console settings from a saved state payload."""
+        if not isinstance(payload, dict):
+            return None
+        valid_fields = set(ConsoleSessionSettings.__dataclass_fields__)
+        values = {key: value for key, value in payload.items() if key in valid_fields}
+        provider = str(values.get("provider") or "").strip()
+        if not provider:
+            return None
+        values["provider"] = provider
+        try:
+            return ConsoleSessionSettings(**values)
+        except TypeError:
+            logger.debug("Skipping invalid Console session settings payload", exc_info=True)
+            return None
+
+    @staticmethod
+    def _serialize_console_variants(
+        variants: ConsoleVariantSet | None,
+    ) -> dict[str, Any] | None:
+        """Return a JSON-safe snapshot of regenerated message variants."""
+        if variants is None:
+            return None
+        return {
+            "turn_id": variants.turn_id,
+            "selected_index": variants.selected_index,
+            "variants": [
+                {"id": variant.id, "content": variant.content}
+                for variant in variants.variants
+            ],
+        }
+
+    @staticmethod
+    def _restore_console_variants(payload: Any) -> ConsoleVariantSet | None:
+        """Return regenerated message variants from a saved state payload."""
+        if not isinstance(payload, dict):
+            return None
+        raw_variants = payload.get("variants")
+        if not isinstance(raw_variants, list) or not raw_variants:
+            return None
+        variants: list[ConsoleVariant] = []
+        for raw_variant in raw_variants:
+            if not isinstance(raw_variant, dict):
+                continue
+            content = str(raw_variant.get("content") or "")
+            variant_id = str(raw_variant.get("id") or uuid.uuid4())
+            variants.append(ConsoleVariant(content=content, id=variant_id))
+        if not variants:
+            return None
+        selected_index = payload.get("selected_index", 0)
+        if not isinstance(selected_index, int):
+            selected_index = 0
+        selected_index = min(max(selected_index, 0), len(variants) - 1)
+        return ConsoleVariantSet(
+            turn_id=str(payload.get("turn_id") or uuid.uuid4()),
+            variants=variants,
+            selected_index=selected_index,
+        )
+
+    @classmethod
+    def _serialize_console_message(
+        cls,
+        message: ConsoleChatMessage,
+    ) -> dict[str, Any]:
+        """Return a JSON-safe snapshot of a native Console transcript message."""
+        role = message.role.value if hasattr(message.role, "value") else message.role
+        return {
+            "id": message.id,
+            "role": role,
+            "content": message.content,
+            "turn_id": message.turn_id,
+            "status": message.status,
+            "persisted_message_id": message.persisted_message_id,
+            "feedback": message.feedback,
+            "variants": cls._serialize_console_variants(message.variants),
+        }
+
+    @classmethod
+    def _restore_console_message(cls, payload: Any) -> ConsoleChatMessage | None:
+        """Return a native Console transcript message from a saved state payload."""
+        if not isinstance(payload, dict):
+            return None
+        try:
+            role = ConsoleMessageRole(str(payload.get("role") or "system"))
+        except ValueError:
+            role = ConsoleMessageRole.SYSTEM
+        status = str(payload.get("status") or "complete")
+        if status not in {"complete", "pending", "streaming", "stopped", "failed"}:
+            status = "complete"
+        feedback = payload.get("feedback")
+        if feedback not in {None, "up", "down"}:
+            feedback = None
+        return ConsoleChatMessage(
+            role=role,
+            content=str(payload.get("content") or ""),
+            id=str(payload.get("id") or uuid.uuid4()),
+            turn_id=(
+                str(payload["turn_id"])
+                if payload.get("turn_id") is not None
+                else None
+            ),
+            status=status,  # type: ignore[arg-type]
+            persisted_message_id=(
+                str(payload["persisted_message_id"])
+                if payload.get("persisted_message_id") is not None
+                else None
+            ),
+            variants=cls._restore_console_variants(payload.get("variants")),
+            feedback=feedback,  # type: ignore[arg-type]
+        )
+
+    def _serialize_native_console_state(self) -> dict[str, Any] | None:
+        """Return the native Console in-session state for screen restoration."""
+        store = self._console_chat_store
+        if store is None or not store.sessions():
+            return None
+
+        visible_session_id = self._console_visible_draft_session_id
+        composer = self._console_composer_or_none()
+        if composer is not None and visible_session_id is not None:
+            try:
+                store.set_session_draft(visible_session_id, composer.draft_text())
+            except KeyError:
+                pass
+
+        return {
+            "version": NATIVE_CONSOLE_STATE_VERSION,
+            "active_session_id": store.active_session_id,
+            "sessions": [
+                {
+                    "id": session.id,
+                    "title": session.title,
+                    "workspace_id": session.workspace_id,
+                    "persisted_conversation_id": session.persisted_conversation_id,
+                    "draft": session.draft,
+                    "settings": self._serialize_console_settings(session.settings),
+                    "updated_at": session.updated_at,
+                }
+                for session in store.sessions()
+            ],
+            "messages_by_session": {
+                session.id: [
+                    self._serialize_console_message(message)
+                    for message in store.messages_for_session(session.id)
+                ]
+                for session in store.sessions()
+            },
+        }
+
+    def _restore_native_console_state(self, payload: Any) -> None:
+        """Restore native Console in-session state saved by ``save_state``."""
+        if not isinstance(payload, dict):
+            return
+        raw_sessions = payload.get("sessions")
+        if not isinstance(raw_sessions, list) or not raw_sessions:
+            return
+
+        store = self._ensure_console_chat_store()
+        raw_messages_by_session = payload.get("messages_by_session")
+        messages_by_session = (
+            raw_messages_by_session
+            if isinstance(raw_messages_by_session, dict)
+            else {}
+        )
+        restored_sessions: list[ConsoleChatSession] = []
+        restored_messages_by_session: dict[str, list[ConsoleChatMessage]] = {}
+        for raw_session in raw_sessions:
+            if not isinstance(raw_session, dict):
+                continue
+            session_id = str(raw_session.get("id") or uuid.uuid4())
+            session_kwargs: dict[str, Any] = dict(
+                id=session_id,
+                title=str(raw_session.get("title") or DEFAULT_CONSOLE_SESSION_TITLE),
+                workspace_id=str(
+                    raw_session.get("workspace_id")
+                    or store.workspace_context.active_workspace_id
+                    or CONSOLE_GLOBAL_WORKSPACE_ID
+                ),
+                persisted_conversation_id=(
+                    str(raw_session["persisted_conversation_id"])
+                    if raw_session.get("persisted_conversation_id") is not None
+                    else None
+                ),
+                settings=self._restore_console_settings(raw_session.get("settings")),
+                draft=str(raw_session.get("draft") or ""),
+            )
+            # Legacy payloads saved before `updated_at` was serialized omit the
+            # key entirely; keep the ConsoleChatSession factory default (now)
+            # for those instead of forcing an empty/invalid timestamp.
+            raw_updated_at = raw_session.get("updated_at")
+            if raw_updated_at:
+                session_kwargs["updated_at"] = str(raw_updated_at)
+            session = ConsoleChatSession(**session_kwargs)
+            restored_sessions.append(session)
+            restored_messages_by_session[session.id] = []
+            raw_messages = messages_by_session.get(session.id, [])
+            if not isinstance(raw_messages, list):
+                continue
+            for raw_message in raw_messages:
+                message = self._restore_console_message(raw_message)
+                if message is None:
+                    continue
+                restored_messages_by_session[session.id].append(message)
+
+        active_session_id = payload.get("active_session_id")
+        active_session_id = str(active_session_id) if active_session_id is not None else ""
+        store.restore_state(
+            sessions=restored_sessions,
+            messages_by_session=restored_messages_by_session,
+            active_session_id=active_session_id,
+        )
+        self._console_visible_draft_session_id = None
+        self._last_native_transcript_refresh_key = None
     
     def save_state(self) -> Dict[str, Any]:
         """
@@ -2601,11 +5546,18 @@ class ChatScreen(BaseAppScreen):
 
             # Save pending attachments
             self._save_attachments()
+
+            native_console_state = self._serialize_native_console_state()
+            if native_console_state is not None:
+                state["native_console_state"] = native_console_state
             
             # Convert to dict for storage
             state['chat_state'] = self.chat_state.to_dict()
             state['state_version'] = '1.0'
-            state['interface_type'] = 'tabbed' if self.chat_state.tabs else 'single'
+            if native_console_state is not None:
+                state["interface_type"] = "native_console"
+            else:
+                state['interface_type'] = 'tabbed' if self.chat_state.tabs else 'single'
             
             logger.info(f"Saved chat state: {len(self.chat_state.tabs)} tabs, interface: {state.get('interface_type')}")
             
@@ -2624,6 +5576,9 @@ class ChatScreen(BaseAppScreen):
         super().restore_state(state)
         
         try:
+            if "native_console_state" in state:
+                self._restore_native_console_state(state["native_console_state"])
+
             if 'chat_state' in state:
                 # Restore from saved state
                 self.chat_state = ChatScreenState.from_dict(state['chat_state'])
@@ -2634,9 +5589,10 @@ class ChatScreen(BaseAppScreen):
                 
                 if self.chat_state.validate():
                     logger.info(f"Restoring {len(self.chat_state.tabs)} tabs")
-                    
-                    # Schedule restoration after mount
-                    self.set_timer(0.1, self._perform_state_restoration)
+
+                    # Native Console does not mount legacy ChatTabContainer widgets.
+                    if self.chat_state.tabs:
+                        self.set_timer(0.1, self._perform_state_restoration)
                 else:
                     logger.warning("Chat state validation failed, starting fresh")
                     self.chat_state = ChatScreenState()
@@ -2805,14 +5761,29 @@ class ChatScreen(BaseAppScreen):
     def _session_data_for_handoff(self, payload: ChatHandoffPayload) -> ChatSessionData:
         title_item_type = payload.item_type.replace("-", " ").title()
         scope_type = payload.scope_type or "global"
+        character_identity = _character_session_identity_from_handoff(payload)
+        character_id = None
+        character_name = None
+        assistant_kind = None
+        assistant_id = None
+        discovery_owner = payload.discovery_owner
+        if character_identity is not None:
+            character_id, character_name, assistant_id = character_identity
+            assistant_kind = "character"
+            if discovery_owner == "general_chat" and payload.source == "personas":
+                discovery_owner = "ccp_character"
         return ChatSessionData(
             tab_id=uuid.uuid4().hex[:8],
             title=f"{title_item_type}: {payload.title}",
             conversation_id=None,
             is_ephemeral=True,
             runtime_backend=payload.runtime_backend,
-            discovery_owner=payload.discovery_owner,
+            discovery_owner=discovery_owner,
             discovery_entity_id=payload.discovery_entity_id or payload.source_id,
+            character_id=character_id,
+            character_name=character_name,
+            assistant_kind=assistant_kind,
+            assistant_id=assistant_id,
             scope_type=scope_type,
             workspace_id=payload.workspace_id if scope_type == "workspace" else None,
             handoff_payload=payload,
@@ -2922,14 +5893,25 @@ class ChatScreen(BaseAppScreen):
         )
         self._pending_console_launch_auto_open_inspector = True
 
-        if payload.suggested_prompt:
+        suggested_prompt = launch_payload["suggested_prompt"]
+        if suggested_prompt:
+            store = self._ensure_console_chat_store()
+            session = store.ensure_session(
+                title=self._console_initial_session_title_for_workspace(
+                    store.workspace_context.active_workspace_id
+                ),
+                workspace_id=store.workspace_context.active_workspace_id,
+                settings=self._default_console_session_settings(),
+            )
+            if not store.session_draft(session.id).strip():
+                store.set_session_draft(session.id, suggested_prompt)
             try:
                 composer = self.query_one("#console-native-composer", ConsoleComposerBar)
             except QueryError:
                 pass
             else:
                 if not composer.draft_text().strip():
-                    composer.load_draft(payload.suggested_prompt)
+                    composer.load_draft(suggested_prompt)
 
         self.run_worker(self._sync_native_console_chat_ui(), exclusive=True)
 
@@ -3037,6 +6019,16 @@ class ChatScreen(BaseAppScreen):
                     ),
                 )
             )
+
+    def _clear_native_console_message_selection(self) -> None:
+        """Dismiss contextual message actions when an action changes the transcript flow."""
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            return
+        self._pending_console_delete_message_id = None
+        transcript.selected_message_id = None
+        self._last_native_transcript_refresh_key = None
         self._sync_console_transcript_guidance()
 
     def _native_run_status_copy(self) -> str:
@@ -3065,6 +6057,7 @@ class ChatScreen(BaseAppScreen):
             self._console_sync_requested = True
             return
         self._console_sync_in_progress = True
+        self._record_ui_worker_started("console-sync")
         try:
             self._sync_console_chat_core_state()
             self._sync_console_session_draft()
@@ -3074,8 +6067,12 @@ class ChatScreen(BaseAppScreen):
             await self._sync_console_native_session_tabs()
             self._sync_console_workspace_context()
             await self._sync_native_console_transcript_to_legacy_surface()
-            self._sync_console_rail_visibility(self._current_console_rail_state())
+            self._sync_console_rail_visibility_if_changed(
+                self._current_console_rail_state()
+            )
+            self._dispatch_console_rail_preference_prune()
         finally:
+            self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
             if self._console_sync_requested:
                 self._console_sync_requested = False
@@ -3133,6 +6130,7 @@ class ChatScreen(BaseAppScreen):
                 self._stop_console_transcript_sync_timer()
 
         self._console_transcript_sync_timer = self.set_interval(0.2, _poll_transcript)
+        self._record_ui_timer_created("console-transcript-sync")
 
     def _stop_console_transcript_sync_timer(self) -> None:
         if self._console_transcript_sync_timer is None:
@@ -3140,6 +6138,7 @@ class ChatScreen(BaseAppScreen):
         try:
             self._console_transcript_sync_timer.stop()
         finally:
+            self._record_ui_timer_stopped("console-transcript-sync")
             self._console_transcript_sync_timer = None
 
     async def _submit_console_native_draft(self, draft: str) -> None:
@@ -3152,6 +6151,11 @@ class ChatScreen(BaseAppScreen):
             composer = None
         if result.should_clear_draft and composer is not None:
             composer.clear_draft()
+        if result.accepted:
+            # Retry/continue/regenerate paths intentionally don't record the flag here —
+            # they require an existing message, so ``has_messages`` already keeps the
+            # card hidden and the flag was set by the originating submit.
+            self._record_console_first_send()
         await self._sync_native_console_chat_ui()
 
     def _console_send_blocked_reason(self) -> str:
@@ -3172,6 +6176,10 @@ class ChatScreen(BaseAppScreen):
     async def handle_console_send_message(self, event: Button.Pressed) -> None:
         """Route the Console composer send action through the native controller."""
         event.stop()
+        await self._send_console_message_from_visible_action()
+
+    async def _send_console_message_from_visible_action(self) -> None:
+        """Route the visible Console send action through the native controller."""
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
             draft = composer.draft_text()
@@ -3186,6 +6194,7 @@ class ChatScreen(BaseAppScreen):
             if setup_blocked_reason and not blocked_reason.startswith(
                 "Console send blocked: Library Search/RAG"
             ):
+                await self._append_native_console_system_message(setup_blocked_reason)
                 self.app_instance.notify(
                     setup_blocked_reason,
                     severity="warning",
@@ -3204,6 +6213,10 @@ class ChatScreen(BaseAppScreen):
     async def handle_console_stop_generation(self, event: Button.Pressed) -> None:
         """Route the Console stop action through native run control."""
         event.stop()
+        await self._stop_console_generation_from_visible_action()
+
+    async def _stop_console_generation_from_visible_action(self) -> None:
+        """Route the visible Console stop action through native run control."""
         controller = self._ensure_console_chat_controller()
         if not controller.stop_active_run():
             self.app_instance.notify("No active Console run to stop.", severity="warning")
@@ -3238,6 +6251,10 @@ class ChatScreen(BaseAppScreen):
     def handle_console_save_chatbook(self, event: Button.Pressed) -> None:
         """Route available Chatbook artifacts through the existing Artifacts handoff."""
         event.stop()
+        self._save_console_chatbook_from_visible_action()
+
+    def _save_console_chatbook_from_visible_action(self) -> None:
+        """Route available Chatbook artifacts through the existing Artifacts handoff."""
         launch = self._consume_pending_console_launch()
         if self._launch_targets_chatbook_artifact(launch):
             handler = getattr(self.app_instance, "open_console_live_work_primary_action", None)
@@ -3248,13 +6265,16 @@ class ChatScreen(BaseAppScreen):
             severity="warning",
         )
 
-    @on(Button.Pressed, "#console-open-provider-settings")
-    async def handle_console_open_provider_settings(self, event: Button.Pressed) -> None:
+    async def _open_console_provider_recovery(self) -> None:
         """Route provider setup recovery to the smallest relevant settings surface."""
-        event.stop()
         _label, target, _tooltip = self._console_provider_recovery_action()
-        if target == "console" and getattr(self, "is_mounted", False):
-            await self.on_console_settings_open(event)
+        if target in {"console", "hidden"} and getattr(self, "is_mounted", False):
+            await self._open_console_settings(
+                focus_model=(
+                    target == "hidden"
+                    or self._is_console_choose_model_action(_label)
+                )
+            )
             return
         provider, model, settings = self._active_console_provider_model_display()
         settings_provider = settings.provider if settings is not None else None
@@ -3268,6 +6288,9 @@ class ChatScreen(BaseAppScreen):
         model_context = str(model or settings_model or "").strip()
         if model_context:
             screen_context["model"] = model_context
+        field_context = self._console_provider_recovery_field()
+        if field_context:
+            screen_context["field"] = field_context
         self.post_message(
             NavigateToScreen(
                 TAB_SETTINGS,
@@ -3319,11 +6342,26 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify("Console message action target no longer exists.", severity="warning")
             return True
 
+        if action_id != "delete":
+            self._pending_console_delete_message_id = None
+
         if action_id == "save-as":
-            await self.app_instance.push_screen(
+            destinations = self._console_save_as_destinations(message)
+
+            def _apply_save_as(destination: str | None) -> None:
+                if destination == "Note":
+                    self.run_worker(
+                        self._save_console_message_as_note(message_id),
+                        exclusive=True,
+                    )
+
+            await self.app.push_screen(
                 ConsoleSaveAsModal(
-                    destinations=self._console_message_action_service.save_as_destinations(message)
-                )
+                    destinations=destinations,
+                    message_role=self._console_message_role_label(message),
+                    message_excerpt=self._console_message_excerpt(message),
+                ),
+                callback=_apply_save_as,
             )
             self._last_console_action = ConsoleActionResult(
                 action_id=action_id,
@@ -3363,6 +6401,17 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify(result.visible_copy, severity="information")
             return True
         if action_id == "delete" and result.status == "completed":
+            if self._pending_console_delete_message_id != message_id:
+                self._pending_console_delete_message_id = message_id
+                self._last_console_action = ConsoleActionResult(
+                    action_id=action_id,
+                    status="blocked",
+                    visible_copy="Press Delete again to remove this message.",
+                    target_message_id=message_id,
+                )
+                await self._sync_native_console_chat_ui()
+                return True
+            self._pending_console_delete_message_id = None
             store.delete_message(message_id)
             await self._sync_native_console_chat_ui()
             self.app_instance.notify(result.visible_copy, severity="information")
@@ -3374,6 +6423,92 @@ class ChatScreen(BaseAppScreen):
         severity = "information" if result.status in {"completed", "wip"} else "warning"
         self.app_instance.notify(result.visible_copy, severity=severity)
         return True
+
+    @staticmethod
+    def _console_message_role_label(message: ConsoleChatMessage) -> str:
+        """Return a user-facing role label for a Console transcript message."""
+        role = message.role.value if hasattr(message.role, "value") else str(message.role)
+        return role.title()
+
+    @staticmethod
+    def _console_message_content(message: ConsoleChatMessage) -> str:
+        """Return the currently visible content for a Console transcript message."""
+        if message.variants is not None:
+            return message.variants.current.content
+        return message.content
+
+    @classmethod
+    def _console_message_excerpt(
+        cls,
+        message: ConsoleChatMessage,
+        *,
+        max_length: int = 120,
+    ) -> str:
+        """Return a single-line excerpt for selected-message context surfaces."""
+        normalized = " ".join(cls._console_message_content(message).split())
+        if len(normalized) <= max_length:
+            return normalized
+        return f"{normalized[: max(0, max_length - 1)].rstrip()}…"
+
+    def _console_save_as_destinations(self, message: Any) -> list[Any]:
+        """Return Save-as destinations available in the current app runtime."""
+        _ = message
+        available_destinations: set[str] = set()
+        notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
+        if callable(getattr(notes_scope_service, "save_note", None)):
+            available_destinations.add("Note")
+        return ConsoleMessageActionService(
+            available_save_destinations=available_destinations,
+        ).save_as_destinations(message)
+
+    async def _save_console_message_as_note(self, message_id: str) -> None:
+        """Persist one selected Console message as a local Note."""
+        notes_scope_service = getattr(self.app_instance, "notes_scope_service", None)
+        save_note = getattr(notes_scope_service, "save_note", None)
+        if not callable(save_note):
+            self.app_instance.notify(
+                "Save as Note is unavailable: Notes service is not ready.",
+                severity="warning",
+            )
+            return
+
+        try:
+            message = self._ensure_console_chat_store().get_message(message_id)
+        except KeyError:
+            self.app_instance.notify(
+                "Console message action target no longer exists.",
+                severity="warning",
+            )
+            return
+
+        content = (
+            message.variants.current.content
+            if message.variants is not None
+            else message.content
+        )
+        result = save_note(
+            scope=ScopeType.LOCAL_NOTE.value,
+            title="Console message",
+            content=content,
+            note_id=None,
+            version=None,
+            user_id=getattr(self.app_instance, "current_user", None) or "default_user",
+            workspace_id=None,
+            keywords=["console"],
+        )
+        if inspect.isawaitable(result):
+            result = await result
+        if not result:
+            self.app_instance.notify("Save as Note failed.", severity="error")
+            return
+        self._last_console_action = ConsoleActionResult(
+            action_id="save-as-note",
+            status="completed",
+            visible_copy="Saved message as Note.",
+            target_message_id=message_id,
+            target_content=content,
+        )
+        self.app_instance.notify("Saved message as Note.", severity="information")
 
     async def _open_console_message_edit_modal(self, *, message_id: str, content: str) -> None:
         """Open the dedicated transcript edit modal for one Console message."""
@@ -3447,6 +6582,8 @@ class ChatScreen(BaseAppScreen):
         result = await controller.continue_from_message(message_id)
         if result.visible_copy and not result.accepted:
             self.app_instance.notify(result.visible_copy, severity="warning")
+        if result.accepted:
+            self._clear_native_console_message_selection()
         await self._sync_native_console_chat_ui()
 
     async def _regenerate_console_message(
@@ -3508,14 +6645,23 @@ class ChatScreen(BaseAppScreen):
 
     def _sync_console_control_bar(self) -> None:
         """Refresh Console-owned control labels from current selection state."""
-        try:
-            control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
-        except QueryError:
-            control_bar = None
-        if control_bar is not None:
-            control_bar.sync_state(
-                self._build_console_control_state(self._pending_console_launch_context)
-            )
+        self._sync_console_pending_delete_confirmation()
+        control_state = self._build_console_control_state(
+            self._pending_console_launch_context
+        )
+        workbench_state = self._build_console_workbench_state(control_state)
+        control_state_changed = control_state != self._last_console_control_state
+        workbench_state_changed = workbench_state != self._last_console_workbench_state
+        if control_state_changed or workbench_state_changed:
+            try:
+                control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
+            except QueryError:
+                control_bar = None
+            if control_bar is not None:
+                control_bar.sync_state(control_state, actions=workbench_state.actions)
+            self._sync_console_workbench_state(control_state, workbench_state=workbench_state)
+            self._last_console_control_state = control_state
+            self._last_console_workbench_state = workbench_state
         self._sync_console_transcript_guidance()
         try:
             inspector = self.query_one("#console-run-inspector-state", ConsoleRunInspector)
@@ -3530,7 +6676,59 @@ class ChatScreen(BaseAppScreen):
             can_save_chatbook=inspector_state.can_save_chatbook
             and self._console_chatbook_action_available()
         )
-        self._sync_console_rail_visibility(self._current_console_rail_state())
+        self._sync_console_rail_visibility_if_changed(self._current_console_rail_state())
+
+    def _sync_console_workbench_state(
+        self,
+        control_state: ConsoleControlState,
+        *,
+        workbench_state: Any | None = None,
+    ) -> None:
+        """Refresh visible Workbench primitives from current Console state."""
+        if workbench_state is None:
+            workbench_state = self._build_console_workbench_state(control_state)
+        try:
+            self.query_one("#console-workbench-header", DestinationHeader).sync_state(
+                workbench_state.header
+            )
+        except QueryError:
+            pass
+        try:
+            self.query_one("#console-workbench-mode-strip", ModeStrip).sync_modes(
+                workbench_state.modes
+            )
+        except QueryError:
+            pass
+        try:
+            self.query_one("#console-workbench-command-strip", CommandStrip).sync_actions(
+                workbench_state.actions
+            )
+        except QueryError:
+            pass
+        try:
+            self.query_one("#workbench-recovery-callout", RecoveryCallout).sync_state(
+                workbench_state.recovery
+            )
+        except QueryError:
+            pass
+
+    def _sync_console_workbench_actions_from_draft(self) -> None:
+        """Refresh Workbench command readiness after composer draft changes."""
+        self._sync_console_workbench_state(
+            self._build_console_control_state(self._pending_console_launch_context)
+        )
+
+    def _sync_console_pending_delete_confirmation(self) -> None:
+        """Clear stale destructive-action confirmation when transcript selection changes."""
+        if self._pending_console_delete_message_id is None:
+            return
+        try:
+            transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
+        except QueryError:
+            self._pending_console_delete_message_id = None
+            return
+        if transcript.selected_message_id != self._pending_console_delete_message_id:
+            self._pending_console_delete_message_id = None
 
     def _console_chatbook_action_available(self) -> bool:
         """Return True when the composer Chatbook action has a real target."""
@@ -3639,10 +6837,30 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             return
+        if self._console_setup_modal_blocking():
+            # Workbench is inert behind the first-run setup modal; never route
+            # printable/edit keys into the covered composer.
+            return
         if not self._should_capture_console_input(composer):
             return
-        if event.key in {"backspace", "ctrl+h"}:
+        if event.key in {"ctrl+a", "super+a", "cmd+a", "meta+a"}:
+            composer.select_all_draft()
+            event.stop()
+            event.prevent_default()
+            return
+        if (
+            event.key in {"ctrl+c", "super+c", "cmd+c", "meta+c"}
+            and composer.has_full_draft_selection()
+        ):
+            copy_to_clipboard = getattr(self.app_instance, "copy_to_clipboard", None)
+            if callable(copy_to_clipboard):
+                copy_to_clipboard(composer.draft_text())
+            event.stop()
+            event.prevent_default()
+            return
+        if event.key in {"backspace", "ctrl+h", "delete"}:
             composer.delete_left()
+            self._sync_console_workbench_actions_from_draft()
             event.stop()
             event.prevent_default()
             return
@@ -3660,11 +6878,13 @@ class ChatScreen(BaseAppScreen):
             return
         if event.key == "ctrl+u":
             composer.clear_draft()
+            self._sync_console_workbench_actions_from_draft()
             event.stop()
             event.prevent_default()
             return
         if event.is_printable and event.character is not None:
             composer.insert_text(event.character)
+            self._sync_console_workbench_actions_from_draft()
             self._dismiss_console_guidance()
             event.stop()
             event.prevent_default()
@@ -3675,9 +6895,12 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             return
+        if self._console_setup_modal_blocking():
+            return
         if not self._should_capture_console_input(composer):
             return
         composer.insert_pasted_text(event.text)
+        self._sync_console_workbench_actions_from_draft()
         self._dismiss_console_guidance()
         event.stop()
 
@@ -4578,7 +7801,18 @@ class ChatScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         logger.debug("Chat screen resuming")
+        # Re-evaluate setup-card/model readiness before touching focus. Some
+        # recovery flows (e.g. certain providers' API-key recovery) navigate to
+        # the full Settings screen and back rather than completing setup via
+        # the in-Console settings modal callback, so the setup modal's blocking
+        # state can be stale by the time this screen resumes. Without this,
+        # `_restore_console_workbench_focus` below would just re-apply the
+        # stale block and the modal could stick even after setup completed
+        # elsewhere.
+        self._sync_console_transcript_guidance()
         self.sync_task_resume_state()
+        self._register_console_footer_shortcuts()
+        self.call_after_refresh(self._restore_console_workbench_focus)
         # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:
@@ -4617,13 +7851,221 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-settings-open":
             await self.on_console_settings_open(event)
             return
+        if button_id == "console-model-section-configure":
+            await self.on_console_settings_open(event)
+            return
+        if button_id and button_id.startswith(CONSOLE_RAIL_SECTION_TOGGLE_PREFIX):
+            event.stop()
+            self._toggle_console_rail_section(
+                button_id.removeprefix(CONSOLE_RAIL_SECTION_TOGGLE_PREFIX)
+            )
+            return
         if button_id == "console-new-chat-tab":
             event.stop()
-            self._ensure_console_chat_controller().new_session(
-                settings=self._default_console_session_settings(),
+            await self._create_native_console_session_from_active_context()
+            return
+        if button_id and button_id.startswith("console-conversation-browser-section-toggle-"):
+            event.stop()
+            group_id = str(getattr(event.button, "group_id", "") or "").strip()
+            state = self._build_console_workspace_context_state()
+            section_id = group_id.removeprefix("section:")
+            section = None
+            browser = state.conversation_browser
+            if browser is not None:
+                section = next(
+                    (
+                        candidate
+                        for candidate in browser.sections
+                        if candidate.section_id == section_id
+                    ),
+                    None,
+                )
+            collapsed = not bool(section.collapsed if section is not None else False)
+            self._set_console_conversation_browser_group_collapsed(group_id, collapsed)
+            self._sync_console_workspace_context()
+            return
+        if button_id and button_id.startswith("console-conversation-browser-group-toggle-"):
+            event.stop()
+            group_id = str(getattr(event.button, "group_id", "") or "").strip()
+            state = self._build_console_workspace_context_state()
+            group = None
+            browser = state.conversation_browser
+            if browser is not None:
+                for section in browser.sections:
+                    group = next(
+                        (
+                            candidate
+                            for candidate in section.groups
+                            if candidate.group_id == group_id
+                        ),
+                        None,
+                    )
+                    if group is not None:
+                        break
+            collapsed = not bool(group.collapsed if group is not None else False)
+            self._set_console_conversation_browser_group_collapsed(group_id, collapsed)
+            self._sync_console_workspace_context()
+            return
+        if button_id and button_id.startswith("console-conversation-star-"):
+            event.stop()
+            conversation_id = str(
+                getattr(event.button, "conversation_id", "") or ""
+            ).strip()
+            if not conversation_id:
+                self.app_instance.notify(
+                    "Save this conversation before starring it.",
+                    severity="warning",
+                )
+                return
+            marks_service = getattr(
+                self.app_instance,
+                "conversation_local_marks_service",
+                None,
             )
-            await self._sync_native_console_chat_ui()
+            if marks_service is None:
+                self.app_instance.notify(
+                    "Local stars are unavailable.",
+                    severity="warning",
+                )
+                return
+            star_action = "resolve"
+            try:
+                is_starred = getattr(marks_service, "is_starred", None)
+                currently_starred = (
+                    bool(is_starred(conversation_id))
+                    if callable(is_starred)
+                    else bool(getattr(event.button, "starred", False))
+                )
+                star_action = "unstar" if currently_starred else "star"
+                if currently_starred:
+                    marks_service.unstar_conversation(conversation_id)
+                else:
+                    marks_service.star_conversation(conversation_id)
+            except Exception:
+                logger.exception(
+                    "Unable to update local conversation star "
+                    "conversation_id={} action={}",
+                    conversation_id,
+                    star_action,
+                )
+                self.app_instance.notify(
+                    "Unable to update local star.",
+                    severity="warning",
+                )
+                return
+            self._sync_console_workspace_context()
+            return
+        if button_id == "console-workspace-conversations-toggle":
+            event.stop()
+            try:
+                workspace_context = self.query_one(
+                    "#console-workspace-context",
+                    ConsoleWorkspaceContextTray,
+                )
+            except (NoMatches, QueryError):
+                self._sync_console_workspace_context()
+                return
+            state = getattr(workspace_context, "state", None)
+            if (
+                state is not None
+                and getattr(state, "conversation_browser", None) is None
+            ):
+                section = getattr(state, "conversation_section", None)
+                if section is None:
+                    return
+                collapsed = not bool(section.collapsed)
+                self._set_console_workspace_conversations_collapsed(
+                    section.workspace_id,
+                    collapsed,
+                )
+                workspace_context.sync_state(
+                    replace(
+                        state,
+                        conversation_section=replace(
+                            section,
+                            collapsed=collapsed,
+                        ),
+                    )
+                )
+                return
+            self._sync_console_workspace_context()
+            return
+        if button_id == "console-new-workspace-conversation":
+            event.stop()
+            await self._create_native_console_session_from_active_context()
+            return
+        if button_id == "console-workspace-conversation-search-clear":
+            event.stop()
+            if self._console_conversation_browser_search_timer is not None:
+                self._console_conversation_browser_search_timer.stop()
+                self._console_conversation_browser_search_timer = None
+            if self._console_workspace_conversation_search_timer is not None:
+                self._console_workspace_conversation_search_timer.stop()
+                self._console_workspace_conversation_search_timer = None
+            self._console_conversation_browser_query = ""
+            self._console_conversation_browser_search_token += 1
+            self._console_conversation_browser_rows = ()
+            self._console_conversation_browser_total = None
+            self._console_conversation_browser_error = ""
+            self._console_workspace_conversation_query = ""
+            self._console_workspace_conversation_search_token += 1
+            self._console_workspace_conversation_search_rows = ()
+            self._console_workspace_conversation_search_total = None
+            self._console_workspace_conversation_search_error = ""
+            self._sync_console_workspace_context()
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
+            return
+        if button_id and button_id.startswith("console-workspace-conversation-"):
+            event.stop()
+            conversation_id = str(
+                getattr(event.button, "conversation_id", "") or ""
+            ).strip()
+            row_key = str(getattr(event.button, "row_key", "") or "").strip()
+            browser_row = self._find_console_browser_row(
+                row_key or conversation_id,
+                conversation_id=conversation_id,
+            )
+            if browser_row is not None:
+                self._activate_console_workspace_for_browser_row(browser_row)
+                row_conversation_id = str(browser_row.conversation_id or "").strip()
+                session_id = self._console_session_id_for_browser_row(browser_row)
+            else:
+                row_conversation_id = conversation_id
+                session_id = self._console_session_id_for_workspace_conversation(
+                    conversation_id
+                )
+            if session_id is None:
+                if not row_conversation_id:
+                    self.app_instance.notify(
+                        "This conversation row is no longer available.",
+                        severity="warning",
+                    )
+                    return
+                resumed = await self._resume_console_workspace_conversation(
+                    row_conversation_id,
+                    target_scope_type=(
+                        browser_row.scope_type if browser_row is not None else None
+                    ),
+                    target_workspace_id=(
+                        browser_row.workspace_id if browser_row is not None else None
+                    ),
+                )
+                if resumed:
+                    await self._refresh_console_conversation_browser_after_selection()
+                    return
+                self.app_instance.notify(
+                    "Open this saved conversation from Library before switching here.",
+                    severity="warning",
+                )
+                return
+            controller = self._ensure_console_chat_controller()
+            if controller.store.active_session_id != session_id:
+                if browser_row is None:
+                    self._set_active_workspace_for_console_session(session_id)
+                controller.switch_session(session_id)
+                await self._sync_native_console_chat_ui()
             self._focus_console_composer_if_needed(force=True)
+            await self._refresh_console_conversation_browser_after_selection()
             return
         if button_id and button_id.startswith("console-close-session-tab-"):
             event.stop()
@@ -4659,10 +8101,7 @@ class ChatScreen(BaseAppScreen):
             if controller.store.active_session_id == session_id:
                 self._open_console_session_rename_modal(session_id)
                 return
-            self._set_active_workspace_for_console_session(session_id)
-            controller.switch_session(session_id)
-            await self._sync_native_console_chat_ui()
-            self._focus_console_composer_if_needed(force=True)
+            await self._activate_native_console_session(session_id)
             return
         if button_id and button_id.startswith("console-message-action-"):
             handled = await self.handle_console_message_action(event)

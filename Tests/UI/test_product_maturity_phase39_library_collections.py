@@ -195,20 +195,25 @@ async def test_library_collections_mode_mounts_panel_and_defers_scoped_actions()
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
 
-        screen.query_one("#library-mode-collections", Button).press()
+        screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
         assert screen.query_one("#library-collections-panel").parent is screen.query_one(
-            "#library-source-detail"
+            "#library-canvas"
         )
         assert len(screen.query("#library-rag-run-query")) == 0
         assert "Sync: sync-unavailable" in _visible_text(screen)
         assert "Updated 2026-05-08 04:05 UTC" in _visible_text(screen)
-        assert screen.query_one("#library-open-study", Button).disabled is True
-        assert screen.query_one("#library-open-flashcards", Button).disabled is True
-        assert screen.query_one("#library-open-quizzes", Button).disabled is True
-        assert screen.query_one("#library-use-in-console", Button).disabled is True
-        assert "Collection-scoped Study, Flashcards, Quizzes, and Console are later-stage." in (
+        # The retired action-region's per-mode Study/Flashcards/Quizzes/Console
+        # handoff buttons never mount for a collection selection (they only
+        # live in the create-study/-flashcards/-quizzes canvases now, as
+        # screen-global actions rather than collection-scoped ones); the
+        # collections panel's own deferred-actions copy is the surviving
+        # surface for "collection item actions stay blocked".
+        assert "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync" in (
+            _visible_text(screen)
+        )
+        assert "Next: collection item adapters are required before item-level actions unlock." in (
             _visible_text(screen)
         )
 
@@ -259,7 +264,7 @@ async def test_library_collections_surfaces_sync_dry_run_report_without_write_sy
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
 
-        screen.query_one("#library-mode-collections", Button).press()
+        screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
         visible = _visible_text(screen)
@@ -268,17 +273,19 @@ async def test_library_collections_surfaces_sync_dry_run_report_without_write_sy
         assert "Review: required before writes" in visible
         assert "Review dry-run results before enabling writes." in visible
         assert "write sync enabled" not in visible.lower()
-        inspector_text = " ".join(
+        # The retired Inspector column's "Selected Collection Record" /
+        # "What this means" / "read-only sync dry run" copy has no verbatim
+        # successor; the merged collection-detail column (inside the
+        # collections panel itself) is the surviving scoped surface that
+        # carries the same "selected item, no writes without review" claim.
+        detail_text = " ".join(
             str(widget.renderable)
-            for widget in screen.query("#library-source-inspector Static")
+            for widget in screen.query("#library-collection-detail Static")
         )
-        assert "Selected Collection" in inspector_text
-        assert "Research" in inspector_text
-        assert "What this means" in inspector_text
-        assert "This is a read-only sync dry run. No server writes can run from this screen." in (
-            inspector_text
-        )
-        assert "No source selected." not in inspector_text
+        assert "Selected: Research" in detail_text
+        assert "Write Sync Safety" in detail_text
+        assert "Review these labels before any future server write promotion." in detail_text
+        assert "No Collection selected." not in detail_text
 
 
 @pytest.mark.asyncio
@@ -332,7 +339,7 @@ async def test_library_collections_surfaces_sync_profile_summary_without_write_s
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
 
-        screen.query_one("#library-mode-collections", Button).press()
+        screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-sync-profile-status")
 
         visible = _visible_text(screen)
@@ -383,7 +390,7 @@ async def test_library_collections_does_not_load_sync_profile_summary_in_local_m
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
 
-        screen.query_one("#library-mode-collections", Button).press()
+        screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
         assert len(screen.query("#library-sync-profile-status")) == 0
@@ -425,7 +432,7 @@ async def test_library_collections_validates_sync_profile_scope_before_summary_l
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
 
-        screen.query_one("#library-mode-collections", Button).press()
+        screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
         assert len(screen.query("#library-sync-profile-status")) == 0
@@ -512,7 +519,7 @@ async def test_library_collections_scopes_sync_conflicts_to_selected_collection(
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
 
-        screen.query_one("#library-mode-collections", Button).press()
+        screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
         visible = _visible_text(screen)
@@ -566,7 +573,7 @@ async def test_library_collections_ignores_sync_state_from_other_scope(tmp_path)
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
 
-        screen.query_one("#library-mode-collections", Button).press()
+        screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
         visible = _visible_text(screen)
@@ -586,11 +593,9 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
 
-        screen.query_one("#library-mode-collections", Button).press()
+        screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
-        assert "Group saved Library items for Search/RAG, Study, and Console." in _visible_text(
-            screen
-        )
+        assert "Create a local Collection record to start reviewing saved content." in _visible_text(screen)
 
         screen.query_one("#library-collection-name-input", Input).value = "Research"
         screen.query_one("#library-collection-description-input", Input).value = "Policy sources"
@@ -620,7 +625,7 @@ async def test_library_collections_create_rename_and_delete_workflow() -> None:
         await _wait_for_text(
             screen,
             pilot,
-            "Group saved Library items for Search/RAG, Study, and Console.",
+            "Create a local Collection record to start reviewing saved content.",
         )
 
     assert service.deleted == ["collection-1"]
@@ -637,7 +642,7 @@ async def test_library_collection_form_input_keeps_focus_and_updates_actions() -
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
 
-        screen.query_one("#library-mode-collections", Button).press()
+        screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
 
         name_input = screen.query_one("#library-collection-name-input", Input)
@@ -678,7 +683,7 @@ async def test_library_collections_delete_failure_keeps_selection_and_warns_user
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
 
-        screen.query_one("#library-mode-collections", Button).press()
+        screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-panel")
         screen.query_one("#library-delete-collection", Button).press()
         await _wait_for_selector(screen, pilot, "#library-confirm-delete-collection")
@@ -703,7 +708,7 @@ async def test_library_collections_service_failure_renders_recovery_copy() -> No
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
 
-        screen.query_one("#library-mode-collections", Button).press()
+        screen.query_one("#library-row-browse-collections", Button).press()
         await _wait_for_selector(screen, pilot, "#library-collections-error")
 
         error_text = screen.query_one("#library-collections-error", Static).renderable

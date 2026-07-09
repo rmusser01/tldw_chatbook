@@ -398,9 +398,17 @@ def get_encryption_module():
 
 
 def set_encryption_password(password: str):
-    """Set the encryption password for the current session."""
-    global _ENCRYPTION_PASSWORD
+    """Set the encryption password for the current session.
+
+    Also invalidates the settings/CLI config caches: any config loaded before the
+    password was available (e.g. the module-level ``APP_CONFIG`` primed at import,
+    before the startup unlock prompt) holds ciphertext, so it must be dropped and
+    re-decrypted on the next load.
+    """
+    global _ENCRYPTION_PASSWORD, _SETTINGS_CACHE, _CONFIG_CACHE
     _ENCRYPTION_PASSWORD = password
+    _SETTINGS_CACHE = None
+    _CONFIG_CACHE = None
     logger.info("Encryption password set for current session")
 
 
@@ -690,6 +698,12 @@ def load_settings(force_reload: bool = False) -> Dict:
     toml_config_data = deep_merge_dicts(toml_config_data, base_config_data) # Merge primary config
     toml_config_data = deep_merge_dicts(toml_config_data, user_override_config_data) # Merge user CLI overrides
     logger.info("Merged all configurations: CLI Defaults < Primary Config < User CLI Config.")
+    # Decrypt sensitive values (e.g. [api_settings].*.api_key) when config encryption
+    # is enabled and a session password is available; a no-op otherwise. Without this,
+    # app.app_config (populated from load_settings) would carry `enc:` ciphertext keys
+    # that the Chat send path passes to providers verbatim, failing auth. Mirrors the
+    # decrypt step in load_cli_config_and_ensure_existence.
+    toml_config_data = decrypt_config_section(toml_config_data)
     logger.debug("load_settings: Configuration loaded from disk (cache miss or forced reload)")
     # logger.debug(f"Final toml_config_data after potential merge: {toml_config_data}") # Optional: for verbose debugging
 
@@ -844,7 +858,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         # --- Configurations migrated from load_and_log_configs ---
         "anthropic_api": {
             'api_key': anthropic_api_key,
-            'model': api_section_legacy.get('anthropic_model', 'claude-3-5-sonnet-20240620'),
+            'model': api_section_legacy.get('anthropic_model', 'claude-sonnet-4-20250514'),
             'streaming': api_section_legacy.get("anthropic_streaming", False),
             'temperature': api_section_legacy.get('anthropic_temperature', 0.7),
             'top_p': api_section_legacy.get('anthropic_top_p', 0.95),
@@ -856,7 +870,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         },
         "cohere_api": {
             'api_key': cohere_api_key,
-            'model': api_section_legacy.get('cohere_model', 'command-r-plus'),
+            'model': api_section_legacy.get('cohere_model', 'command-a-03-2025'),
             'streaming': api_section_legacy.get('cohere_streaming', False),
             'temperature': api_section_legacy.get('cohere_temperature', 0.7),
             'max_p': api_section_legacy.get('cohere_max_p', 0.95), # Note: check param name, Cohere might use 'p' or 'top_p'
@@ -880,7 +894,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         },
         "google_generative_api": { # Renamed to avoid confusion with Google Search API
             'api_key': google_api_key,
-            'model': api_section_legacy.get('google_model', 'gemini-2.5-pro'),
+            'model': api_section_legacy.get('google_model', 'gemini-2.5-flash'),
             'streaming': api_section_legacy.get('google_streaming', False),
             'temperature': api_section_legacy.get('google_temperature', 0.7),
             'top_p': api_section_legacy.get('google_top_p', 0.95),
@@ -892,7 +906,7 @@ def load_settings(force_reload: bool = False) -> Dict:
         },
         "groq_api": {
             'api_key': groq_api_key,
-            'model': api_section_legacy.get('groq_model', 'llama3-70b-8192'),
+            'model': api_section_legacy.get('groq_model', 'llama-3.3-70b-versatile'),
             'streaming': api_section_legacy.get('groq_streaming', False),
             'temperature': api_section_legacy.get('groq_temperature', 0.7),
             'top_p': api_section_legacy.get('groq_top_p', 0.95),
@@ -903,10 +917,11 @@ def load_settings(force_reload: bool = False) -> Dict:
         },
         "huggingface_api": {
             'api_key': huggingface_api_key,
-            'huggingface_use_router_url_format': api_section_legacy.get('huggingface_use_router_url_format', False),
-            'huggingface_router_base_url': api_section_legacy.get('huggingface_router_base_url', 'https://router.huggingface.co/hf-inference'),
-            'api_base_url': api_section_legacy.get('huggingface_api_base_url', 'https://router.huggingface.co/hf-inference/models'), # Redundant if router_base_url is used for construction
-            'model': api_section_legacy.get('huggingface_model', '/Qwen/Qwen3-235B-A22B'),
+            'use_router_url_format': api_section_legacy.get('huggingface_use_router_url_format', False),
+            'router_base_url': api_section_legacy.get('huggingface_router_base_url', 'https://router.huggingface.co/hf-inference'),
+            'api_base_url': api_section_legacy.get('huggingface_api_base_url', 'https://router.huggingface.co/v1'),
+            'api_chat_path': api_section_legacy.get('huggingface_api_chat_path', 'chat/completions'),
+            'model': api_section_legacy.get('huggingface_model', 'openai/gpt-oss-120b'),
             'streaming': api_section_legacy.get('huggingface_streaming', False),
             'temperature': api_section_legacy.get('huggingface_temperature', 0.7),
             'top_p': api_section_legacy.get('huggingface_top_p', 0.95),
@@ -1416,9 +1431,9 @@ API_MODELS_BY_PROVIDER = {
     "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
     "Groq": ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatile", "llama-3.1-8b-instant",
              "llama3-70b-8192", "llama3-70b-8192", "llama3-8b-8192",],
-    "Google": ["gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash",
+    "Google": ["gemini-2.5-flash", "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash",
                "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ],
-    "HuggingFace": ["meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",],
+    "HuggingFace": ["openai/gpt-oss-120b", "meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",],
     "MistralAI": ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502",
                   "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411",
                   "devstral-small-2505", "mistral-small-2503", ],
@@ -1597,8 +1612,8 @@ Anthropic = ["claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-3-7-s
 Cohere = ["command-a-03-2025", "command-r7b-12-2024", "command-r-plus-04-2024", "command-r-plus", "command-r-08-2024", "command-r-03-2024", "command", "command-nightly", "command-light", "command-light-nightly"]
 DeepSeek = ["deepseek-chat", "deepseek-reasoner"]
 Groq = ["gemma2-9b-it", "mmeta-llama/Llama-Guard-4-12B", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-70b-8192", "llama3-70b-8192", "llama3-8b-8192",]
-Google = ["gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ]
-HuggingFace = ["meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",]
+Google = ["gemini-2.5-flash", "gemini-2.5-flash-preview-05-20", "gemini-2.5-pro-preview-05-06", "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", ]
+HuggingFace = ["openai/gpt-oss-120b", "meta-llama/Meta-Llama-3.1-8B-Instruct", "meta-llama/Meta-Llama-3.1-70B-Instruct",]
 MistralAI = ["open-mistral-nemo", "mistral-medium-2505", "codestral-2501", "mistral-saba-2502", "mistral-large-2411", "ministral-3b-2410", "ministral-8b-2410", "mistral-moderation-2411", "devstral-small-2505", "mistral-small-2503", ]
 Moonshot = ["kimi-latest", "kimi-thinking-preview", "moonshot-v1-auto", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "moonshot-v1-8k-vision-preview", "moonshot-v1-32k-vision-preview", "moonshot-v1-128k-vision-preview", "kimi-k2-0711-preview"]
 OpenRouter = ["openai/gpt-4o-mini", "anthropic/claude-3.7-sonnet", "google/gemini-2.0-flash-001", "google/gemini-2.5-pro-preview", "google/gemini-2.5-flash-preview", "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324", "openai/gpt-4.1", "anthropic/claude-sonnet-4", "deepseek/deepseek-r1:free", "anthropic/claude-3.7-sonnet:thinking", "google/gemini-flash-1.5-8b", "mistralai/mistral-nemo", "google/gemini-2.5-flash-preview-05-20", ]
@@ -1639,7 +1654,7 @@ local_mlx_lm = ["None"]
     [api_settings.anthropic]
     api_key_env_var = "ANTHROPIC_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "claude-3-haiku-20240307"
+    model = "claude-sonnet-4-20250514"
     temperature = 0.7
     top_p = 1.0 # Anthropic uses top_p (represented as topp in UI)
     top_k = 0 # Anthropic specific, 0 or -1 usually disables it
@@ -1652,7 +1667,7 @@ local_mlx_lm = ["None"]
     [api_settings.cohere]
     api_key_env_var = "COHERE_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "command-r-plus"
+    model = "command-a-03-2025"
     temperature = 0.3
     top_p = 0.75 # Cohere uses 'p' (represented as topp in UI)
     top_k = 0 # Cohere uses 'k'
@@ -1677,7 +1692,7 @@ local_mlx_lm = ["None"]
     [api_settings.groq]
     api_key_env_var = "GROQ_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "llama3-70b-8192"
+    model = "llama-3.3-70b-versatile"
     temperature = 0.7
     top_p = 1.0 # Groq uses top_p (represented as maxp in UI)
     max_tokens = 8192
@@ -1689,7 +1704,7 @@ local_mlx_lm = ["None"]
     [api_settings.google]
     api_key_env_var = "GOOGLE_API_KEY"
     api_key = "<API_KEY_HERE>"
-    model = "gemini-1.5-pro-latest"
+    model = "gemini-2.5-flash"
     temperature = 0.7
     top_p = 0.9 # Google uses topP (represented as topp in UI)
     top_k = 100 # Google uses topK
@@ -1702,7 +1717,9 @@ local_mlx_lm = ["None"]
     [api_settings.huggingface]
     api_key_env_var = "HUGGINGFACE_API_KEY"
     # api_key = "" # Less secure fallback - use env var instead
-    model = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+    model = "openai/gpt-oss-120b"
+    api_base_url = "https://router.huggingface.co/v1"
+    api_chat_path = "chat/completions"
     temperature = 0.7
     top_p = 1.0 # HF Inference API uses top_p
     top_k = 50  # HF Inference API uses top_k
@@ -2828,6 +2845,13 @@ def _is_sensitive_setting_key(key: Any) -> bool:
     return key_lower in sensitive_exact or any(pattern in key_lower for pattern in sensitive_patterns)
 
 
+def _setting_value_for_log(key: Any, value: Any) -> str:
+    """Return a safe representation of a config setting value for logs."""
+    if _is_sensitive_setting_key(key):
+        return repr("<redacted>")
+    return repr(value)
+
+
 def _maybe_encrypt_setting_value(config_data: Dict[str, Any], key: Any, value: Any) -> Any:
     encryption_config = config_data.get("encryption", {})
     if not (
@@ -2864,6 +2888,48 @@ def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[st
     return current_level
 
 
+# Eagerly created at import (single-threaded), so every caller shares one
+# lock. Lazy init would let the first two concurrent workers each build a
+# separate lock and defeat serialization on the first write.
+import threading as _threading
+
+_CONFIG_FILE_LOCK = _threading.Lock()
+
+# Fallback permissions for a config file that does not exist yet. config.toml
+# may hold plaintext secrets (when encryption is disabled), so it is created
+# owner-only rather than world-readable.
+_CONFIG_FILE_DEFAULT_MODE = 0o600
+
+
+def _config_file_lock():
+    """Return the shared config-file read-modify-write lock.
+
+    Returns:
+        The process-wide lock serializing config file saves/deletes across
+        Textual thread workers so concurrent cycles cannot drop updates.
+    """
+    return _CONFIG_FILE_LOCK
+
+
+def _config_write_mode(config_path: Path) -> int:
+    """Choose the file mode to write a config file with.
+
+    Args:
+        config_path: Target config file path.
+
+    Returns:
+        The existing file's permission bits when it already exists (so a
+        hardened ``0600`` config is never silently widened), otherwise the
+        owner-only default.
+    """
+    try:
+        if config_path.exists():
+            return config_path.stat().st_mode & 0o777
+    except OSError:
+        pass
+    return _CONFIG_FILE_DEFAULT_MODE
+
+
 def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]]) -> bool:
     """Persist multiple config values with one TOML read/write and one cache reload."""
     global _CONFIG_CACHE, _SETTINGS_CACHE, settings
@@ -2880,48 +2946,117 @@ def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]])
         logger.error(f"Could not create config directory {config_path.parent}: {e}")
         return False
 
-    config_data: Dict[str, Any] = {}
-    if config_path.exists():
+    with _config_file_lock():
+        config_data: Dict[str, Any] = {}
+        if config_path.exists():
+            try:
+                with open(config_path, "rb") as f:
+                    config_data = tomllib.load(f)
+            except tomllib.TOMLDecodeError as e:
+                logger.error(f"Corrupted config file at {config_path}. Cannot save. Please fix or delete it. Error: {e}")
+                # Consider creating a backup of the corrupt file for the user.
+                return False
+            except Exception as e:
+                logger.error(f"Unexpected error reading {config_path}: {e}", exc_info=True)
+                return False
+
+        try:
+            for section, values in section_values.items():
+                if not values:
+                    continue
+                current_level = _target_config_section(config_data, section)
+                for key, value in values.items():
+                    current_level[key] = _maybe_encrypt_setting_value(config_data, key, value)
+        except (TypeError, AttributeError):
+            logger.error(
+                "Configuration structure conflict. Could not save settings batch "
+                f"because a part of the path is not a table/dictionary. Please check your config file."
+            )
+            return False
+
+        try:
+            atomic_write_text(
+                config_path,
+                toml.dumps(config_data),
+                mode=_config_write_mode(config_path),
+            )
+            logger.success(f"Successfully saved settings batch to {config_path}")
+
+            _CONFIG_CACHE = None
+            _SETTINGS_CACHE = None
+            load_cli_config_and_ensure_existence(force_reload=True)
+            settings = load_settings(force_reload=True)
+            logger.info("Global configuration caches invalidated and reloaded.")
+
+            return True
+        except (IOError, OSError, toml.TomlDecodeError) as e:
+            logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
+            return False
+
+
+def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
+    """Remove keys from a config section and persist the file atomically.
+
+    Args:
+        section: Dotted config section path (e.g. ``"console.rail_state"``).
+        keys: Keys to remove from that section.
+
+    Returns:
+        True on success, including the no-op cases where the file, section,
+        or every named key is already absent. False only when the file
+        exists but cannot be read or rewritten, or the path is not a table.
+    """
+    global _CONFIG_CACHE, _SETTINGS_CACHE, settings
+    config_path = _get_effective_config_path()
+    if not config_path.exists():
+        return True
+
+    with _config_file_lock():
         try:
             with open(config_path, "rb") as f:
-                config_data = tomllib.load(f)
+                config_data: Dict[str, Any] = tomllib.load(f)
         except tomllib.TOMLDecodeError as e:
-            logger.error(f"Corrupted config file at {config_path}. Cannot save. Please fix or delete it. Error: {e}")
-            # Consider creating a backup of the corrupt file for the user.
+            logger.error(f"Corrupted config file at {config_path}. Cannot delete from it. Error: {e}")
             return False
         except Exception as e:
             logger.error(f"Unexpected error reading {config_path}: {e}", exc_info=True)
             return False
 
-    try:
-        for section, values in section_values.items():
-            if not values:
-                continue
-            current_level = _target_config_section(config_data, section)
-            for key, value in values.items():
-                current_level[key] = _maybe_encrypt_setting_value(config_data, key, value)
-    except (TypeError, AttributeError):
-        logger.error(
-            "Configuration structure conflict. Could not save settings batch "
-            f"because a part of the path is not a table/dictionary. Please check your config file."
-        )
-        return False
+        current_level: Any = config_data
+        for part in section.split('.'):
+            if not isinstance(current_level, dict) or part not in current_level:
+                return True
+            current_level = current_level[part]
+        if not isinstance(current_level, dict):
+            logger.error(
+                f"Cannot delete keys from [{section}]: path is not a table in {config_path}."
+            )
+            return False
 
-    try:
-        with open(config_path, "w", encoding="utf-8") as f:
-            toml.dump(config_data, f)
-        logger.success(f"Successfully saved settings batch to {config_path}")
+        # Sentinel, not None: a key whose stored value is legitimately None
+        # must still count as removed so the file is rewritten.
+        _MISSING = object()
+        removed = [key for key in keys if current_level.pop(key, _MISSING) is not _MISSING]
+        if not removed:
+            return True
 
-        _CONFIG_CACHE = None
-        _SETTINGS_CACHE = None
-        load_cli_config_and_ensure_existence(force_reload=True)
-        settings = load_settings(force_reload=True)
-        logger.info("Global configuration caches invalidated and reloaded.")
+        try:
+            atomic_write_text(
+                config_path,
+                toml.dumps(config_data),
+                mode=_config_write_mode(config_path),
+            )
+            logger.info(f"Removed {len(removed)} key(s) from [{section}] in {config_path}")
 
-        return True
-    except (IOError, toml.TomlDecodeError) as e:
-        logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
-        return False
+            _CONFIG_CACHE = None
+            _SETTINGS_CACHE = None
+            load_cli_config_and_ensure_existence(force_reload=True)
+            settings = load_settings(force_reload=True)
+
+            return True
+        except (IOError, OSError, toml.TomlDecodeError) as e:
+            logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
+            return False
 
 
 def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
@@ -2941,7 +3076,10 @@ def save_setting_to_cli_config(section: str, key: str, value: Any) -> bool:
     Returns:
         True if the setting was saved successfully, False otherwise.
     """
-    logger.info(f"Attempting to save setting: [{section}].{key} = {repr(value)}")
+    logger.info(
+        f"Attempting to save setting: [{section}].{key} = "
+        f"{_setting_value_for_log(key, value)}"
+    )
     return save_settings_to_cli_config({section: {key: value}})
 
 

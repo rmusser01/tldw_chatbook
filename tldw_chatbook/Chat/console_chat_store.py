@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from datetime import datetime, timezone
+from typing import Any, Iterable, Mapping, Protocol
 from uuid import uuid4
 
 from loguru import logger
@@ -64,6 +65,10 @@ class ConsoleChatSyncProducer(Protocol):
         """Enqueue a Chat message into the Sync v2 local outbox."""
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 @dataclass
 class ConsoleChatSession:
     """A native Console chat session."""
@@ -74,6 +79,7 @@ class ConsoleChatSession:
     persisted_conversation_id: str | None = None
     settings: ConsoleSessionSettings | None = None
     draft: str = ""
+    updated_at: str = field(default_factory=_utc_now_iso)
 
 
 class ConsoleChatStore:
@@ -145,6 +151,42 @@ class ConsoleChatStore:
         self._sessions[session.id] = session
         self._messages_by_session[session.id] = []
         self.active_session_id = session.id
+        return session
+
+    def restore_persisted_session(
+        self,
+        *,
+        title: str,
+        workspace_id: str | None,
+        persisted_conversation_id: str,
+        messages: Iterable[ConsoleChatMessage],
+        settings: ConsoleSessionSettings | None = None,
+    ) -> ConsoleChatSession:
+        """Create and activate a native session from persisted conversation data.
+
+        Args:
+            title: Display title for the restored Console session.
+            workspace_id: Workspace scope recorded on the persisted conversation,
+                or ``None`` to use the current store workspace context.
+            persisted_conversation_id: Durable Chat conversation identifier.
+            messages: Native Console messages reconstructed from persisted data.
+            settings: Optional provider/model settings snapshot for the session.
+
+        Returns:
+            The newly created and activated Console session.
+        """
+        session = self.create_session(
+            title=title,
+            workspace_id=workspace_id,
+            settings=settings,
+        )
+        session.persisted_conversation_id = str(persisted_conversation_id)
+        restored_messages: list[ConsoleChatMessage] = []
+        for message in messages:
+            restored = replace(message)
+            restored_messages.append(restored)
+            self._message_session_index[restored.id] = session.id
+        self._messages_by_session[session.id] = restored_messages
         return session
 
     def switch_session(self, session_id: str) -> ConsoleChatSession:
@@ -229,6 +271,45 @@ class ConsoleChatStore:
         """Replace the active workspace context."""
         self.workspace_context = workspace_context
 
+    def restore_state(
+        self,
+        *,
+        sessions: Iterable[ConsoleChatSession],
+        messages_by_session: Mapping[str, Iterable[ConsoleChatMessage]] | None = None,
+        active_session_id: str | None = None,
+    ) -> None:
+        """Replace in-memory Console state with previously restored sessions.
+
+        Args:
+            sessions: Native Console sessions to load in display order.
+            messages_by_session: Transcript messages keyed by session ID.
+            active_session_id: Preferred active session after restoration.
+        """
+        restored_sessions = list(sessions)
+        self.active_session_id = None
+        self._sessions.clear()
+        self._messages_by_session.clear()
+        self._message_session_index.clear()
+        self._pending_persistence_message_ids.clear()
+        self._stream_chunks_by_message.clear()
+        self._stream_materialized_counts.clear()
+        self._sync_v2_message_versions.clear()
+
+        messages_by_session = messages_by_session or {}
+        for session in restored_sessions:
+            self._sessions[session.id] = replace(session)
+            restored_messages: list[ConsoleChatMessage] = []
+            for message in messages_by_session.get(session.id, ()):
+                restored_message = replace(message)
+                restored_messages.append(restored_message)
+                self._message_session_index[restored_message.id] = session.id
+            self._messages_by_session[session.id] = restored_messages
+
+        if active_session_id in self._sessions:
+            self.active_session_id = active_session_id
+        elif self._sessions:
+            self.active_session_id = next(iter(self._sessions))
+
     def append_message(
         self,
         session_id: str,
@@ -245,6 +326,7 @@ class ConsoleChatStore:
             status=self._initial_status(role=role, content=content),
         )
         self._messages_by_session[session_id].append(message)
+        self._sessions[session_id].updated_at = _utc_now_iso()
         self._message_session_index[message.id] = session_id
         if persist:
             self._persist_new_message_or_defer(session_id=session_id, message=message)

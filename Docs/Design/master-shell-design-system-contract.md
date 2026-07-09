@@ -21,6 +21,12 @@ Runtime shell implementation must not introduce new visual patterns, token names
 
 If a runtime slice needs a new visual pattern, update the visual-system contract before changing Python widgets or TCSS.
 
+## Workbench UI System
+
+See `Docs/Design/chatbook-workbench-ui-system.md` for shared destination workbench widgets, visible-action rules, route migration ownership, and responsiveness gates.
+
+Core workflows must not be hidden only in the command palette. Primary actions, blocked-state recovery, destructive confirmations, mode switches, and source/workspace/provider readiness belong in the workbench surface, header, mode strip, inspector, footer, or contextual help. Palette commands may duplicate those visible-action paths.
+
 ## Required Shared Classes
 
 | Class | Purpose | First master-shell use |

@@ -13,7 +13,8 @@ from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Rule, Static
+from textual.screen import ModalScreen
+from textual.widgets import Button, Input, Rule, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...runtime_policy.types import PolicyDeniedError
@@ -28,6 +29,11 @@ SKILLS_LOCAL_PAGE_SIZE = 25
 SKILLS_SERVICE_ERROR_COPY = "Skills service unavailable; retry Skills later."
 SKILLS_SERVICE_UNAVAILABLE_COPY = "Skills service is unavailable in this runtime."
 SKILLS_POLICY_DENIED_FALLBACK_COPY = "Local Skills are blocked by the current runtime policy."
+SKILLS_TRUST_REVIEWABLE_STATUSES = {
+    "quarantined_modified",
+    "quarantined_added",
+    "quarantined_deleted",
+}
 SKILL_TEXT_LIMITS = {
     "name": 64,
     "skill_name": 64,
@@ -36,7 +42,113 @@ SKILL_TEXT_LIMITS = {
     "record_id": 256,
     "backend": 32,
     "policy_message": 500,
+    "trust_status": 64,
+    "trust_reason_code": 128,
 }
+
+
+class SkillTrustPassphraseModal(ModalScreen[str | None]):
+    """Prompt for the local skill trust passphrase without logging it."""
+
+    DEFAULT_CSS = """
+    SkillTrustPassphraseModal {
+        align: center middle;
+    }
+
+    #skill-trust-passphrase-modal {
+        width: 64;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    #skill-trust-passphrase-message {
+        margin: 1 0;
+    }
+
+    #skill-trust-passphrase-input {
+        width: 100%;
+    }
+
+    #skill-trust-passphrase-error {
+        height: auto;
+        min-height: 1;
+        color: red;
+    }
+
+    #skill-trust-passphrase-actions {
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    #skill-trust-passphrase-cancel,
+    #skill-trust-passphrase-submit {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+    """
+
+    BINDINGS = [("escape", "dismiss", "Cancel")]
+
+    def __init__(self, *, confirm_bootstrap: bool) -> None:
+        super().__init__()
+        self._confirm_bootstrap = confirm_bootstrap
+
+    def compose(self) -> ComposeResult:
+        title = "Bootstrap Local Skill Trust" if self._confirm_bootstrap else "Unlock Local Skill Trust"
+        message = (
+            "Current local skill files will become the trusted baseline. "
+            "Enter the local skill trust passphrase to continue."
+            if self._confirm_bootstrap
+            else "Enter the local skill trust passphrase to unlock trust checks for this session."
+        )
+        with Vertical(id="skill-trust-passphrase-modal"):
+            yield Static(title, classes="destination-section")
+            yield Static(message, id="skill-trust-passphrase-message")
+            yield Input(
+                password=True,
+                id="skill-trust-passphrase-input",
+                placeholder="Trust passphrase",
+            )
+            yield Static("", id="skill-trust-passphrase-error", markup=False)
+            with Horizontal(id="skill-trust-passphrase-actions"):
+                yield Button("Cancel", id="skill-trust-passphrase-cancel")
+                yield Button("Submit", id="skill-trust-passphrase-submit", variant="primary")
+
+    def on_mount(self) -> None:
+        self.query_one("#skill-trust-passphrase-input", Input).focus()
+
+    def action_dismiss(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#skill-trust-passphrase-cancel")
+    def _cancel(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#skill-trust-passphrase-submit")
+    def _submit_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._submit()
+
+    @on(Input.Submitted, "#skill-trust-passphrase-input")
+    def _submit_input(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._submit()
+
+    def _submit(self) -> None:
+        passphrase = self.query_one("#skill-trust-passphrase-input", Input).value
+        if not passphrase:
+            self.query_one("#skill-trust-passphrase-error", Static).update(
+                "Passphrase cannot be blank."
+            )
+            return
+        self.dismiss(passphrase)
 
 
 class SkillsScreen(BaseAppScreen):
@@ -49,6 +161,7 @@ class SkillsScreen(BaseAppScreen):
         self._skills_lookup_recovery_state: DestinationRecoveryState | None = None
         self._skills_loaded = False
         self._selected_skill_index: int | None = None
+        self._active_trust_review: dict[str, Any] | None = None
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -70,6 +183,7 @@ class SkillsScreen(BaseAppScreen):
         self._skills_lookup_recovery_state = recovery_state
         self._skills_loaded = True
         self._ensure_selected_skill()
+        self._reconcile_active_trust_review()
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -172,8 +286,135 @@ class SkillsScreen(BaseAppScreen):
     def _plain_text(value: str) -> Text:
         return Text(value)
 
+    def _skill_trust_status(self, record: Mapping[str, Any]) -> str:
+        return self._skill_field(record, "trust_status", "trusted").lower() or "trusted"
+
+    def _skill_trust_reason(self, record: Mapping[str, Any]) -> str:
+        return self._skill_field(record, "trust_reason_code")
+
+    @staticmethod
+    def _skill_trust_blocked(record: Mapping[str, Any]) -> bool:
+        return bool(record.get("trust_blocked"))
+
+    def _skill_trust_changed_files(self, record: Mapping[str, Any]) -> list[str]:
+        files = record.get("trust_changed_files")
+        if not isinstance(files, (list, tuple)):
+            return []
+        changed_files = []
+        for file_name in files:
+            safe_file_name = self._safe_skill_text(file_name, max_length=100)
+            if safe_file_name:
+                changed_files.append(safe_file_name)
+        return changed_files
+
+    def _skill_trust_copy(self, record: Mapping[str, Any]) -> str:
+        status = self._skill_trust_status(record)
+        trust_copy = {
+            "trusted": "Trust: trusted baseline",
+            "trust_uninitialized": "Trust: not initialized",
+            "trust_locked": "Trust: locked",
+            "quarantined_modified": "Trust: changed since trusted baseline",
+            "quarantined_added": "Trust: new untrusted file",
+            "quarantined_deleted": "Trust: trusted file missing",
+            "quarantined_manifest_error": "Trust: manifest cannot be verified",
+            "quarantined_unsupported_path": "Trust: unsupported file path",
+        }
+        return trust_copy.get(status, "Trust: blocked")
+
+    def _skill_trust_blocked_copy(self, record: Mapping[str, Any]) -> str:
+        status = self._skill_trust_status(record)
+        blocked_copy = {
+            "trust_uninitialized": (
+                "local skill trust has not been initialized. "
+                "Next: Bootstrap Trust after reviewing current local skill files."
+            ),
+            "trust_locked": (
+                "local skill trust is locked. "
+                "Next: Unlock Trust with the trust passphrase."
+            ),
+            "quarantined_modified": (
+                "local skill files changed since the trusted baseline. "
+                "Next: Review Diff, then Trust Reviewed Version."
+            ),
+            "quarantined_added": (
+                "local skill files include new untrusted files. "
+                "Next: Review Diff, then Trust Reviewed Version."
+            ),
+            "quarantined_deleted": (
+                "trusted local skill files are missing. "
+                "Next: Review Diff, then Trust Reviewed Version."
+            ),
+            "quarantined_manifest_error": (
+                "local skill trust manifest cannot be verified. "
+                "Next: resolve local trust state before staging."
+            ),
+            "quarantined_unsupported_path": (
+                "local skill files include unsupported paths. "
+                "Next: remove unsupported paths before staging."
+            ),
+        }
+        return blocked_copy.get(status, "local skill trust blocks execution. Next: resolve trust state before staging.")
+
+    def _can_review_skill_trust(self, record: Mapping[str, Any] | None) -> bool:
+        if record is None:
+            return False
+        return (
+            self._skill_validation_status(record) == "valid"
+            and self._skill_trust_blocked(record)
+            and self._skill_trust_status(record) in SKILLS_TRUST_REVIEWABLE_STATUSES
+        )
+
+    def _has_trust_status(self, trust_status: str) -> bool:
+        return any(self._skill_trust_status(record) == trust_status for record in self._local_skill_records)
+
+    @staticmethod
+    def _review_file_label(value: Any) -> str:
+        text = str(value or "").replace("\\", "/").strip()
+        if not text:
+            return ""
+        if text.startswith("/") or text.startswith("~") or ":" in text:
+            text = text.rsplit("/", 1)[-1]
+        text = text.replace("..", "").strip("/ ")
+        return sanitize_string(text, max_length=100).strip()
+
+    def _active_review_changed_files(self) -> list[str]:
+        if self._active_trust_review is None:
+            return []
+        files = self._active_trust_review.get("changed_files")
+        if not isinstance(files, (list, tuple)):
+            return []
+        changed_files = []
+        for file_name in files:
+            safe_file_name = self._review_file_label(file_name)
+            if safe_file_name and validate_text_input(safe_file_name, max_length=100, allow_html=False):
+                changed_files.append(safe_file_name)
+        return changed_files
+
+    def _active_review_matches_selected(self, metadata: Mapping[str, Any] | None = None) -> bool:
+        if self._active_trust_review is None:
+            return False
+        metadata = metadata or self._selected_skill_metadata()
+        if not metadata:
+            return False
+        if not metadata.get("trust_reviewable"):
+            return False
+        return (
+            self._active_trust_review.get("selected_skill_name") == metadata.get("selected_skill_name")
+            and self._active_trust_review.get("selected_record_id") == metadata.get("selected_record_id")
+            and self._active_trust_review.get("selected_target_id") == metadata.get("selected_target_id")
+        )
+
+    def _reconcile_active_trust_review(self) -> None:
+        if self._active_trust_review is None:
+            return
+        if self._skills_lookup_error or not self._local_skill_records:
+            self._active_trust_review = None
+            return
+        if not self._active_review_matches_selected():
+            self._active_trust_review = None
+
     def _is_skill_valid(self, record: Mapping[str, Any]) -> bool:
-        return self._skill_validation_status(record) == "valid"
+        return self._skill_validation_status(record) == "valid" and not self._skill_trust_blocked(record)
 
     def _ensure_selected_skill(self) -> None:
         if not self._local_skill_records or self._skills_lookup_error:
@@ -199,12 +440,19 @@ class SkillsScreen(BaseAppScreen):
         record = self._selected_skill_record()
         if record is None:
             return {}
+        trust_changed_files = self._skill_trust_changed_files(record)
         return {
             "selected_skill_name": self._skill_name(record),
             "selected_record_id": self._skill_record_id(record),
             "selected_target_id": self._skill_target_id(record),
             "validation_status": self._skill_validation_status(record),
             "validation_errors": self._skill_validation_errors(record),
+            "stageable": self._is_skill_valid(record),
+            "trust_status": self._skill_trust_status(record),
+            "trust_reason_code": self._skill_trust_reason(record),
+            "trust_blocked": self._skill_trust_blocked(record),
+            "trust_changed_files": trust_changed_files,
+            "trust_reviewable": self._can_review_skill_trust(record),
         }
 
     def _skill_body(self, records: tuple[Mapping[str, Any], ...] | None = None) -> str:
@@ -230,6 +478,13 @@ class SkillsScreen(BaseAppScreen):
                 lines.append(f"   record id: {record_id}")
             lines.append(f"   backend: {backend}")
             lines.append(f"   validation: {validation_status}")
+            lines.append(f"   {self._skill_trust_copy(record)}")
+            trust_reason = self._skill_trust_reason(record)
+            if trust_reason:
+                lines.append(f"   reason code: {trust_reason}")
+            changed_files = ", ".join(self._skill_trust_changed_files(record))
+            if changed_files:
+                lines.append(f"   changed files: {changed_files}")
             lines.append("")
         return "\n".join(lines).strip()
 
@@ -246,15 +501,22 @@ class SkillsScreen(BaseAppScreen):
             return
         selected_name = metadata["selected_skill_name"]
         target_id = metadata["selected_target_id"]
-        valid = metadata["validation_status"] == "valid"
+        stageable = bool(metadata["stageable"])
         reason = "; ".join(metadata["validation_errors"]) or "Selected skill is not valid."
+        if metadata["validation_status"] == "valid" and metadata["trust_blocked"]:
+            reason = self._skill_trust_blocked_copy(self._selected_skill_record() or {})
         updates = {
             "#skills-selected-context": f"Selected: {selected_name}",
             "#skills-selected-runtime-target": f"Runtime target: {target_id}",
             "#skills-execution-readiness": (
-                "Execution: ready to stage in Console" if valid else "Execution: blocked"
+                "Execution: ready to stage in Console" if stageable else "Execution: blocked"
             ),
-            "#skills-execution-blocked-reason": "" if valid else f"Reason: {reason}",
+            "#skills-execution-blocked-reason": "" if stageable else f"Reason: {reason}",
+            "#skills-selected-trust-reason-code": (
+                f"Reason code: {metadata['trust_reason_code']}"
+                if metadata["trust_blocked"] and metadata["trust_reason_code"]
+                else ""
+            ),
         }
         for selector, text in updates.items():
             for widget in self.query(selector):
@@ -263,12 +525,47 @@ class SkillsScreen(BaseAppScreen):
                     widget.display = bool(text)
         for button in self.query("#skills-attach-to-console"):
             if isinstance(button, Button):
-                button.disabled = not valid
+                button.disabled = not stageable
                 button.tooltip = (
                     "Stage selected valid Agent Skill in Console."
-                    if valid
-                    else "Fix SKILL.md validation errors before staging this skill in Console."
+                    if stageable
+                    else "Resolve SKILL.md validation or local trust blocks before staging this skill in Console."
                 )
+        for button in self.query("#skills-review-diff"):
+            if isinstance(button, Button):
+                button.disabled = not bool(metadata["trust_reviewable"])
+                button.tooltip = (
+                    "Capture the selected skill files for review against the trusted baseline."
+                    if metadata["trust_reviewable"]
+                    else "Review is available only for metadata-valid local skills blocked by changed files."
+                )
+        for button in self.query("#skills-trust-reviewed-version"):
+            if isinstance(button, Button):
+                review_bound = self._active_review_matches_selected(metadata)
+                button.disabled = not review_bound
+                button.tooltip = (
+                    "Trust the captured reviewed skill snapshot."
+                    if review_bound
+                    else "Capture a trust review before approving this skill version."
+                )
+        review_bound = self._active_review_matches_selected(metadata)
+        review_files = ", ".join(self._active_review_changed_files()) or "selected files"
+        review_updates = {
+            "#skills-trust-review-title": "Trust Review" if review_bound else "",
+            "#skills-trust-review-skill": (
+                f"Reviewed skill: {selected_name}" if review_bound else ""
+            ),
+            "#skills-trust-review-summary": (
+                f"Review captured: {review_files}. Confirm these current files should become the trusted baseline."
+                if review_bound
+                else ""
+            ),
+        }
+        for selector, text in review_updates.items():
+            for widget in self.query(selector):
+                if isinstance(widget, Static):
+                    widget.update(self._plain_text(text))
+                    widget.display = bool(text)
 
     @staticmethod
     def _column_divider(identifier: str) -> Rule:
@@ -352,10 +649,10 @@ class SkillsScreen(BaseAppScreen):
                         for index, record in enumerate(self._local_skill_records):
                             name = self._skill_name(record)
                             description = self._skill_field(record, "description", "No description provided.")
-                            is_valid = self._is_skill_valid(record)
+                            metadata_valid = self._skill_validation_status(record) == "valid"
                             validation_copy = (
                                 "Ready: valid SKILL.md"
-                                if is_valid
+                                if metadata_valid
                                 else "Blocked: invalid SKILL.md"
                             )
                             validation_errors = "; ".join(self._skill_validation_errors(record))
@@ -374,6 +671,22 @@ class SkillsScreen(BaseAppScreen):
                                     self._plain_text(validation_errors),
                                     id=f"skills-validation-errors-{index}",
                                 )
+                            yield Static(
+                                self._plain_text(self._skill_trust_copy(record)),
+                                id=f"skills-trust-status-{index}",
+                            )
+                            trust_reason = self._skill_trust_reason(record)
+                            if trust_reason:
+                                yield Static(
+                                    self._plain_text(f"Reason code: {trust_reason}"),
+                                    id=f"skills-trust-reason-{index}",
+                                )
+                            changed_files = ", ".join(self._skill_trust_changed_files(record))
+                            if changed_files:
+                                yield Static(
+                                    self._plain_text(f"Changed files: {changed_files}"),
+                                    id=f"skills-trust-files-{index}",
+                                )
                             yield Button(
                                 "Use",
                                 id=f"skills-select-local-{index}",
@@ -382,12 +695,12 @@ class SkillsScreen(BaseAppScreen):
                             )
                         attach_label = "Attach local Skills to Console"
                         attach_disabled = not (
-                            selected_metadata and selected_metadata.get("validation_status") == "valid"
+                            selected_metadata and selected_metadata.get("stageable")
                         )
                         attach_tooltip = (
                             "Stage selected valid Agent Skill in Console."
                             if not attach_disabled
-                            else "Fix SKILL.md validation errors before staging this skill in Console."
+                            else "Resolve SKILL.md validation or local trust blocks before staging this skill in Console."
                         )
                 yield self._column_divider("skills-detail-inspector-divider")
                 with Vertical(id="skills-inspector-pane", classes="destination-workbench-pane ds-inspector"):
@@ -406,23 +719,54 @@ class SkillsScreen(BaseAppScreen):
                             self._plain_text(f"Runtime target: {selected_metadata['selected_target_id']}"),
                             id="skills-selected-runtime-target",
                         )
-                        is_selected_valid = selected_metadata["validation_status"] == "valid"
+                        is_selected_stageable = bool(selected_metadata["stageable"])
+                        selected_blocked_reason = (
+                            "; ".join(selected_metadata["validation_errors"])
+                            or "Selected skill is not valid."
+                        )
+                        if selected_metadata["validation_status"] == "valid" and selected_metadata["trust_blocked"]:
+                            selected_blocked_reason = (
+                                self._skill_trust_blocked_copy(self._selected_skill_record() or {})
+                            )
                         yield Static(
                             "Execution: ready to stage in Console"
-                            if is_selected_valid
+                            if is_selected_stageable
                             else "Execution: blocked",
                             id="skills-execution-readiness",
                         )
                         yield Static(
-                            self._plain_text("" if is_selected_valid else (
-                                "Reason: "
-                                + (
-                                    "; ".join(selected_metadata["validation_errors"])
-                                    or "Selected skill is not valid."
-                                )
-                            )),
+                            self._plain_text(
+                                "" if is_selected_stageable else f"Reason: {selected_blocked_reason}"
+                            ),
                             id="skills-execution-blocked-reason",
                         )
+                        yield Static(
+                            self._plain_text(
+                                f"Reason code: {selected_metadata['trust_reason_code']}"
+                                if selected_metadata["trust_blocked"] and selected_metadata["trust_reason_code"]
+                                else ""
+                            ),
+                            id="skills-selected-trust-reason-code",
+                        )
+                        if self._active_review_matches_selected(selected_metadata):
+                            review_files = ", ".join(self._active_review_changed_files()) or "selected files"
+                            yield Static(
+                                "Trust Review",
+                                id="skills-trust-review-title",
+                                classes="destination-section",
+                            )
+                            yield Static(
+                                self._plain_text(
+                                    f"Reviewed skill: {selected_metadata['selected_skill_name']}"
+                                ),
+                                id="skills-trust-review-skill",
+                            )
+                            yield Static(
+                                self._plain_text(
+                                    f"Review captured: {review_files}. Confirm these current files should become the trusted baseline."
+                                ),
+                                id="skills-trust-review-summary",
+                            )
                     yield Static("Actions", classes="destination-section")
                     yield Static(
                         "Skill import is not wired in this shell yet.",
@@ -433,6 +777,48 @@ class SkillsScreen(BaseAppScreen):
                         id="skills-import-skill",
                         disabled=True,
                         tooltip="Unavailable until skill import is wired in this shell.",
+                    )
+                    yield Button(
+                        "Bootstrap Trust",
+                        id="skills-bootstrap-trust",
+                        disabled=not self._has_trust_status("trust_uninitialized"),
+                        tooltip=(
+                            "Create the first trusted baseline from current local skill files."
+                            if self._has_trust_status("trust_uninitialized")
+                            else "Bootstrap is available when local skill trust has not been initialized."
+                        ),
+                    )
+                    yield Button(
+                        "Unlock Trust",
+                        id="skills-unlock-trust",
+                        disabled=not self._has_trust_status("trust_locked"),
+                        tooltip=(
+                            "Unlock local skill trust with the trust passphrase for this session."
+                            if self._has_trust_status("trust_locked")
+                            else "Unlock is available when local skill trust is locked."
+                        ),
+                    )
+                    review_enabled = bool(selected_metadata and selected_metadata.get("trust_reviewable"))
+                    yield Button(
+                        "Review Diff",
+                        id="skills-review-diff",
+                        disabled=not review_enabled,
+                        tooltip=(
+                            "Capture the selected skill files for review against the trusted baseline."
+                            if review_enabled
+                            else "Review is available only for metadata-valid local skills blocked by changed files."
+                        ),
+                    )
+                    review_active = self._active_review_matches_selected(selected_metadata)
+                    yield Button(
+                        "Trust Reviewed Version",
+                        id="skills-trust-reviewed-version",
+                        disabled=not review_active,
+                        tooltip=(
+                            "Trust the captured reviewed skill snapshot."
+                            if review_active
+                            else "Capture a trust review before approving this skill version."
+                        ),
                     )
                     yield Button(
                         attach_label,
@@ -454,8 +840,155 @@ class SkillsScreen(BaseAppScreen):
             return
         if not (0 <= index < len(self._local_skill_records)):
             return
+        if self._selected_skill_index != index:
+            self._active_trust_review = None
         self._selected_skill_index = index
         self._apply_selected_skill_widgets()
+
+    def _notify_skill_trust_warning(self, message: str) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    async def _reload_local_skills_context(self) -> None:
+        records, lookup_error, recovery_state = await self._list_local_skills()
+        self._apply_local_skills_context(records, lookup_error, recovery_state)
+
+    async def _request_skill_trust_passphrase(self, confirm_bootstrap: bool) -> str | None:
+        push_screen_wait = getattr(self.app, "push_screen_wait", None)
+        if not callable(push_screen_wait):
+            self._notify_skill_trust_warning("Local skill trust passphrase prompt is unavailable.")
+            return None
+        result = await push_screen_wait(
+            SkillTrustPassphraseModal(confirm_bootstrap=confirm_bootstrap)
+        )
+        if isinstance(result, str) and result:
+            return result
+        return None
+
+    async def _call_skill_trust_service(
+        self,
+        method_name: str,
+        *args: Any,
+    ) -> tuple[Any, bool]:
+        trust_service = getattr(self.app_instance, "local_skill_trust_service", None)
+        method = getattr(trust_service, method_name, None)
+        if not callable(method):
+            self._notify_skill_trust_warning("Local skill trust service is unavailable.")
+            return None, False
+        try:
+            if inspect.iscoroutinefunction(method):
+                result = await method(*args)
+            else:
+                result = await asyncio.to_thread(method, *args)
+                if inspect.isawaitable(result):
+                    result = await result
+        except Exception as exc:
+            logger.warning(
+                "Local skill trust action failed.",
+                action=method_name,
+                error_type=type(exc).__name__,
+            )
+            self._notify_skill_trust_warning(
+                "Local skill trust action could not be completed."
+            )
+            return None, False
+        return result, True
+
+    async def _handle_skill_trust_passphrase_action(
+        self,
+        *,
+        method_name: str,
+        confirm_bootstrap: bool,
+    ) -> None:
+        passphrase = await self._request_skill_trust_passphrase(
+            confirm_bootstrap=confirm_bootstrap
+        )
+        if passphrase is None:
+            self._notify_skill_trust_warning("Local skill trust action cancelled.")
+            return
+        _, ok = await self._call_skill_trust_service(method_name, passphrase)
+        if ok:
+            self._active_trust_review = None
+            await self._reload_local_skills_context()
+
+    @on(Button.Pressed, "#skills-bootstrap-trust")
+    async def bootstrap_skill_trust(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._handle_skill_trust_passphrase_action(
+            method_name="bootstrap_trust",
+            confirm_bootstrap=True,
+        )
+
+    @on(Button.Pressed, "#skills-unlock-trust")
+    async def unlock_skill_trust(self, event: Button.Pressed) -> None:
+        event.stop()
+        await self._handle_skill_trust_passphrase_action(
+            method_name="unlock_with_passphrase",
+            confirm_bootstrap=False,
+        )
+
+    @on(Button.Pressed, "#skills-review-diff")
+    async def review_skill_trust_diff(self, event: Button.Pressed) -> None:
+        event.stop()
+        selected_record = self._selected_skill_record()
+        if not self._can_review_skill_trust(selected_record):
+            self._notify_skill_trust_warning(
+                "Select a metadata-valid trust-blocked skill with changed files before reviewing."
+            )
+            return
+        skill_name = self._skill_name(selected_record)
+        selected_metadata = self._selected_skill_metadata()
+        result, ok = await self._call_skill_trust_service("capture_review", skill_name)
+        if not ok:
+            return
+        if not isinstance(result, Mapping) or not result.get("review_id"):
+            self._notify_skill_trust_warning(
+                "Local skill trust review could not be captured."
+            )
+            return
+        self._active_trust_review = {
+            **dict(result),
+            "selected_skill_name": selected_metadata.get("selected_skill_name"),
+            "selected_record_id": selected_metadata.get("selected_record_id"),
+            "selected_target_id": selected_metadata.get("selected_target_id"),
+        }
+        self._apply_selected_skill_widgets()
+        await self._reload_local_skills_context()
+
+    @on(Button.Pressed, "#skills-trust-reviewed-version")
+    async def trust_reviewed_skill_version(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._active_trust_review is None:
+            self._notify_skill_trust_warning(
+                "Capture a local skill trust review before approving this version."
+            )
+            return
+        if not self._active_review_matches_selected():
+            self._active_trust_review = None
+            self._notify_skill_trust_warning(
+                "Capture a fresh local skill trust review before approving this version."
+            )
+            self._apply_selected_skill_widgets()
+            if self.is_mounted:
+                self.refresh(recompose=True)
+            return
+        review_id = self._safe_skill_text(
+            self._active_trust_review.get("review_id"),
+            max_length=128,
+        )
+        if not review_id:
+            self._notify_skill_trust_warning(
+                "Local skill trust review could not be approved."
+            )
+            return
+        _, ok = await self._call_skill_trust_service(
+            "trust_reviewed_snapshot",
+            review_id,
+        )
+        if ok:
+            self._active_trust_review = None
+            await self._reload_local_skills_context()
 
     @on(Button.Pressed, "#skills-attach-to-console")
     def attach_to_console(self, event: Button.Pressed) -> None:
@@ -470,10 +1003,17 @@ class SkillsScreen(BaseAppScreen):
                 )
             return
         if not self._is_skill_valid(selected_record):
+            if (
+                self._skill_validation_status(selected_record) == "valid"
+                and self._skill_trust_blocked(selected_record)
+            ):
+                warning = "Resolve the local skill trust block before staging this skill in Console."
+            else:
+                warning = "Fix SKILL.md validation errors before staging this skill in Console."
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify(
-                    "Fix SKILL.md validation errors before staging this skill in Console.",
+                    warning,
                     severity="warning",
                 )
             return

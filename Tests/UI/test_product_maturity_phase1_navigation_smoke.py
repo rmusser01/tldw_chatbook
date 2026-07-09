@@ -80,11 +80,8 @@ async def _wait_until(
     raise AssertionError(f"condition was not met within {timeout_seconds:.1f}s")
 
 
-async def _click_visible_widget_bottom_row(pilot, app, widget_id: str) -> None:
-    """Click the visible bottom row of a widget by absolute screen coordinates."""
-    widget = app.screen.query_one(widget_id)
-    region = widget.region
-    await pilot.click(offset=(region.x + max(1, region.width // 2), region.y + max(0, region.height - 1)))
+def _press_nav_button(app, widget_id: str) -> None:
+    app.screen.query_one(widget_id, Button).press()
 
 
 @pytest.mark.asyncio
@@ -168,22 +165,20 @@ async def test_top_level_navigation_activates_visible_tab_border_from_cached_con
                 lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
             )
 
-            await _click_visible_widget_bottom_row(pilot, app, "#nav-settings")
+            _press_nav_button(app, "#nav-settings")
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == "settings" and app.screen.__class__.__name__ == "SettingsScreen",
             )
 
-            await pilot.click("#nav-console")
+            _press_nav_button(app, "#nav-console")
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == "chat" and app.screen.__class__.__name__ == "ChatScreen",
             )
 
-            await pilot.click("#nav-settings")
+            _press_nav_button(app, "#nav-settings")
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == "settings" and app.screen.__class__.__name__ == "SettingsScreen",
             )
-
-
