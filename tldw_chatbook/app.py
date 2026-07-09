@@ -1813,6 +1813,22 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Retry the active Home item through the configured adapter."""
         return self._handle_home_control_action(HomeControlAction.RETRY, target_id=target_id)
 
+    def open_home_flashcards_review(self) -> None:
+        """Open the Study screen directly on the flashcards review surface."""
+        self.open_study_screen(initial_section="flashcards")
+
+    def _local_flashcards_due_count(self) -> int | None:
+        """Count due flashcards for the Home mirror; None when the DB is absent."""
+        db = getattr(self, "chachanotes_db", None)
+        counter = getattr(db, "count_due_flashcards", None)
+        if not callable(counter):
+            return None
+        try:
+            return int(counter())
+        except Exception:
+            logger.debug("Home flashcards-due count failed.", exc_info=True)
+            return None
+
     def open_active_home_item_details(
         self,
         *,
@@ -2199,6 +2215,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             chatbook_service=self.local_chatbook_service,
             server_event_service=self.notifications_scope_service,
             runtime_policy=self.runtime_policy,
+            flashcards_due_provider=self._local_flashcards_due_count,
         )
         try:
             self.server_claims_service = ServerClaimsService.from_config(

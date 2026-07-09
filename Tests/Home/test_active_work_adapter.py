@@ -1052,3 +1052,53 @@ def test_unavailable_adapter_recent_items_empty():
         has_recent_work=False,
     )
     assert dashboard_input.recent_work_items == ()
+
+
+def test_flashcards_due_provider_snapshot_flows_into_dashboard_input():
+    adapter = LocalNotificationHomeActiveWorkAdapter(flashcards_due_provider=lambda: 7)
+
+    adapter.refresh_flashcards_due_snapshot()
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.flashcards_due_count == 7
+
+
+def test_flashcards_due_provider_raising_degrades_to_zero():
+    def _broken_provider():
+        raise RuntimeError("flashcards backend unavailable")
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(flashcards_due_provider=_broken_provider)
+
+    adapter.refresh_flashcards_due_snapshot()
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.flashcards_due_count == 0
+
+
+def test_flashcards_due_provider_returning_none_degrades_to_zero():
+    adapter = LocalNotificationHomeActiveWorkAdapter(flashcards_due_provider=lambda: None)
+
+    adapter.refresh_flashcards_due_snapshot()
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.flashcards_due_count == 0
+
+
+def test_flashcards_due_count_defaults_to_zero_without_provider():
+    adapter = LocalNotificationHomeActiveWorkAdapter()
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.flashcards_due_count == 0

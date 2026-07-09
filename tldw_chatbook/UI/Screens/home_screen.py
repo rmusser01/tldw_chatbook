@@ -47,6 +47,7 @@ HOME_CONTROL_METHODS = {
     "home-open-in-console": "open_active_home_item_in_console",
     "home-open-chatbook-details": "open_active_home_item_details",
     "home-open-chatbook-in-console": "open_active_home_item_in_console",
+    "home-review-flashcards": "open_home_flashcards_review",
 }
 
 HOME_CONTROL_METHODS_WITH_TARGET_ROUTE = {
@@ -119,6 +120,9 @@ class HomeScreen(BaseAppScreen):
     @work(exclusive=True, thread=True)
     def _refresh_home_chatbook_artifact_snapshot(self) -> None:
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
+        refresh_flashcards_due = getattr(adapter, "refresh_flashcards_due_snapshot", None)
+        if callable(refresh_flashcards_due):
+            refresh_flashcards_due()
         refresh_snapshot = getattr(adapter, "refresh_chatbook_artifact_snapshot", None)
         if not callable(refresh_snapshot):
             return
