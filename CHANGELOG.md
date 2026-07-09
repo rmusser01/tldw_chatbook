@@ -11,7 +11,7 @@ and this project adheres to Some kind of Versioning
 - Initial features pending documentation
 
 
-## [0.1.7.4] - 2026-07-08
+## [0.1.8.0] - 2026-07-08
 ### Changed
 - Master-shell UI/navigation overhaul: the app is organized around primary destinations
   (Home, Console, Library, Artifacts, Personas, Watchlists, Schedules, Workflows, MCP, ACP,
