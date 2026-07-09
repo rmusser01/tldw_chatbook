@@ -105,6 +105,7 @@ from tldw_chatbook.Chat import (
 )
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
+from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -2085,6 +2086,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_quiz_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self.library_rag_search_service = LibraryLocalRagSearchService(self)
 
     def _wire_research_services(self) -> None:
         """Initialize source-aware research services if the broad parity wiring has not already done so."""
