@@ -3469,14 +3469,16 @@ ListItem.personas-library-row.is-active.-highlight {
     margin: 0 0 1 0;
 }
 
+/* Auto-height: the query row used to be a Horizontal (Input + Button side
+ * by side) inside this container, sized with a hand-counted fixed height
+ * (14, 17 with the recovery line). Stacking the query Input and Run button
+ * as their own full-width rows (house canvas grammar) made that hand count
+ * fragile -- content growth (e.g. the mode-toggle button) silently overflowed
+ * the fixed height, clipping/overlapping the callout and Run button. Sizing
+ * to content avoids re-counting rows by hand every time this region changes. */
 #library-rag-query-controls {
-    height: 14;
-    min-height: 14;
-}
-
-#library-rag-query-controls.has-recovery {
-    height: 17;
-    min-height: 17;
+    height: auto;
+    min-height: 0;
 }
 
 #library-rag-source-scope {
@@ -3489,20 +3491,15 @@ ListItem.personas-library-row.is-active.-highlight {
     min-height: 16;
 }
 
-#library-rag-query-row {
-    width: 100%;
-    height: 3;
-    min-height: 3;
-}
-
 #library-rag-results {
     height: 1fr;
     min-height: 8;
 }
 
 #library-rag-query-input {
-    width: 1fr;
+    width: 100%;
     min-width: 0;
+    margin: 0 0 1 0;
     border: solid $ds-grid-line;
     background: $ds-surface-raised;
 }
@@ -3525,6 +3522,8 @@ ListItem.personas-library-row.is-active.-highlight {
 }
 
 .library-rag-callout {
+    width: 100%;
+    margin: 0 0 1 0;
     padding: 0 1;
     background: $ds-surface-raised;
     color: $ds-text-primary;
@@ -3565,7 +3564,7 @@ ListItem.personas-library-row.is-active.-highlight {
 #library-rag-run-query {
     width: 18;
     min-width: 16;
-    margin: 0 0 0 1;
+    margin: 0 0 1 0;
     background: $ds-action-focus 35%;
     color: $ds-text-primary;
     text-style: bold;

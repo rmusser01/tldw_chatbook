@@ -5,7 +5,7 @@ from __future__ import annotations
 from rich.markup import escape as escape_markup
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.widgets import Button, Collapsible, Input, Static
 from textual.widget import Widget
 
@@ -81,18 +81,17 @@ class LibrarySearchRagPanel(Vertical):
                 id="library-rag-query-blocked-callout",
                 classes=_query_callout_classes(self.state),
             )
-            with Horizontal(id="library-rag-query-row"):
-                yield Input(
-                    value=self.state.query_state.query,
-                    placeholder="Ask or search Library sources",
-                    id="library-rag-query-input",
-                )
-                yield Button(
-                    self.state.query_state.run_action.label,
-                    id=self.state.query_state.run_action.widget_id,
-                    disabled=not self.state.query_state.run_action.enabled,
-                    tooltip=self.state.query_state.run_action.tooltip,
-                )
+            yield Input(
+                value=self.state.query_state.query,
+                placeholder="Ask or search Library sources",
+                id="library-rag-query-input",
+            )
+            yield Button(
+                self.state.query_state.run_action.label,
+                id=self.state.query_state.run_action.widget_id,
+                disabled=not self.state.query_state.run_action.enabled,
+                tooltip=self.state.query_state.run_action.tooltip,
+            )
             yield Static(
                 _run_disabled_reason(self.state),
                 id="library-rag-run-disabled-reason",

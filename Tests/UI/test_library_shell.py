@@ -48,6 +48,28 @@ LIBRARY_TEST_SIZE = (170, 48)
 _GATED_RELEASE_TIMEOUT_SECONDS = 30.0
 
 
+@pytest.fixture(autouse=True)
+def _stub_library_search_history_cli_fallback(monkeypatch):
+    """Isolate ``LibraryScreen`` construction from the real on-disk CLI config.
+
+    ``_load_library_search_history`` falls back to ``get_cli_setting`` when
+    ``app_config`` has no in-memory history yet (the Issue 1 fix: recover
+    persisted history after a restart). Tests share one real ``HOME`` /
+    ``config.toml`` across the whole pytest session -- other tests'
+    ``_record_library_search_history`` calls persist to that same file via
+    a background ``save_setting_to_cli_config`` worker -- so without this
+    stub, a freshly constructed screen would non-deterministically inherit
+    whatever ``[library.search] history`` a prior test (or prior session)
+    happened to leave on disk instead of starting clean. Tests that want to
+    exercise the CLI-config fallback itself re-patch
+    ``library_screen_module.get_cli_setting`` after this fixture runs, which
+    takes precedence for the remainder of the test.
+    """
+    monkeypatch.setattr(
+        library_screen_module, "get_cli_setting", lambda *args, **kwargs: None
+    )
+
+
 class LibraryHarness(App):
     """Mount a single LibraryScreen with the real app stylesheet."""
 
@@ -536,6 +558,67 @@ async def test_library_shell_search_history_records_submitted_queries():
             raise AssertionError(f"History rows never became [beta, alpha]: {labels}")
 
         assert app.app_config["library"]["search"]["history"] == ["beta", "alpha"]
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_history_loads_from_cli_config_fallback(monkeypatch):
+    """Issue: a restarted app always showed empty Search/RAG history even
+    though history was persisted to ``config.toml``, because ``app_config``
+    (from ``load_settings()``) can come back without a ``library`` section
+    at all while the on-disk CLI config still has one. ``_build_test_app``'s
+    fake ``app_config`` reproduces that exact shape (no ``library`` key), so
+    the screen must fall back to ``get_cli_setting`` to recover history.
+    """
+    app = _build_test_app()
+    assert "library" not in app.app_config
+    _seed_conversations(app, _two_conversations())
+
+    calls: list[tuple] = []
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        calls.append((section, key, default))
+        if section == "library.search" and key is None:
+            return {"history": ["alpha", "bravo"]}
+        return default
+
+    monkeypatch.setattr(library_screen_module, "get_cli_setting", fake_get_cli_setting)
+
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert screen._library_search_history == ("alpha", "bravo")
+        assert calls, "get_cli_setting fallback was never consulted"
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-history-0")
+        assert str(screen.query_one("#library-rag-history-0", Button).label) == "alpha"
+        assert str(screen.query_one("#library-rag-history-1", Button).label) == "bravo"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_history_prefers_app_config_over_cli_config(monkeypatch):
+    """Precedence: when ``app_config`` already carries a history list, the
+    ``get_cli_setting`` fallback must never be consulted.
+    """
+    app = _build_test_app()
+    app.app_config["library"] = {"search": {"history": ["from-app-config"]}}
+    _seed_conversations(app, _two_conversations())
+
+    def raising_get_cli_setting(*args, **kwargs):
+        raise AssertionError(
+            "get_cli_setting should not be called when app_config already has history"
+        )
+
+    monkeypatch.setattr(library_screen_module, "get_cli_setting", raising_get_cli_setting)
+
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert screen._library_search_history == ("from-app-config",)
 
 
 @pytest.mark.asyncio

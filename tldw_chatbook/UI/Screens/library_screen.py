@@ -4462,9 +4462,29 @@ class LibraryScreen(BaseAppScreen):
     def _load_library_search_history(self) -> tuple[str, ...]:
         """Read persisted Library Search/RAG query history, defensively.
 
-        Missing keys or a malformed shape quietly fall back to no history;
-        entries are coerced to trimmed strings and capped to the same shape
-        `update_search_history` produces (<= 10 entries, <= 200 chars each).
+        Two sources are consulted, in order:
+
+        1. `self.app_instance.app_config["library"]["search"]["history"]` --
+           the in-memory config dict. This is the primary source: it is what
+           pilots seed directly, and it reflects any history recorded during
+           the current session (`_record_library_search_history` mutates it
+           in place, alongside persisting to disk).
+        2. `get_cli_setting("library.search")` -- a live re-read of
+           `config.toml` via `load_cli_config_and_ensure_existence()`. This
+           fallback exists because `app.app_config` comes from
+           `load_settings()`, whose merged output does NOT reliably surface
+           the `[library.search]` TOML table (it can come back empty even
+           when `config.toml` has history on disk) -- so a freshly started
+           app would otherwise always see empty history despite having
+           persisted some in a prior session. `get_cli_setting` reads the
+           CLI config file directly and does carry the value.
+
+        Only source (1) is used when it already yields a list, so pilots
+        that seed `app_config` directly stay authoritative and never touch
+        disk. Missing keys or a malformed shape from either source quietly
+        fall back to no history; entries are coerced to trimmed strings and
+        capped to the same shape `update_search_history` produces (<= 10
+        entries, <= 200 chars each).
 
         `config.toml` is user-editable, so each entry is also run through
         `_safe_text` (control-character stripping, dangerous-pattern
@@ -4480,6 +4500,20 @@ class LibraryScreen(BaseAppScreen):
                 search_config = library_config.get("search")
                 if isinstance(search_config, dict):
                     raw = search_config.get("history")
+        if not isinstance(raw, list):
+            try:
+                # Dotted 1-arg form: get_cli_setting("library.search") splits
+                # on the first '.' into section="library", key="search" and
+                # returns config["library"]["search"] (the search sub-dict,
+                # not the history list) -- deliberately NOT the 3-arg
+                # ("library.search", "history", default) form, which treats
+                # "library.search" as a single literal top-level section key
+                # and never matches the nested TOML table.
+                search_config = get_cli_setting("library.search")
+            except Exception:
+                search_config = None
+            if isinstance(search_config, dict):
+                raw = search_config.get("history")
         if not isinstance(raw, list):
             return ()
         entries = tuple(
