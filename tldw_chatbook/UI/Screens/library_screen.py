@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.timer import Timer
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...config import get_cli_setting, save_setting_to_cli_config
@@ -70,7 +70,13 @@ from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
 )
-from ...Library.library_rag_state import LibraryRagPanelState
+from ...Library.library_rag_state import (
+    LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
+    LIBRARY_SEARCH_HISTORY_LIMIT,
+    LibraryRagPanelState,
+    searching_status_line,
+    update_search_history,
+)
 from ...Library.library_rail_state import (
     LIBRARY_RAIL_SECTION_IDS,
     coerce_library_rail_preferences,
@@ -106,6 +112,7 @@ from ...Widgets.Library import (
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
     library_dim_label_text,
+    library_rag_history_children,
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -520,11 +527,18 @@ class LibraryScreen(BaseAppScreen):
         self._library_lookup_recovery_state: DestinationRecoveryState | None = None
         self._library_loaded = False
         self._active_mode = "sources"
+        self._library_rag_mode: str = "search"
         self._library_rag_query = ""
         self._library_rag_results = ()
         self._library_rag_retrieval_status = ""
         self._library_rag_recovery_state: DestinationRecoveryState | None = None
         self._library_rag_selected_result_id = ""
+        self._library_search_history: tuple[str, ...] = self._load_library_search_history()
+        # Serializes history-collapsible content rebuilds: the "searching"
+        # status refresh (called synchronously before the search worker is
+        # scheduled) and that worker's own "outcome" refresh can otherwise
+        # interleave mid-rebuild and mount duplicate row IDs.
+        self._library_rag_history_refresh_lock = asyncio.Lock()
         self._library_collections_loaded = False
         self._library_collections_records = ()
         self._library_collections_selected_id = ""
@@ -2122,7 +2136,7 @@ class LibraryScreen(BaseAppScreen):
                 "collections": 0,
             },
             query=self._library_rag_query,
-            mode="rag",
+            mode=self._library_rag_mode,
             results=self._library_rag_results,
             selected_result_id=self._library_rag_selected_result_id,
             retrieval_status=self._library_rag_retrieval_status,
@@ -2136,9 +2150,13 @@ class LibraryScreen(BaseAppScreen):
                 if self._library_rag_recovery_state is not None
                 else ""
             ),
+            # Deliberately always ready: the UI path never imports torch (or
+            # any other optional Search/RAG dependency), and the retrieval
+            # service double-guards missing runtimes/indexes at call time.
             dependencies_ready=True,
             index_ready=True,
-            provider_ready=True,
+            provider_ready=(getattr(self.app_instance, "_rag_service", None) is not None),
+            history=self._library_search_history,
         )
 
     def _library_collections_panel_state(self) -> LibraryCollectionsPanelState:
@@ -4332,6 +4350,57 @@ class LibraryScreen(BaseAppScreen):
                 if isinstance(rail_state, dict):
                     raw = rail_state.get("sections")
         return coerce_library_rail_preferences(raw)
+
+    def _load_library_search_history(self) -> tuple[str, ...]:
+        """Read persisted Library Search/RAG query history, defensively.
+
+        Missing keys or a malformed shape quietly fall back to no history;
+        entries are coerced to trimmed strings and capped to the same shape
+        `update_search_history` produces (<= 10 entries, <= 200 chars each).
+        """
+        app_config = getattr(self.app_instance, "app_config", None)
+        raw = None
+        if isinstance(app_config, dict):
+            library_config = app_config.get("library")
+            if isinstance(library_config, dict):
+                search_config = library_config.get("search")
+                if isinstance(search_config, dict):
+                    raw = search_config.get("history")
+        if not isinstance(raw, list):
+            return ()
+        entries = tuple(
+            str(entry).strip()[:LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS]
+            for entry in raw
+            if str(entry).strip()
+        )
+        return entries[:LIBRARY_SEARCH_HISTORY_LIMIT]
+
+    def _record_library_search_history(self, query: str) -> None:
+        """Update in-memory and persisted Library Search/RAG query history."""
+        self._library_search_history = update_search_history(
+            self._library_search_history, query
+        )
+        history_list = list(self._library_search_history)
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            library_config = app_config.get("library")
+            if not isinstance(library_config, dict):
+                library_config = {}
+                app_config["library"] = library_config
+            search_config = library_config.get("search")
+            if not isinstance(search_config, dict):
+                search_config = {}
+                library_config["search"] = search_config
+            search_config["history"] = history_list
+        self._save_library_search_history(history_list)
+
+    @work(thread=True)
+    def _save_library_search_history(self, history: list[str]) -> None:
+        """Persist Library Search/RAG query history without blocking the UI thread."""
+        try:
+            save_setting_to_cli_config("library.search", "history", history)
+        except Exception:
+            pass
 
     def _set_library_rail_section(self, section_id: str, open_state: bool) -> None:
         """Persist one section preference and sync the rail body/header."""
@@ -6902,6 +6971,35 @@ class LibraryScreen(BaseAppScreen):
         # Import/Export mode; flipping _active_mode alone reverts on recompose.
         await self._select_library_rail_row("ingest-import-export", "import-export")
 
+    @on(Button.Pressed, "#library-rag-mode-toggle")
+    def cycle_library_rag_mode(self, event: Button.Pressed) -> None:
+        """Cycle Library Search/RAG mode between keyword search and RAG answer."""
+        event.stop()
+        self._library_rag_mode = "rag" if self._library_rag_mode == "search" else "search"
+        self._reset_library_rag_retrieval_state()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-rag-history-row")
+    async def rerun_library_search_from_history(self, event: Button.Pressed) -> None:
+        """Re-run a prior Library Search/RAG query selected from history."""
+        event.stop()
+        index = self._trailing_index(event.button.id)
+        if index is None or index >= len(self._library_search_history):
+            return
+        self._library_rag_query = self._library_search_history[index]
+        await self._start_library_rag_query()
+
+    @staticmethod
+    def _trailing_index(button_id: str | None) -> int | None:
+        """Parse the trailing `-{index}` integer from a button id, or None."""
+        if not button_id:
+            return None
+        try:
+            index = int(button_id.rsplit("-", 1)[-1])
+        except ValueError:
+            return None
+        return index if index >= 0 else None
+
     async def _start_library_rag_query(self) -> None:
         panel_state = self._library_rag_panel_state()
         run_action = panel_state.query_state.run_action
@@ -6918,6 +7016,7 @@ class LibraryScreen(BaseAppScreen):
             top_k=panel_state.query_state.top_k,
             include_citations=panel_state.query_state.include_citations,
         )
+        self._record_library_search_history(request.query)
         self._library_rag_results = ()
         self._library_rag_recovery_state = None
         self._library_rag_selected_result_id = ""
@@ -7027,12 +7126,8 @@ class LibraryScreen(BaseAppScreen):
     async def select_library_rag_result(self, event: Button.Pressed) -> None:
         """Select an evidence row for inspector review and Console handoff."""
         event.stop()
-        button_id = event.button.id or ""
-        try:
-            result_index = int(button_id.rsplit("-", 1)[-1])
-        except ValueError:
-            return
-        if result_index < 0 or result_index >= len(self._library_rag_results):
+        result_index = self._trailing_index(event.button.id)
+        if result_index is None or result_index >= len(self._library_rag_results):
             return
         self._library_rag_selected_result_id = self._library_rag_results[result_index].result_id
         await self._refresh_search_rag_panel_state_widgets()
@@ -7202,6 +7297,36 @@ class LibraryScreen(BaseAppScreen):
 
         self._refresh_library_rag_inspector(panel_state)
         await self._refresh_library_rag_results_widgets(panel_state)
+        await self._refresh_library_rag_history_widget(panel_state)
+
+    async def _refresh_library_rag_history_widget(
+        self,
+        panel_state: LibraryRagPanelState,
+    ) -> None:
+        """Rebuild the `Recent searches` collapsible content from state.
+
+        Mutates the compose-time `Collapsible` in place (its `collapsed`
+        reactive, then its `Contents` children) rather than replacing the
+        whole widget -- two refreshes can be triggered back to back (the
+        synchronous "searching" status refresh, then the search worker's
+        own "outcome" refresh), and remove-then-mount of the same fixed ID
+        from overlapping calls raises `DuplicateIds`. The lock serializes
+        those calls so one full rebuild always finishes before the next
+        starts.
+        """
+        async with self._library_rag_history_refresh_lock:
+            history_widgets = list(self.query("#library-rag-history"))
+            if not history_widgets:
+                return
+            collapsible = history_widgets[0]
+            if not isinstance(collapsible, Collapsible):
+                return
+            collapsible.collapsed = bool(panel_state.results)
+            contents = collapsible.query_one(Collapsible.Contents)
+            for child in list(contents.children):
+                await child.remove()
+            for row in library_rag_history_children(panel_state):
+                await contents.mount(row)
 
     def _refresh_library_rag_inspector(
         self,
@@ -7285,7 +7410,10 @@ class LibraryScreen(BaseAppScreen):
                     )
         elif panel_state.retrieval_status == "searching":
             await results_container.mount(
-                Static("Searching Library sources...", id="library-rag-searching")
+                Static(
+                    searching_status_line(panel_state.scope.selected_source_types),
+                    id="library-rag-searching-line",
+                )
             )
         elif panel_state.recovery_copy and panel_state.recovery_selector:
             await results_container.mount(

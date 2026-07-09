@@ -9,6 +9,7 @@ from .library_rail import LIBRARY_RAIL_ROW_PREFIX, LibraryRail, library_dim_labe
 from .library_search_rag_panel import (
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
+    library_rag_history_children,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "LibrarySearchRagInspectorPanel",
     "LibrarySearchRagPanel",
     "library_dim_label_text",
+    "library_rag_history_children",
 ]

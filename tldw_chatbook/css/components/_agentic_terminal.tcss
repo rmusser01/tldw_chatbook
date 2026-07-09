@@ -3444,13 +3444,13 @@ ListItem.personas-library-row.is-active.-highlight {
 }
 
 #library-rag-query-controls {
-    height: 11;
-    min-height: 11;
+    height: 14;
+    min-height: 14;
 }
 
 #library-rag-query-controls.has-recovery {
-    height: 14;
-    min-height: 14;
+    height: 17;
+    min-height: 17;
 }
 
 #library-rag-source-scope {
@@ -3598,6 +3598,60 @@ ListItem.personas-library-row.is-active.-highlight {
     background: $ds-surface-raised;
     color: $ds-text-disabled;
     text-style: none;
+}
+
+#library-rag-mode-toggle {
+    width: auto;
+    min-width: 20;
+    height: 2;
+    min-height: 2;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+#library-rag-mode-toggle:hover {
+    background: $ds-action-focus 20%;
+}
+
+#library-rag-searching-line {
+    padding: 0 1;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: italic;
+}
+
+#library-rag-history {
+    margin: 1 0 0 0;
+}
+
+.library-rag-history-row {
+    width: 100%;
+    min-width: 0;
+    height: 2;
+    min-height: 2;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    border: none;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+.library-rag-history-row:hover {
+    background: $ds-action-focus 20%;
+}
+
+.library-rag-history-empty {
+    color: $ds-text-muted;
+    padding: 0 1;
 }
 
 .is-disabled {

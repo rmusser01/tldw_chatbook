@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Collapsible, Input, Static
+from textual.widget import Widget
 
-from ...Library.library_rag_state import LibraryRagPanelState, LibraryRagResultRow
+from ...Library.library_rag_state import (
+    LibraryRagPanelState,
+    LibraryRagResultRow,
+    searching_status_line,
+)
 
 
 _SELECTED_EVIDENCE_DETAIL_IDS = (
@@ -62,6 +67,11 @@ class LibrarySearchRagPanel(Vertical):
             yield Static(
                 f"Mode: {self.state.query_state.mode_label} | Top {self.state.query_state.top_k}",
                 id="library-rag-query-status",
+            )
+            yield Button(
+                _mode_toggle_label(self.state),
+                id="library-rag-mode-toggle",
+                tooltip="Cycle Search/RAG mode.",
             )
             yield Static(_query_blocked_summary(self.state), id="library-rag-query-blocked")
             yield Static(
@@ -183,7 +193,10 @@ class LibrarySearchRagPanel(Vertical):
                             tooltip=self.state.use_in_console_action.tooltip,
                         )
             elif self.state.retrieval_status == "searching":
-                yield Static("Searching Library sources...", id="library-rag-searching")
+                yield Static(
+                    searching_status_line(self.state.scope.selected_source_types),
+                    id="library-rag-searching-line",
+                )
             elif self.state.recovery_copy and self.state.recovery_selector:
                 yield Static(
                     self.state.recovery_copy,
@@ -199,6 +212,14 @@ class LibrarySearchRagPanel(Vertical):
                     id="library-rag-evidence-empty-guidance",
                     classes="library-rag-empty-guidance",
                 )
+
+        with Collapsible(
+            title="Recent searches",
+            collapsed=bool(self.state.results),
+            id="library-rag-history",
+        ):
+            for child in library_rag_history_children(self.state):
+                yield child
 
     @property
     def _show_query_recovery(self) -> bool:
@@ -296,6 +317,42 @@ def _query_callout_classes(state: LibraryRagPanelState) -> str:
     if state.query_state.run_action.enabled:
         return "library-rag-callout is-ready"
     return "library-rag-callout is-blocked"
+
+
+def _mode_toggle_label(state: LibraryRagPanelState) -> str:
+    """Return the visible mode-cycle button label."""
+    return f"mode: {state.query_state.mode_label} ▸"
+
+
+def library_rag_history_children(state: LibraryRagPanelState) -> list[Widget]:
+    """Return the `Recent searches` collapsible's child widgets.
+
+    Shared by the widget's own `compose` and the screen's incremental
+    DOM refresh so both build identical rows from the same state.
+
+    Args:
+        state: Current Library Search/RAG panel display state.
+
+    Returns:
+        One full-width `Button` per history entry (most recent first), or a
+        single muted `Static` placeholder when there is no history yet.
+    """
+    if not state.history:
+        return [
+            Static(
+                "No recent searches.",
+                id="library-rag-history-empty",
+                classes="library-rag-history-empty",
+            )
+        ]
+    return [
+        Button(
+            entry,
+            id=f"library-rag-history-{index}",
+            classes="library-rag-history-row",
+        )
+        for index, entry in enumerate(state.history)
+    ]
 
 
 def _evidence_empty_guidance() -> str:
