@@ -7227,6 +7227,23 @@ class LibraryScreen(BaseAppScreen):
             self._library_rag_scope_deselected.add(source_type)
         self.refresh(recompose=True)
 
+    @on(Collapsible.Toggled, "#library-rag-history")
+    def sync_library_rag_history_collapsed(self, event: Collapsible.Toggled) -> None:
+        """Track manual expand/collapse so recomposes preserve the user's choice.
+
+        `Collapsible._watch_collapsed` posts this message on every change of
+        the `collapsed` reactive -- both the user clicking the title and the
+        programmatic `collapsible.collapsed = force_collapsed` assignment in
+        `_refresh_library_rag_history_widget` (the results-arrival
+        force-collapse path). The latter is harmless to mirror here: that
+        assignment always uses `panel_state.history_collapsed`, which is
+        itself derived from `_library_rag_history_collapsed` moments after
+        that field was just set at the results-arrival transition, so this
+        handler only ever re-writes the field to the value it already holds.
+        """
+        event.stop()
+        self._library_rag_history_collapsed = event.collapsible.collapsed
+
     @on(Button.Pressed, "#library-rag-history-clear")
     async def clear_library_search_history(self, event: Button.Pressed) -> None:
         """Clear all Library Search/RAG query history, in memory and on disk (D1)."""
@@ -7752,8 +7769,13 @@ class LibraryScreen(BaseAppScreen):
         `force_collapsed` (D1) is `None` for every caller except the
         results-arrival transition in `_apply_library_rag_search_outcome`:
         `None` leaves the live widget's `collapsed` reactive exactly as the
-        user left it (a manual expand/collapse must survive query edits,
-        evidence selection, and scope toggles); a `bool` overwrites it.
+        user left it; a `bool` overwrites it. This is safe for full
+        recomposes too (scope toggles, the mode toggle) -- not just in-place
+        refreshes (query edits, evidence selection) -- because
+        `sync_library_rag_history_collapsed` mirrors every live `collapsed`
+        change (manual or programmatic) back into
+        `_library_rag_history_collapsed`, so `compose()` always rebuilds the
+        `Collapsible` from the user's last choice instead of a stale field.
         """
         async with self._library_rag_history_refresh_lock:
             history_widgets = list(self.query("#library-rag-history"))

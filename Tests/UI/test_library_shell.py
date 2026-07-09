@@ -2969,6 +2969,65 @@ async def test_library_shell_history_manual_expand_survives_unrelated_refresh():
         assert screen.query_one("#library-rag-history", Collapsible).collapsed is False
 
 
+@pytest.mark.asyncio
+async def test_library_shell_history_manual_expand_survives_scope_toggle_recompose():
+    """D1: a manual expand of `Recent searches` must survive a scope-toggle
+    recompose (`refresh(recompose=True)`).
+
+    Unlike a query edit (which only refreshes widgets in place), a scope
+    toggle tears down and rebuilds the whole canvas via `compose()`, which
+    reads `_library_rag_history_collapsed`. The live `Collapsible.collapsed`
+    reactive must be synced back into that field on user interaction, or the
+    recompose reads the stale (force-collapsed) field and silently discards
+    the manual expand.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Research Note", "id": "note-1"}],
+        media=_two_media_items(),
+    )
+    service = _StaticLibraryRagSearchService(
+        {"results": [{"document_title": "Result", "snippet": "s", "source_id": "id-1"}]}
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        screen.query_one("#library-rag-query-input", Input).value = "alpha"
+        await _wait_for_library_rag_query_ready(screen, pilot, "alpha")
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-history-0")
+
+        # Results just landed: the collapsible is force-collapsed.
+        assert screen.query_one("#library-rag-history", Collapsible).collapsed is True
+
+        # Mirror a user click on the collapsible header.
+        screen.query_one("#library-rag-history", Collapsible).collapsed = False
+        for _ in range(120):
+            if screen._library_rag_history_collapsed is False:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Manual expand never synced back to _library_rag_history_collapsed."
+            )
+
+        # A scope toggle triggers a full `refresh(recompose=True)`, unlike a
+        # query edit -- this is the transition the field-sync must survive.
+        screen.query_one("#library-rag-scope-toggle-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-history-0")
+
+        assert screen.query_one("#library-rag-history", Collapsible).collapsed is False
+
+
 def _never_loads(self) -> None:
     """Stand in for ``_refresh_local_source_snapshot`` that never resolves.
 
