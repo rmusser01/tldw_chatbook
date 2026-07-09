@@ -55,6 +55,44 @@ _SCRIPT_BLOCK_PATTERN = re.compile(
     r"<script\b[^>]*>.*?</script\s*>",
     re.IGNORECASE | re.DOTALL,
 )
+LIBRARY_SEARCH_HISTORY_LIMIT = 10
+LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS = 200
+_OPEN_SOURCE_TYPE_MAP = {
+    "note": "notes", "notes": "notes",
+    "media": "media", "media_chunk": "media",
+    "conversation": "conversations", "conversations": "conversations",
+    "chat": "conversations",
+}
+
+
+def update_search_history(history: Sequence[str], query: str) -> tuple[str, ...]:
+    """Return search history with `query` prepended, deduped, capped at 10.
+
+    Args:
+        history: Existing history entries, most recent first.
+        query: Newly submitted query; blank input leaves history unchanged.
+
+    Returns:
+        New history tuple, entries truncated to 200 chars, length <= 10.
+    """
+    entry = (query or "").strip()[:LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS]
+    if not entry:
+        return tuple(str(item) for item in history)
+    deduped = [entry] + [str(item) for item in history if str(item) != entry]
+    return tuple(deduped[:LIBRARY_SEARCH_HISTORY_LIMIT])
+
+
+def searching_status_line(source_types: Sequence[str]) -> str:
+    """Build the visible in-flight status line for a running search.
+
+    Args:
+        source_types: Selected source type IDs for the in-flight query.
+
+    Returns:
+        User-facing status line, e.g. `searching · notes, media…`.
+    """
+    labels = ", ".join(str(s) for s in source_types if str(s).strip())
+    return f"searching · {labels}…" if labels else "searching…"
 
 
 def _clean_text(value: Any, fallback: str = "") -> str:
@@ -657,6 +695,22 @@ class LibraryRagResultRow:
         """User-facing statement of what the Console handoff preserves."""
         return "Handoff: snippet + citations + source/chunk IDs"
 
+    @property
+    def open_source_type(self) -> str:
+        """Library canvas target this result can open, or empty string."""
+        raw = str(
+            self.provenance.get("source_type")
+            or self.provenance.get("item_type")
+            or self.provenance.get("type")
+            or ""
+        ).strip().lower()
+        return _OPEN_SOURCE_TYPE_MAP.get(raw, "")
+
+    @property
+    def can_open(self) -> bool:
+        """True when the row carries a resolvable parent id and known type."""
+        return bool(self.open_source_type and self.source_id)
+
 
 @dataclass(frozen=True)
 class LibraryRagPanelState:
@@ -672,6 +726,7 @@ class LibraryRagPanelState:
     selected_result: LibraryRagResultRow | None = None
     recovery_copy: str = ""
     recovery_selector: str = ""
+    history: tuple[str, ...] = ()
 
     @classmethod
     def from_values(
@@ -689,6 +744,7 @@ class LibraryRagPanelState:
         index_ready: bool = True,
         provider_ready: bool = True,
         selected_source_types: Sequence[str] | None = None,
+        history: Sequence[str] = (),
     ) -> "LibraryRagPanelState":
         """Build full Library Search/RAG panel display state.
 
@@ -706,6 +762,7 @@ class LibraryRagPanelState:
             provider_ready: Whether a provider/model is ready for RAG-answer mode.
             selected_source_types: Selected source type IDs. `None` selects all available
                 source types; an empty sequence represents no selected sources.
+            history: Prior submitted queries, most recent first.
 
         Returns:
             Display state for the destination-native Library Search/RAG panel.
@@ -822,6 +879,7 @@ class LibraryRagPanelState:
             selected_result=selected_result,
             recovery_copy=recovery_copy,
             recovery_selector=active_recovery_selector,
+            history=tuple(str(h) for h in history),
         )
 
 

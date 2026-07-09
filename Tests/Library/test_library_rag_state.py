@@ -11,6 +11,8 @@ from tldw_chatbook.Library.library_rag_state import (
     LibraryRagQueryState,
     LibraryRagResultRow,
     LibraryRagScopeState,
+    searching_status_line,
+    update_search_history,
 )
 
 
@@ -280,3 +282,74 @@ def test_explicit_empty_scope_selection_is_not_defaulted_to_all_sources() -> Non
     assert panel.scope.has_selected_sources is False
     assert panel.retrieval_status == "blocked"
     assert panel.query_state.run_action.disabled_reason == "Select at least one Library source."
+
+
+class TestUpdateSearchHistory:
+    def test_prepends_new_query(self):
+        assert update_search_history(("b",), "a") == ("a", "b")
+
+    def test_exact_match_dedupes_to_front(self):
+        assert update_search_history(("a", "b", "c"), "b") == ("b", "a", "c")
+
+    def test_caps_at_ten_entries(self):
+        history = tuple(f"q{i}" for i in range(10))
+        result = update_search_history(history, "new")
+        assert len(result) == 10
+        assert result[0] == "new"
+        assert "q9" not in result
+
+    def test_truncates_entries_to_200_chars(self):
+        result = update_search_history((), "x" * 500)
+        assert result == ("x" * 200,)
+
+    def test_blank_query_is_ignored(self):
+        assert update_search_history(("a",), "   ") == ("a",)
+
+
+class TestSearchingStatusLine:
+    def test_lists_selected_sources(self):
+        assert searching_status_line(("notes", "media")) == "searching · notes, media…"
+
+    def test_empty_scope_still_reads_searching(self):
+        assert searching_status_line(()) == "searching…"
+
+
+class TestResultRowOpenTarget:
+    def test_note_result_opens_notes(self):
+        row = LibraryRagResultRow.from_result(
+            {"source_id": "note-42", "title": "T", "snippet": "s",
+             "provenance": {"source_type": "note"}}
+        )
+        assert row.open_source_type == "notes"
+        assert row.can_open is True
+
+    def test_media_and_conversation_map(self):
+        media = LibraryRagResultRow.from_result(
+            {"source_id": "7", "title": "T", "snippet": "s",
+             "provenance": {"source_type": "media"}}
+        )
+        convo = LibraryRagResultRow.from_result(
+            {"source_id": "c1", "title": "T", "snippet": "s",
+             "provenance": {"source_type": "conversation"}}
+        )
+        assert media.open_source_type == "media"
+        assert convo.open_source_type == "conversations"
+
+    def test_unknown_type_or_missing_id_cannot_open(self):
+        no_type = LibraryRagResultRow.from_result(
+            {"source_id": "x", "title": "T", "snippet": "s"}
+        )
+        no_id = LibraryRagResultRow.from_result(
+            {"title": "T", "snippet": "s", "provenance": {"source_type": "note"}}
+        )
+        assert no_type.can_open is False
+        assert no_id.can_open is False
+
+
+class TestPanelStateHistory:
+    def test_from_values_carries_history(self):
+        state = LibraryRagPanelState.from_values(history=("a", "b"))
+        assert state.history == ("a", "b")
+
+    def test_history_defaults_empty(self):
+        assert LibraryRagPanelState.from_values().history == ()
