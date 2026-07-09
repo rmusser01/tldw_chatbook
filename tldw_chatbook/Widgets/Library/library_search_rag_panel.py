@@ -167,6 +167,13 @@ class LibrarySearchRagPanel(Vertical):
                         classes="library-rag-result-action",
                         tooltip="Select this evidence result for Console handoff.",
                     )
+                    if result.can_open:
+                        yield Button(
+                            "Open",
+                            id=f"library-rag-open-result-{index}",
+                            classes="library-rag-result-open",
+                            tooltip="Open this result's source in its Library editor/viewer.",
+                        )
                     yield Static(
                         result.row_badge_label,
                         id=f"library-rag-result-badges-{index}",

@@ -7183,6 +7183,155 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_selected_result_id = self._library_rag_results[result_index].result_id
         await self._refresh_search_rag_panel_state_widgets()
 
+    @on(Button.Pressed, ".library-rag-result-open")
+    async def open_library_rag_result(self, event: Button.Pressed) -> None:
+        """Open a Search/RAG evidence result straight to its Library detail surface."""
+        event.stop()
+        index = self._trailing_index(event.button.id)
+        rows = self._library_rag_results
+        if index is None or not (0 <= index < len(rows)):
+            return
+        row = rows[index]
+        await self._open_library_item_by_id(row.open_source_type, row.source_id)
+
+    async def _open_library_item_by_id(self, source_type: str, record_id: str) -> None:
+        """Open a Library item straight to its detail surface by id.
+
+        Shared route for per-result Search/RAG "Open" actions -- unlike
+        rail-row navigation (``_select_library_rail_row``), which always
+        lands on the list/browse view for a content type, this jumps
+        straight to the media viewer, the notes editor, or a specific
+        conversation. Also the route the future ingest-queue "open result"
+        actions reuse.
+
+        Args:
+            source_type: ``"media"``, ``"notes"``, or ``"conversations"``.
+                Any other value (including empty) is a no-op -- defensive
+                only, since the Open action is only rendered for rows with
+                resolvable provenance (``LibraryRagResultRow.can_open``).
+            record_id: The item's id within its source type.
+        """
+        if not record_id or source_type not in ("media", "notes", "conversations"):
+            return
+
+        if source_type == "media":
+            await self._flush_library_note_save()
+            if self._library_note_autosave_state == "conflict":
+                return
+            # Mirrors handle_library_media_row's full state-set EXACTLY so
+            # the recomposed canvas lands on a clean viewer, never a stale
+            # one carried over from a previously opened item.
+            self._selected_media_id = record_id
+            self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+            self._active_mode = "media"
+            self._library_media_view = "viewer"
+            self._library_media_detail = None
+            self._library_media_editing = False
+            self._library_media_confirming_delete = False
+            self._library_media_highlights = []
+            self._library_media_editing_analysis = False
+            self._library_media_content_query = ""
+            self._library_media_content_match_index = 0
+            self.run_worker(
+                self._refresh_library_media_detail(record_id),
+                exclusive=True,
+                group="library_media_detail",
+            )
+            self.refresh(recompose=True)
+            return
+
+        if source_type == "notes":
+            await self._flush_library_note_save()
+            if self._library_note_autosave_state == "conflict":
+                return
+            # Reset first for a clean slate (also stops any autosave timer,
+            # clears dirty/conflict/preview state), then apply the actual
+            # open-target fields -- equivalent final state to the note_id
+            # navigation-context branch's inline field-by-field reset.
+            self._reset_library_note_editor_state()
+            self._active_mode = "notes"
+            self._library_notes_view = "editor"
+            self._selected_note_id = record_id
+            self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+            self.run_worker(
+                self._refresh_library_note_detail(record_id),
+                exclusive=True,
+                group="library_note_detail",
+            )
+            self.refresh(recompose=True)
+            return
+
+        # conversations: jump straight to a specific conversation, fetching
+        # it by id when it isn't already in the loaded snapshot. Closes the
+        # known deep-link caveat where an out-of-snapshot id silently fell
+        # back to the first row (_ensure_selected_conversation_id).
+        record_ids = {
+            self._conversation_record_id(record, index)
+            for index, record in enumerate(self._conversation_records())
+        }
+        if record_id not in record_ids:
+            fetched = await self._fetch_library_conversation_by_id(record_id)
+            if fetched is None:
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify("Conversation is unavailable.", severity="warning")
+                return
+            self._local_source_records["conversations"] = (
+                fetched,
+                *self._local_source_records.get("conversations", ()),
+            )
+        self._selected_conversation_id = record_id
+        # Opening a specific conversation must show it even if an in-canvas
+        # filter would otherwise hide it -- handle_library_rail_row's own
+        # canvas branch resets this same field for the same reason when
+        # entering Conversations via the rail; _select_library_rail_row
+        # itself does not touch it.
+        self._library_conversation_query = ""
+        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS, "conversations")
+
+    async def _fetch_library_conversation_by_id(
+        self, conversation_id: str
+    ) -> Mapping[str, Any] | None:
+        """Fetch a single conversation record directly from ChaChaNotes by id.
+
+        Used by ``_open_library_item_by_id`` when a conversation Open target
+        is outside the loaded ``_local_source_records["conversations"]``
+        snapshot -- ``chat_conversation_scope_service.list_conversations``
+        only returns the loaded page, so a direct point lookup against the
+        DB is needed instead.
+
+        Args:
+            conversation_id: The conversation id to fetch.
+
+        Returns:
+            The raw ``conversations`` table row as a mapping, or ``None``
+            when the DB is unavailable, the lookup fails, or no matching
+            (non-deleted) conversation exists.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        get_conversation_by_id = getattr(db, "get_conversation_by_id", None)
+        if not callable(get_conversation_by_id):
+            return None
+        try:
+            if getattr(db, "is_memory_db", False):
+                # In-memory SQLite connections are thread-local -- only the
+                # thread that created the DB has the migrated schema, so
+                # offloading to a worker thread would hit a blank connection.
+                # Same guard as
+                # LibraryLocalRagSearchService._search_conversations.
+                record = get_conversation_by_id(conversation_id, include_deleted=False)
+            else:
+                record = await asyncio.to_thread(
+                    get_conversation_by_id, conversation_id, include_deleted=False
+                )
+        except Exception:
+            logger.warning(
+                f"Failed to fetch Library conversation {conversation_id!r} by id.",
+                exc_info=True,
+            )
+            return None
+        return record if isinstance(record, Mapping) else None
+
     @on(Button.Pressed, "#library-rag-use-in-console")
     def use_library_rag_result_in_console(self, event: Button.Pressed) -> None:
         """Stage the selected Library Search/RAG evidence result in Console."""
@@ -7426,6 +7575,15 @@ class LibraryScreen(BaseAppScreen):
                         tooltip="Select this evidence result for Console handoff.",
                     )
                 )
+                if result.can_open:
+                    await results_container.mount(
+                        Button(
+                            "Open",
+                            id=f"library-rag-open-result-{index}",
+                            classes="library-rag-result-open",
+                            tooltip="Open this result's source in its Library editor/viewer.",
+                        )
+                    )
                 await results_container.mount(
                     Static(
                         result.row_badge_label,

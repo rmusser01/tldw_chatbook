@@ -15,7 +15,10 @@ from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_CONVERSATIONS,
+    LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_CREATE_NOTE,
 )
@@ -5554,6 +5557,212 @@ async def test_library_shell_notes_sync_conflicts_get_honest_resolved_copy(monke
             "1 conflict resolved (Newer wins)" in line
             for line in screen._library_notes_sync_activity
         ), screen._library_notes_sync_activity
+
+
+async def _run_library_search_and_wait_for_open_result(
+    screen, pilot, query: str, *, index: int = 0
+):
+    """Run a Library Search/RAG query and wait for its Open result button."""
+    screen.query_one("#library-row-browse-search").press()
+    await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+    screen.query_one("#library-rag-query-input", Input).value = query
+    await _wait_for_library_rag_query_ready(screen, pilot, query)
+    screen.query_one("#library-rag-run-query", Button).press()
+    await _wait_for_selector(screen, pilot, f"#library-rag-open-result-{index}")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_result_open_note_lands_in_editor():
+    """Pressing Open on a note evidence result jumps straight to that note's
+    in-canvas editor, fetching its full detail by id -- not via the notes
+    list/row-selection path.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "source_id": "n-1",
+                    "title": "Q3 retro",
+                    "snippet": "alpha budget line",
+                    "provenance": {"source_type": "note"},
+                }
+            ]
+        }
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _run_library_search_and_wait_for_open_result(screen, pilot, "retro")
+
+        screen.query_one("#library-rag-open-result-0").press()
+        await _wait_for_selector(screen, pilot, "#library-note-title")
+        for _ in range(120):
+            if screen._selected_note_id == "n-1" and screen._library_notes_view == "editor":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Open never landed on the note editor.")
+        await pilot.pause()
+
+        assert screen._active_mode == "notes"
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        title = screen.query_one("#library-note-title", Input)
+        assert title.value == "Q3 retro"
+        assert any(
+            call["note_id"] == "n-1" for call in app.notes_scope_service.detail_calls
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_result_open_media_switches_to_viewer():
+    """Pressing Open on a media evidence result flips the canvas to the
+    in-canvas media viewer and fetches that item's detail by id.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "source_id": "media-1",
+                    "title": "Interview Recording",
+                    "snippet": "audio transcript",
+                    "provenance": {"source_type": "media"},
+                }
+            ]
+        }
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _run_library_search_and_wait_for_open_result(screen, pilot, "interview")
+
+        screen.query_one("#library-rag-open-result-0").press()
+        await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+        for _ in range(120):
+            if screen._selected_media_id == "media-1" and screen._library_media_view == "viewer":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Open never landed on the media viewer.")
+        await pilot.pause()
+
+        assert screen._active_mode == "media"
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        title = str(screen.query_one("#library-media-viewer-title").renderable)
+        assert title == "Interview Recording"
+        assert any(
+            call["media_id"] == "media-1"
+            for call in app.media_reading_scope_service.detail_calls
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_result_open_conversation_fetches_missing_id():
+    """Pressing Open on a conversation evidence result whose id is NOT in the
+    loaded snapshot fetches it directly from ChaChaNotes and selects it --
+    closing the deep-link caveat where an unknown id silently fell back to
+    the snapshot's first row.
+
+    Uses a real in-memory ``CharactersRAGDB`` (not a fake) per the task
+    brief: the fetch path checks ``is_memory_db`` and must call the DB
+    directly rather than via ``asyncio.to_thread`` for in-memory connections.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    db = CharactersRAGDB(":memory:", client_id="test-client")
+    off_snapshot_id = db.add_conversation({"title": "Off-snapshot chat"})
+    app.chachanotes_db = db
+    try:
+        service = _StaticLibraryRagSearchService(
+            {
+                "results": [
+                    {
+                        "source_id": off_snapshot_id,
+                        "title": "Off-snapshot chat",
+                        "snippet": "not part of the loaded snapshot",
+                        "provenance": {"source_type": "conversation"},
+                    }
+                ]
+            }
+        )
+        app.library_rag_search_service = service
+        host = LibraryHarness(app)
+
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            assert off_snapshot_id not in {
+                screen._conversation_record_id(record, index)
+                for index, record in enumerate(screen._conversation_records())
+            }
+            await _run_library_search_and_wait_for_open_result(screen, pilot, "snapshot")
+
+            screen.query_one("#library-rag-open-result-0").press()
+            for _ in range(150):
+                if screen._selected_conversation_id == off_snapshot_id:
+                    break
+                await pilot.pause(0.02)
+            else:
+                raise AssertionError("Open never fetched/selected the off-snapshot conversation.")
+            await pilot.pause()
+            await pilot.pause()
+
+            assert screen._active_mode == "conversations"
+            assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
+            preview = str(
+                screen.query_one("#library-conversation-preview-lines").renderable
+            )
+            assert "Off-snapshot chat" in preview
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_result_without_provenance_has_no_open_button():
+    """A Search/RAG result lacking resolvable provenance (no known source
+    type/id) renders no Open button -- ``LibraryRagResultRow.can_open`` is
+    False, so the Open action must not appear (the row remains selectable
+    for Console handoff via ``Select evidence``).
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _StaticLibraryRagSearchService(
+        {
+            "results": [
+                {
+                    "title": "Unattributed result",
+                    "snippet": "no provenance",
+                }
+            ]
+        }
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        screen.query_one("#library-rag-query-input", Input).value = "unattributed"
+        await _wait_for_library_rag_query_ready(screen, pilot, "unattributed")
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-select-result-0")
+
+        assert not screen.query(".library-rag-result-open")
+        assert not list(screen.query("#library-rag-open-result-0"))
         assert not any(
             "recorded for review" in line for line in screen._library_notes_sync_activity
         )
