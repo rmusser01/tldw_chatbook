@@ -27,6 +27,8 @@ class LibraryRailRow:
     target_id: str
     count: int | None = None
     count_known: bool = True
+    count_display: str = ""
+    count_emphasis: str = ""
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,9 @@ class LibraryShellInput:
     runtime_source: str = "local"
     server_label: str | None = None
     details_lines: tuple[str, ...] = ()
+    study_decks_count: int | None = None
+    flashcards_due_count: int | None = None
+    quizzes_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -147,7 +152,7 @@ def build_library_shell_state(
             title="Study decks",
             target_kind="mode",
             target_id="study",
-            count=None,
+            count=state.study_decks_count,
             count_known=True,
         ),
         LibraryRailRow(
@@ -158,6 +163,20 @@ def build_library_shell_state(
             target_id="flashcards",
             count=None,
             count_known=True,
+            count_display=(
+                f" due: {state.flashcards_due_count}"
+                if state.flashcards_due_count is not None
+                else ""
+            ),
+            count_emphasis=(
+                (
+                    "bright"
+                    if state.flashcards_due_count > 0
+                    else "dim"
+                )
+                if state.flashcards_due_count is not None
+                else ""
+            ),
         ),
         LibraryRailRow(
             row_id="create-quizzes",
@@ -165,7 +184,7 @@ def build_library_shell_state(
             title="Quizzes",
             target_kind="mode",
             target_id="quizzes",
-            count=None,
+            count=state.quizzes_count,
             count_known=True,
         ),
     )

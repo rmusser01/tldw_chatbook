@@ -2740,6 +2740,125 @@ async def test_library_shell_notes_rail_badge_degrades_without_count_seam():
         assert "(2+)" in rail_label
 
 
+class _FakeStudyScopeService:
+    """Minimal study-scope fake exposing only the count seams under test.
+
+    Mirrors the real ``StudyScopeService``'s ``count_decks``/
+    ``count_due_flashcards`` shape (async, no required args) without going
+    through the local/server routing -- same spirit as the Static* fakes
+    above for notes/media/conversations.
+    """
+
+    def __init__(self, *, decks, due_flashcards):
+        self._decks = decks
+        self._due_flashcards = due_flashcards
+        self.count_decks_calls = []
+        self.count_due_flashcards_calls = []
+
+    async def count_decks(self, **kwargs):
+        self.count_decks_calls.append(kwargs)
+        return self._decks
+
+    async def count_due_flashcards(self, **kwargs):
+        self.count_due_flashcards_calls.append(kwargs)
+        return self._due_flashcards
+
+
+class _FakeQuizScopeService:
+    """Minimal quiz-scope fake exposing only the ``count_quizzes`` seam."""
+
+    def __init__(self, *, quizzes):
+        self._quizzes = quizzes
+        self.count_quizzes_calls = []
+
+    async def count_quizzes(self, **kwargs):
+        self.count_quizzes_calls.append(kwargs)
+        return self._quizzes
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_rail_shows_study_and_quiz_counts():
+    """The Create rail renders exact live counts once the study/quiz
+    scope-service count seams (Task 8) are wired into the Library screen's
+    local-source snapshot fetch: flashcards due gets the special
+    "Flashcards due: N" copy (bright emphasis when N > 0), decks/quizzes
+    render the ordinary "(N)" suffix."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.study_scope_service = _FakeStudyScopeService(decks=3, due_flashcards=7)
+    app.study_quiz_scope_service = _FakeQuizScopeService(quizzes=2)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        flashcards_button = screen.query_one("#library-row-create-flashcards", Button)
+        decks_label = str(screen.query_one("#library-row-create-study").label)
+        quizzes_label = str(screen.query_one("#library-row-create-quizzes").label)
+
+        assert "Flashcards due: 7" in str(flashcards_button.label)
+        assert "Study decks (3)" in decks_label
+        assert "Quizzes (2)" in quizzes_label
+        assert flashcards_button.has_class("library-rail-row-due-bright")
+        assert not flashcards_button.has_class("library-rail-row-due-dim")
+
+    assert app.study_scope_service.count_decks_calls
+    assert app.study_scope_service.count_due_flashcards_calls
+    assert app.study_quiz_scope_service.count_quizzes_calls
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_rail_flashcards_due_zero_renders_dim():
+    """Zero due flashcards still renders the exact "due: 0" copy, but with
+    the dim (not bright) emphasis class -- there is nothing to act on."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.study_scope_service = _FakeStudyScopeService(decks=3, due_flashcards=0)
+    app.study_quiz_scope_service = _FakeQuizScopeService(quizzes=2)
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        flashcards_button = screen.query_one("#library-row-create-flashcards", Button)
+        assert "Flashcards due: 0" in str(flashcards_button.label)
+        assert flashcards_button.has_class("library-rail-row-due-dim")
+        assert not flashcards_button.has_class("library-rail-row-due-bright")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_rail_degrades_without_study_count_seams():
+    """When the study/quiz services expose neither count seam (mirroring a
+    runtime where those services are absent or unwired), the Create rows
+    render uncounted -- no crash, no error copy leaking from the decorative
+    study counts into the Library lookup-error state that the three browse
+    sources use."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.study_scope_service = object()
+    app.study_quiz_scope_service = object()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        flashcards_button = screen.query_one("#library-row-create-flashcards", Button)
+        decks_label = str(screen.query_one("#library-row-create-study").label)
+        quizzes_label = str(screen.query_one("#library-row-create-quizzes").label)
+
+        assert "due:" not in str(flashcards_button.label)
+        assert "(" not in decks_label
+        assert "(" not in quizzes_label
+        assert not flashcards_button.has_class("library-rail-row-due-bright")
+        assert not flashcards_button.has_class("library-rail-row-due-dim")
+        # Study-count degrade must never surface as a Library lookup error --
+        # that error state is reserved for the three browse sources.
+        assert screen._library_lookup_error is None
+
+
 @pytest.mark.asyncio
 async def test_library_shell_notes_row_opens_notes_list_canvas():
     app = _build_test_app()

@@ -125,3 +125,53 @@ def test_server_header_line():
         LibraryShellInput(runtime_source="server", server_label="lab-box")
     )
     assert shell.header_line == "Library | Server: lab-box"
+
+
+def _create_row(shell, row_id):
+    return next(r for r in shell.sections[1].rows if r.row_id == row_id)
+
+
+def test_flashcards_due_count_renders_bright_when_positive():
+    shell = build_library_shell_state(LibraryShellInput(flashcards_due_count=12))
+    row = _create_row(shell, "create-flashcards")
+    assert row.count_display == " due: 12"
+    assert row.count_emphasis == "bright"
+    # count/count_known are untouched by the flashcards due copy -- the row
+    # renders exclusively via count_display.
+    assert row.count is None
+
+
+def test_flashcards_due_count_renders_dim_when_zero():
+    shell = build_library_shell_state(LibraryShellInput(flashcards_due_count=0))
+    row = _create_row(shell, "create-flashcards")
+    assert row.count_display == " due: 0"
+    assert row.count_emphasis == "dim"
+
+
+def test_flashcards_due_count_none_yields_no_display_or_emphasis():
+    shell = build_library_shell_state(LibraryShellInput(flashcards_due_count=None))
+    row = _create_row(shell, "create-flashcards")
+    assert row.count_display == ""
+    assert row.count_emphasis == ""
+
+
+def test_study_decks_and_quizzes_counts_land_in_row_count():
+    shell = build_library_shell_state(
+        LibraryShellInput(study_decks_count=3, quizzes_count=2)
+    )
+    decks_row = _create_row(shell, "create-study")
+    quizzes_row = _create_row(shell, "create-quizzes")
+    assert (decks_row.count, decks_row.count_known) == (3, True)
+    assert (quizzes_row.count, quizzes_row.count_known) == (2, True)
+    # Neither the study-decks nor the quizzes row uses the count_display
+    # override -- that's exclusive to the flashcards-due copy contract.
+    assert decks_row.count_display == ""
+    assert quizzes_row.count_display == ""
+
+
+def test_study_decks_and_quizzes_counts_default_to_none():
+    shell = build_library_shell_state(LibraryShellInput())
+    decks_row = _create_row(shell, "create-study")
+    quizzes_row = _create_row(shell, "create-quizzes")
+    assert decks_row.count is None
+    assert quizzes_row.count is None

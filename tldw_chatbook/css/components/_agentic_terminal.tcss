@@ -612,6 +612,21 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     text-style: bold underline;
 }
 
+/* Flashcards-due emphasis on the create-flashcards rail row. Bright mirrors
+   .console-action-primary's accent treatment (there is due work); dim uses
+   the muted text color already used for rail hints elsewhere in this file
+   (e.g. #library-notes-sync-status) so a zero-due state reads as quiet. */
+.library-rail-row-due-bright {
+    background: $ds-action-focus 35%;
+    color: $ds-text-primary;
+    text-style: bold;
+}
+
+.library-rail-row-due-dim {
+    color: $ds-text-muted;
+    text-style: none;
+}
+
 .library-conversation-row {
     width: 100%;
     min-width: 0;

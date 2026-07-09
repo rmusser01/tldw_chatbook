@@ -527,6 +527,17 @@ class LibraryScreen(BaseAppScreen):
         }
         self._library_lookup_error: str | None = None
         self._library_lookup_recovery_state: DestinationRecoveryState | None = None
+        # Decorative Create-rail counts (study decks, flashcards due,
+        # quizzes): None until the local source snapshot has loaded, and
+        # None per-key thereafter when that count's service seam is absent
+        # or its fetch failed -- see ``_study_count_or_none``. Unlike the
+        # three browse sources, a missing/failed study count never carries
+        # an error copy; the row just renders uncounted.
+        self._library_study_counts: dict[str, int | None] = {
+            "study_decks": None,
+            "flashcards_due": None,
+            "quizzes": None,
+        }
         self._library_loaded = False
         self._active_mode = "sources"
         self._library_rag_mode: str = "search"
@@ -774,8 +785,11 @@ class LibraryScreen(BaseAppScreen):
             total_known,
             lookup_error,
             recovery_state,
+            study_counts,
         ) = await self._list_local_source_snapshot()
-        self._apply_local_source_snapshot(records, counts, total_known, lookup_error, recovery_state)
+        self._apply_local_source_snapshot(
+            records, counts, total_known, lookup_error, recovery_state, study_counts
+        )
 
     def _apply_local_source_snapshot(
         self,
@@ -784,12 +798,18 @@ class LibraryScreen(BaseAppScreen):
         total_known: dict[str, bool],
         lookup_error: str | None = None,
         recovery_state: DestinationRecoveryState | None = None,
+        study_counts: dict[str, int | None] | None = None,
     ) -> None:
         self._local_source_records = records
         self._local_source_counts = counts
         self._local_source_total_known = total_known
         self._library_lookup_error = lookup_error
         self._library_lookup_recovery_state = recovery_state
+        self._library_study_counts = (
+            study_counts
+            if study_counts is not None
+            else {"study_decks": None, "flashcards_due": None, "quizzes": None}
+        )
         self._library_loaded = True
         self._invalidate_library_workspace_depth_state()
         if self.is_mounted:
@@ -805,6 +825,7 @@ class LibraryScreen(BaseAppScreen):
             {"notes": True, "media": True, "conversations": True},
             LIBRARY_SERVICE_ERROR_COPY,
             None,
+            {"study_decks": None, "flashcards_due": None, "quizzes": None},
         )
 
     @staticmethod
@@ -1018,6 +1039,38 @@ class LibraryScreen(BaseAppScreen):
             return None
         return result if isinstance(result, int) else None
 
+    async def _study_count_or_none(self, count_callable: Any, label: str, **kwargs: Any) -> int | None:
+        """Fetch a decorative Create-rail count, degrading quietly on failure.
+
+        Runs inside the same ``asyncio.gather`` as the local source snapshot
+        fetch (see ``_list_local_source_snapshot``). Unlike the three browse
+        sources (notes/media/conversations), study/quiz counts are purely
+        decorative rail badges: the underlying scope-service methods can
+        raise ``PolicyDeniedError`` (via ``_enforce_policy``) or a plain
+        ``ValueError`` (e.g. local backend unavailable) depending on the
+        runtime, and none of that should ever surface as Library error copy
+        or fail the snapshot fetch -- it just degrades to ``None``, which
+        the rail renders as an uncounted row.
+
+        Args:
+            count_callable: The bound count method to invoke (e.g.
+                ``study_scope_service.count_decks``).
+            label: Human-readable label for the debug log on failure.
+            **kwargs: Forwarded to ``count_callable``.
+
+        Returns:
+            The exact count, or ``None`` if the call failed or returned
+            something other than an ``int``.
+        """
+        try:
+            result = await self._run_library_service_call(
+                count_callable, isolate_in_worker=True, **kwargs
+            )
+        except Exception:
+            logger.debug(f"Failed to fetch {label} count for Library create rail.", exc_info=True)
+            return None
+        return result if isinstance(result, int) else None
+
     async def _list_local_source_snapshot(
         self,
     ) -> tuple[
@@ -1026,15 +1079,21 @@ class LibraryScreen(BaseAppScreen):
         dict[str, bool],
         str | None,
         DestinationRecoveryState | None,
+        dict[str, int | None],
     ]:
         notes_service = getattr(self.app_instance, "notes_scope_service", None)
         media_service = getattr(self.app_instance, "media_reading_scope_service", None)
         conversation_service = getattr(self.app_instance, "chat_conversation_scope_service", None)
+        study_service = getattr(self.app_instance, "study_scope_service", None)
+        quiz_service = getattr(self.app_instance, "study_quiz_scope_service", None)
         list_notes = getattr(notes_service, "list_notes", None)
         list_media = getattr(media_service, "list_media_items", None)
         list_conversations = getattr(conversation_service, "list_conversations", None)
         count_notes = getattr(notes_service, "count_notes", None)
         count_notes_available = callable(count_notes)
+        count_decks = getattr(study_service, "count_decks", None)
+        count_due_flashcards = getattr(study_service, "count_due_flashcards", None)
+        count_quizzes = getattr(quiz_service, "count_quizzes", None)
         notes_user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
 
         empty_records: dict[str, tuple[Mapping[str, Any], ...]] = {
@@ -1044,8 +1103,20 @@ class LibraryScreen(BaseAppScreen):
         }
         empty_counts = {"notes": 0, "media": 0, "conversations": 0}
         empty_total_known = {"notes": True, "media": True, "conversations": True}
+        empty_study_counts: dict[str, int | None] = {
+            "study_decks": None,
+            "flashcards_due": None,
+            "quizzes": None,
+        }
         if not all(callable(call) for call in (list_notes, list_media, list_conversations)):
-            return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_UNAVAILABLE_COPY, None
+            return (
+                empty_records,
+                empty_counts,
+                empty_total_known,
+                LIBRARY_SERVICE_UNAVAILABLE_COPY,
+                None,
+                empty_study_counts,
+            )
 
         gathered_calls = [
             self._run_library_service_call(
@@ -1072,10 +1143,29 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             ),
         ]
+        # Optional decorative/exact counts are appended (and unpacked back)
+        # by key so this stays simple as the number of optional seams
+        # grows -- see ``_notes_true_count_or_none``/``_study_count_or_none``
+        # for the per-count degrade-to-None contract.
+        optional_calls: list[tuple[str, Any]] = []
         if count_notes_available:
-            gathered_calls.append(
-                self._notes_true_count_or_none(count_notes, scope="local_note", user_id=notes_user_id)
+            optional_calls.append(
+                (
+                    "notes_true_count",
+                    self._notes_true_count_or_none(count_notes, scope="local_note", user_id=notes_user_id),
+                )
             )
+        if callable(count_decks):
+            optional_calls.append(
+                ("study_decks", self._study_count_or_none(count_decks, "study decks"))
+            )
+        if callable(count_due_flashcards):
+            optional_calls.append(
+                ("flashcards_due", self._study_count_or_none(count_due_flashcards, "flashcards due"))
+            )
+        if callable(count_quizzes):
+            optional_calls.append(("quizzes", self._study_count_or_none(count_quizzes, "quizzes")))
+        gathered_calls.extend(call for _, call in optional_calls)
 
         try:
             gathered_results = await asyncio.wait_for(
@@ -1096,19 +1186,31 @@ class LibraryScreen(BaseAppScreen):
                 empty_total_known,
                 recovery_state.visible_copy,
                 recovery_state,
+                empty_study_counts,
             )
         except Exception:
             logger.warning(
                 "Failed to load local Library source snapshot.",
                 exc_info=True,
             )
-            return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_ERROR_COPY, None
+            return (
+                empty_records,
+                empty_counts,
+                empty_total_known,
+                LIBRARY_SERVICE_ERROR_COPY,
+                None,
+                empty_study_counts,
+            )
 
-        if count_notes_available:
-            notes_result, media_result, conversation_result, notes_true_count = gathered_results
-        else:
-            notes_result, media_result, conversation_result = gathered_results
-            notes_true_count = None
+        notes_result, media_result, conversation_result, *optional_results = gathered_results
+        optional_values = dict(zip((key for key, _ in optional_calls), optional_results))
+
+        notes_true_count = optional_values.get("notes_true_count")
+        study_counts: dict[str, int | None] = {
+            "study_decks": optional_values.get("study_decks"),
+            "flashcards_due": optional_values.get("flashcards_due"),
+            "quizzes": optional_values.get("quizzes"),
+        }
 
         notes, notes_count, notes_total_known = self._response_records_and_count(notes_result)
         if notes_true_count is not None:
@@ -1138,6 +1240,7 @@ class LibraryScreen(BaseAppScreen):
             },
             None,
             None,
+            study_counts,
         )
 
     def _has_local_sources(self) -> bool:
@@ -3102,6 +3205,9 @@ class LibraryScreen(BaseAppScreen):
             runtime_source=active_source,
             server_label=str(server_label) if server_label else None,
             details_lines=self._library_details_lines(active_source, server_label),
+            study_decks_count=self._library_study_counts.get("study_decks"),
+            flashcards_due_count=self._library_study_counts.get("flashcards_due"),
+            quizzes_count=self._library_study_counts.get("quizzes"),
         )
 
     def _library_details_lines(
