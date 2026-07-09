@@ -131,7 +131,9 @@ async def test_search_mode_returns_rows_from_all_three_sources(conversations_db)
     assert by_type["note"]["title"] == "Runbook"
     assert by_type["media"]["source_id"] == "7"
     assert by_type["conversation"]["source_id"] == conv_id
-    assert "expired credential" in by_type["conversation"]["snippet"] or "conversation" in by_type["conversation"]["snippet"]
+    # The fixture's one conversation has exactly one message, and it's the
+    # one that matched the FTS query -- so message_count == 1.
+    assert by_type["conversation"]["snippet"] == "Matched conversation · 1 messages"
     assert notes_service.calls[0]["user_id"] == "tester"
     assert notes_service.calls[0]["scope"] == "local_note"
 

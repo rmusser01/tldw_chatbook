@@ -4465,6 +4465,12 @@ class LibraryScreen(BaseAppScreen):
         Missing keys or a malformed shape quietly fall back to no history;
         entries are coerced to trimmed strings and capped to the same shape
         `update_search_history` produces (<= 10 entries, <= 200 chars each).
+
+        `config.toml` is user-editable, so each entry is also run through
+        `_safe_text` (control-character stripping, dangerous-pattern
+        removal, length validation) before it ever becomes a history
+        `Button` label -- belt-and-suspenders alongside the markup escape
+        `library_rag_history_children` applies at render time.
         """
         app_config = getattr(self.app_instance, "app_config", None)
         raw = None
@@ -4477,9 +4483,13 @@ class LibraryScreen(BaseAppScreen):
         if not isinstance(raw, list):
             return ()
         entries = tuple(
-            str(entry).strip()[:LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS]
+            sanitized
             for entry in raw
-            if str(entry).strip()
+            if (
+                sanitized := self._safe_text(
+                    entry, max_length=LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS
+                )
+            )
         )
         return entries[:LIBRARY_SEARCH_HISTORY_LIMIT]
 
@@ -6446,6 +6456,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_query = query
         self._library_rag_mode = "search"
         await self._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH, "search")
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
+            # A dirty note editor sitting in an unresolved save conflict
+            # aborts the row switch (`_select_library_rail_row` returns
+            # early without moving `_library_selected_row_id`) -- the rail
+            # submit must not run a query against a canvas the user never
+            # actually reached, and must not record a history entry for it.
+            return
         if query.strip():
             await self._start_library_rag_query()
         self.call_after_refresh(self._focus_library_search_input)
@@ -7133,7 +7150,20 @@ class LibraryScreen(BaseAppScreen):
         index = self._trailing_index(event.button.id)
         if index is None or index >= len(self._library_search_history):
             return
-        self._library_rag_query = self._library_search_history[index]
+        query = self._library_search_history[index]
+        self._library_rag_query = query
+        # Repopulate the visible query input too -- otherwise it keeps
+        # whatever text (or blank) it held before the history row was
+        # clicked, even though the run underneath used the history entry.
+        # Set this before starting the run: `update_library_rag_query`'s
+        # `Input.Changed` handler is a no-op once its value already equals
+        # `_library_rag_query` (true here), so it can't clobber the new
+        # run's "searching" status either way, but setting it first keeps
+        # the widget and state in lockstep from the start of the run.
+        try:
+            self.query_one("#library-rag-query-input", Input).value = query
+        except (NoMatches, QueryError):
+            pass
         await self._start_library_rag_query()
 
     @staticmethod
@@ -7501,17 +7531,33 @@ class LibraryScreen(BaseAppScreen):
         request: LibraryRagSearchRequest,
         outcome: LibraryRagSearchOutcome,
     ) -> None:
+        """Resolve a completed Library Search/RAG worker's outcome into state.
+
+        The state fields (results/status/recovery) always apply once the
+        stale-query and stale-mode guards pass -- even if the user has since
+        left the Search canvas (a different rail row, e.g. Media) -- so a
+        dangling "searching" status can never survive: an outcome that lands
+        while the user is elsewhere still resolves it, and re-entering the
+        Search canvas composes from settled state instead of a stale
+        in-flight line. Only the live widget refresh is skipped when the
+        panel isn't mounted; there is nothing on screen to update.
+        """
         if not self.is_mounted:
-            return
-        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
             return
         current_query = self._library_rag_panel_state().query_state.query
         if request.query != current_query:
+            # Stale: a newer query has since replaced this one.
+            return
+        if request.mode != self._library_rag_mode:
+            # Stale: the mode toggled mid-flight; this result belongs to
+            # the mode the user has since left.
             return
         self._library_rag_results = outcome.results
         self._library_rag_retrieval_status = outcome.status
         self._library_rag_recovery_state = outcome.recovery_state
         self._library_rag_selected_result_id = ""
+        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
+            return
         await self._refresh_search_rag_panel_state_widgets()
 
     async def _refresh_search_rag_panel_state_widgets(self) -> None:

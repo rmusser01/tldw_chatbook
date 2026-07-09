@@ -585,6 +585,71 @@ async def test_library_shell_search_history_row_reruns_query():
             raise AssertionError("History row press never re-ran the search service.")
 
         assert service.calls[-1]["query"] == "alpha"
+        # Minor #5: the visible query input must show the re-run entry too,
+        # not the "beta" text it held before the history row was clicked.
+        assert screen.query_one("#library-rag-query-input", Input).value == "alpha"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_history_row_survives_bracketed_query():
+    """C1: a history entry containing bracket-like text must not crash the
+    Search canvas.
+
+    Textual parses a plain string ``Button`` label as Rich markup: an
+    unescaped stored entry like "docs [/archive] cleanup" raises
+    ``MarkupError`` at construction time inside
+    ``library_rag_history_children`` -- and because the query is recorded
+    into history *before* that rebuild runs, the crash would recur on
+    every Search-canvas entry after restart. This exercises both call
+    sites that build history rows from the same state: the live refresh
+    triggered by submitting the query, and a fresh ``compose()`` reached by
+    leaving and re-entering the Search canvas.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _StaticLibraryRagSearchService(
+        {"results": [{"document_title": "Result", "snippet": "s", "source_id": "id-1"}]}
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    query = "docs [/archive] cleanup"
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        screen.query_one("#library-rag-query-input", Input).value = query
+        await _wait_for_library_rag_query_ready(screen, pilot, query)
+        screen.query_one("#library-rag-run-query", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-rag-history-0")
+
+        history_row = screen.query_one("#library-rag-history-0", Button)
+        assert str(history_row.label) == query
+
+        # Leave and re-enter the Search canvas: this rebuilds the history
+        # rows via the widget's own compose(), not the live-refresh path
+        # the submit above already exercised -- both must survive the same
+        # unescaped bracket entry.
+        screen.query_one("#library-row-browse-media").press()
+        await pilot.pause()
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-history-0")
+        assert str(screen.query_one("#library-rag-history-0", Button).label) == query
+
+        # Re-running from the history row must still work end to end.
+        calls_before = len(service.calls)
+        screen.query_one("#library-rag-history-0", Button).press()
+        for _ in range(150):
+            if len(service.calls) > calls_before:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("History row press never re-ran the search service.")
+        assert service.calls[-1]["query"] == query
 
 
 @pytest.mark.asyncio
@@ -620,6 +685,176 @@ async def test_library_shell_search_searching_line_shows_while_gated():
             assert line == "searching · notes, media, conversations…"
         finally:
             service.release_event.set()
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_outcome_resolves_status_after_leaving_canvas():
+    """I1(b): an outcome that lands while the user has left the Search
+    canvas (switched to Media mid-flight) must still resolve the dangling
+    "searching" retrieval status into settled state -- not leave it stuck,
+    which would render a stale "searching" line again on re-entry.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Research Note", "id": "note-1"}],
+        media=_two_media_items(),
+    )
+    service = _GatedLibraryRagSearchService(
+        {"results": [{"document_title": "Result", "snippet": "s", "source_id": "id-1"}]}
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search_input = screen.query_one("#library-search-input", Input)
+        search_input.value = "policy"
+        search_input.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+
+        for _ in range(150):
+            if service.calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Rail submit never reached the gated search service.")
+
+        assert screen._library_rag_retrieval_status == "searching"
+
+        # Leave the Search canvas while the gated fake is still in flight.
+        screen.query_one("#library-row-browse-media").press()
+        await pilot.pause()
+        assert screen._active_mode == "media"
+
+        service.release_event.set()
+
+        # The outcome must resolve _library_rag_retrieval_status even
+        # though the panel is unmounted right now (user is on Media).
+        for _ in range(150):
+            if screen._library_rag_retrieval_status not in ("", "searching"):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Retrieval status was never resolved off-canvas.")
+
+        assert screen._library_rag_retrieval_status == "ready"
+        assert screen._library_rag_results
+
+        # Re-entering the Search canvas must compose from the settled
+        # state -- no stale "searching" line.
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-select-result-0")
+
+        assert not screen.query("#library-rag-searching-line")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
+    """I1(a): a rail-top search submit while a dirty note sits in an
+    unresolved save conflict must not run the query or record history.
+
+    ``_select_library_rail_row`` aborts the row switch until the conflict
+    is resolved; the rail submit handler must bail out too, instead of
+    running the search against a canvas the user never actually reached.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    service = _StaticLibraryRagSearchService(
+        {"results": [{"document_title": "Result", "snippet": "s", "source_id": "id-1"}]}
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        notes_service = app.notes_scope_service
+        _bump_note_version_externally(notes_service, "n-1")
+
+        screen.query_one("#library-note-body", TextArea).text = "kept text that must survive"
+        await pilot.pause()
+
+        screen.query_one("#library-note-save").press()
+        for _ in range(150):
+            if screen._library_note_autosave_state == "conflict":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("The version conflict was never reached.")
+
+        history_before = screen._library_search_history
+        search_input = screen.query_one("#library-search-input", Input)
+        search_input.value = "zeta"
+        search_input.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert service.calls == []
+        assert screen._library_search_history == history_before
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert screen._library_note_autosave_state == "conflict"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_search_mode_toggle_mid_flight_discards_wrong_mode_outcome():
+    """I2: toggling Search <-> RAG Answer mode while a query is still in
+    flight must not apply that query's outcome once it lands -- the result
+    belongs to the mode the user has since left.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _GatedLibraryRagSearchService(
+        {"results": [{"document_title": "Result", "snippet": "s", "source_id": "id-1"}]}
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+
+        screen.query_one("#library-rag-query-input", Input).value = "policy"
+        await _wait_for_library_rag_query_ready(screen, pilot, "policy")
+        assert screen._library_rag_mode == "search"
+        screen.query_one("#library-rag-run-query", Button).press()
+
+        for _ in range(150):
+            if service.calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Run never reached the gated search service.")
+
+        # Toggle mode mid-flight. This resets the in-flight request's own
+        # display state via _reset_library_rag_retrieval_state -- what
+        # this test guards is the STALE outcome re-populating it once the
+        # gate releases.
+        screen.query_one("#library-rag-mode-toggle", Button).press()
+        for _ in range(120):
+            if screen._library_rag_mode == "rag":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Mode toggle never switched to RAG Answer.")
+
+        service.release_event.set()
+        for _ in range(20):
+            await pilot.pause(0.02)
+
+        assert screen._library_rag_results == ()
+        assert screen._library_rag_retrieval_status == ""
 
 
 @pytest.mark.asyncio
@@ -5676,6 +5911,9 @@ async def test_library_shell_notes_sync_conflicts_get_honest_resolved_copy(monke
             "1 conflict resolved (Newer wins)" in line
             for line in screen._library_notes_sync_activity
         ), screen._library_notes_sync_activity
+        assert not any(
+            "recorded for review" in line for line in screen._library_notes_sync_activity
+        )
 
 
 async def _run_library_search_and_wait_for_open_result(
@@ -5882,6 +6120,3 @@ async def test_library_shell_search_result_without_provenance_has_no_open_button
 
         assert not screen.query(".library-rag-result-open")
         assert not list(screen.query("#library-rag-open-result-0"))
-        assert not any(
-            "recorded for review" in line for line in screen._library_notes_sync_activity
-        )

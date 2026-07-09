@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from rich.markup import escape as escape_markup
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Collapsible, Input, Static
@@ -354,7 +356,14 @@ def library_rag_history_children(state: LibraryRagPanelState) -> list[Widget]:
         ]
     return [
         Button(
-            entry,
+            # Textual parses a plain string Button label as markup: an
+            # unescaped stored entry like "docs [/archive] cleanup" raises
+            # MarkupError at construction time -- and because history is
+            # persisted before this rebuild, the crash would recur on every
+            # Search-canvas entry after restart. Escaping mirrors the
+            # `_sanitize_display_text(escape=True)` path result titles and
+            # snippets already use.
+            escape_markup(entry),
             id=f"library-rag-history-{index}",
             classes="library-rag-history-row",
         )
