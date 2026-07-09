@@ -1991,7 +1991,12 @@ async def test_library_shell_media_canvas_shows_loading_before_snapshot_loads(mo
 
 
 @pytest.mark.asyncio
-async def test_library_shell_search_filters_conversations_canvas():
+async def test_library_shell_conversations_filter_filters_canvas():
+    """The in-canvas filter (``#library-conversations-filter``) narrows the
+    loaded conversations snapshot client-side; the rail-top box no longer
+    does this (it feeds the Search canvas instead -- see the rail-submit
+    pilots below).
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -2000,9 +2005,12 @@ async def test_library_shell_search_filters_conversations_canvas():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        search_input = screen.query_one("#library-search-input")
-        search_input.value = "quarterly"
-        search_input.focus()
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+
+        filter_input = screen.query_one("#library-conversations-filter")
+        filter_input.value = "quarterly"
+        filter_input.focus()
         await pilot.pause()
         await pilot.press("enter")
         await _wait_for_selector(screen, pilot, "#library-conversations-status")
@@ -2014,13 +2022,13 @@ async def test_library_shell_search_filters_conversations_canvas():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_search_retains_value_after_submit():
-    """Submitting a search recomposes the shell; the box must keep the query.
+async def test_library_shell_conversations_filter_retains_value_after_submit():
+    """Submitting a filter recomposes the shell; the box must keep the value.
 
-    The submit handler rebuilds the whole screen (``refresh(recompose=True)``),
-    which remounts a brand-new ``#library-search-input``. Regression guard:
-    that new input must be seeded with the active query instead of showing
-    empty text while the filter is silently active.
+    The submit handler recomposes the whole screen (``refresh(recompose=True)``),
+    which remounts a brand-new ``#library-conversations-filter``. Regression
+    guard: that new input must be seeded with the active filter instead of
+    showing empty text while the filter is silently active.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -2030,16 +2038,132 @@ async def test_library_shell_search_retains_value_after_submit():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        search_input = screen.query_one("#library-search-input")
-        search_input.value = "quarterly"
-        search_input.focus()
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-filter")
+
+        filter_input = screen.query_one("#library-conversations-filter")
+        filter_input.value = "quarterly"
+        filter_input.focus()
         await pilot.pause()
         await pilot.press("enter")
         await _wait_for_selector(screen, pilot, "#library-conversations-status")
 
-        recomposed_input = screen.query_one("#library-search-input")
+        recomposed_input = screen.query_one("#library-conversations-filter")
         assert recomposed_input.value == "quarterly"
         assert recomposed_input.has_focus
+
+
+@pytest.mark.asyncio
+async def test_library_shell_rail_search_submit_runs_search_canvas_query():
+    """Submitting the rail-top search box feeds the promoted Search canvas
+    (single query truth = ``_library_rag_query``): it selects the Search
+    row, runs the fast ``search`` mode query against the recording fake
+    service, and returns focus to the rail box (which remains mounted --
+    it is not torn down when leaving the conversations canvas).
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[{"title": "Research Note", "id": "note-1"}],
+        media=_two_media_items(),
+    )
+    service = _StaticLibraryRagSearchService(
+        {"results": [{"document_title": "Result", "snippet": "s", "source_id": "id-1"}]}
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search_input = screen.query_one("#library-search-input", Input)
+        search_input.value = "zeta"
+        search_input.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+
+        for _ in range(150):
+            if screen.query("#library-search-rag-panel") and service.calls:
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                "Rail search submit never mounted the Search canvas / called "
+                f"the service. Visible text: {_visible_text(screen)}"
+            )
+
+        assert screen._library_selected_row_id == "browse-search"
+        assert service.calls == [
+            {
+                "query": "zeta",
+                "scope": ("notes", "media", "conversations"),
+                "mode": "search",
+                "top_k": 5,
+                "include_citations": True,
+            }
+        ]
+
+        recomposed_input = screen.query_one("#library-search-input", Input)
+        assert recomposed_input.value == "zeta"
+        assert recomposed_input.has_focus
+
+
+@pytest.mark.asyncio
+async def test_library_shell_rail_search_placeholder_is_unconditional():
+    """The rail placeholder always reads "Search Library..." now -- it no
+    longer flips to "Search conversations..." while Browse Conversations is
+    selected, because the rail box no longer filters conversations.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        assert (
+            str(screen.query_one("#library-search-input", Input).placeholder)
+            == "Search Library…"
+        )
+
+        screen.query_one("#library-row-browse-conversations").press()
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+
+        assert (
+            str(screen.query_one("#library-search-input", Input).placeholder)
+            == "Search Library…"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_rail_search_empty_submit_selects_without_service_call():
+    """An empty rail-top submit still selects the Search canvas (so the user
+    lands somewhere sensible on a bare Enter) but must not invoke the search
+    service -- there is nothing to search for.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    service = _StaticLibraryRagSearchService(
+        {"results": [{"document_title": "Result", "snippet": "s", "source_id": "id-1"}]}
+    )
+    app.library_rag_search_service = service
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        search_input = screen.query_one("#library-search-input", Input)
+        search_input.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+
+        assert screen._library_selected_row_id == "browse-search"
+        assert service.calls == []
 
 
 def _never_loads(self) -> None:

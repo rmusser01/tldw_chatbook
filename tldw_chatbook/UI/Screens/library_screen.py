@@ -71,6 +71,7 @@ from ...Library.library_rag_service import (
     run_library_rag_search,
 )
 from ...Library.library_rag_state import (
+    LIBRARY_RAG_QUERY_MAX_LENGTH,
     LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
     LIBRARY_SEARCH_HISTORY_LIMIT,
     LibraryRagPanelState,
@@ -86,6 +87,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_CREATE_NOTE,
     LibraryShellInput,
     build_library_shell_state,
@@ -2890,7 +2892,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._library_conversation_query,
+                query=self._library_rag_query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 id="library-rail",
@@ -6319,17 +6321,27 @@ class LibraryScreen(BaseAppScreen):
         self.post_message(NavigateToScreen("media"))
 
     @on(Input.Submitted, "#library-search-input")
-    def handle_library_search_submitted(self, event: Input.Submitted) -> None:
-        """Filter the conversations canvas from the rail search box.
+    async def handle_library_search_submitted(self, event: Input.Submitted) -> None:
+        """Submit the rail-top query to the Search canvas (fast `search` mode).
+
+        The rail search box is the single query truth for Library
+        Search/RAG: submitting it seeds ``_library_rag_query``, selects the
+        promoted Search canvas, and (for a non-blank query) runs it through
+        the same exclusive-worker gate as the in-panel query box
+        (``_start_library_rag_query``). A blank submit still lands on the
+        Search canvas -- so a bare Enter always goes somewhere sensible --
+        but never invokes the search service.
 
         Args:
             event: Input submit event emitted by the rail's search box.
         """
         event.stop()
-        self._library_conversation_query = self._safe_text(event.value, max_length=200)
-        self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
-        self._active_mode = "conversations"
-        self.refresh(recompose=True)
+        query = self._safe_text(event.value, max_length=LIBRARY_RAG_QUERY_MAX_LENGTH)
+        self._library_rag_query = query
+        self._library_rag_mode = "search"
+        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH, "search")
+        if query.strip():
+            await self._start_library_rag_query()
         self.call_after_refresh(self._focus_library_search_input)
 
     def _focus_library_search_input(self) -> None:
@@ -6345,21 +6357,50 @@ class LibraryScreen(BaseAppScreen):
             pass
 
     def _library_rail_search_placeholder(self) -> str:
-        """Placeholder for the rail search box, reflecting the active browse.
+        """Placeholder for the rail search box.
 
-        The rail search only filters conversations (see
-        ``handle_library_search_submitted``), so it is precise when the
-        Conversations browse is active and a generic "Search Library…"
-        otherwise -- it should not claim "conversations" while the user is
-        browsing Media or another source. Making it actually search the
-        active source is a tracked follow-up.
+        The rail box always feeds the Search canvas now (see
+        ``handle_library_search_submitted``), never a source-specific
+        filter, so the placeholder is unconditional regardless of which
+        rail row is active.
 
         Returns:
-            The context-appropriate search placeholder text.
+            The rail search placeholder text.
         """
-        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
-            return "Search conversations…"
         return "Search Library…"
+
+    @on(Input.Submitted, "#library-conversations-filter")
+    def handle_library_conversations_filter_submitted(self, event: Input.Submitted) -> None:
+        """Filter the conversations canvas from its in-canvas filter box.
+
+        This is client-side substring filtering over the already-loaded
+        conversations snapshot (up to ``LIBRARY_SOURCE_PAGE_SIZES["conversations"]``
+        records) -- the same behavior the rail-top search box used to
+        provide before it was rewired to feed the Search canvas. A
+        service-backed FTS filter over the full conversation set (not just
+        the loaded snapshot) is a tracked follow-up.
+
+        Args:
+            event: Input submit event emitted by the conversations canvas's
+                filter box.
+        """
+        event.stop()
+        self._library_conversation_query = self._safe_text(event.value, max_length=200)
+        self.refresh(recompose=True)
+        self.call_after_refresh(self._focus_library_conversations_filter)
+
+    def _focus_library_conversations_filter(self) -> None:
+        """Re-focus the conversations filter box after a submit-triggered recompose.
+
+        Mirrors ``_focus_library_search_input``: the Submitted-driven
+        recompose remounts a brand-new ``#library-conversations-filter``;
+        without this, focus silently falls back to the screen after every
+        filter submit.
+        """
+        try:
+            self.query_one("#library-conversations-filter", Input).focus()
+        except (NoMatches, QueryError):
+            pass
 
     @on(Button.Pressed, ".library-mode-chip")
     async def switch_library_mode(self, event: Button.Pressed) -> None:
@@ -7021,7 +7062,17 @@ class LibraryScreen(BaseAppScreen):
         self._library_rag_recovery_state = None
         self._library_rag_selected_result_id = ""
         self._library_rag_retrieval_status = "searching"
-        await self._refresh_search_rag_panel_state_widgets()
+        # The rail-top search box can invoke this mid-recompose -- it selects
+        # the Search canvas via ``_select_library_rail_row`` and then runs the
+        # query immediately after, before the scheduled recompose has mounted
+        # ``#library-search-rag-panel``. The widget refresh below is best
+        # effort in that window: a NoMatches/QueryError here is non-fatal
+        # because the subsequent recompose renders the same state (the status
+        # fields set above already carry it).
+        try:
+            await self._refresh_search_rag_panel_state_widgets()
+        except (NoMatches, QueryError):
+            pass
         self._execute_library_rag_search(request)
 
     @on(Button.Pressed, "#library-create-collection")

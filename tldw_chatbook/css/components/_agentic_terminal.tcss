@@ -719,6 +719,17 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     margin: 0 0 1 0;
 }
 
+#library-conversations-filter {
+    width: 100%;
+    height: 3;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    border: tall $ds-grid-line;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
 #library-notes-header {
     width: 100%;
     min-width: 0;
