@@ -19,6 +19,7 @@ from tldw_chatbook.Home.dashboard_state import (
     HomeDashboardInput,
 )
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.UI.Screens import home_screen as home_screen_module
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -27,6 +28,29 @@ from Tests.UI.test_screen_navigation import _build_test_app
 HOME_TEST_SIZE = (160, 40)
 HOME_MOUNT_PAUSE = 0.1
 HOME_FOLLOWUP_ROW_MAX_HEIGHT = 6
+
+
+@pytest.fixture(autouse=True)
+def _stub_home_rail_preferences_cli_fallback(monkeypatch):
+    """Isolate ``HomeScreen`` construction from the real on-disk CLI config.
+
+    ``_home_rail_preferences`` (C4) falls back to ``get_cli_setting`` when
+    ``app_config`` has no in-memory ``home.rail_state`` yet -- the same
+    restart-persistence fix already applied to Library's rail preferences
+    and search history. Tests share one real ``HOME``/``config.toml``
+    across the whole pytest session, so without this stub a freshly
+    constructed ``HomeScreen`` could non-deterministically inherit
+    whatever ``[home.rail_state]`` a prior test (or prior session) happened
+    to leave on disk (mirrors ``test_library_shell.py``'s
+    ``_stub_library_search_history_cli_fallback`` fixture and its
+    documented autouse-stub hazard). Tests that want to exercise the
+    CLI-config fallback itself re-patch ``home_screen_module.get_cli_setting``
+    after this fixture runs, which takes precedence for the rest of the
+    test.
+    """
+    monkeypatch.setattr(
+        home_screen_module, "get_cli_setting", lambda *args, **kwargs: None
+    )
 
 
 class HomeHarness(App):
@@ -109,6 +133,65 @@ async def test_home_screen_shows_dashboard_sections():
             "#home-details-body",
         ]:
             assert home.query_one(selector)
+
+
+@pytest.mark.asyncio
+async def test_home_rail_preferences_loads_from_cli_config_fallback(monkeypatch):
+    """(C4) Same restart-persistence gap as Library's rail preferences /
+    search history: ``app_config`` (from ``load_settings()``) can come
+    back without a ``home`` section at all even when ``config.toml`` has
+    persisted ``[home.rail_state]`` sections on disk -- so a freshly
+    started app would otherwise always reopen every Home rail section at
+    its hardcoded default instead of the user's last-chosen open/collapsed
+    state. Mirrors Library's ``_library_rail_preferences`` fallback
+    template exactly (1-arg dotted ``get_cli_setting`` call, ``sections``
+    sub-key extracted from the returned ``rail_state`` dict).
+    """
+    app = _build_test_app()
+    assert "home" not in app.app_config
+
+    calls: list[tuple] = []
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        calls.append((section, key, default))
+        if section == "home.rail_state" and key is None:
+            return {"sections": {"details_open": True, "attention_open": False}}
+        return default
+
+    monkeypatch.setattr(home_screen_module, "get_cli_setting", fake_get_cli_setting)
+
+    host = HomeHarness(app)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        preferences = home._home_rail_preferences()
+        assert preferences.details_open is True
+        assert preferences.attention_open is False
+        assert calls, "get_cli_setting fallback was never consulted"
+
+
+@pytest.mark.asyncio
+async def test_home_rail_preferences_prefers_app_config_over_cli_config(monkeypatch):
+    """Precedence: when ``app_config`` already carries rail-state sections,
+    the ``get_cli_setting`` fallback must never be consulted.
+    """
+    app = _build_test_app()
+    app.app_config["home"] = {"rail_state": {"sections": {"details_open": True}}}
+
+    def raising_get_cli_setting(*args, **kwargs):
+        raise AssertionError(
+            "get_cli_setting should not be called when app_config already has rail state"
+        )
+
+    monkeypatch.setattr(home_screen_module, "get_cli_setting", raising_get_cli_setting)
+
+    host = HomeHarness(app)
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        assert home._home_rail_preferences().details_open is True
 
 
 @pytest.mark.asyncio

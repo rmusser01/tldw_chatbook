@@ -537,7 +537,7 @@ def test_canvas_lines_merge_status_and_source_once_for_selected_item():
 
     assert triage.canvas.lines == (
         "● pending_approval · Workflows · since 3m",
-        "Route: workflows",
+        "Opens: Workflows",
     )
 
 
@@ -546,7 +546,7 @@ def test_canvas_lines_merge_status_and_source_for_running_item():
 
     assert triage.canvas.lines == (
         "● running · Watchlists · since now",
-        "Route: watchlists",
+        "Opens: Watchlists",
     )
 
 
@@ -566,7 +566,7 @@ def test_canvas_lines_omit_since_clause_when_age_is_blank():
         now=_NOW,
     )
 
-    assert triage.canvas.lines == ("● running · ACP", "Route: chat")
+    assert triage.canvas.lines == ("● running · ACP", "Opens: Console")
 
 
 def test_canvas_lines_for_flashcards_due_row_are_sensible_not_duplicated():
@@ -578,5 +578,5 @@ def test_canvas_lines_for_flashcards_due_row_are_sensible_not_duplicated():
 
     assert triage.canvas.lines == (
         "● due for review · Library",
-        "Route: study",
+        "Opens: Study",
     )

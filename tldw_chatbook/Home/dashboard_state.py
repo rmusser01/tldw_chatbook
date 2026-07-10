@@ -5,8 +5,48 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from tldw_chatbook.Constants import TAB_SETTINGS
+from tldw_chatbook.Constants import TAB_LLM, TAB_SETTINGS, TAB_STUDY, get_tab_display_label
+from tldw_chatbook.UI.Navigation.shell_destinations import (
+    get_shell_destination,
+    resolve_shell_route,
+)
 from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+
+
+# C1: human-readable labels for the Home canvas "Opens: <label>" line.
+# `shell_destinations` is a leaf module (no imports back into `Home` or
+# `UI.Screens`), so this stays a pure, cycle-free lookup. Overrides win over
+# the generic shell-destination resolution for routes whose canonical
+# destination label would otherwise be misleading (e.g. "study" resolves to
+# the Library destination via its legacy-route alias, which would read as
+# "Opens: Library" instead of the more specific "Opens: Study").
+HOME_ROUTE_LABEL_OVERRIDES = {
+    "llm": get_tab_display_label(TAB_LLM),
+    TAB_LLM: get_tab_display_label(TAB_LLM),
+    "search-rag": "Search/RAG",
+    "study": get_tab_display_label(TAB_STUDY),
+}
+
+
+def _home_route_label(route: str) -> str:
+    """Resolve a Home canvas ``detail_route`` to a human-readable label.
+
+    Args:
+        route: The raw route/destination id stored on a work item or rail
+            row (e.g. ``"chat"``, ``"study"``, ``"watchlists"``).
+
+    Returns:
+        A human-facing label suitable for ``f"Opens: {label}"``.
+    """
+    route = route.strip()
+    if route in HOME_ROUTE_LABEL_OVERRIDES:
+        return HOME_ROUTE_LABEL_OVERRIDES[route]
+
+    resolved = resolve_shell_route(route)
+    try:
+        return get_shell_destination(resolved.destination_id).accessible_label
+    except KeyError:
+        return route.replace("_", " ").replace("-", " ").title()
 
 
 APPROVAL_RUN_STATUS = "approval"
@@ -749,7 +789,7 @@ def build_home_triage_state(
                 title=f"Flashcards due: {state.flashcards_due_count}",
                 lines=(
                     f"{selected.glyph} due for review \u00b7 Library",
-                    "Route: study",
+                    f"Opens: {_home_route_label('study')}",
                 ),
                 actions=controls,
                 next_action=next_action,
@@ -771,7 +811,7 @@ def build_home_triage_state(
                 title=item.title,
                 lines=(
                     status_line,
-                    f"Route: {item.detail_route}",
+                    f"Opens: {_home_route_label(item.detail_route)}",
                 ),
                 actions=controls,
                 next_action=next_action,

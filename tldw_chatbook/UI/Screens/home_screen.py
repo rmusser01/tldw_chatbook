@@ -8,8 +8,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Constants import TAB_LLM, get_tab_display_label
-from tldw_chatbook.config import save_setting_to_cli_config
+from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from tldw_chatbook.Home.dashboard_state import (
     HomeDashboard,
     HomeDashboardInput,
@@ -33,7 +32,6 @@ from tldw_chatbook.Widgets.Home.home_rail import HOME_RAIL_ROW_PREFIX, HomeRail
 
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
-from ..Navigation.shell_destinations import get_shell_destination, resolve_shell_route
 from .settings_config_models import SettingsCategoryId
 
 
@@ -56,24 +54,6 @@ HOME_CONTROL_METHODS_WITH_TARGET_ROUTE = {
     "home-open-chatbook-details",
     "home-open-chatbook-in-console",
 }
-
-HOME_ROUTE_LABEL_OVERRIDES = {
-    "llm": get_tab_display_label(TAB_LLM),
-    TAB_LLM: get_tab_display_label(TAB_LLM),
-    "search-rag": "Search/RAG",
-}
-
-
-def _home_route_label(route: str) -> str:
-    route = route.strip()
-    if route in HOME_ROUTE_LABEL_OVERRIDES:
-        return HOME_ROUTE_LABEL_OVERRIDES[route]
-
-    resolved = resolve_shell_route(route)
-    try:
-        return get_shell_destination(resolved.destination_id).accessible_label
-    except KeyError:
-        return route.replace("_", " ").replace("-", " ").title()
 
 
 def _home_runtime_status_label(state: HomeDashboardInput) -> str:
@@ -238,7 +218,20 @@ class HomeScreen(BaseAppScreen):
         )
 
     def _home_rail_preferences(self) -> HomeRailPreferences:
-        """Read persisted Home rail section preferences."""
+        """Read persisted Home rail section preferences, defensively.
+
+        (C4) Same restart-persistence gap as Library's
+        ``_library_rail_preferences``/``_load_library_search_history``:
+        ``self.app_instance.app_config`` (from ``load_settings()``) can
+        come back without a ``home`` section at all even when
+        ``config.toml`` has persisted ``[home.rail_state]`` on disk -- so
+        a freshly started app would otherwise always reopen every Home
+        rail section at its hardcoded default instead of the user's
+        last-chosen open/collapsed state. Falls back to a live
+        ``get_cli_setting("home.rail_state")`` read of the CLI config file
+        when ``app_config`` doesn't already carry a usable ``sections``
+        dict; ``app_config`` wins whenever it does.
+        """
         app_config = getattr(self.app_instance, "app_config", None)
         raw = None
         if isinstance(app_config, dict):
@@ -247,6 +240,17 @@ class HomeScreen(BaseAppScreen):
                 rail_state = home_config.get("rail_state")
                 if isinstance(rail_state, dict):
                     raw = rail_state.get("sections")
+        if not isinstance(raw, dict):
+            try:
+                # Dotted 1-arg form, same shape as Library's rail
+                # preferences fallback: `get_cli_setting("home.rail_state")`
+                # returns `config["home"]["rail_state"]` (the rail_state
+                # sub-dict), not the "sections" dict directly.
+                cli_rail_state = get_cli_setting("home.rail_state")
+            except Exception:
+                cli_rail_state = None
+            if isinstance(cli_rail_state, dict):
+                raw = cli_rail_state.get("sections")
         return coerce_home_rail_preferences(raw)
 
     def _set_home_rail_section(self, section_id: str, open_state: bool) -> None:

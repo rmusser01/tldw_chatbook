@@ -835,6 +835,65 @@ class LibraryScreen(BaseAppScreen):
             records, counts, total_known, lookup_error, recovery_state, study_counts
         )
 
+    def _carry_selected_conversation_into_snapshot(
+        self,
+        records: dict[str, tuple[Mapping[str, Any], ...]],
+    ) -> dict[str, tuple[Mapping[str, Any], ...]]:
+        """Preserve an out-of-page selected conversation across a snapshot replace.
+
+        (C3) A wholesale ``_local_source_records`` replace -- the periodic
+        background refresh, not a user action -- can silently drop the
+        currently-open conversation if it fell off the loaded page (the
+        conversations snapshot is capped, see
+        ``LIBRARY_SOURCE_PAGE_SIZES["conversations"]``) or was fetched
+        out-of-band via ``_open_library_item_by_id`` and prepended into the
+        OLD records. Without this, the next recompose would silently reset
+        the selection to the first row (``_ensure_selected_conversation_id``)
+        even though the user never navigated away -- the same class of race
+        ``_open_library_item_by_id`` already guards against for its own
+        out-of-snapshot fetch, just triggered by a background refresh
+        instead of a user click.
+
+        Pure in-memory merge: reads the OLD ``self._local_source_records``
+        (not yet replaced) and the INCOMING ``records``, and -- only when the
+        selected id is present in the old snapshot but missing from the new
+        one -- prepends the old record into the new conversations tuple so
+        the selection survives the replace.
+
+        Args:
+            records: The incoming snapshot about to replace
+                ``self._local_source_records``.
+
+        Returns:
+            ``records``, unchanged, or with the selected conversation's
+            record prepended into its ``"conversations"`` tuple.
+        """
+        selected_id = getattr(self, "_selected_conversation_id", "")
+        if not selected_id:
+            return records
+        old_conversations = getattr(self, "_local_source_records", {}).get(
+            "conversations", ()
+        )
+        old_index_by_id = {
+            self._conversation_record_id(record, index): record
+            for index, record in enumerate(old_conversations)
+        }
+        carried_record = old_index_by_id.get(selected_id)
+        if carried_record is None:
+            # Not present in the old snapshot either -- nothing to carry.
+            return records
+        new_conversations = records.get("conversations", ())
+        new_ids = {
+            self._conversation_record_id(record, index)
+            for index, record in enumerate(new_conversations)
+        }
+        if selected_id in new_ids:
+            # Still present in the incoming snapshot -- no carry-over needed.
+            return records
+        merged = dict(records)
+        merged["conversations"] = (carried_record, *new_conversations)
+        return merged
+
     def _apply_local_source_snapshot(
         self,
         records: dict[str, tuple[Mapping[str, Any], ...]],
@@ -844,6 +903,7 @@ class LibraryScreen(BaseAppScreen):
         recovery_state: DestinationRecoveryState | None = None,
         study_counts: dict[str, int | None] | None = None,
     ) -> None:
+        records = self._carry_selected_conversation_into_snapshot(records)
         self._local_source_records = records
         self._local_source_counts = counts
         self._local_source_total_known = total_known
@@ -3703,7 +3763,19 @@ class LibraryScreen(BaseAppScreen):
         self._open_selected_library_note_handoff()
 
     def _library_rail_preferences(self):
-        """Read persisted Library rail section preferences."""
+        """Read persisted Library rail section preferences, defensively.
+
+        (C4) Same restart-persistence gap as
+        ``_load_library_search_history``: ``self.app_instance.app_config``
+        (from ``load_settings()``) can come back without a ``library``
+        section at all even when ``config.toml`` has persisted
+        ``[library.rail_state]`` on disk -- so a freshly started app would
+        otherwise always reopen every rail section at its hardcoded
+        default instead of the user's last-chosen open/collapsed state.
+        Falls back to a live ``get_cli_setting("library.rail_state")`` read
+        of the CLI config file when ``app_config`` doesn't already carry a
+        usable ``sections`` dict; ``app_config`` wins whenever it does.
+        """
         app_config = getattr(self.app_instance, "app_config", None)
         raw = None
         if isinstance(app_config, dict):
@@ -3712,6 +3784,18 @@ class LibraryScreen(BaseAppScreen):
                 rail_state = library_config.get("rail_state")
                 if isinstance(rail_state, dict):
                     raw = rail_state.get("sections")
+        if not isinstance(raw, dict):
+            try:
+                # Dotted 1-arg form, same shape as
+                # `_load_library_search_history`'s CLI fallback:
+                # `get_cli_setting("library.rail_state")` returns
+                # `config["library"]["rail_state"]` (the rail_state
+                # sub-dict), not the "sections" dict directly.
+                cli_rail_state = get_cli_setting("library.rail_state")
+            except Exception:
+                cli_rail_state = None
+            if isinstance(cli_rail_state, dict):
+                raw = cli_rail_state.get("sections")
         return coerce_library_rail_preferences(raw)
 
     def _load_library_search_history(self) -> tuple[str, ...]:
@@ -6927,6 +7011,22 @@ class LibraryScreen(BaseAppScreen):
             panel_state,
             force_collapsed=panel_state.history_collapsed if force_history_collapse else None,
         )
+        # `force_history_collapse` is only set True from the results-arrival
+        # transition in `_apply_library_rag_search_outcome` -- every other
+        # refresh trigger (scope toggle, mode toggle, evidence selection)
+        # passes the default False. Reuse that same signal (C2) to scroll
+        # the Evidence heading back into view once results just landed.
+        # Deliberately done LAST, after every widget mutation above
+        # (results *and* history) has settled: mounting/removing the
+        # history rows also changes the panel's virtual size, and a scroll
+        # issued before that would just get overridden by it.
+        if force_history_collapse and panel_state.results:
+            try:
+                self.query_one(
+                    "#library-rag-results-heading", Static
+                ).scroll_visible(animate=False)
+            except NoMatches:
+                pass
 
     async def _refresh_library_rag_query_status_widgets(
         self,
