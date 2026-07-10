@@ -42,16 +42,30 @@ unsupported `.xyz` extension).
 - No `type:` control and no URL input (inventory: `ingest_local_file` has no type override and
   TAB_INGEST ships no local URL ingest).
 
-## GATE DECISION REQUIRED: TAB_INGEST deprecation
+## UX wave (user-approved sr UX/HCI review findings, commits a72acafa + 32b1971d)
 
-The Library rail no longer routes to the standalone Ingest screen, but the top-nav `Ingest` tab
-remains routed. The inventory found its Local Files tab is now fully covered by this canvas, while
-its three server-mode tabs are scaffolding: Sources/Web Clipper call real server seams; the Server
-Jobs tab calls scope-service methods that DO NOT EXIST (`submit_media_ingest_jobs` et al. — masked
-by mocked tests; pre-existing bug, follow-up below). Options:
-- **(a) Keep the Ingest tab (recommended):** server-mode Sources/Web Clipper stay reachable; the
-  Library canvas is the local path. Deprecation revisited when server ingest ships end-to-end.
-- **(b) Retire the tab now:** accepts losing the server-mode scaffolding until a server-ingest phase.
+Findings A1–A6, B1–B2, C1–C2, D1–D3 implemented (opus review: Approved, zero issues);
+B3 (seam error copy claims XML support) and C3 (no age on ingest rows) logged as follow-ups.
+
+| Capture | What it shows |
+|---|---|
+| `l3b-ux-ingest-idle.png` | `(optional)` metadata placeholders, `Enter a file path to start.` quiet gate line, `Chunk size (words)` labeling. |
+| `l3b-ux-ingest-queue.png` | Non-zero-only counts line (`2 done · 1 failed`), indented row actions (association fixed), `Dismiss` on failed rows, `Clear finished`. |
+| `l3b-ux-ingest-after-dismiss.png` | Dismissed failure removed from the queue (and from Home — pilots assert the ripple). |
+| `l3b-ux-handoff.png` | Rebuilt handoff canvas: header → one purpose line → `Carries forward: a, b, c and N more.` → `Generation and review run in Study.` → primary open button; WIP roadmap callout gone; ready state muted. |
+| `l3b-ux-home-canvas.png` | Merged status line (`● failed · Library`), selection-aware primary (`Retry` accented for a failed item; `Review flashcards` accented only when its row is selected). |
+
+Registry lifecycle additions: retry SUPERSEDES the failed original (one row per file);
+`dismiss(job_id)` (failed-only) and `clear_finished()` with exactly-once listener semantics;
+title clears with the path after submit (author/keywords stay as batch metadata).
+
+## GATE DECISION: TAB_INGEST deprecation — RESOLVED (user, 2026-07-10): option (a) KEEP
+
+The top-nav `Ingest` tab STAYS routed (user decision, option (a)): its server-mode Sources and
+Web Clipper panels call real server seams and remain reachable there; the Library canvas is the
+local ingest path. Deprecation is revisited when server ingest ships end-to-end (the Server Jobs
+tab's mis-wiring — `submit_media_ingest_jobs` et al. do not exist on the scope service, masked by
+mocked tests — is a pre-existing follow-up below).
 
 ## Follow-ups (logged)
 
