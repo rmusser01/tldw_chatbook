@@ -851,7 +851,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             # Submit jobs through the runtime-policy-aware media seam.
             logger.info(f"Submitting {len(urls)} URL(s) as server media ingest job(s)")
             response = await self._maybe_await(
-                self.scope_service.submit_media_ingest_jobs(
+                self.scope_service.submit_ingest_jobs(
                     mode="server",
                     media_type=self.media_type,
                     urls=urls,
@@ -938,7 +938,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self.notify("Server ingest jobs require server mode.", severity="warning")
             return
 
-        stream_events = getattr(self.scope_service, "stream_media_ingest_job_events", None)
+        stream_events = getattr(self.scope_service, "stream_ingest_job_events", None)
         if stream_events is None:
             self.notify("Server ingest job event stream is unavailable.", severity="error")
             return
@@ -989,7 +989,7 @@ class RemoteIngestionPanel(ScrollableContainer):
             self.notify("Server ingest jobs require server mode.", severity="warning")
             return
 
-        stream_events = getattr(self.scope_service, "stream_media_ingest_job_events", None)
+        stream_events = getattr(self.scope_service, "stream_ingest_job_events", None)
         if stream_events is None:
             self.notify("Server ingest job event stream is unavailable.", severity="error")
             return
@@ -1029,7 +1029,7 @@ class RemoteIngestionPanel(ScrollableContainer):
         self._set_batch_controls_disabled(True)
         try:
             response = await self._maybe_await(
-                self.scope_service.list_media_ingest_jobs(
+                self.scope_service.list_ingest_jobs(
                     mode="server",
                     batch_id=self.last_batch_id,
                     limit=limit,
@@ -1066,7 +1066,7 @@ class RemoteIngestionPanel(ScrollableContainer):
         self._set_batch_controls_disabled(True)
         try:
             response = await self._maybe_await(
-                self.scope_service.cancel_media_ingest_jobs_batch(
+                self.scope_service.cancel_ingest_batch(
                     mode="server",
                     batch_id=self.last_batch_id,
                     reason=reason,
@@ -1114,7 +1114,7 @@ class RemoteIngestionPanel(ScrollableContainer):
         self._set_job_controls_disabled(True)
         try:
             response = await self._maybe_await(
-                self.scope_service.cancel_media_ingest_job(
+                self.scope_service.cancel_ingest_job(
                     mode="server",
                     job_id=job_id,
                     reason=reason,

@@ -753,7 +753,14 @@ class LibraryScreen(BaseAppScreen):
             # the create-note rail row's own target_id. The rail row's
             # flush of a dirty editor is handled upstream by
             # apply_navigation_context's mounted dirty-editor branch; here we
-            # only apply the selection the recompose reads.
+            # only apply the selection the recompose reads. Reset the note
+            # editor state FIRST (a cached, already-mounted screen re-entered
+            # via this deep link can still hold a previously opened note's
+            # id/detail/version) then re-assert the create-note target state
+            # AFTER, since the reset flips _library_notes_view back to
+            # "list" -- same reset-then-set ordering as
+            # _open_library_item_by_id's notes branch.
+            self._reset_library_note_editor_state()
             self._library_selected_row_id = LIBRARY_ROW_CREATE_NOTE
         if ingest_media:
             # Home's ingest-jobs "Open details" control re-points here
@@ -2457,6 +2464,21 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_media_detail = detail if isinstance(detail, Mapping) else None
         self._library_media_highlights = highlights
+        if (
+            self._library_media_detail is None
+            and media_id == self._selected_media_id
+            and self._library_media_view == "viewer"
+        ):
+            # The record backing an opened item vanished between the click
+            # and this fetch resolving (e.g. deleted elsewhere, or a stale
+            # Search/RAG "Open" result) -- mirror the equivalent
+            # "Conversation is unavailable." notify _open_library_item_by_id
+            # gives its conversations branch, and fall back to the list
+            # view instead of leaving an empty/stuck viewer.
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Media item is unavailable.", severity="warning")
+            self._library_media_view = "list"
         if self.is_mounted:
             self.refresh(recompose=True)
 

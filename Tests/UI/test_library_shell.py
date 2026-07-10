@@ -1892,6 +1892,51 @@ async def test_library_shell_media_detail_race_discards_stale_fetch():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_open_deleted_media_notifies_and_falls_back_to_list():
+    """(A3) Opening a media item whose backing record was deleted between
+    the id being captured (e.g. a stale Search/RAG "Open" result) and the
+    click must notify the user and fall back to the list view instead of
+    leaving an empty/stuck viewer -- mirrors the existing "Conversation is
+    unavailable." notify ``_open_library_item_by_id`` already gives its
+    conversations branch for the equivalent out-of-snapshot case.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    notifications = []
+    app.notify = lambda message, **kwargs: notifications.append((message, kwargs))
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # Delete the backing record "between done and click": remove it
+        # from the fake service's store so a subsequent get_media_item
+        # resolves to None, the same way the real local backend does for a
+        # deleted/never-existed id.
+        service = screen.app_instance.media_reading_scope_service
+        service.media_items = tuple(
+            item for item in service.media_items if str(item.get("id")) != "media-1"
+        )
+
+        await screen._open_library_item_by_id("media", "media-1")
+        for _ in range(150):
+            if screen._library_media_view != "viewer":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Deleted-media open never fell back to the list view.")
+
+        assert screen._library_media_view == "list"
+        assert screen._library_media_detail is None
+        assert notifications
+        assert notifications[-1][0] == "Media item is unavailable."
+        assert notifications[-1][1].get("severity") == "warning"
+        # No empty/stuck viewer left mounted once the canvas recomposes.
+        assert not screen.query("#library-media-viewer-title")
+
+
+@pytest.mark.asyncio
 async def test_library_shell_media_edit_cancel_discards():
     """Cancelling the edit form discards changes without calling the service."""
     app = _build_test_app()
@@ -3323,6 +3368,52 @@ async def test_library_shell_notes_create_deeplink_lands_on_create_view():
 
         assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
         assert screen.query_one("#library-notes-create-blank")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_notes_create_deeplink_reentry_resets_stale_editor_state():
+    """(A4) A cached ``LibraryScreen`` re-entered via the ``notes_create``
+    deep link must never carry over a previously opened note's editor state
+    -- ``_select_library_rail_row`` (the "New note" rail row's own entry
+    path) already resets the note editor on every switch via
+    ``_reset_library_note_editor_state``, but the ``notes_create`` deep-link
+    branch in ``_apply_navigation_context_state`` skipped that call, so a
+    post-mount re-entry through the deep link (after the user had already
+    opened an existing note in the editor) kept that note's id/detail/
+    version around instead of landing on a clean create-note slate. Mirrors
+    ``test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_form``.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # Open an existing note in the editor, as if the user had already
+        # visited it on a previous Notes visit -- no edits made, so the
+        # editor is clean (not dirty), and ``apply_navigation_context``
+        # takes its synchronous (no-flush-needed) path.
+        await _open_note_editor(screen, pilot)
+        assert screen._selected_note_id == "n-1"
+        assert screen._library_notes_view == "editor"
+        assert screen._library_note_detail is not None
+        assert screen._library_note_dirty is False
+
+        # The retired Notes tab's "new note" deep link re-enters via this
+        # same navigation context on an already-mounted (cached) screen.
+        screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_NOTES_CREATE: True})
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+        assert screen._selected_note_id == ""
+        assert screen._library_notes_view == "list"
+        assert screen._library_note_detail is None
+        assert screen._library_note_version is None
+        assert screen._library_note_dirty is False
+        assert screen._library_note_autosave_state == "idle"
 
 
 @pytest.mark.asyncio
