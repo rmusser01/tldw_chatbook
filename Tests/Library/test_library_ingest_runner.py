@@ -393,3 +393,29 @@ async def test_five_rapid_submissions_all_complete_no_stranding(tmp_path: Path) 
             assert done.media_id is not None
 
         await _wait_for_runner_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_reingest_of_unchanged_file_still_resolves_media_id(tmp_path: Path) -> None:
+    """Re-ingesting an already-present, unchanged file keeps Open usable.
+
+    ``add_media_with_keywords`` takes its update path for a URL that already
+    exists with identical content and returns ``media_id=None``; the runner
+    must resolve the id via ``get_media_by_url`` so the done job still
+    carries a real ``media_id`` (and the canvas keeps its Open action).
+    """
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "note-b.txt", "Spring tides align sun and moon.")
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test() as pilot:
+        first = app.submit_library_ingest_job(source_path=str(source))
+        first_done = await _wait_for_job_state(app, pilot, first.job_id, IngestJobState.DONE)
+        assert first_done.media_id is not None
+        await _wait_for_runner_idle(app, pilot)
+
+        second = app.submit_library_ingest_job(source_path=str(source))
+        second_done = await _wait_for_job_state(app, pilot, second.job_id, IngestJobState.DONE)
+
+        assert second_done.media_id == first_done.media_id
+        await _wait_for_runner_idle(app, pilot)

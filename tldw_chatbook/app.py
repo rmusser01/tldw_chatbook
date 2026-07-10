@@ -1397,10 +1397,21 @@ class LibraryIngestQueueMixin:
                             else None
                         ),
                     )
+                    media_id = result["media_id"]
+                    if media_id is None:
+                        # Re-ingesting an unchanged file takes the DB's
+                        # update path, whose return carries no media id.
+                        # Resolve it by canonical URL so the done row keeps
+                        # its "Open in Library" action.
+                        existing = self.media_db.get_media_by_url(
+                            f"file://{Path(job.source_path).absolute()}"
+                        )
+                        if existing is not None:
+                            media_id = existing.get("id")
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_done,
                         job.job_id,
-                        media_id=result["media_id"],
+                        media_id=media_id,
                     )
                 except Exception as exc:
                     self.call_from_thread(
