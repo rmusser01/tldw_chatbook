@@ -2,6 +2,7 @@
 
 from .library_collections_panel import LibraryCollectionsPanel
 from .library_conversations_canvas import LibraryConversationsCanvas
+from .library_ingest_canvas import LibraryIngestCanvas
 from .library_media_canvas import LibraryMediaCanvas
 from .library_media_viewer import LibraryMediaViewer
 from .library_notes_canvas import LibraryNotesCanvas
@@ -23,6 +24,7 @@ __all__ = [
     "LIBRARY_RAIL_ROW_PREFIX",
     "LibraryCollectionsPanel",
     "LibraryConversationsCanvas",
+    "LibraryIngestCanvas",
     "LibraryMediaCanvas",
     "LibraryMediaViewer",
     "LibraryNotesCanvas",

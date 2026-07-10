@@ -189,14 +189,14 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
                 lambda: app.current_tab == "library" and app.screen.__class__.__name__ == "LibraryScreen",
             )
             # Import media is now a first-class canvas row (not a deep-link
-            # to the standalone Ingest screen): pressing it mounts the
-            # ingest canvas stub in place rather than navigating away from
-            # Library (Task 4 replaces the stub with the real canvas).
+            # to the standalone Ingest screen): pressing it mounts the real
+            # ingest canvas (L3b Task 4) in place rather than navigating
+            # away from Library.
             app.screen.query_one("#library-row-ingest-import-media", Button).press()
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == "library"
-                and bool(app.screen.query("#library-ingest-canvas-placeholder")),
+                and bool(app.screen.query("#library-ingest-canvas")),
             )
 
             app.open_console_for_live_work(

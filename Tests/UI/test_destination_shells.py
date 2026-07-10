@@ -1250,13 +1250,13 @@ async def test_library_exposes_source_sections_and_ingest_media_canvas():
             assert screen.query_one(selector)
         assert not screen.query("#library-row-ingest-import-export")
 
-        # Pressing Ingest ▸ Import media mounts the ingest canvas stub in
-        # place (Task 4 replaces it with the real ingest canvas).
+        # Pressing Ingest ▸ Import media mounts the real ingest canvas
+        # (L3b Task 4) in place.
         screen.query_one("#library-row-ingest-import-media", Button).press()
         await pilot.pause()
         await pilot.pause()
 
-        assert screen.query_one("#library-ingest-canvas-placeholder")
+        assert screen.query_one("#library-ingest-canvas")
 
 
 @pytest.mark.asyncio
@@ -1652,14 +1652,14 @@ async def test_library_conversations_action_switches_to_native_mode_without_rout
 
 
 @pytest.mark.asyncio
-async def test_library_ingest_import_media_row_mounts_ingest_canvas_placeholder():
+async def test_library_ingest_import_media_row_mounts_ingest_canvas():
     """The Ingest ▸ Import/Export row (and its native "import-export" mode
     switch) is retired outright -- the row is deleted, not merely re-routed.
     Ingest ▸ Import media is now a first-class canvas row: pressing it
-    mounts the ingest canvas stub in place (Task 4 replaces the stub) rather
-    than either switching to a retired mode or deep-linking to the
-    standalone Ingest screen (the prior ``NavigateToScreen("ingest")``
-    behavior covered by the retired
+    mounts the real ingest canvas (L3b Task 4) in place rather than either
+    switching to a retired mode or deep-linking to the standalone Ingest
+    screen (the prior ``NavigateToScreen("ingest")`` behavior covered by
+    the retired
     ``test_library_import_export_dedicated_import_action_emits_ingest_route``)."""
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService([])
@@ -1673,7 +1673,7 @@ async def test_library_ingest_import_media_row_mounts_ingest_canvas_placeholder(
         await _wait_for_library_snapshot(screen, pilot)
         assert not screen.query("#library-row-ingest-import-export")
         screen.query_one("#library-row-ingest-import-media", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-ingest-canvas-placeholder")
+        await _wait_for_selector(screen, pilot, "#library-ingest-canvas")
 
         assert getattr(screen, "_library_selected_row_id") == "ingest-import-media"
 

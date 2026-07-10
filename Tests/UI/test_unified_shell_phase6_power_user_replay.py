@@ -96,14 +96,14 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             assert not app.screen.query("#library-row-ingest-import-export")
 
             # Import media is now a first-class canvas row (not a deep-link
-            # to the standalone Ingest screen): pressing it mounts the
-            # ingest canvas stub in place rather than navigating away from
-            # Library (Task 4 replaces the stub with the real canvas).
+            # to the standalone Ingest screen): pressing it mounts the real
+            # ingest canvas (L3b Task 4) in place rather than navigating
+            # away from Library.
             app.screen.query_one("#library-row-ingest-import-media", Button).press()
             await _wait_until(
                 pilot,
                 lambda: app.current_tab == "library"
-                and bool(app.screen.query("#library-ingest-canvas-placeholder")),
+                and bool(app.screen.query("#library-ingest-canvas")),
             )
 
             app.screen.query_one("#nav-console", Button).press()

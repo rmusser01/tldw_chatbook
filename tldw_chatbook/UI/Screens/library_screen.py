@@ -33,6 +33,13 @@ from ...DB.ChaChaNotes_DB import ConflictError
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_conversations_state import build_library_conversations_state
+from ...Library.library_ingest_state import (
+    LibraryIngestCanvasState,
+    LibraryIngestFormState,
+    build_library_ingest_state,
+    clamp_chunk_size,
+    parse_keywords,
+)
 from ...Library.library_media_state import (
     LibraryMediaCanvasState,
     build_library_media_state,
@@ -108,6 +115,7 @@ from ...Widgets.Console.console_rail_section import (
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
     LibraryConversationsCanvas,
+    LibraryIngestCanvas,
     LibraryMediaCanvas,
     LibraryMediaViewer,
     LibraryNotesCanvas,
@@ -618,6 +626,12 @@ class LibraryScreen(BaseAppScreen):
         # Sync now run. None = not edited this panel visit; fall back to the
         # persisted config value.
         self._library_notes_sync_folder_text: str | None = None
+        # Ingest canvas form echo -- a single bundled mutable dataclass
+        # (rather than a scatter of scalar fields like the sync panel
+        # above) since every field here is reset together on rail
+        # re-entry (see ``_reset_library_ingest_transient_state``); the
+        # job queue itself is registry-owned, not screen state.
+        self._library_ingest_form: LibraryIngestFormState = LibraryIngestFormState()
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -3047,11 +3061,9 @@ class LibraryScreen(BaseAppScreen):
                         id="library-collections-panel",
                     )
                 elif shell.canvas_kind == "ingest-media":
-                    yield Static(
-                        "Ingest canvas arrives in the next task.",
-                        id="library-ingest-canvas-placeholder",
-                        classes="destination-purpose",
-                        markup=False,
+                    yield LibraryIngestCanvas(
+                        self._build_library_ingest_state(),
+                        id="library-ingest-canvas",
                     )
                 elif shell.canvas_kind == "mode":
                     yield from self._compose_mode_canvas(shell.canvas_target)
@@ -3419,6 +3431,47 @@ class LibraryScreen(BaseAppScreen):
         # status/activity above: re-entering the panel re-reads the
         # committed config value.
         self._library_notes_sync_folder_text = None
+
+    def _reset_library_ingest_transient_state(self) -> None:
+        """Clear the ingest canvas's form to defaults on rail re-entry.
+
+        Called on every ``_select_library_rail_row`` switch (mirrors
+        ``_reset_library_notes_sync_transient_state``'s placement) so a
+        stale in-progress form from a previous Ingest visit never
+        reappears when the user comes back to the canvas. The job queue
+        itself is registry-owned and untouched by this reset -- only the
+        local form echo resets.
+        """
+        self._library_ingest_form = LibraryIngestFormState()
+
+    def _library_ingest_registry(self) -> Any:
+        """Return the app's ingest job registry, or ``None`` when absent."""
+        return getattr(self.app_instance, "library_ingest_jobs", None)
+
+    def _build_library_ingest_state(self) -> LibraryIngestCanvasState:
+        """Build the ingest canvas's full display state from the live registry + form.
+
+        Reads directly from ``self.app_instance.library_ingest_jobs`` via
+        quiet-degrade ``getattr`` (never assuming the seam exists) rather
+        than caching a screen-owned copy, so every render -- the canvas
+        compose, and the Open in Library/Retry handlers' row index
+        resolution -- sees the registry's current truth, including
+        transitions a live-update listener applies between renders.
+        """
+        registry = self._library_ingest_registry()
+        jobs_fn = getattr(registry, "jobs", None)
+        jobs = jobs_fn() if callable(jobs_fn) else ()
+        runtime_state = getattr(
+            getattr(self.app_instance, "runtime_policy", None), "state", None
+        )
+        runtime_source = str(getattr(runtime_state, "active_source", "local") or "local")
+        return build_library_ingest_state(
+            jobs,
+            form=self._library_ingest_form,
+            runtime_source=runtime_source,
+            media_db_available=getattr(self.app_instance, "media_db", None) is not None,
+            registry_available=registry is not None,
+        )
 
     def _ensure_library_notes_sync_config_loaded(self) -> None:
         """Seed sync direction/conflict/auto-sync from config on first entry.
@@ -4556,6 +4609,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter_records = None
         self._reset_library_note_editor_state()
         self._reset_library_notes_sync_transient_state()
+        self._reset_library_ingest_transient_state()
         self._invalidate_library_workspace_depth_state()
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # First Collections entry must load the snapshot the retired chip
@@ -5159,6 +5213,192 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_sync_running = False
             if self._library_notes_view == "sync" and self.is_mounted:
                 self.refresh(recompose=True)
+
+    # ----- Ingest canvas -----------------------------------------------
+
+    @on(Input.Changed, "#library-ingest-path")
+    def handle_library_ingest_path_changed(self, event: Input.Changed) -> None:
+        """Track the ingest path text as the user types it (state only).
+
+        Also live-updates the Start button's disabled state via a targeted
+        query (mirroring ``update_library_collection_name_input``) rather
+        than a full canvas recompose, so typing never disturbs the Input's
+        cursor position.
+
+        Args:
+            event: Input change event emitted by the path field.
+        """
+        event.stop()
+        self._library_ingest_form.path = event.value
+        try:
+            start_button = self.query_one("#library-ingest-start", Button)
+        except (NoMatches, QueryError):
+            return
+        start_button.disabled = not self._build_library_ingest_state().start_enabled
+
+    @on(Input.Changed, "#library-ingest-title")
+    def handle_library_ingest_title_changed(self, event: Input.Changed) -> None:
+        """Track the ingest title text as the user types it (state only)."""
+        event.stop()
+        self._library_ingest_form.title = event.value
+
+    @on(Input.Changed, "#library-ingest-author")
+    def handle_library_ingest_author_changed(self, event: Input.Changed) -> None:
+        """Track the ingest author text as the user types it (state only)."""
+        event.stop()
+        self._library_ingest_form.author = event.value
+
+    @on(Input.Changed, "#library-ingest-keywords")
+    def handle_library_ingest_keywords_changed(self, event: Input.Changed) -> None:
+        """Track the ingest keywords text as the user types it (state only)."""
+        event.stop()
+        self._library_ingest_form.keywords = event.value
+
+    @on(Input.Changed, "#library-ingest-chunk-size")
+    def handle_library_ingest_chunk_size_changed(self, event: Input.Changed) -> None:
+        """Track the chunk-size text as typed (display-echo only).
+
+        Parsed and clamped to ``[100, 5000]`` only at submit time (see
+        ``clamp_chunk_size``) -- never here.
+        """
+        event.stop()
+        self._library_ingest_form.chunk_size = event.value
+
+    @on(Button.Pressed, "#library-ingest-browse")
+    def handle_library_ingest_browse(self, event: Button.Pressed) -> None:
+        """Push a ``FileOpen`` dialog to pick a local file to ingest.
+
+        Mirrors ``handle_library_notes_import``'s dialog flow exactly (the
+        working ``FileOpen`` reference, invoked the same simple
+        ``title=``-only way). The callback writes the chosen path straight
+        into the form and recomposes so the Input and the Start button's
+        gate both reflect it immediately; validation still runs at Start
+        so a path typed by hand (not picked via this dialog) is caught
+        too.
+
+        Args:
+            event: Button press event emitted by the "Browse…" action.
+        """
+        event.stop()
+
+        async def browse_callback(selected_path: Path | None) -> None:
+            if selected_path is None:
+                return
+            self._library_ingest_form.path = str(selected_path)
+            self.refresh(recompose=True)
+
+        self.app.push_screen(
+            FileOpen(title="Import Media"),
+            browse_callback,
+        )
+
+    @on(Button.Pressed, "#library-ingest-analyze-toggle")
+    def handle_library_ingest_analyze_toggle(self, event: Button.Pressed) -> None:
+        """Flip the "Analyze after ingest" form toggle.
+
+        Args:
+            event: Button press event emitted by the analyze toggle.
+        """
+        event.stop()
+        self._library_ingest_form.analyze = not self._library_ingest_form.analyze
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-ingest-chunk-toggle")
+    def handle_library_ingest_chunk_toggle(self, event: Button.Pressed) -> None:
+        """Flip the "Chunk content" form toggle.
+
+        Args:
+            event: Button press event emitted by the chunk toggle.
+        """
+        event.stop()
+        self._library_ingest_form.chunk = not self._library_ingest_form.chunk
+        self.refresh(recompose=True)
+
+    def _notify_library_ingest_warning(self, message: str) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-ingest-start")
+    def handle_library_ingest_start(self, event: Button.Pressed) -> None:
+        """Validate the form and submit a new Library ingest job.
+
+        An invalid/missing path is a quiet warning notice, matching every
+        other Library form failure path in this screen; a missing
+        ``submit_library_ingest_job`` seam (registry absent) gets the same
+        treatment. On success, only the path field clears -- title/author/
+        keywords/advanced options persist so a batch of files sharing
+        metadata doesn't need to be retyped for every submission.
+
+        Args:
+            event: Button press event emitted by the "Start ingest" action.
+        """
+        event.stop()
+        form = self._library_ingest_form
+        raw_path = form.path.strip()
+        if not raw_path:
+            self._notify_library_ingest_warning("Please choose a file to ingest.")
+            return
+        try:
+            validated_path = validate_path_simple(
+                Path(raw_path).expanduser(), require_exists=True
+            )
+        except ValueError:
+            logger.warning(f"Rejected Library ingest path {raw_path!r}.", exc_info=True)
+            self._notify_library_ingest_warning("Could not find that file.")
+            return
+        submit = getattr(self.app_instance, "submit_library_ingest_job", None)
+        if not callable(submit):
+            self._notify_library_ingest_warning("Ingest is unavailable in this runtime.")
+            return
+        submit(
+            source_path=str(validated_path),
+            title=self._safe_text(form.title, max_length=300),
+            author=self._safe_text(form.author, max_length=200),
+            keywords=parse_keywords(form.keywords),
+            perform_analysis=form.analyze,
+            chunk_enabled=form.chunk,
+            chunk_size=clamp_chunk_size(form.chunk_size),
+        )
+        form.path = ""
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-ingest-open")
+    async def handle_library_ingest_open(self, event: Button.Pressed) -> None:
+        """Open a done ingest job's resulting media item in the Library viewer.
+
+        Args:
+            event: Button press event emitted by an "Open in Library" row action.
+        """
+        event.stop()
+        index = self._trailing_index(event.button.id)
+        rows = self._build_library_ingest_state().queue_rows
+        if index is None or not (0 <= index < len(rows)):
+            return
+        row = rows[index]
+        if not row.can_open or row.media_id is None:
+            return
+        await self._open_library_item_by_id("media", str(row.media_id))
+
+    @on(Button.Pressed, ".library-ingest-retry")
+    def handle_library_ingest_retry(self, event: Button.Pressed) -> None:
+        """Requeue a failed ingest job.
+
+        Args:
+            event: Button press event emitted by a "Retry" row action.
+        """
+        event.stop()
+        index = self._trailing_index(event.button.id)
+        rows = self._build_library_ingest_state().queue_rows
+        if index is None or not (0 <= index < len(rows)):
+            return
+        row = rows[index]
+        if not row.can_retry:
+            return
+        retry = getattr(self.app_instance, "retry_library_ingest_job", None)
+        if callable(retry):
+            retry(row.job_id)
+        self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-notes-row")
     async def handle_library_notes_row(self, event: Button.Pressed) -> None:
