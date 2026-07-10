@@ -1164,10 +1164,13 @@ class LibraryIngestQueueMixin:
 
     The queue-runner worker (``_run_library_ingest_queue``) is the *only*
     intended caller of the registry's ``mark_running``/``mark_done``/
-    ``mark_failed`` transition methods; every job it dequeues is always
-    driven ``queued`` -> ``running`` -> ``done``/``failed``, and one job's
-    failure is caught locally so it never kills the loop or strands a later
-    queued job.
+    ``mark_failed`` transition methods. Every job it dequeues is driven
+    either ``queued`` -> ``running`` -> ``done``/``failed``, *or* straight
+    from ``queued`` to ``failed`` when an error occurs before
+    ``mark_running`` is ever reached -- e.g. an unsupported/undetectable
+    file type raised by ``detect_file_type``, which runs before
+    ``mark_running`` is called. Either way, one job's failure is caught
+    locally so it never kills the loop or strands a later queued job.
     """
 
     def submit_library_ingest_job(
@@ -1250,29 +1253,124 @@ class LibraryIngestQueueMixin:
         UI-thread only. Sets ``runner_active = True`` synchronously, before
         scheduling the worker, so a rapid double-submission can never
         double-start the runner.
+
+        If scheduling the ``@work`` worker itself raises synchronously
+        (e.g. the app isn't in a state that accepts new workers), the
+        ``runner_active`` flag is rolled back to ``False`` before
+        re-raising -- otherwise a scheduling failure here would leave the
+        registry permanently believing a runner is active when none was
+        ever started, silently stranding every future submission.
         """
         if self.library_ingest_jobs.runner_active:
             return
         self.library_ingest_jobs.runner_active = True
-        self._run_library_ingest_queue()
+        try:
+            self._run_library_ingest_queue()
+        except Exception:
+            self.library_ingest_jobs.runner_active = False
+            raise
+
+    def _claim_next_ingest_job_or_release(self) -> Optional[LibraryIngestJob]:
+        """Atomically claim the next queued job, or release the runner.
+
+        UI-thread only; must only ever be invoked via ``call_from_thread``
+        from the queue-runner worker thread (see
+        ``_run_library_ingest_queue``), never called directly from that
+        thread.
+
+        Atomicity contract: this is a single, plain synchronous UI-thread
+        call, so the "is there another queued job?" check and the "clear
+        ``runner_active``" decision happen in the same turn of the UI event
+        loop with no ``await``/yield between them. No other UI-thread code
+        -- in particular ``submit_library_ingest_job``/
+        ``retry_library_ingest_job``, which only start a fresh runner when
+        ``runner_active`` is ``False`` -- can run in between. This closes
+        the exit race the previous two-step implementation had: it used to
+        call ``next_queued()`` and, only in a *separate* later
+        ``call_from_thread`` (in the ``finally`` block), clear
+        ``runner_active``. A submission landing on the UI thread in the gap
+        between those two calls would append a ``QUEUED`` job while
+        ``runner_active`` was still (stale-)``True``, so it would never
+        start a new runner -- stranding the job until some unrelated later
+        submission happened to start one. Collapsing the check and the
+        ``runner_active`` mutation into one call removes that gap entirely.
+        Do not reintroduce a two-``call_from_thread`` exit path.
+
+        Returns:
+            The next ``QUEUED`` job (a registry copy), if one exists --
+            ``runner_active`` is left untouched (still ``True``) and the
+            runner must keep looping. ``None`` when the queue is genuinely
+            empty -- ``runner_active`` is cleared before returning, and the
+            runner must exit.
+        """
+        job = self.library_ingest_jobs.next_queued()
+        if job is not None:
+            return job
+        self.library_ingest_jobs.runner_active = False
+        return None
+
+    def _release_ingest_runner_after_crash(self) -> None:
+        """Safety-net cleanup for the queue-runner's ``finally`` block.
+
+        UI-thread only; invoked via ``call_from_thread`` from the
+        queue-runner worker's ``finally``, on every exit path (clean or
+        not).
+
+        On the normal, clean-exit path this is a no-op: the runner already
+        exited because ``_claim_next_ingest_job_or_release`` returned
+        ``None``, which already cleared ``runner_active``. It only does
+        real work when the worker thread is unwinding from something that
+        bypassed that atomic exit -- i.e. an exception escaped a job's own
+        isolation (see ``_run_library_ingest_queue``) or the marshaled
+        call itself raised. In that case: clear ``runner_active`` if it is
+        still set, and, since the crash may have left one or more jobs
+        ``QUEUED`` with nothing left to drain them, restart the runner
+        when the queue is non-empty at that moment. Restarting here is
+        safe: this method runs on the UI thread, and the dying worker
+        thread is already unwinding and will not touch the registry again.
+        """
+        if self.library_ingest_jobs.runner_active:
+            self.library_ingest_jobs.runner_active = False
+        if self.library_ingest_jobs.next_queued() is not None:
+            self._start_library_ingest_queue_if_idle()
 
     @work(exclusive=True, thread=True, group="library_ingest_queue")
     def _run_library_ingest_queue(self) -> None:
         """Serially drain the Library ingest queue on a background thread.
 
         Runs until ``self.library_ingest_jobs`` has no more ``QUEUED`` jobs,
-        then clears ``runner_active`` and exits -- a later submission/retry
-        starts a fresh worker. Every registry touch is marshaled onto the
-        UI thread via ``call_from_thread`` because
-        ``LibraryIngestJobRegistry`` does no internal locking (see its
-        module docstring). A single job's exception (missing file,
-        unsupported type, DB error, ...) is caught and turned into a
-        ``mark_failed`` transition; it never aborts the loop.
+        then clears ``runner_active`` (via
+        ``_claim_next_ingest_job_or_release``, atomically -- see that
+        method's docstring) and exits -- a later submission/retry starts a
+        fresh worker. Every registry touch is marshaled onto the UI thread
+        via ``call_from_thread`` because ``LibraryIngestJobRegistry`` does
+        no internal locking (see its module docstring). A single job's
+        exception (missing file, unsupported type, DB error, ...) is
+        caught locally and turned into a ``mark_failed`` transition; it
+        never aborts the loop.
+
+        The outer ``try/finally`` is a separate safety net for failures
+        *outside* that per-job isolation -- e.g. the marshaled claim call
+        itself raising (a genuinely unexpected/"catastrophic" failure, not
+        a per-job ingest error). The local ``clean_exit`` flag is only set
+        right before the natural, queue-is-empty ``return``; it lets
+        ``finally`` tell that ordinary case apart from a crash. This
+        matters because on a clean exit, ``_claim_next_ingest_job_or_release``
+        has *already* atomically handled ``runner_active`` -- by the time
+        ``finally`` runs, an unrelated fresh submission may have legitimately
+        raced in and started a brand-new runner (correctly, since
+        ``runner_active`` was truthfully ``False`` at that point). Invoking
+        the crash-recovery callable unconditionally would risk that stale
+        ``finally`` clobbering the *new* runner's ``runner_active`` flag.
+        Skipping it on a clean exit avoids that. See
+        ``_release_ingest_runner_after_crash``.
         """
+        clean_exit = False
         try:
             while True:
-                job = self.call_from_thread(self.library_ingest_jobs.next_queued)
+                job = self.call_from_thread(self._claim_next_ingest_job_or_release)
                 if job is None:
+                    clean_exit = True
                     return
                 try:
                     detected_type = detect_file_type(job.source_path) or ""
@@ -1298,22 +1396,20 @@ class LibraryIngestQueueMixin:
                             else None
                         ),
                     )
+                    self.call_from_thread(
+                        self.library_ingest_jobs.mark_done,
+                        job.job_id,
+                        media_id=result["media_id"],
+                    )
                 except Exception as exc:
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_failed,
                         job.job_id,
                         error=_sanitize_library_ingest_error(exc),
                     )
-                    continue
-                self.call_from_thread(
-                    self.library_ingest_jobs.mark_done,
-                    job.job_id,
-                    media_id=result["media_id"],
-                )
         finally:
-            self.call_from_thread(
-                setattr, self.library_ingest_jobs, "runner_active", False
-            )
+            if not clean_exit:
+                self.call_from_thread(self._release_ingest_runner_after_crash)
 
 
 # --- Main App ---

@@ -215,3 +215,181 @@ async def test_listener_fires_on_every_state_change(tmp_path: Path) -> None:
 
         # submit -> mark_running -> mark_done == 3 notifications.
         assert len(calls) == 3
+
+
+# --- Task 2 review fix regression tests -------------------------------------
+#
+# The review found a check-then-exit race in the queue-runner's old exit
+# path: it called `next_queued()` and, only in a *separate later*
+# `call_from_thread` (inside `finally`), cleared `runner_active`. A
+# submission landing on the UI thread in the gap between those two calls
+# would append a QUEUED job while `runner_active` was still (stale-)`True`,
+# so `_start_library_ingest_queue_if_idle` would never start a new runner --
+# stranding the job. The fix collapses the check-and-clear into one atomic
+# UI-thread call, `_claim_next_ingest_job_or_release`, and adds a
+# crash-recovery safety net (`_release_ingest_runner_after_crash`) for the
+# case where something bypasses that atomic exit entirely.
+#
+# The tests below combine:
+#   (i)/(ii)  direct, synchronous calls to `_claim_next_ingest_job_or_release`
+#             proving its atomic claim-or-release contract in isolation;
+#   (iii)     an end-to-end test that forces the runner to hit its
+#             crash-recovery `finally` path (not a per-job failure -- a
+#             failure in the claim step itself, outside all per-job
+#             isolation) with a second job still queued, proving the
+#             runner notices and restarts itself instead of stranding the
+#             queue -- this is the test that fails (times out) against the
+#             pre-fix implementation;
+#   (iv)      a coarse end-to-end stress smoke across five rapid
+#             submissions (some landing while the runner is genuinely
+#             mid-flight) as a gross-stranding catch-all.
+
+
+@pytest.mark.asyncio
+async def test_claim_next_job_returns_job_and_keeps_runner_active(tmp_path: Path) -> None:
+    """(i) Direct-call contract: a queued job is returned and
+    ``runner_active`` is left untouched (``True``), so the runner keeps
+    looping instead of exiting.
+    """
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "note-claim.txt", "Body for the claim contract test.")
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test():
+        # Simulate the runner already being active (as it always is by the
+        # time anything calls the claim method for real) without actually
+        # starting the background worker thread -- this keeps the test
+        # fully synchronous and deterministic. Submitting straight through
+        # the registry (bypassing `submit_library_ingest_job`) avoids
+        # triggering `_start_library_ingest_queue_if_idle` for the same
+        # reason.
+        app.library_ingest_jobs.runner_active = True
+        job = app.library_ingest_jobs.submit(source_path=str(source))
+
+        claimed = app._claim_next_ingest_job_or_release()
+
+        assert claimed is not None
+        assert claimed.job_id == job.job_id
+        assert app.library_ingest_jobs.runner_active is True
+
+
+@pytest.mark.asyncio
+async def test_claim_next_job_returns_none_and_clears_runner_active_when_empty(
+    tmp_path: Path,
+) -> None:
+    """(ii) Direct-call contract: with no queued jobs, ``None`` is
+    returned and ``runner_active`` is cleared in that same call -- the
+    exact atomicity the exit-race fix depends on.
+    """
+    db = _make_db(tmp_path)
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test():
+        app.library_ingest_jobs.runner_active = True
+
+        claimed = app._claim_next_ingest_job_or_release()
+
+        assert claimed is None
+        assert app.library_ingest_jobs.runner_active is False
+
+
+@pytest.mark.asyncio
+async def test_finally_restarts_runner_after_unexpected_claim_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(iii) Regression test for the crash-recovery path -- the strongest
+    deterministic proxy for the exit race available without depending on
+    real thread-scheduling timing.
+
+    Simulates a genuinely unexpected ("catastrophic") failure in the
+    runner's own claim step, as opposed to a per-job ingest failure (which
+    is already isolated by the inner try/except and covered by
+    ``test_failing_job_does_not_block_next_queued_job``): the *first ever*
+    call to ``next_queued()`` -- made from inside
+    ``_claim_next_ingest_job_or_release``, at the top of the runner's
+    loop, outside any per-job try/except -- raises once; every subsequent
+    call behaves normally. The patch is installed before either
+    submission, and no ``await`` happens between the two submissions, so
+    the scheduled worker task cannot have started running yet by the time
+    both jobs are queued -- the ordering (both jobs queued *before* the
+    one-shot raise fires) is therefore deterministic, not a timing gamble.
+
+    Pre-fix, the runner's ``finally`` unconditionally set
+    ``runner_active = False`` via a plain ``setattr`` and exited for
+    good -- it never rechecked the queue or restarted itself, so both
+    jobs submitted before the crash would be stranded ``QUEUED`` forever
+    (the ``_wait_for_job_state`` call below times out and raises
+    ``AssertionError`` pre-fix, within its bounded ~6s poll budget).
+    Post-fix, ``_release_ingest_runner_after_crash`` notices the queue is
+    still non-empty and restarts the runner, so both jobs still reach
+    ``DONE``.
+    """
+    db = _make_db(tmp_path)
+    source1 = _write_text_file(tmp_path, "note-crash-1.txt", "First body, present when the crash hits.")
+    source2 = _write_text_file(tmp_path, "note-crash-2.txt", "Second body, queued behind the crash.")
+    app = _IngestRunnerHarness(db)
+
+    real_next_queued = app.library_ingest_jobs.next_queued
+    call_state = {"raised": False}
+
+    def _flaky_next_queued():
+        if not call_state["raised"]:
+            call_state["raised"] = True
+            raise RuntimeError("simulated catastrophic queue-runner failure")
+        return real_next_queued()
+
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(app.library_ingest_jobs, "next_queued", _flaky_next_queued)
+
+        job1 = app.submit_library_ingest_job(source_path=str(source1))
+        job2 = app.submit_library_ingest_job(source_path=str(source2))
+
+        done1 = await _wait_for_job_state(app, pilot, job1.job_id, IngestJobState.DONE)
+        assert done1.media_id is not None
+        done2 = await _wait_for_job_state(app, pilot, job2.job_id, IngestJobState.DONE)
+        assert done2.media_id is not None
+
+        assert call_state["raised"] is True, "the simulated crash never fired -- test is not exercising the recovery path"
+
+        await _wait_for_runner_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_five_rapid_submissions_all_complete_no_stranding(tmp_path: Path) -> None:
+    """(iv) End-to-end stress smoke: five jobs submitted in rapid
+    succession -- some landing while the runner is genuinely mid-flight
+    processing an earlier job -- must ALL reach DONE.
+
+    This is a coarse, gross-stranding catch-all: if any submission landed
+    in the (pre-fix) exit-race gap and got stuck behind a stale
+    ``runner_active``, at least one job here would never leave QUEUED and
+    the wait loop below would time out.
+    """
+    db = _make_db(tmp_path)
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test() as pilot:
+        sources = [
+            _write_text_file(tmp_path, f"note-stress-{i}.txt", f"Stress body number {i}.")
+            for i in range(5)
+        ]
+
+        jobs = [
+            app.submit_library_ingest_job(source_path=str(sources[0])),
+            app.submit_library_ingest_job(source_path=str(sources[1])),
+        ]
+        # Give the runner a chance to actually start draining before the
+        # remaining submissions land -- the scenario most likely to hit
+        # the exit-race gap is a submission arriving while the runner is
+        # mid-loop, possibly right as it decides whether to exit.
+        await pilot.pause(_POLL_INTERVAL)
+        jobs.append(app.submit_library_ingest_job(source_path=str(sources[2])))
+        await pilot.pause(_POLL_INTERVAL)
+        jobs.append(app.submit_library_ingest_job(source_path=str(sources[3])))
+        jobs.append(app.submit_library_ingest_job(source_path=str(sources[4])))
+
+        for job in jobs:
+            done = await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
+            assert done.media_id is not None
+
+        await _wait_for_runner_idle(app, pilot)
