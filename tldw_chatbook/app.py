@@ -34,6 +34,7 @@ from textual.widget import Widget
 import asyncio
 from PIL import Image
 from loguru import logger as loguru_logger, logger
+from rich.markup import escape as escape_markup
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.widgets import (
@@ -2107,7 +2108,52 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         return self._handle_home_control_action(HomeControlAction.RESUME, target_id=target_id)
 
     def retry_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
-        """Retry the active Home item through the configured adapter."""
+        """Retry the active Home item through the configured adapter.
+
+        Library ingest job targets (``local:ingest:<job_id>``) are requeued
+        directly through ``retry_library_ingest_job`` -- the real requeue
+        seam over ``self.library_ingest_jobs`` -- instead of falling through
+        to ``_handle_home_control_action``/the adapter, which has no
+        visibility into the in-memory ingest job registry and always
+        degrades to the honest "not connected to an active run service yet"
+        fallback for this target shape. Non-ingest targets (approvals,
+        watchlist runs, schedules) are unaffected and still route through
+        the adapter exactly as before.
+        """
+        if target_id is not None and str(target_id).startswith("local:ingest:"):
+            job_id = str(target_id)[len("local:ingest:"):]
+            requeued = self.retry_library_ingest_job(job_id)
+            if requeued is None:
+                # Unknown job id, or the job is no longer FAILED (e.g. it
+                # was already retried/finished by the time the button was
+                # pressed) -- ``requeue`` is a documented no-op in that case.
+                result = HomeControlResult(
+                    action=HomeControlAction.RETRY,
+                    status=HomeControlResultStatus.UNAVAILABLE,
+                    message="This ingest job can no longer be retried.",
+                    severity="warning",
+                    recovery_route="library",
+                    target_id=target_id,
+                )
+            else:
+                # The basename is a user-controlled filename (arbitrary
+                # source path picked in the Library ingest form) that flows
+                # straight into a Home toast, which parses Rich markup --
+                # same hazard class as the open-details title fix. Escape
+                # defensively.
+                basename = escape_markup(
+                    Path(str(requeued.source_path)).name or str(requeued.source_path)
+                )
+                result = HomeControlResult(
+                    action=HomeControlAction.RETRY,
+                    status=HomeControlResultStatus.HANDLED,
+                    message=f"Retry queued for {basename}.",
+                    recovery_route="library",
+                    target_id=f"local:ingest:{requeued.job_id}",
+                    target_route="library",
+                )
+            self.notify(result.message, severity=result.severity)
+            return result
         return self._handle_home_control_action(HomeControlAction.RETRY, target_id=target_id)
 
     def open_home_flashcards_review(self) -> None:

@@ -1313,3 +1313,113 @@ async def test_home_open_details_button_click_navigates_library_for_failed_inges
     # live "advances to Library but keeps rendering Home" symptom).
     assert app._screen_cache.get(TAB_LIBRARY) is not library_sentinel
     assert TAB_LIBRARY not in app._screen_cache
+
+
+def test_retry_active_home_item_requeues_ingest_job_via_real_seam():
+    """(L3b live-QA repro) Retry on a failed Library ingest job in Needs
+    Attention must requeue through the real ``retry_library_ingest_job``
+    seam (L3b Task 2) instead of degrading to the adapter's honest
+    "not connected to an active run service yet" fallback -- the adapter has
+    no visibility into the in-memory ingest job registry, so it can never
+    handle this target shape on its own.
+    """
+    app = _build_test_app()
+    job = app.library_ingest_jobs.submit(source_path="/tmp/report.xyz")
+    app.library_ingest_jobs.mark_failed(job.job_id, error="Unsupported extension")
+    app.notify = Mock()
+    jobs_before = len(app.library_ingest_jobs.jobs())
+
+    result = app.retry_active_home_item(target_id=f"local:ingest:{job.job_id}")
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    app.notify.assert_called_once_with(
+        "Retry queued for report.xyz.",
+        severity="information",
+    )
+    jobs_after = app.library_ingest_jobs.jobs()
+    assert len(jobs_after) == jobs_before + 1
+    newest = jobs_after[0]  # jobs() is newest-first.
+    assert newest.job_id != job.job_id
+    assert newest.source_path == "/tmp/report.xyz"
+
+
+def test_retry_active_home_item_unknown_ingest_id_warns_without_requeue():
+    """An ingest target id that no longer maps to a ``FAILED`` job (already
+    retried, unknown, or finished by the time Retry is pressed) must warn
+    honestly rather than silently no-op or crash --
+    ``LibraryIngestJobRegistry.requeue`` is a documented no-op (returns
+    ``None``) for exactly this case.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    jobs_before = len(app.library_ingest_jobs.jobs())
+
+    result = app.retry_active_home_item(target_id="local:ingest:does-not-exist")
+
+    assert result.status is HomeControlResultStatus.UNAVAILABLE
+    app.notify.assert_called_once_with(
+        "This ingest job can no longer be retried.",
+        severity="warning",
+    )
+    assert len(app.library_ingest_jobs.jobs()) == jobs_before
+
+
+def test_retry_active_home_item_non_ingest_target_still_routes_through_adapter():
+    """Non-ingest Retry targets (approvals/watchlist runs/schedules) must be
+    unaffected by the ingest special-case and keep degrading through the
+    adapter's honest "not connected" fallback -- regression guard for
+    existing behavior the ingest fix must not disturb.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+
+    result = app.retry_active_home_item(target_id="local:watchlist_run:5")
+
+    assert result.status is HomeControlResultStatus.UNAVAILABLE
+    app.notify.assert_called_once_with(
+        "Retry is not connected to an active run service yet. "
+        "Open details or Console to inspect the work.",
+        severity="warning",
+    )
+
+
+@pytest.mark.asyncio
+async def test_home_retry_button_click_requeues_failed_ingest_job():
+    """(L3b live-QA repro) Clicking the REAL ``Retry`` canvas button on a
+    failed Library ingest job in Needs Attention must drive the full UI hop
+    -- button press -> _activate_home_control -> app.retry_active_home_item
+    -> the real ``retry_library_ingest_job`` requeue seam -- not just the
+    direct app-method call the sibling test above exercises, and not the
+    adapter's generic "not connected to an active run service yet" toast
+    (the live-QA finding this test guards against). Uses the real registry
+    (submit + mark_failed, exactly like the Library ingest canvas), mirroring
+    ``test_home_open_details_button_click_navigates_library_for_failed_ingest_job``.
+    """
+    app = _build_test_app()
+    job = app.library_ingest_jobs.submit(source_path="/tmp/report.xyz")
+    app.library_ingest_jobs.mark_failed(job.job_id, error="Unsupported extension")
+    app.notify = Mock()
+    jobs_before = len(app.library_ingest_jobs.jobs())
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        # Select the failed ingest row in Needs Attention via a real press.
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == f"local:ingest:{job.job_id}"
+        )
+        await pilot.click(row_button)
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+        await pilot.click("#home-retry")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    notify_messages = [call.args[0] for call in app.notify.call_args_list]
+    assert "Retry queued for report.xyz." in notify_messages, (
+        f"Retry did not requeue the failed ingest job; notify calls: {notify_messages}"
+    )
+    assert not any("not connected" in str(message) for message in notify_messages)
+    assert len(app.library_ingest_jobs.jobs()) == jobs_before + 1
