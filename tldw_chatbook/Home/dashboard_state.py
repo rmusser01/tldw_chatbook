@@ -27,6 +27,10 @@ HOME_ROUTE_LABEL_OVERRIDES = {
     "study": get_tab_display_label(TAB_STUDY),
 }
 
+# M1: cap on the failed-item canvas's status-detail (failure reason) line,
+# so one runaway/verbose error message can't blow out the canvas.
+_STATUS_DETAIL_MAX_CHARS = 140
+
 
 def _home_route_label(route: str) -> str:
     """Resolve a Home canvas ``detail_route`` to a human-readable label.
@@ -47,6 +51,24 @@ def _home_route_label(route: str) -> str:
         return get_shell_destination(resolved.destination_id).accessible_label
     except KeyError:
         return route.replace("_", " ").replace("-", " ").title()
+
+
+def _truncate_status_detail(text: str, *, limit: int = _STATUS_DETAIL_MAX_CHARS) -> str:
+    """Truncate a canvas status-detail (failure reason) line to ``limit`` chars.
+
+    Args:
+        text: The (already-escaped) status detail text.
+        limit: Maximum length of the returned string, ellipsis included.
+
+    Returns:
+        ``text`` unchanged when it already fits within ``limit``, otherwise
+        the text cut short with a trailing "…" so the total length is
+        exactly ``limit``.
+    """
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 0)].rstrip() + "…"
 
 
 APPROVAL_RUN_STATUS = "approval"
@@ -105,6 +127,7 @@ class HomeActiveWorkItem:
     detail_route: str = "chat"
     console_available: bool = False
     updated_at: str = ""
+    status_detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -168,7 +191,22 @@ class HomeDashboard:
     controls: tuple[HomeControl, ...]
 
 
-def choose_next_best_action(state: HomeDashboardInput) -> HomeAction:
+def choose_next_best_action(
+    state: HomeDashboardInput,
+    *,
+    exclude: frozenset[str] = frozenset(),
+) -> HomeAction:
+    """Pick the single highest-priority Home "Next" suggestion.
+
+    Args:
+        state: Adapter-provided dashboard input.
+        exclude: ``action_id`` values to skip even when their branch would
+            otherwise win (H3, fix batch F1b) -- used by the triage canvas
+            builder to fall through to the next-best suggestion when the
+            top one would just repeat the selected item's own recovery
+            control (e.g. a failed item's canvas already offers Retry).
+            Empty by default, so every other caller is unaffected.
+    """
     if not state.model_ready:
         return HomeAction(
             "fix_model_setup",
@@ -191,7 +229,7 @@ def choose_next_best_action(state: HomeDashboardInput) -> HomeAction:
             "Scheduled work needs recovery.",
         )
     failed_item = _first_item_for_status(state, _FAILED_STATUSES)
-    if _failed_run_count(state):
+    if _failed_run_count(state) and "review_failed_work" not in exclude:
         return HomeAction(
             "review_failed_work",
             "Review failed work",
@@ -240,7 +278,27 @@ def choose_home_selected_item(state: HomeDashboardInput) -> HomeActiveWorkItem |
     )
 
 
-def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
+def build_home_controls(
+    state: HomeDashboardInput,
+    *,
+    selected_row_id: str = "",
+) -> tuple[HomeControl, ...]:
+    """Build the Home canvas's control set.
+
+    Args:
+        state: Adapter-provided dashboard input.
+        selected_row_id: The currently selected Home rail row id, or ""
+            when nothing is selected (the count-only fallback path).
+            Threaded through only from ``build_home_triage_state`` (H2,
+            fix batch F1b) so the global "Review flashcards" shortcut can
+            be scoped to "no real item selected": it is a global shortcut,
+            not the selected item's own control, so it has no business
+            sitting on a real work item's canvas next to that item's own
+            controls (Retry, Approve, ...). Callers that don't have a
+            selection concept (``summarize_home_dashboard``, and the
+            triage builder's own count-only fallback) simply omit this and
+            keep today's unconditional-when-due behavior.
+    """
     controls: list[HomeControl] = []
     approval_item = _first_item_for_status(state, _APPROVAL_STATUSES)
     running_item = _first_item_for_status(state, _RUNNING_STATUSES)
@@ -351,7 +409,9 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
                     chatbook_item.item_id,
                 )
             )
-    if state.flashcards_due_count > 0:
+    if state.flashcards_due_count > 0 and (
+        not selected_row_id or selected_row_id == HOME_FLASHCARDS_DUE_ROW_ID
+    ):
         controls.append(
             HomeControl(
                 "home-review-flashcards",
@@ -782,13 +842,21 @@ def build_home_triage_state(
         selected = all_rows.get(fallback_item.item_id) if fallback_item else None
     next_action = choose_next_best_action(state)
     if selected is not None:
-        controls = build_home_controls(state)
+        # H2: thread the selection into build_home_controls so the global
+        # "Review flashcards" shortcut is scoped out of a real work item's
+        # canvas (kept for the synthetic flashcards row and for "nothing
+        # selected", below).
+        controls = build_home_controls(state, selected_row_id=selected.row_id)
         if selected.row_id == HOME_FLASHCARDS_DUE_ROW_ID:
             # Synthetic row: no backing HomeActiveWorkItem to look up.
             canvas = HomeCanvasState(
                 title=f"Flashcards due: {state.flashcards_due_count}",
                 lines=(
-                    f"{selected.glyph} due for review \u00b7 Library",
+                    # L7: "Library" alone reads as a source/destination
+                    # mismatch (flashcards live in Study, not Library) --
+                    # name the actual feature while still crediting the
+                    # Library-sourced due count.
+                    f"{selected.glyph} due for review \u00b7 Study decks in Library",
                     f"Opens: {_home_route_label('study')}",
                 ),
                 actions=controls,
@@ -804,17 +872,35 @@ def build_home_triage_state(
                 for i in tuple(state.active_work_items) + tuple(state.recent_work_items)
                 if i.item_id == selected.row_id
             )
+            # H3: the Next hint must not repeat the selected item's own
+            # recovery control (e.g. a failed item's canvas already offers
+            # Retry) -- when the engine's top suggestion is exactly that,
+            # for exactly this item's route, recompute with that branch
+            # suppressed so it falls through to the next one.
+            item_next_action = next_action
+            if (
+                next_action.action_id == "review_failed_work"
+                and _normalized_status(item) in _FAILED_STATUSES
+                and item.detail_route == next_action.target_route
+            ):
+                item_next_action = choose_next_best_action(
+                    state, exclude=frozenset({"review_failed_work"})
+                )
             status_line = f"{selected.glyph} {item.status} \u00b7 {item.source}"
             if selected.age_label:
                 status_line += f" \u00b7 since {selected.age_label}"
+            lines = [status_line]
+            if item.status_detail:
+                # M1: the failure reason, as its own line right after the
+                # status line -- truncated so one runaway error message
+                # can't blow out the canvas.
+                lines.append(_truncate_status_detail(item.status_detail))
+            lines.append(f"Opens: {_home_route_label(item.detail_route)}")
             canvas = HomeCanvasState(
                 title=item.title,
-                lines=(
-                    status_line,
-                    f"Opens: {_home_route_label(item.detail_route)}",
-                ),
+                lines=tuple(lines),
                 actions=controls,
-                next_action=next_action,
+                next_action=item_next_action,
                 next_action_is_canvas=False,
                 primary_control_id=_canvas_primary_control_id(
                     selected.status_category, controls

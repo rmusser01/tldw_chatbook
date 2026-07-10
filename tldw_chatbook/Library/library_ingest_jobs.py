@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Callable
 
@@ -98,6 +99,15 @@ class LibraryIngestJob:
             transitions to ``RUNNING``; ``None`` until then.
         finished_at: ``time.monotonic()`` timestamp taken when the job
             transitions to ``DONE`` or ``FAILED``; ``None`` until then.
+        finished_at_wall: The wall-clock counterpart to ``finished_at``,
+            stamped ``datetime.now(timezone.utc).isoformat()`` inside
+            ``mark_done``/``mark_failed`` (H1, fix batch F1b). Unlike
+            ``submitted_at``/``started_at``/``finished_at`` (``time.
+            monotonic()`` floats with no fixed epoch), this is a real ISO-
+            8601 UTC timestamp -- it exists so DONE/FAILED jobs can be
+            sorted and age-labeled by real time once they leave the active
+            queue (e.g. Home's Recent feed). ``""`` until a job reaches a
+            terminal state.
         superseded: ``True`` once a ``FAILED`` job has been retried via
             ``requeue`` (L3b AB wave, B1) -- hides it from ``jobs()``/
             ``counts()`` and makes ``mark_running``/``mark_done``/
@@ -126,6 +136,7 @@ class LibraryIngestJob:
     submitted_at: float = 0.0
     started_at: float | None = None
     finished_at: float | None = None
+    finished_at_wall: str = ""
     superseded: bool = False
     dismissed: bool = False
 
@@ -309,7 +320,7 @@ class LibraryIngestJobRegistry:
         return replace(updated)
 
     def mark_done(self, job_id: str, *, media_id: int) -> LibraryIngestJob | None:
-        """Transition a job to ``DONE`` and stamp ``finished_at``.
+        """Transition a job to ``DONE`` and stamp ``finished_at``/``finished_at_wall``.
 
         Args:
             job_id: The job to transition.
@@ -336,13 +347,14 @@ class LibraryIngestJobRegistry:
             state=IngestJobState.DONE,
             media_id=media_id,
             finished_at=time.monotonic(),
+            finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[index] = updated
         self._notify_listeners()
         return replace(updated)
 
     def mark_failed(self, job_id: str, *, error: str) -> LibraryIngestJob | None:
-        """Transition a job to ``FAILED`` and stamp ``finished_at``.
+        """Transition a job to ``FAILED`` and stamp ``finished_at``/``finished_at_wall``.
 
         Args:
             job_id: The job to transition.
@@ -370,6 +382,7 @@ class LibraryIngestJobRegistry:
             state=IngestJobState.FAILED,
             error=error,
             finished_at=time.monotonic(),
+            finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[index] = updated
         self._notify_listeners()

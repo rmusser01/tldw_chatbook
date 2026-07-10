@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
 import pytest
 
@@ -80,6 +81,47 @@ def test_mark_failed_transitions_and_fills_error() -> None:
     assert failed.state == IngestJobState.FAILED
     assert failed.error == "file not found"
     assert failed.finished_at is not None
+
+
+def test_finished_at_wall_blank_until_a_terminal_transition() -> None:
+    """(H1, fix batch F1b) ``finished_at_wall`` is the wall-clock ISO-8601
+    UTC counterpart to the monotonic ``finished_at`` -- Home's Recent feed
+    needs a real timestamp to sort/display by, since ``time.monotonic()``
+    has no fixed epoch. It stays "" until a job reaches a terminal state."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    assert job.finished_at_wall == ""
+
+    running = registry.mark_running(job.job_id)
+    assert running.finished_at_wall == ""
+
+
+def test_mark_done_stamps_finished_at_wall_iso_utc() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+
+    before = datetime.now(timezone.utc)
+    done = registry.mark_done(job.job_id, media_id=42)
+    after = datetime.now(timezone.utc)
+
+    assert done.finished_at_wall != ""
+    stamped = datetime.fromisoformat(done.finished_at_wall)
+    assert before <= stamped <= after
+
+
+def test_mark_failed_stamps_finished_at_wall_iso_utc() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+
+    before = datetime.now(timezone.utc)
+    failed = registry.mark_failed(job.job_id, error="file not found")
+    after = datetime.now(timezone.utc)
+
+    assert failed.finished_at_wall != ""
+    stamped = datetime.fromisoformat(failed.finished_at_wall)
+    assert before <= stamped <= after
 
 
 def test_unknown_job_id_returns_none_without_raising() -> None:

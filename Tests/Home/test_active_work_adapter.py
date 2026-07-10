@@ -1229,6 +1229,72 @@ def test_local_notification_adapter_maps_ingest_jobs_to_active_work():
     assert failed.status == "failed"
 
 
+def test_local_notification_adapter_promotes_done_ingest_jobs_to_recent_work():
+    """H1 (fix batch F1b): a DONE ingest job has nothing actionable left in
+    Needs Attention/Running, but it must not vanish from Home entirely --
+    it belongs in Recent, like every other terminal local work item, sorted
+    by the wall-clock ``finished_at_wall`` timestamp (not the ``time.
+    monotonic()`` ``finished_at``, which has no fixed epoch to sort by)."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-4",
+            source_path="/tmp/done.txt",
+            state=IngestJobState.DONE,
+            media_id=42,
+            finished_at_wall="2026-07-04T09:00:00+00:00",
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    recent = {item.item_id: item for item in dashboard_input.recent_work_items}
+    assert "local:ingest:ingest-job-4" in recent
+    item = recent["local:ingest:ingest-job-4"]
+    assert item.title == "done.txt"
+    assert item.source == "Library"
+    assert item.status == "done"
+    assert item.detail_route == "library"
+    assert item.console_available is False
+    assert item.updated_at == "2026-07-04T09:00:00+00:00"
+    # Still excluded from active work -- Recent, not Needs Attention/Running.
+    active_ids = {i.item_id for i in dashboard_input.active_work_items}
+    assert "local:ingest:ingest-job-4" not in active_ids
+
+
+def test_local_notification_adapter_sorts_done_ingest_jobs_into_recent_by_finished_at_wall():
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-old",
+            source_path="/tmp/old.txt",
+            state=IngestJobState.DONE,
+            media_id=1,
+            finished_at_wall="2026-07-04T08:00:00+00:00",
+        ),
+        LibraryIngestJob(
+            job_id="ingest-job-new",
+            source_path="/tmp/new.txt",
+            state=IngestJobState.DONE,
+            media_id=2,
+            finished_at_wall="2026-07-04T10:00:00+00:00",
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    recent_ids = [item.item_id for item in dashboard_input.recent_work_items]
+    assert recent_ids.index("local:ingest:ingest-job-new") < recent_ids.index(
+        "local:ingest:ingest-job-old"
+    )
+
+
 def test_local_notification_adapter_escapes_markup_hostile_ingest_job_title():
     """(Critical, L3b Task 6 fix wave) A source filename containing
     Rich-markup-like bracket syntax must reach ``HomeActiveWorkItem.title``

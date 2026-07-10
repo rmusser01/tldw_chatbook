@@ -1080,8 +1080,15 @@ async def test_home_canvas_primary_control_follows_selection_between_failed_item
     """C1: primary emphasis follows the selected row rather than sticking
     to one permanently-accented button. Failed ingest item selected (the
     default selection here, since it is the only attention-worthy item) ->
-    Retry is primary and Review flashcards is not; selecting the
-    flashcards-due row flips it."""
+    Retry is primary; selecting the flashcards-due row flips primary
+    emphasis to Review flashcards.
+
+    H2 (fix batch F1b): the global "Review flashcards" shortcut is scoped
+    to "no real item selected" -- while the failed ingest item is selected,
+    the control is not merely non-primary, it is absent entirely (it isn't
+    about this item). It (re)appears once the flashcards row itself is
+    selected.
+    """
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
@@ -1104,9 +1111,8 @@ async def test_home_canvas_primary_control_follows_selection_between_failed_item
         home = _active_home_screen(host)
 
         retry_button = home.query_one("#home-retry")
-        review_flashcards_button = home.query_one("#home-review-flashcards")
         assert retry_button.has_class("console-action-primary")
-        assert not review_flashcards_button.has_class("console-action-primary")
+        assert len(home.query("#home-review-flashcards")) == 0
 
         row_button = next(
             btn for btn in home.query("Button")

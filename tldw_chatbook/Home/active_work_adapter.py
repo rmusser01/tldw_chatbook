@@ -532,6 +532,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     updated_at=_item_updated_at(record),
                 )
             )
+        recents.extend(self._local_ingest_recent_items())
         recents.sort(key=lambda item: item.updated_at, reverse=True)
         return tuple(recents[:_HOME_RECENT_WORK_LIMIT])
 
@@ -565,54 +566,83 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         called directly, every ``build_dashboard_input``/Home compose, with
         no caching layer.
 
-        DONE jobs are intentionally excluded (v1): a finished ingest has
-        nothing actionable left in Home once it drops off Running, and the
-        Library ingest canvas itself is the source of truth for job
-        history. A future task can promote DONE jobs into
-        ``recent_work_items`` if that turns out to be wanted.
+        DONE jobs are excluded from *this* method's active-work items: a
+        finished ingest has nothing actionable left in Needs Attention or
+        Running once it terminates. They are not dropped from Home
+        entirely, though -- ``_local_ingest_recent_items`` (H1, fix batch
+        F1b) mirrors DONE jobs into ``recent_work_items`` instead, stamped
+        with the real wall-clock ``LibraryIngestJob.finished_at_wall`` so
+        they sort correctly among the other Recent rows.
 
-        ``updated_at`` is always ``""``: ``LibraryIngestJob.started_at`` /
-        ``finished_at`` / ``submitted_at`` are ``time.monotonic()`` floats,
-        which have no fixed epoch and cannot be converted to the wall-clock
-        ISO timestamps ``format_console_relative_age`` expects. Passing ""
+        ``updated_at`` is always ``""`` here: unlike ``finished_at_wall`` (a
+        wall-clock ISO timestamp stamped by ``mark_done``/``mark_failed``
+        specifically so terminal jobs can be sorted/displayed by real time),
+        ``LibraryIngestJob.started_at``/``finished_at``/``submitted_at``
+        remain ``time.monotonic()`` floats with no fixed epoch -- and none
+        of QUEUED/RUNNING/FAILED (the three states this method emits) have
+        a wall-clock timestamp to report through ``updated_at``. Passing ""
         renders no age label (mirrors the L3a flashcards-due row), rather
         than a misleading -- or crashing -- age.
         """
-        if not callable(self.ingest_jobs_provider):
-            return []
-        try:
-            jobs = self.ingest_jobs_provider()
-        except Exception as e:
-            logger.warning(f"Failed to fetch local Library ingest jobs for Home: {e}")
-            return []
         items: list[HomeActiveWorkItem] = []
-        for job in jobs or ():
-            if not isinstance(job, LibraryIngestJob):
-                continue
+        for job in self._ingest_jobs_snapshot():
             if job.state not in _HOME_INGEST_JOB_ACTIVE_STATES:
                 continue
-            # The basename is a user-controlled filename (arbitrary source
-            # path picked in the Library ingest form) and flows straight
-            # into a Textual Button label in HomeRail.compose() -- Button
-            # labels parse Rich markup, so an unescaped title containing
-            # bracket syntax (e.g. "weird [/bracket].txt") raises
-            # MarkupError and breaks Home's mount entirely for as long as
-            # the job stays queued/running/failed. Escape defensively, the
-            # same way _chatbook_title/_safe_payload_text already does for
-            # Chatbook artifact titles below.
-            title = escape(Path(str(job.source_path)).name or str(job.source_path))
             items.append(
                 HomeActiveWorkItem(
                     item_id=f"local:ingest:{job.job_id}",
-                    title=title,
+                    title=_ingest_job_title(job),
                     source="Library",
                     status=job.state.value,
                     detail_route="library",
                     console_available=False,
                     updated_at="",
+                    status_detail=(
+                        escape(job.error)
+                        if job.state == IngestJobState.FAILED and job.error
+                        else ""
+                    ),
                 )
             )
         return items
+
+    def _local_ingest_recent_items(self) -> list[HomeActiveWorkItem]:
+        """Mirror DONE Library ingest jobs into Home's Recent feed (H1).
+
+        A finished ingest has nothing actionable left in Needs Attention or
+        Running (see ``_local_ingest_job_items``'s docstring), but it
+        should not vanish from Home entirely -- it belongs in Recent like
+        every other terminal local work item, sorted by
+        ``LibraryIngestJob.finished_at_wall`` (a real wall-clock ISO
+        timestamp, unlike the ``time.monotonic()`` ``finished_at``).
+        """
+        items: list[HomeActiveWorkItem] = []
+        for job in self._ingest_jobs_snapshot():
+            if job.state is not IngestJobState.DONE:
+                continue
+            items.append(
+                HomeActiveWorkItem(
+                    item_id=f"local:ingest:{job.job_id}",
+                    title=_ingest_job_title(job),
+                    source="Library",
+                    status="done",
+                    detail_route="library",
+                    console_available=False,
+                    updated_at=job.finished_at_wall,
+                )
+            )
+        return items
+
+    def _ingest_jobs_snapshot(self) -> tuple[LibraryIngestJob, ...]:
+        """Fetch and validate the Library ingest job registry snapshot."""
+        if not callable(self.ingest_jobs_provider):
+            return ()
+        try:
+            jobs = self.ingest_jobs_provider()
+        except Exception as e:
+            logger.warning(f"Failed to fetch local Library ingest jobs for Home: {e}")
+            return ()
+        return tuple(job for job in jobs or () if isinstance(job, LibraryIngestJob))
 
     def _local_watchlist_run_by_id(self, target_id: str) -> Any | None:
         if self.watchlist_service is None:
@@ -710,6 +740,21 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         }
         payload.update(_console_metadata_payload(_mapping_value(record, "metadata")))
         return payload
+
+
+def _ingest_job_title(job: LibraryIngestJob) -> str:
+    """Return an escaped display title for a Library ingest job.
+
+    The basename is a user-controlled filename (arbitrary source path
+    picked in the Library ingest form) and flows straight into a Textual
+    Button label in HomeRail.compose() -- Button labels parse Rich markup,
+    so an unescaped title containing bracket syntax (e.g.
+    "weird [/bracket].txt") raises MarkupError and breaks Home's mount
+    entirely for as long as the job stays visible. Escape defensively, the
+    same way ``_chatbook_title``/``_safe_payload_text`` already do for
+    Chatbook artifact titles.
+    """
+    return escape(Path(str(job.source_path)).name or str(job.source_path))
 
 
 def _item_updated_at(record: Any) -> str:
