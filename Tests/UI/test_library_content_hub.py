@@ -327,7 +327,7 @@ async def test_library_navigation_context_opens_requested_conversation() -> None
         )
 
         visible = _visible_text(screen)
-        assert getattr(screen, "_active_mode") == "conversations"
+        assert getattr(screen, "_library_selected_row_id") == "browse-conversations"
         assert getattr(screen, "_selected_conversation_id") == "chat-2"
         assert "Design Review" in visible
         assert "Planning Chat" in visible
@@ -347,7 +347,7 @@ async def test_library_navigation_context_opens_requested_valid_mode() -> None:
         screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_MODE: "search"})
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
-        assert getattr(screen, "_active_mode") == "search"
+        assert getattr(screen, "_library_selected_row_id") == "browse-search"
         assert str(screen.query_one("#library-header-line").renderable) == "Library | Local"
         assert screen.query_one("#library-row-browse-search", Button).has_class(
             "library-rail-row-selected"

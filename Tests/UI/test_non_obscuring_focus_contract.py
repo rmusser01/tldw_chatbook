@@ -676,27 +676,32 @@ def test_console_composer_action_availability_states_are_visually_distinct():
         assert "$error" not in stop_active
 
 
-def test_library_mode_chip_active_states_use_selected_focus_contracts():
-    """``.library-mode-chip:focus`` (the retired mode-strip's own focus rule)
-    was removed once the Library screen stopped rendering any widget with
-    that class (see Task 7's rail/canvas rework); ``.notes-mode-chip:focus``
-    keeps that contract. ``.library-mode-chip.is-active``/``:focus`` are
-    untouched (still shared with ``.notes-mode-chip``/``.personas-mode-chip``
-    and out of this retirement's scope), so those assertions stay."""
+def test_library_mode_chip_selector_is_retired_from_focus_contracts():
+    """``.library-mode-chip`` (base rule, ``:focus``, ``.is-active``, and
+    ``.is-active:focus``) was deleted wholesale in L3b Task 9 along with
+    ``LIBRARY_MODES`` and the rest of the mode-switch chrome the Library
+    rail + canvas shell superseded. ``.notes-mode-chip``/``.personas-mode-chip``
+    still render their own mode strips, so their base rule, ``:focus`` rule,
+    and shared ``.is-active``/``.is-active:focus`` variants keep the same
+    non-obscuring, readable-selected-state contracts this suite enforces
+    elsewhere -- only the ``library-`` selector is gone."""
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
         BUNDLE.read_text(encoding="utf-8"),
     ):
+        assert ".library-mode-chip" not in css_selectors(text)
         assert ".library-mode-chip:focus" not in css_selectors(text)
 
-        active = css_block(text, ".library-mode-chip.is-active")
+        assert_non_obscuring_focus(css_block(text, ".notes-mode-chip:focus"))
+
+        active = css_block(text, ".notes-mode-chip.is-active")
         assert_readable_selected_state_contract(active)
         # Chips are one row tall; selection reads through background/underline,
         # not a border that would consume the single content row.
         assert "border: none;" in active
         assert "background: $ds-focus-bg;" in active
 
-        active_focus = css_block(text, ".library-mode-chip.is-active:focus")
+        active_focus = css_block(text, ".notes-mode-chip.is-active:focus")
         assert_non_obscuring_focus(active_focus)
         assert active_focus != active
         assert "border: none;" in active_focus

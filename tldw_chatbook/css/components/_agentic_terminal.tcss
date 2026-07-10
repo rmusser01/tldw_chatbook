@@ -3411,7 +3411,6 @@ Button.notes-delete-action {
     text-style: bold;
 }
 
-.library-mode-chip.is-active,
 .notes-mode-chip.is-active,
 .personas-mode-chip.is-active {
     border: none;
@@ -3420,7 +3419,6 @@ Button.notes-delete-action {
     text-style: bold underline;
 }
 
-.library-mode-chip.is-active:focus,
 .notes-mode-chip.is-active:focus,
 .personas-mode-chip.is-active:focus {
     outline: none;

@@ -854,7 +854,7 @@ async def test_library_shell_search_outcome_resolves_status_after_leaving_canvas
         # Leave the Search canvas while the gated fake is still in flight.
         screen.query_one("#library-row-browse-media").press()
         await pilot.pause()
-        assert screen._active_mode == "media"
+        assert screen._library_selected_row_id == "browse-media"
 
         service.release_event.set()
 
@@ -4511,10 +4511,10 @@ async def test_library_shell_note_flush_on_rail_switch_saves_before_switching():
             raise AssertionError("Rail switch never triggered the flush save.")
 
         # The save is still sleeping: the rail switch must not have applied yet.
-        assert screen._active_mode == "notes"
+        assert screen._library_selected_row_id == "browse-notes"
 
         for _ in range(150):
-            if screen._active_mode == "media":
+            if screen._library_selected_row_id == "browse-media":
                 break
             await pilot.pause(0.02)
         else:
@@ -4537,8 +4537,9 @@ async def test_library_shell_note_flush_on_notes_create_deeplink_saves_before_sw
     runs it on a mounted, dirty editor. Without the flush the recompose to
     the create view destroys the ``#library-note-body`` the debounced
     autosave would have read, silently dropping the last edits. Proven by
-    the (deliberately slow) save being in flight while the mode is still
-    ``notes`` and only becoming ``notes-create`` once it resolves.
+    the (deliberately slow) save being in flight while the selected row is
+    still ``browse-notes`` and only becoming ``create-note`` once it
+    resolves.
     """
     app = _build_test_app()
     service = _DelayedSaveLibraryNotesScopeService(_two_notes())
@@ -4564,10 +4565,10 @@ async def test_library_shell_note_flush_on_notes_create_deeplink_saves_before_sw
             raise AssertionError("notes_create deep link never triggered the flush save.")
 
         # The save is still sleeping: the create view must not have applied yet.
-        assert screen._active_mode == "notes"
+        assert screen._library_selected_row_id == "browse-notes"
 
         for _ in range(150):
-            if screen._active_mode == "notes-create":
+            if screen._library_selected_row_id == "create-note":
                 break
             await pilot.pause(0.02)
         else:
@@ -6778,7 +6779,6 @@ async def test_library_shell_search_result_open_note_lands_in_editor():
             raise AssertionError("Open never landed on the note editor.")
         await pilot.pause()
 
-        assert screen._active_mode == "notes"
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
         title = screen.query_one("#library-note-title", Input)
         assert title.value == "Q3 retro"
@@ -6824,7 +6824,6 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
             raise AssertionError("Open never landed on the media viewer.")
         await pilot.pause()
 
-        assert screen._active_mode == "media"
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
         title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert title == "Interview Recording"
@@ -6885,7 +6884,6 @@ async def test_library_shell_search_result_open_conversation_fetches_missing_id(
             await pilot.pause()
             await pilot.pause()
 
-            assert screen._active_mode == "conversations"
             assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
             preview = str(
                 screen.query_one("#library-conversation-preview-lines").renderable
