@@ -5,6 +5,7 @@ import pytest
 from textual.app import App
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_INGEST
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Home.active_work_adapter import (
     HomeConsoleLaunch,
@@ -1053,3 +1054,112 @@ async def test_pending_console_launch_does_not_create_home_live_work_controls():
 
         assert len(home.query("#home-pause")) == 0
         assert len(home.query("#home-open-in-console")) == 0
+
+
+# --- Library ingest jobs -> Home Running / Needs Attention (L3b Task 6) ---
+
+
+@pytest.mark.asyncio
+async def test_home_running_section_shows_running_library_ingest_job():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:ingest-job-1",
+                title="quarterly.txt",
+                source="Library",
+                status="running",
+                detail_route="library",
+                console_available=False,
+                updated_at="",
+            ),
+        ),
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        running_body = home.query_one("#home-rail-section-body-running")
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-1"
+        )
+        assert row_button in running_body.children
+        assert "quarterly.txt" in str(row_button.label)
+        assert "Library" in str(row_button.label)
+        assert not any(
+            str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-1"
+            for btn in home.query_one("#home-rail-section-body-attention").query("Button")
+        )
+
+
+@pytest.mark.asyncio
+async def test_home_needs_attention_section_shows_failed_library_ingest_job():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:ingest-job-3",
+                title="broken.pdf",
+                source="Library",
+                status="failed",
+                detail_route="library",
+                console_available=False,
+                updated_at="",
+            ),
+        ),
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        attention_body = home.query_one("#home-rail-section-body-attention")
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-3"
+        )
+        assert row_button in attention_body.children
+        assert "broken.pdf" in str(row_button.label)
+
+
+def test_app_detail_hook_navigates_library_with_ingest_context_for_handled_ingest_detail():
+    """Home's ``Open details`` control on a Library ingest job routes to the
+    Library screen carrying the ingest nav-context flag -- the one-hop route
+    an ingest job takes from Home's Running/Needs Attention feed back to the
+    in-canvas ingest queue (mirrors the subscriptions staging special-case
+    right above this test).
+    """
+    app = _build_test_app()
+    adapter = RecordingHomeActiveWorkAdapter(
+        responses={
+            HomeControlAction.OPEN_DETAILS: HomeControlResult(
+                action=HomeControlAction.OPEN_DETAILS,
+                status=HomeControlResultStatus.HANDLED,
+                message="Opening Library ingest job details.",
+                target_id="local:ingest:ingest-job-1",
+                target_route="library",
+            ),
+        }
+    )
+    app.home_active_work_adapter = adapter
+    app.notify = Mock()
+    app.post_message = Mock()
+
+    result = app.open_active_home_item_details(
+        target_id="local:ingest:ingest-job-1",
+        target_route="library",
+    )
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    app.post_message.assert_called_once()
+    posted = app.post_message.call_args.args[0]
+    assert posted.screen_name == "library"
+    assert posted.screen_context == {LIBRARY_NAV_CONTEXT_INGEST: True}

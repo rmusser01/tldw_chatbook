@@ -10,6 +10,7 @@ from tldw_chatbook.Home.active_work_adapter import (
     UnavailableHomeActiveWorkAdapter,
 )
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, summarize_home_dashboard
+from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.Notifications.notifications_scope_service import ServerEventScopeRequiredError
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
@@ -1119,3 +1120,89 @@ def test_flashcards_due_provider_returning_noncoercible_object_degrades_to_zero(
     )
 
     assert dashboard_input.flashcards_due_count == 0
+
+
+# --- Library ingest jobs -> Home Running / Needs Attention (L3b Task 6) ---
+
+
+def test_local_notification_adapter_maps_ingest_jobs_to_active_work():
+    """Running/queued/failed ingest jobs mirror into active work; done jobs
+    are excluded (v1 -- see ``_local_ingest_job_items`` docstring)."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/reports/quarterly.txt",
+            state=IngestJobState.RUNNING,
+        ),
+        LibraryIngestJob(
+            job_id="ingest-job-2",
+            source_path="/tmp/notes/todo.md",
+            state=IngestJobState.QUEUED,
+        ),
+        LibraryIngestJob(
+            job_id="ingest-job-3",
+            source_path="/tmp/broken.pdf",
+            state=IngestJobState.FAILED,
+            error="unsupported format",
+        ),
+        LibraryIngestJob(
+            job_id="ingest-job-4",
+            source_path="/tmp/done.txt",
+            state=IngestJobState.DONE,
+            media_id=42,
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    items = {item.item_id: item for item in dashboard_input.active_work_items}
+    assert set(items) == {
+        "local:ingest:ingest-job-1",
+        "local:ingest:ingest-job-2",
+        "local:ingest:ingest-job-3",
+    }
+
+    running = items["local:ingest:ingest-job-1"]
+    assert running.title == "quarterly.txt"
+    assert running.source == "Library"
+    assert running.status == "running"
+    assert running.detail_route == "library"
+    assert running.console_available is False
+    assert running.updated_at == ""
+
+    queued = items["local:ingest:ingest-job-2"]
+    assert queued.title == "todo.md"
+    assert queued.status == "queued"
+
+    failed = items["local:ingest:ingest-job-3"]
+    assert failed.title == "broken.pdf"
+    assert failed.status == "failed"
+
+
+def test_local_notification_adapter_ingest_items_absent_without_provider():
+    adapter = LocalNotificationHomeActiveWorkAdapter()
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.active_work_items == ()
+
+
+def test_local_notification_adapter_opens_local_ingest_job_details():
+    adapter = LocalNotificationHomeActiveWorkAdapter()
+
+    result = adapter.handle_control(
+        HomeControlAction.OPEN_DETAILS,
+        target_id="local:ingest:ingest-job-1",
+        target_route="library",
+    )
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    assert result.target_route == "library"
+    assert result.target_id == "local:ingest:ingest-job-1"

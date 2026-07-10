@@ -14,6 +14,7 @@ from loguru import logger
 from rich.markup import escape
 
 from tldw_chatbook.Chat.answer_citations import summarize_citation_artifact_metadata
+from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.Notifications.notifications_scope_service import ServerEventScopeRequiredError
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
@@ -44,6 +45,11 @@ _HOME_WATCHLIST_RUN_STATUSES = frozenset(
 )
 _HOME_RECENT_WORK_STATUSES = frozenset(
     {"completed", "complete", "succeeded", "success", "done", "finished"}
+)
+# Library ingest job states that mirror into Home's active-work feed.
+# DONE jobs stay out of active work in v1 -- see _local_ingest_job_items.
+_HOME_INGEST_JOB_ACTIVE_STATES = frozenset(
+    {IngestJobState.QUEUED, IngestJobState.RUNNING, IngestJobState.FAILED}
 )
 _HOME_RECENT_WORK_LIMIT = 8
 _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS = 1000
@@ -189,6 +195,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         server_event_service: Any | None = None,
         runtime_policy: Any | None = None,
         flashcards_due_provider: Callable[[], int | None] | None = None,
+        ingest_jobs_provider: Callable[[], tuple] | None = None,
     ) -> None:
         super().__init__(runtime_policy=runtime_policy)
         self.notification_service = notification_service
@@ -196,6 +203,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         self.chatbook_service = chatbook_service
         self.server_event_service = server_event_service
         self.flashcards_due_provider = flashcards_due_provider
+        self.ingest_jobs_provider = ingest_jobs_provider
         self._chatbook_artifact_snapshot: tuple[Mapping[str, Any], ...] = ()
         self._chatbook_artifact_snapshot_lock = RLock()
         self._flashcards_due_count: int = 0
@@ -265,6 +273,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 [
                     *self._local_watchlist_run_items(runs),
                     *self._local_chatbook_artifact_items(),
+                    *self._local_ingest_job_items(),
                 ]
             ),
             recent_work_items=self._local_recent_work_items(runs),
@@ -336,6 +345,19 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                         action_label="Open Chatbook artifact",
                     ),
                 )
+        if action is HomeControlAction.OPEN_DETAILS and _is_local_ingest_job_id(target_id):
+            # Library ingest jobs are ephemeral, in-memory registry entries
+            # (see library_ingest_jobs.py) -- routing back to the Library
+            # ingest canvas does not require the job to still be present in
+            # the provider snapshot (it may have already finished or been
+            # requeued by the time the control is pressed).
+            return HomeControlResult(
+                action=action,
+                status=HomeControlResultStatus.HANDLED,
+                message="Opening Library ingest job details.",
+                target_route=target_route or "library",
+                target_id=target_id,
+            )
         return super().handle_control(
             action,
             target_id=target_id,
@@ -524,6 +546,57 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             )
         return items
 
+    def _local_ingest_job_items(self) -> list[HomeActiveWorkItem]:
+        """Mirror running/queued/failed Library ingest jobs into active work.
+
+        The registry (``tldw_chatbook.Library.library_ingest_jobs``) is an
+        in-memory, UI-thread-only object owned by the app -- ``jobs()`` is a
+        synchronous, non-blocking snapshot read (no DB, no I/O), so unlike
+        ``flashcards_due_provider``/``chatbook_service`` there is no
+        in-memory-SQLite thread hazard to guard against: the provider is
+        called directly, every ``build_dashboard_input``/Home compose, with
+        no caching layer.
+
+        DONE jobs are intentionally excluded (v1): a finished ingest has
+        nothing actionable left in Home once it drops off Running, and the
+        Library ingest canvas itself is the source of truth for job
+        history. A future task can promote DONE jobs into
+        ``recent_work_items`` if that turns out to be wanted.
+
+        ``updated_at`` is always ``""``: ``LibraryIngestJob.started_at`` /
+        ``finished_at`` / ``submitted_at`` are ``time.monotonic()`` floats,
+        which have no fixed epoch and cannot be converted to the wall-clock
+        ISO timestamps ``format_console_relative_age`` expects. Passing ""
+        renders no age label (mirrors the L3a flashcards-due row), rather
+        than a misleading -- or crashing -- age.
+        """
+        if not callable(self.ingest_jobs_provider):
+            return []
+        try:
+            jobs = self.ingest_jobs_provider()
+        except Exception as e:
+            logger.warning(f"Failed to fetch local Library ingest jobs for Home: {e}")
+            return []
+        items: list[HomeActiveWorkItem] = []
+        for job in jobs or ():
+            if not isinstance(job, LibraryIngestJob):
+                continue
+            if job.state not in _HOME_INGEST_JOB_ACTIVE_STATES:
+                continue
+            title = Path(str(job.source_path)).name or str(job.source_path)
+            items.append(
+                HomeActiveWorkItem(
+                    item_id=f"local:ingest:{job.job_id}",
+                    title=title,
+                    source="Library",
+                    status=job.state.value,
+                    detail_route="library",
+                    console_available=False,
+                    updated_at="",
+                )
+            )
+        return items
+
     def _local_watchlist_run_by_id(self, target_id: str) -> Any | None:
         if self.watchlist_service is None:
             return None
@@ -651,6 +724,10 @@ def _is_local_watchlist_run_id(value: str | None) -> bool:
 
 def _is_local_chatbook_id(value: str | None) -> bool:
     return bool(value and str(value).startswith("local:chatbook:"))
+
+
+def _is_local_ingest_job_id(value: str | None) -> bool:
+    return bool(value and str(value).startswith("local:ingest:"))
 
 
 def _runtime_server_status_fields(runtime_policy: Any | None) -> dict[str, object]:

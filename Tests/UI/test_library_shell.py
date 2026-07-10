@@ -14,6 +14,7 @@ from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextAr
 
 from tldw_chatbook.app import LibraryIngestQueueMixin
 from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
 )
@@ -3275,6 +3276,59 @@ async def test_library_shell_note_id_deeplink_opens_note_editor():
         assert screen._selected_note_id == "n-1"
         title = screen.query_one("#library-note-title", Input)
         assert title.value == "Q3 retro"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_nav_context_deeplink_lands_on_ingest_canvas():
+    """Home's ingest-jobs ``Open details`` control re-points here (L3b Task
+    6): a ``LIBRARY_NAV_CONTEXT_INGEST`` navigation context must land the
+    shell on the in-canvas Ingest > Import media view, mirroring how
+    pressing the Ingest rail row does (``LIBRARY_ROW_INGEST_MEDIA`` / canvas
+    kind ``ingest-media``). Unlike the collections/note_id deep links, the
+    ingest canvas needs no async data fetch, so setting the selected row id
+    pre-mount is sufficient -- there is no on_mount deferral to add.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    screen = LibraryScreen(app)
+
+    # Mirrors the real app.py ordering: handle_screen_navigation calls
+    # apply_navigation_context BEFORE switch_screen mounts the destination
+    # screen (see test_library_shell_collections_deeplink_loads_before_mount).
+    assert screen.is_mounted is False
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+        assert screen.query_one("#library-ingest-path")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_unknown_nav_context_mode_degrades_quietly():
+    """A retired/unknown navigation-context ``mode`` (e.g. the removed
+    Import/Export placeholder row's old mode value) must not raise and must
+    leave the current rail selection untouched -- carried Minor from L3b
+    Task 3.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        selected_before = screen._library_selected_row_id
+
+        screen.apply_navigation_context({"mode": "import-export"})
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == selected_before
 
 
 @pytest.mark.asyncio

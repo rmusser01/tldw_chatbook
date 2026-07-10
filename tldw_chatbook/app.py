@@ -81,6 +81,7 @@ from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_L
     TAB_SCHEDULES, TAB_WORKFLOWS, TAB_MCP, TAB_ACP, TAB_SKILLS, TAB_SETTINGS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
     LIBRARY_NAV_CONTEXT_MODE, LIBRARY_NAV_CONTEXT_NOTE_ID, LIBRARY_NAV_CONTEXT_NOTES_CREATE, \
+    LIBRARY_NAV_CONTEXT_INGEST, \
     get_tab_display_label
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
@@ -2129,7 +2130,19 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         if result.status is HomeControlResultStatus.HANDLED and result.target_route:
             if result.target_route == "subscriptions":
                 self._stage_subscription_watchlist_run_context(result.target_id or target_id)
-            self.post_message(NavigateToScreen(result.target_route))
+                self.post_message(NavigateToScreen(result.target_route))
+            elif result.target_route == "library" and str(
+                result.target_id or target_id or ""
+            ).startswith("local:ingest:"):
+                # Home's ingest-jobs Running/Needs Attention rows one-hop
+                # back to the Library ingest canvas via the nav-context
+                # contract instead of a bare route (mirrors the
+                # subscriptions staging special-case above).
+                self.post_message(
+                    NavigateToScreen("library", {LIBRARY_NAV_CONTEXT_INGEST: True})
+                )
+            else:
+                self.post_message(NavigateToScreen(result.target_route))
         return result
 
     def _stage_subscription_watchlist_run_context(self, target_id: str | None) -> None:
@@ -2502,6 +2515,11 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             server_event_service=self.notifications_scope_service,
             runtime_policy=self.runtime_policy,
             flashcards_due_provider=self._local_flashcards_due_count,
+            # self.library_ingest_jobs is a plain in-memory registry (no DB,
+            # no I/O) assigned later in __init__ (_wire_study_services); this
+            # lambda closes over self so it resolves lazily on first Home
+            # compose rather than at wiring time here.
+            ingest_jobs_provider=lambda: self.library_ingest_jobs.jobs(),
         )
         try:
             self.server_claims_service = ServerClaimsService.from_config(

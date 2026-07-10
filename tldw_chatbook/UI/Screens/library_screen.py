@@ -25,6 +25,7 @@ from ...config import get_cli_setting, save_setting_to_cli_config
 from ...Constants import (
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
@@ -718,7 +719,10 @@ class LibraryScreen(BaseAppScreen):
                 "new note" deep link). A ``note_id`` opens that note's
                 in-canvas editor directly (the retired Notes tab's
                 chat-sidebar deep link); ``mode="notes"`` alone (no
-                ``note_id``) lands on the Notes list instead.
+                ``note_id``) lands on the Notes list instead. An
+                ``ingest_media`` flag lands on the in-canvas Ingest >
+                Import media view (Home's ingest-jobs "Open details"
+                control, L3b Task 6).
         """
         if not isinstance(context, Mapping):
             return
@@ -776,6 +780,7 @@ class LibraryScreen(BaseAppScreen):
             max_length=200,
         )
         notes_create = bool(context.get(LIBRARY_NAV_CONTEXT_NOTES_CREATE))
+        ingest_media = bool(context.get(LIBRARY_NAV_CONTEXT_INGEST))
         target_mode = requested_mode if requested_mode in LIBRARY_MODES else ""
         if conversation_id and not target_mode:
             target_mode = LIBRARY_MODE_CONVERSATIONS
@@ -802,6 +807,18 @@ class LibraryScreen(BaseAppScreen):
             # only apply the mode + selection the recompose reads.
             self._active_mode = "notes-create"
             self._library_selected_row_id = LIBRARY_ROW_CREATE_NOTE
+        if ingest_media:
+            # Home's ingest-jobs "Open details" control re-points here
+            # (L3b Task 6): running/queued/failed Library ingest jobs
+            # mirror into Home's Running and Needs Attention sections, and
+            # this deep link is their one-hop route back to the in-canvas
+            # ingest queue. Mirrors _select_library_rail_row(
+            # LIBRARY_ROW_INGEST_MEDIA, "ingest-media") -- unlike
+            # collections/note_id above, the ingest canvas reads the job
+            # registry directly on recompose, so no async data fetch (and
+            # therefore no on_mount deferral) is needed even pre-mount.
+            self._active_mode = "ingest-media"
+            self._library_selected_row_id = LIBRARY_ROW_INGEST_MEDIA
         if note_id:
             # Forward-compat entry point: the retired Notes tab's chat-sidebar
             # deep link carried a note id, and this rebuilds the editor for it.
