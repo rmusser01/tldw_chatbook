@@ -8,6 +8,7 @@ import logging
 from typing import TYPE_CHECKING
 #
 # 3rd-Party Imports
+from loguru import logger as _loguru_fallback_logger
 from textual.css.query import QueryError
 from textual.widgets import Button
 #
@@ -28,7 +29,7 @@ async def handle_llm_nav_button_pressed(app: "TldwCli", event: Button.Pressed) -
     Handles generic navigation button presses in the LLM Management tab
     by activating the corresponding view.
     """
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     button_id = event.button.id
     logger.info(f"LLM nav button pressed: {button_id}")
 
@@ -37,7 +38,7 @@ async def handle_llm_nav_button_pressed(app: "TldwCli", event: Button.Pressed) -
         for nav_button in nav_pane.query(".llm-nav-button"):
             nav_button.remove_class("-active")
     except QueryError as e:
-        logger.error(f"Could not query #llm-nav-pane or .llm-nav-button: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Could not query #llm-nav-pane or .llm-nav-button: {e}")
         # Proceeding because view switching might still work
 
     # Add active class to the specifically clicked button
@@ -45,7 +46,7 @@ async def handle_llm_nav_button_pressed(app: "TldwCli", event: Button.Pressed) -
         clicked_button = app.query_one(f"#{button_id}", Button)
         clicked_button.add_class("-active")
     except QueryError as e:
-        logger.error(f"Could not query clicked button #{button_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Could not query clicked button #{button_id}: {e}")
         # Proceeding because view switching might still work
 
     # Activate the corresponding view
@@ -57,7 +58,7 @@ async def handle_llm_nav_button_pressed(app: "TldwCli", event: Button.Pressed) -
         app.llm_active_view = view_to_activate
         logger.info(f"Successfully set app.llm_active_view to: {view_to_activate}")
     except Exception as e:  # Catch errors related to setting reactive or if watcher fails
-        logger.error(f"Error in LLM view activation for '{view_to_activate}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error in LLM view activation for '{view_to_activate}': {e}")
 
 
 # --- Button Handler Map ---

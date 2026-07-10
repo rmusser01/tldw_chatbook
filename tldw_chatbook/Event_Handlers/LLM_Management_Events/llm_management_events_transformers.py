@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from loguru import logger as _loguru_fallback_logger
 import shlex
 import subprocess
 from pathlib import Path
@@ -34,7 +35,7 @@ from .llm_management_events import \
 # --- Worker function for model download (can be similar to the existing one) ---
 async def run_transformers_model_download_worker(app_instance: "TldwCli", command: List[str],
                                                  models_base_dir_for_cwd: str) -> str:
-    logger = getattr(app_instance, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app_instance, "loguru_logger", _loguru_fallback_logger)
     quoted_command = ' '.join(shlex.quote(c) for c in command)
     # The actual target download path is part of the command (--local-dir)
     logger.info(f"Transformers Download WORKER starting: {quoted_command}")
@@ -100,7 +101,7 @@ async def run_transformers_model_download_worker(app_instance: "TldwCli", comman
         raise RuntimeError(msg)  # Make worker fail
     except Exception as err:
         msg = f"CRITICAL ERROR in Transformers Download worker: {err} (Command: {quoted_command})"
-        logger.error(msg, exc_info=True)
+        logger.opt(exception=True).error(msg)
         app_instance.call_from_thread(app_instance._update_transformers_log, f"[bold red]{msg}[/]\n")
         raise
     finally:
@@ -111,7 +112,7 @@ async def run_transformers_model_download_worker(app_instance: "TldwCli", comman
 
 
 async def handle_transformers_list_local_models_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("Transformers list local models button pressed.")
 
     models_dir_input: Input = app.query_one("#transformers-models-dir-path", Input)
@@ -192,13 +193,13 @@ async def handle_transformers_list_local_models_button_pressed(app: "TldwCli", e
         log_output_widget.write("Local model scan complete.\n")
 
     except Exception as e:
-        logger.error(f"Error scanning for local models: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error scanning for local models: {e}")
         log_output_widget.write(f"[bold red]Error scanning models: {e}[/]\n")
         app.notify("Error during local model scan.", severity="error")
 
 
 async def handle_transformers_download_model_button_pressed(app: "TldwCli") -> None:
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.info("Transformers download model button pressed.")
 
     repo_id_input: Input = app.query_one("#transformers-download-repo-id", Input)
@@ -266,7 +267,7 @@ async def handle_transformers_download_model_button_pressed(app: "TldwCli") -> N
 
 
 async def handle_transformers_browse_models_dir_button_pressed(app: "TldwCli", event: Button.Pressed) -> None:
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Transformers browse models directory button pressed.")
 
     try:

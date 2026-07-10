@@ -11,6 +11,7 @@ import asyncio
 
 import json
 import logging
+from loguru import logger as _loguru_fallback_logger
 import shlex
 import subprocess
 import sys
@@ -63,7 +64,7 @@ __all__ = [
 
 async def handle_ollama_nav_button_pressed(app: "TldwCli") -> None:
     """Handle the Ollama navigation button press."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama nav button pressed.")
 
     try:
@@ -110,16 +111,16 @@ async def handle_ollama_nav_button_pressed(app: "TldwCli") -> None:
         # app.notify("Switched to Ollama view.") # Optional notification
 
     except QueryError as e: # pragma: no cover
-        logger.error(f"QueryError in handle_ollama_nav_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_ollama_nav_button_pressed: {e}")
         app.notify("Error switching to Ollama view: Could not find required UI elements.", severity="error")
     except Exception as e: # pragma: no cover
-        logger.error(f"Unexpected error in handle_ollama_nav_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in handle_ollama_nav_button_pressed: {e}")
         app.notify("An unexpected error occurred while switching to Ollama view.", severity="error")
 
 
 async def handle_ollama_browse_exec_button_pressed(app: "TldwCli") -> None:
     """Handles the 'Browse' button press for Ollama executable path."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama browse executable button pressed.")
 
     exec_filters = Filters(
@@ -139,7 +140,7 @@ async def handle_ollama_browse_exec_button_pressed(app: "TldwCli") -> None:
 
 async def handle_ollama_start_service_button_pressed(app: "TldwCli") -> None:
     """Handles the 'Start Ollama Service' button press."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama 'Start Service' button pressed.")
     
     try:
@@ -186,16 +187,16 @@ async def handle_ollama_start_service_button_pressed(app: "TldwCli") -> None:
         app.notify("Ollama service starting...", severity="information")
         
     except QueryError as e:
-        logger.error(f"QueryError in handle_ollama_start_service_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_ollama_start_service_button_pressed: {e}")
         app.notify("Error accessing UI elements for starting Ollama service.", severity="error")
     except Exception as e:
-        logger.error(f"Unexpected error in handle_ollama_start_service_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in handle_ollama_start_service_button_pressed: {e}")
         app.notify("An unexpected error occurred while starting Ollama service.", severity="error")
 
 
 async def handle_ollama_stop_service_button_pressed(app: "TldwCli") -> None:
     """Handles the 'Stop Ollama Service' button press."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama 'Stop Service' button pressed.")
     
     try:
@@ -212,16 +213,16 @@ async def handle_ollama_stop_service_button_pressed(app: "TldwCli") -> None:
             app.notify("No running Ollama service to stop.", severity="warning")
             
     except QueryError as e:
-        logger.error(f"QueryError in handle_ollama_stop_service_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_ollama_stop_service_button_pressed: {e}")
         app.notify("Error accessing UI elements for stopping Ollama service.", severity="error")
     except Exception as e:
-        logger.error(f"Unexpected error in handle_ollama_stop_service_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in handle_ollama_stop_service_button_pressed: {e}")
         app.notify("An unexpected error occurred while stopping Ollama service.", severity="error")
 
 
 async def handle_ollama_list_models_button_pressed(app: "TldwCli") -> None:
     """Handles the 'List Models' button press for Ollama."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama 'List Models' button pressed.")
     try:
         base_url_input = app.query_one("#ollama-server-url", Input)
@@ -257,16 +258,16 @@ async def handle_ollama_list_models_button_pressed(app: "TldwCli") -> None:
             log_output_widget.write("No models found or unexpected response.")
             app.notify("No Ollama models found or unexpected response.", severity="warning")
     except QueryError as e: # pragma: no cover
-        logger.error(f"QueryError in handle_ollama_list_models_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_ollama_list_models_button_pressed: {e}")
         app.notify("Error accessing Ollama UI elements for listing models.", severity="error")
     except Exception as e: # pragma: no cover
-        logger.error(f"Unexpected error in handle_ollama_list_models_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in handle_ollama_list_models_button_pressed: {e}")
         app.notify("An unexpected error occurred while listing Ollama models.", severity="error")
 
 
 async def handle_ollama_show_model_button_pressed(app: "TldwCli") -> None:
     """Handles the 'Show Model Info' button press for Ollama."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama 'Show Model Info' button pressed.")
     try:
         base_url_input = app.query_one("#ollama-server-url", Input)
@@ -309,16 +310,16 @@ async def handle_ollama_show_model_button_pressed(app: "TldwCli") -> None:
             log_output_widget.write(f"No information returned for model '{model_name}'.")
             app.notify(f"No info for {model_name} or unexpected response.", severity="warning")
     except QueryError as e: # pragma: no cover
-        logger.error(f"QueryError in handle_ollama_show_model_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_ollama_show_model_button_pressed: {e}")
         app.notify("Error accessing Ollama UI elements for showing model info.", severity="error")
     except Exception as e: # pragma: no cover
-        logger.error(f"Unexpected error in handle_ollama_show_model_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in handle_ollama_show_model_button_pressed: {e}")
         app.notify("An unexpected error occurred while showing model info.", severity="error")
 
 
 async def handle_ollama_delete_model_button_pressed(app: "TldwCli") -> None:
     """Handles the 'Delete Model' button press for Ollama."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama 'Delete Model' button pressed.")
     try:
         base_url_input = app.query_one("#ollama-server-url", Input)
@@ -381,16 +382,16 @@ async def handle_ollama_delete_model_button_pressed(app: "TldwCli") -> None:
         # Optionally, refresh the model list:
         # app.call_after_refresh(lambda: app.run_action("ollama_list_models_button_pressed"))
     except QueryError as e: # pragma: no cover
-        logger.error(f"QueryError in handle_ollama_delete_model_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_ollama_delete_model_button_pressed: {e}")
         app.notify("Error accessing Ollama UI elements for deleting model.", severity="error")
     except Exception as e: # pragma: no cover
-        logger.error(f"Unexpected error in handle_ollama_delete_model_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in handle_ollama_delete_model_button_pressed: {e}")
         app.notify("An unexpected error occurred while deleting model.", severity="error")
 
 
 async def handle_ollama_copy_model_button_pressed(app: "TldwCli") -> None:
     """Handles the 'Copy Model' button press for Ollama."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama 'Copy Model' button pressed.")
     try:
         base_url_input = app.query_one("#ollama-server-url", Input)
@@ -437,16 +438,16 @@ async def handle_ollama_copy_model_button_pressed(app: "TldwCli") -> None:
                  app.notify(f"Model {source_model} copy to {dest_model} initiated.")
         # Optionally, refresh model list
     except QueryError as e: # pragma: no cover
-        logger.error(f"QueryError in handle_ollama_copy_model_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_ollama_copy_model_button_pressed: {e}")
         app.notify("Error accessing Ollama UI elements for copying model.", severity="error")
     except Exception as e: # pragma: no cover
-        logger.error(f"Unexpected error in handle_ollama_copy_model_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in handle_ollama_copy_model_button_pressed: {e}")
         app.notify("An unexpected error occurred while copying model.", severity="error")
 
 
 async def handle_ollama_pull_model_button_pressed(app: "TldwCli") -> None:
     """Handles the 'Pull Model' button press for Ollama."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama 'Pull Model' button pressed.")
     try:
         base_url_input = app.query_one("#ollama-server-url", Input)
@@ -484,16 +485,16 @@ async def handle_ollama_pull_model_button_pressed(app: "TldwCli") -> None:
             log_output_widget.write(f"Model '{model_name}' pull process finished. Check logs above for status.")
             app.notify(f"Model {model_name} pull completed.")
     except QueryError as e: # pragma: no cover
-        logger.error(f"QueryError in handle_ollama_pull_model_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_ollama_pull_model_button_pressed: {e}")
         app.notify("Error accessing Ollama UI elements for pulling model.", severity="error")
     except Exception as e: # pragma: no cover
-        logger.error(f"Unexpected error in handle_ollama_pull_model_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in handle_ollama_pull_model_button_pressed: {e}")
         app.notify("An unexpected error occurred while pulling model.", severity="error")
 
 
 async def handle_ollama_browse_modelfile_button_pressed(app: "TldwCli") -> None:
     """Handles the 'Browse for Modelfile' button press for Ollama create model."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama 'Browse for Modelfile' button pressed.")
 
     # No specific filters for "Modelfile" by extension, so allow all files or common text files.
@@ -515,7 +516,7 @@ async def handle_ollama_browse_modelfile_button_pressed(app: "TldwCli") -> None:
 
 async def handle_ollama_create_model_button_pressed(app: "TldwCli") -> None:
     """Handles the 'Create Model' button press for Ollama."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama 'Create Model' button pressed.")
     try:
         base_url_input = app.query_one("#ollama-server-url", Input)
@@ -565,16 +566,16 @@ async def handle_ollama_create_model_button_pressed(app: "TldwCli") -> None:
             log_output_widget.write(f"Model '{model_name}' creation process finished. Check logs above for status.")
             app.notify(f"Model {model_name} creation completed.")
     except QueryError as e: # pragma: no cover
-        logger.error(f"QueryError in handle_ollama_create_model_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_ollama_create_model_button_pressed: {e}")
         app.notify("Error accessing Ollama UI elements for creating model.", severity="error")
     except Exception as e: # pragma: no cover
-        logger.error(f"Unexpected error in handle_ollama_create_model_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in handle_ollama_create_model_button_pressed: {e}")
         app.notify("An unexpected error occurred while creating model.", severity="error")
 
 
 async def handle_ollama_push_model_button_pressed(app: "TldwCli") -> None:
     """Handles the 'Push Model' button press for Ollama."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama 'Push Model' button pressed.")
     try:
         base_url_input = app.query_one("#ollama-server-url", Input)
@@ -612,16 +613,16 @@ async def handle_ollama_push_model_button_pressed(app: "TldwCli") -> None:
             log_output_widget.write(f"Model '{model_name}' push process finished. Check logs above for status.")
             app.notify(f"Model {model_name} push completed.")
     except QueryError as e: # pragma: no cover
-        logger.error(f"QueryError in handle_ollama_push_model_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_ollama_push_model_button_pressed: {e}")
         app.notify("Error accessing Ollama UI elements for pushing model.", severity="error")
     except Exception as e: # pragma: no cover
-        logger.error(f"Unexpected error in handle_ollama_push_model_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in handle_ollama_push_model_button_pressed: {e}")
         app.notify("An unexpected error occurred while pushing model.", severity="error")
 
 
 async def handle_ollama_embeddings_button_pressed(app: "TldwCli") -> None:
     """Handles the 'Generate Embeddings' button press for Ollama."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama 'Generate Embeddings' button pressed.")
     try:
         base_url_input = app.query_one("#ollama-server-url", Input)
@@ -675,16 +676,16 @@ async def handle_ollama_embeddings_button_pressed(app: "TldwCli") -> None:
             embeddings_output_widget.write(f"No embeddings returned or unexpected response: {data}")
             app.notify("No embeddings returned or unexpected response.", severity="warning")
     except QueryError as e: # pragma: no cover
-        logger.error(f"QueryError in handle_ollama_embeddings_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_ollama_embeddings_button_pressed: {e}")
         app.notify("Error accessing Ollama UI elements for generating embeddings.", severity="error")
     except Exception as e: # pragma: no cover
-        logger.error(f"Unexpected error in handle_ollama_embeddings_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in handle_ollama_embeddings_button_pressed: {e}")
         app.notify("An unexpected error occurred while generating embeddings.", severity="error")
 
 
 async def handle_ollama_ps_button_pressed(app: "TldwCli") -> None:
     """Handles the 'List Running Models (ps)' button press for Ollama."""
-    logger = getattr(app, "loguru_logger", logging.getLogger(__name__))
+    logger = getattr(app, "loguru_logger", _loguru_fallback_logger)
     logger.debug("Ollama 'List Running Models (ps)' button pressed.")
     try:
         base_url_input = app.query_one("#ollama-server-url", Input)
@@ -720,10 +721,10 @@ async def handle_ollama_ps_button_pressed(app: "TldwCli") -> None:
             ps_output_widget.write("No running models found or unexpected response.")
             app.notify("No running Ollama models found or response format issue.", severity="warning")
     except QueryError as e: # pragma: no cover
-        logger.error(f"QueryError in handle_ollama_ps_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError in handle_ollama_ps_button_pressed: {e}")
         app.notify("Error accessing Ollama UI elements for listing running models.", severity="error")
     except Exception as e: # pragma: no cover
-        logger.error(f"Unexpected error in handle_ollama_ps_button_pressed: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in handle_ollama_ps_button_pressed: {e}")
         app.notify("An unexpected error occurred while listing running models.", severity="error")
 
 # --- Button Handler Map ---

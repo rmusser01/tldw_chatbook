@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
 async def populate_ccp_character_select(app: 'TldwCli') -> None:
     """Populates the character selection dropdown in the CCP tab."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Attempting to populate #conv-char-character-select dropdown.")
     
     if not app.notes_service:
@@ -103,7 +103,7 @@ async def populate_ccp_character_select(app: 'TldwCli') -> None:
 
 async def populate_ccp_prompts_list_view(app: 'TldwCli', search_term: Optional[str] = None) -> None:
     """Populates the prompts list view in the CCP tab."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     
     
     if not app.prompts_service_initialized:
@@ -159,7 +159,7 @@ async def populate_ccp_prompts_list_view(app: 'TldwCli', search_term: Optional[s
 
 def clear_ccp_prompt_fields(app: 'TldwCli') -> None:
     """Clears prompt input fields in the CCP right pane."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     app._clear_prompt_fields()
 
 
@@ -169,7 +169,7 @@ def clear_ccp_prompt_fields(app: 'TldwCli') -> None:
 #
 ########################################################################################################################
 async def _character_import_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     if selected_path:
         logger.info(f"Character card import selected: {selected_path}")
         if not app.notes_service:
@@ -202,7 +202,7 @@ async def _character_import_callback(app: 'TldwCli', selected_path: Optional[Pat
         app.notify("Character import cancelled.", severity="information", timeout=2)
 
 async def handle_ccp_import_character_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Import Character Card button pressed.")
 
     defined_filters = Filters(
@@ -220,7 +220,7 @@ async def handle_ccp_import_character_button_pressed(app: 'TldwCli', event: Butt
 
 
 async def handle_ccp_left_load_character_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging) # Or however logger is typically obtained
+    logger = getattr(app, 'loguru_logger', loguru_logger) # Or however logger is typically obtained
     logger.info("CCP Load Selected Character button (left pane) pressed.")
     try:
         # Get the Select widget from the left pane
@@ -614,7 +614,7 @@ async def handle_ccp_right_delete_character_button_pressed(app: 'TldwCli', event
 
 async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
     """Performs conversation search for the CCP tab with enhanced capabilities."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug("Performing CCP conversation search...")
     try:
         # Get all search inputs
@@ -812,7 +812,7 @@ async def handle_ccp_conversation_search_button_pressed(app: 'TldwCli', event: B
 
 async def handle_ccp_load_conversation_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles loading a selected conversation in the CCP tab."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Load Conversation button pressed.")
     try:
         results_list_view = app.query_one("#conv-char-search-results-list", ListView)
@@ -914,7 +914,7 @@ async def handle_ccp_load_conversation_button_pressed(app: 'TldwCli', event: But
 
 async def handle_ccp_save_conversation_details_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles saving conversation title/keywords in the CCP tab."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Save Conversation Details button pressed.")
     if not app.current_conv_char_tab_conversation_id:
         logger.warning("No current conversation loaded in CCP tab to save details for.")
@@ -1006,7 +1006,7 @@ async def handle_ccp_save_conversation_details_button_pressed(app: 'TldwCli', ev
 
 async def handle_ccp_prompt_create_new_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None: # This one is for the RIGHT pane
     """Handles creating a new prompt in the CCP tab's RIGHT PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Create New Prompt button pressed.")
     clear_ccp_prompt_fields(app)
     try:
@@ -1034,7 +1034,7 @@ async def handle_ccp_center_pane_new_prompt_button_pressed(app: 'TldwCli', event
     """
     Handles the 'New Prompt' button that is intended to open the CENTER PANE editor.
     """
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Center Pane 'New Prompt' button pressed.")
 
     # 1. Signal the intent to edit a new prompt (clears any existing loaded prompt ID)
@@ -1050,7 +1050,7 @@ async def handle_ccp_center_pane_new_prompt_button_pressed(app: 'TldwCli', event
 
 async def handle_ccp_prompt_load_selected_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles loading a selected prompt from the LEFT PANE list into the RIGHT PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Load Selected Prompt button pressed (loads into right pane editor).")
     try:
         list_view = app.query_one("#ccp-prompts-listview", ListView)
@@ -1071,7 +1071,7 @@ async def handle_ccp_prompt_load_selected_button_pressed(app: 'TldwCli', event: 
 
 async def handle_ccp_prompt_save_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles saving a new or existing prompt from the RIGHT PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Save Prompt button pressed (saves from right pane editor).")
     if not app.prompts_service_initialized:
         app.notify("Prompts service not available.", severity="error")
@@ -1143,7 +1143,7 @@ async def handle_ccp_prompt_save_button_pressed(app: 'TldwCli', event: Button.Pr
 
 async def handle_ccp_prompt_clone_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles cloning the currently loaded prompt in the RIGHT PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Clone Prompt button pressed (clones from right pane editor).")
     if not app.prompts_service_initialized or app.current_prompt_id is None:
         app.notify("No prompt loaded in right pane editor to clone or service unavailable.", severity="warning")
@@ -1176,7 +1176,7 @@ async def handle_ccp_prompt_clone_button_pressed(app: 'TldwCli', event: Button.P
 
 async def handle_ccp_prompt_delete_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles deleting (soft) the currently loaded prompt from the RIGHT PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Delete Prompt button pressed (deletes based on right pane editor state).")
     if not app.prompts_service_initialized or app.current_prompt_id is None:
         app.notify("No prompt loaded in right pane editor to delete or service unavailable.", severity="warning")
@@ -1264,7 +1264,7 @@ async def handle_ccp_conversation_tags_search_input_changed(app: 'TldwCli', even
 
 async def handle_ccp_search_checkbox_changed(app: 'TldwCli', checkbox_id: str, value: bool) -> None:
     """Handles checkbox state changes in CCP conversation search."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug(f"CCP search checkbox '{checkbox_id}' changed to {value}")
     
     if checkbox_id == "conv-char-search-all-characters-checkbox":
@@ -1479,7 +1479,7 @@ def _parse_prompt_from_file_content(file_content_str: str) -> Optional[Dict[str,
     return None
 
 async def _prompt_import_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     if selected_path:
         logger.info(f"Prompt import selected: {selected_path}")
         if not app.prompts_service_initialized:
@@ -1524,7 +1524,7 @@ async def _prompt_import_callback(app: 'TldwCli', selected_path: Optional[Path])
         app.notify("Prompt import cancelled.", severity="information", timeout=2)
 
 async def handle_ccp_import_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Import Prompt button pressed.")
 
     defined_filters = Filters(
@@ -1543,7 +1543,7 @@ async def handle_ccp_import_prompt_button_pressed(app: 'TldwCli', event: Button.
 ########################################################################################################################
 async def handle_ccp_editor_prompt_save_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles saving a new or existing prompt from the CENTER PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Editor Save Prompt button pressed (saves from center pane editor).")
     if not app.prompts_service_initialized:
         app.notify("Prompts service not available.", severity="error")
@@ -1616,7 +1616,7 @@ async def handle_ccp_editor_prompt_save_button_pressed(app: 'TldwCli', event: Bu
 
 async def handle_ccp_editor_prompt_clone_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles cloning the prompt currently in the CENTER PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Editor Clone Prompt button pressed.")
     if not app.prompts_service_initialized or app.current_prompt_id is None:
         app.notify("No prompt loaded in editor to clone or service unavailable.", severity="warning")
@@ -2345,7 +2345,7 @@ async def _finish_new_prompt_setup(app: 'TldwCli') -> None:
 # ##############################################################
 async def handle_ccp_tab_sidebar_toggle(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles sidebar toggles specific to the CCP tab."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     button_id = event.button.id
     if button_id == "toggle-conv-char-left-sidebar":
         app.conv_char_sidebar_left_collapsed = not app.conv_char_sidebar_left_collapsed
@@ -3035,7 +3035,7 @@ async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Butt
 
 async def populate_ccp_dictionary_select(app: 'TldwCli') -> None:
     """Populates the dictionary selection dropdown in the CCP tab."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Attempting to populate #ccp-dictionary-select dropdown.")
     
     if not app.notes_service:
@@ -3090,7 +3090,7 @@ async def populate_ccp_dictionary_select(app: 'TldwCli') -> None:
 
 
 async def _dictionary_import_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     if selected_path:
         logger.info(f"Dictionary import selected: {selected_path}")
         if not app.notes_service:
@@ -3118,7 +3118,7 @@ async def _dictionary_import_callback(app: 'TldwCli', selected_path: Optional[Pa
 
 
 async def handle_ccp_import_dictionary_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Import Dictionary button pressed.")
 
     defined_filters = Filters(
@@ -3132,7 +3132,7 @@ async def handle_ccp_import_dictionary_button_pressed(app: 'TldwCli', event: But
 
 
 async def handle_ccp_create_dictionary_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Create Dictionary button pressed.")
     
     # Switch to dictionary editor view
@@ -3183,7 +3183,7 @@ async def handle_ccp_create_dictionary_button_pressed(app: 'TldwCli', event: But
 
 
 async def handle_ccp_load_dictionary_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Load Dictionary button pressed.")
     
     if not app.notes_service:
@@ -3234,14 +3234,14 @@ async def handle_ccp_load_dictionary_button_pressed(app: 'TldwCli', event: Butto
 
 
 async def handle_ccp_refresh_dictionary_list_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Refresh Dictionary List button pressed.")
     await populate_ccp_dictionary_select(app)
     app.notify("Dictionary list refreshed", severity="information")
 
 
 async def handle_ccp_dict_edit_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Edit button pressed.")
     
     if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
@@ -3287,7 +3287,7 @@ async def handle_ccp_dict_edit_button_pressed(app: 'TldwCli', event: Button.Pres
 
 
 async def handle_ccp_editor_dict_save_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Save button pressed.")
     
     if not app.notes_service:
@@ -3354,7 +3354,7 @@ async def handle_ccp_editor_dict_save_button_pressed(app: 'TldwCli', event: Butt
 
 
 async def handle_ccp_dict_export_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Export button pressed.")
     
     if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
@@ -3380,7 +3380,7 @@ async def handle_ccp_dict_export_button_pressed(app: 'TldwCli', event: Button.Pr
 
 
 async def handle_ccp_dict_delete_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Delete button pressed.")
     
     if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
@@ -3432,7 +3432,7 @@ async def handle_ccp_dict_delete_button_pressed(app: 'TldwCli', event: Button.Pr
 
 
 async def handle_ccp_dict_add_entry_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Add Dictionary Entry button pressed.")
     
     try:
@@ -3480,7 +3480,7 @@ async def handle_ccp_dict_add_entry_button_pressed(app: 'TldwCli', event: Button
 
 
 async def handle_ccp_dict_remove_entry_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Remove Dictionary Entry button pressed.")
     
     try:
@@ -3502,7 +3502,7 @@ async def handle_ccp_dict_remove_entry_button_pressed(app: 'TldwCli', event: But
 
 
 async def handle_ccp_editor_dict_cancel_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Cancel Edit button pressed.")
     
     app.editing_dictionary_id = None
@@ -3519,7 +3519,7 @@ async def handle_ccp_editor_dict_cancel_button_pressed(app: 'TldwCli', event: Bu
 
 async def handle_ccp_dict_apply_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Apply the current dictionary to the active conversation."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Apply button pressed.")
     
     if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
@@ -3575,7 +3575,7 @@ async def handle_ccp_dict_apply_button_pressed(app: 'TldwCli', event: Button.Pre
 
 async def handle_ccp_dict_clone_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Clone the current dictionary."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Clone button pressed.")
     
     if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
@@ -3623,7 +3623,7 @@ async def handle_ccp_dict_clone_button_pressed(app: 'TldwCli', event: Button.Pre
 
 async def handle_ccp_dict_remove_from_conv_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Remove selected dictionary from the active conversation."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Remove from Conversation button pressed.")
     
     if not app.current_ccp_conversation_id:
@@ -3678,7 +3678,7 @@ async def handle_ccp_dict_remove_from_conv_button_pressed(app: 'TldwCli', event:
 
 async def handle_ccp_dict_update_priority_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Update the priority of dictionaries in the conversation."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Update Priority button pressed.")
     
     # This is a placeholder for future priority ordering functionality
@@ -3687,7 +3687,7 @@ async def handle_ccp_dict_update_priority_button_pressed(app: 'TldwCli', event: 
 
 async def populate_active_dictionaries_list(app: 'TldwCli') -> None:
     """Populate the active dictionaries list for the current conversation."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     
     if not app.current_ccp_conversation_id or not app.notes_service:
         return
@@ -3724,14 +3724,14 @@ async def populate_active_dictionaries_list(app: 'TldwCli') -> None:
 
 async def handle_ccp_import_worldbook_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle Import World Book button press."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Import World Book button pressed")
     app.notify("Import World Book functionality coming soon!", severity="information")
     # TODO: Implement file picker and import logic
 
 async def handle_ccp_create_worldbook_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle Create World Book button press."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Create World Book button pressed")
     
     try:
@@ -3765,7 +3765,7 @@ async def handle_ccp_worldbook_search_input_changed(app: 'TldwCli', event: Input
     if event.input.id != "ccp-worldbook-search-input":
         return
         
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     search_term = event.value
     logger.debug(f"World book search term: '{search_term}'")
     
@@ -3773,7 +3773,7 @@ async def handle_ccp_worldbook_search_input_changed(app: 'TldwCli', event: Input
 
 async def handle_ccp_worldbook_load_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle Load Selected World Book button press."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Load World Book button pressed")
     
     try:
@@ -3796,7 +3796,7 @@ async def handle_ccp_worldbook_load_button_pressed(app: 'TldwCli', event: Button
 
 async def handle_ccp_worldbook_edit_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle Edit Selected World Book button press."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Edit World Book button pressed")
     
     try:
@@ -3819,14 +3819,14 @@ async def handle_ccp_worldbook_edit_button_pressed(app: 'TldwCli', event: Button
 
 async def handle_ccp_refresh_worldbook_list_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle Refresh World Book List button press."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Refresh World Book List button pressed")
     
     await populate_ccp_worldbook_list(app)
 
 async def populate_ccp_worldbook_list(app: 'TldwCli', search_term: str = "") -> None:
     """Populate the world book list view."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     
     try:
         from ..Character_Chat.world_book_manager import WorldBookManager

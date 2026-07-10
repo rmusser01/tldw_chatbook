@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 async def handle_sidebar_shrink(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle shrinking the right sidebar width."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     try:
         current_width = app.chat_right_sidebar_width
         new_width = max(15, current_width - 5)  # Minimum 15% width
@@ -45,7 +45,7 @@ async def handle_sidebar_shrink(app: 'TldwCli', event: Button.Pressed) -> None:
 
 async def handle_sidebar_expand(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle expanding the right sidebar width."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug(f"handle_sidebar_expand called from file: {__file__}")
     try:
         current_width = app.chat_right_sidebar_width

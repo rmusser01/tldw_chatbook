@@ -3729,7 +3729,7 @@ async def handle_chat_clear_active_character_button_pressed(app: 'TldwCli', even
 
 
 async def handle_chat_prompt_search_input_changed(app: 'TldwCli', event_value: str) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     search_term = event_value.strip()
     logger.debug(f"Chat Tab: Prompt search input changed to: '{search_term}'")
 
@@ -3798,7 +3798,7 @@ async def handle_chat_prompt_search_input_changed(app: 'TldwCli', event_value: s
 
 
 async def perform_chat_prompt_search(app: 'TldwCli') -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     try:
         search_input_widget = app.query_one("#chat-prompt-search-input",
                                             Input)  # Ensure Input is imported where this is called
@@ -3808,7 +3808,7 @@ async def perform_chat_prompt_search(app: 'TldwCli') -> None:
 
 
 async def handle_chat_view_selected_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug("Chat Tab: View Selected Prompt button pressed.")
 
     try:
@@ -3935,7 +3935,7 @@ async def _populate_chat_character_search_list(app: 'TldwCli', search_term: Opti
 
 
 async def handle_chat_copy_system_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug("Chat Tab: Copy System Prompt button pressed.")
     try:
         system_display_widget = app.query_one("#chat-prompt-system-display", TextArea)
@@ -3953,7 +3953,7 @@ async def handle_chat_copy_system_prompt_button_pressed(app: 'TldwCli', event: B
 
 
 async def handle_chat_copy_user_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug("Chat Tab: Copy User Prompt button pressed.")
     try:
         user_display_widget = app.query_one("#chat-prompt-user-display", TextArea)
@@ -3974,7 +3974,7 @@ async def handle_chat_template_search_input_changed(app: 'TldwCli', event_value:
     """Handle changes to the template search input in the Chat tab."""
     from tldw_chatbook.Chat.prompt_template_manager import get_available_templates
 
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     search_term = event_value.strip().lower()
     logger.debug(f"Chat Tab: Template search input changed to: '{search_term}'")
 
@@ -4019,7 +4019,7 @@ async def handle_chat_apply_template_button_pressed(app: 'TldwCli', event: Butto
     """Handle the Apply Template button press in the Chat tab."""
     from tldw_chatbook.Chat.prompt_template_manager import load_template
 
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug("Chat Tab: Apply Template button pressed.")
 
     try:
@@ -4086,7 +4086,7 @@ async def handle_chat_sidebar_prompt_search_changed(
     new_value : str
         The raw text currently in the search-input.  Leading / trailing whitespace is ignored.
     """
-    logger = getattr(app, "loguru_logger", logging)  # fall back to stdlib if unavailable
+    logger = getattr(app, "loguru_logger", loguru_logger)  # fall back to module-level loguru logger if unavailable
     search_term = (new_value or "").strip()
     logger.debug(f"Sidebar-Prompt-Search changed → '{search_term}'")
 

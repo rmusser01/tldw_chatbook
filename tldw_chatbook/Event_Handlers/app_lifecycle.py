@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from textual.css.query import QueryError
 #
 # 3rd-Party Imports
+from loguru import logger as _loguru_fallback_logger
 from textual.widgets import RichLog, Button
 
 #
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 
 async def handle_copy_logs_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles the 'Copy All Logs to Clipboard' button press."""
-    logger = getattr(app, 'loguru_logger', logging)  # Use app's logger
+    logger = getattr(app, 'loguru_logger', _loguru_fallback_logger)  # Use app's logger
     logger.info("Copy logs button pressed.")
     try:
         # Use the actual RichLog type, not a string
@@ -85,10 +86,10 @@ async def handle_copy_logs_button_pressed(app: 'TldwCli', event: Button.Pressed)
         logger.error("Could not find #app-log-display to copy logs.")
     except AttributeError as ae:
         app.notify(f"Error processing log line: {str(ae)}", title="Error", severity="error", timeout=6)
-        logger.error(f"AttributeError while processing RichLog lines: {ae}", exc_info=True)
+        logger.opt(exception=True).error(f"AttributeError while processing RichLog lines: {ae}")
     except Exception as e:  # General catch-all
         app.notify(f"Error copying logs: {str(e)}", title="Error", severity="error", timeout=6)
-        logger.error(f"Failed to copy logs: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to copy logs: {e}")
 
 # --- Button Handler Map ---
 APP_LIFECYCLE_BUTTON_HANDLERS = {
