@@ -34,7 +34,7 @@ from textual.widget import Widget
 import asyncio
 from PIL import Image
 from loguru import logger as loguru_logger, logger
-from textual import on
+from textual import on, work
 from textual.app import App, ComposeResult
 from textual.widgets import (
     Static, Button, Input, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch, Markdown
@@ -105,7 +105,9 @@ from tldw_chatbook.Chat import (
 )
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
+from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJob, LibraryIngestJobRegistry
 from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
+from tldw_chatbook.Local_Ingestion import detect_file_type, ingest_local_file
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -1127,8 +1129,195 @@ class PlaceholderWindow(Container):
                     await result
 
 
+def _sanitize_library_ingest_error(exc: Exception) -> str:
+    """Reduce an ingest-time exception to a single-line, capped error string.
+
+    Args:
+        exc: The exception raised by the ingest seam.
+
+    Returns:
+        The first line of ``str(exc)``, stripped and capped at 200
+        characters. Falls back to the exception's class name when
+        ``str(exc)`` is empty.
+    """
+    message = str(exc).strip()
+    first_line = message.splitlines()[0].strip() if message else ""
+    if not first_line:
+        first_line = exc.__class__.__name__
+    return first_line[:200]
+
+
+class LibraryIngestQueueMixin:
+    """Library ingest job submission seam + serial queue-runner.
+
+    Mixed into :class:`TldwCli` (and headless test harnesses -- see
+    ``Tests/Library/test_library_ingest_runner.py``) rather than being
+    defined directly on the App class, so the queue-runner can be exercised
+    without booting the full app. A host class is expected to provide:
+
+    - ``self.library_ingest_jobs``: a ``LibraryIngestJobRegistry`` instance
+      constructed once (e.g. in ``__init__``/app wiring).
+    - ``self.media_db``: an ``Optional[MediaDatabase]``.
+    - Textual's ``App``/``Widget`` worker machinery (``@work`` and
+      ``call_from_thread``), since this mixin is always combined with one
+      of those base classes.
+
+    The queue-runner worker (``_run_library_ingest_queue``) is the *only*
+    intended caller of the registry's ``mark_running``/``mark_done``/
+    ``mark_failed`` transition methods; every job it dequeues is always
+    driven ``queued`` -> ``running`` -> ``done``/``failed``, and one job's
+    failure is caught locally so it never kills the loop or strands a later
+    queued job.
+    """
+
+    def submit_library_ingest_job(
+        self,
+        *,
+        source_path: str,
+        title: str = "",
+        author: str = "",
+        keywords: tuple = (),
+        perform_analysis: bool = False,
+        chunk_enabled: bool = False,
+        chunk_size: int = 500,
+    ) -> LibraryIngestJob:
+        """Submit a new Library ingest job and start the runner if idle.
+
+        UI-thread only. Appends a ``QUEUED`` job to ``self.library_ingest_jobs``.
+        When ``self.media_db`` is unavailable, the job is failed immediately
+        (with the exact copy ``"Media database is unavailable."``) and the
+        queue-runner is never started for it.
+
+        Args:
+            source_path: The file path to ingest.
+            title: Optional title form field.
+            author: Optional author form field.
+            keywords: Keywords form field.
+            perform_analysis: Whether to run post-ingest analysis.
+            chunk_enabled: Whether to chunk the ingested content.
+            chunk_size: Requested chunk size when ``chunk_enabled``.
+
+        Returns:
+            The newly created job: ``QUEUED`` normally, or immediately
+            ``FAILED`` when ``media_db`` is unavailable.
+        """
+        job = self.library_ingest_jobs.submit(
+            source_path=source_path,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+        )
+        if self.media_db is None:
+            failed = self.library_ingest_jobs.mark_failed(
+                job.job_id, error="Media database is unavailable."
+            )
+            return failed if failed is not None else job
+        self._start_library_ingest_queue_if_idle()
+        return job
+
+    def retry_library_ingest_job(self, job_id: str) -> Optional[LibraryIngestJob]:
+        """Requeue a previously failed job and start the runner if idle.
+
+        UI-thread only. A thin wrapper over
+        ``LibraryIngestJobRegistry.requeue`` -- a no-op (returns ``None``)
+        when ``job_id`` is unknown or the job is not currently ``FAILED``.
+
+        Args:
+            job_id: The failed job to requeue.
+
+        Returns:
+            The newly appended ``QUEUED`` job (or immediately ``FAILED``
+            when ``media_db`` is unavailable), or ``None`` when nothing was
+            requeued.
+        """
+        requeued = self.library_ingest_jobs.requeue(job_id)
+        if requeued is None:
+            return None
+        if self.media_db is None:
+            failed = self.library_ingest_jobs.mark_failed(
+                requeued.job_id, error="Media database is unavailable."
+            )
+            return failed if failed is not None else requeued
+        self._start_library_ingest_queue_if_idle()
+        return requeued
+
+    def _start_library_ingest_queue_if_idle(self) -> None:
+        """Start the queue-runner worker, unless one is already active.
+
+        UI-thread only. Sets ``runner_active = True`` synchronously, before
+        scheduling the worker, so a rapid double-submission can never
+        double-start the runner.
+        """
+        if self.library_ingest_jobs.runner_active:
+            return
+        self.library_ingest_jobs.runner_active = True
+        self._run_library_ingest_queue()
+
+    @work(exclusive=True, thread=True, group="library_ingest_queue")
+    def _run_library_ingest_queue(self) -> None:
+        """Serially drain the Library ingest queue on a background thread.
+
+        Runs until ``self.library_ingest_jobs`` has no more ``QUEUED`` jobs,
+        then clears ``runner_active`` and exits -- a later submission/retry
+        starts a fresh worker. Every registry touch is marshaled onto the
+        UI thread via ``call_from_thread`` because
+        ``LibraryIngestJobRegistry`` does no internal locking (see its
+        module docstring). A single job's exception (missing file,
+        unsupported type, DB error, ...) is caught and turned into a
+        ``mark_failed`` transition; it never aborts the loop.
+        """
+        try:
+            while True:
+                job = self.call_from_thread(self.library_ingest_jobs.next_queued)
+                if job is None:
+                    return
+                try:
+                    detected_type = detect_file_type(job.source_path) or ""
+                    self.call_from_thread(
+                        self.library_ingest_jobs.mark_running,
+                        job.job_id,
+                        detected_type=detected_type,
+                    )
+                    result = ingest_local_file(
+                        file_path=Path(job.source_path),
+                        media_db=self.media_db,
+                        title=job.title or None,
+                        author=job.author or None,
+                        keywords=list(job.keywords) or None,
+                        perform_analysis=job.perform_analysis,
+                        chunk_options=(
+                            {
+                                "method": "sentences",
+                                "size": job.chunk_size,
+                                "overlap": 100,
+                            }
+                            if job.chunk_enabled
+                            else None
+                        ),
+                    )
+                except Exception as exc:
+                    self.call_from_thread(
+                        self.library_ingest_jobs.mark_failed,
+                        job.job_id,
+                        error=_sanitize_library_ingest_error(exc),
+                    )
+                    continue
+                self.call_from_thread(
+                    self.library_ingest_jobs.mark_done,
+                    job.job_id,
+                    media_id=result["media_id"],
+                )
+        finally:
+            self.call_from_thread(
+                setattr, self.library_ingest_jobs, "runner_active", False
+            )
+
+
 # --- Main App ---
-class TldwCli(App[None]):  # Specify return type for run() if needed, None is common
+class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
     # Keep legacy identifier for tests while retaining product name
     TITLE = "tldw CLI • tldw chatbook"
@@ -2103,6 +2292,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             policy_enforcer=self.service_policy_enforcer,
         )
         self.library_rag_search_service = LibraryLocalRagSearchService(self)
+        self.library_ingest_jobs = LibraryIngestJobRegistry()
 
     def _wire_research_services(self) -> None:
         """Initialize source-aware research services if the broad parity wiring has not already done so."""
