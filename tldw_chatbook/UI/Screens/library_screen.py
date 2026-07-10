@@ -25,6 +25,7 @@ from ...config import get_cli_setting, save_setting_to_cli_config
 from ...Constants import (
     LIBRARY_MODE_CONVERSATIONS,
     LIBRARY_NAV_CONTEXT_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
@@ -33,6 +34,15 @@ from ...DB.ChaChaNotes_DB import ConflictError
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_conversations_state import build_library_conversations_state
+from ...Library.library_ingest_jobs import LibraryIngestJob
+from ...Library.library_ingest_state import (
+    INGEST_UNAVAILABLE_COPY,
+    LibraryIngestCanvasState,
+    LibraryIngestFormState,
+    build_library_ingest_state,
+    clamp_chunk_size,
+    parse_keywords,
+)
 from ...Library.library_media_state import (
     LibraryMediaCanvasState,
     build_library_media_state,
@@ -84,11 +94,13 @@ from ...Library.library_rail_state import (
     serialize_library_rail_preferences,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_INGEST_MEDIA,
     LibraryShellInput,
     build_library_shell_state,
 )
@@ -107,6 +119,7 @@ from ...Widgets.Console.console_rail_section import (
 from ...Widgets.Library import (
     LibraryCollectionsPanel,
     LibraryConversationsCanvas,
+    LibraryIngestCanvas,
     LibraryMediaCanvas,
     LibraryMediaViewer,
     LibraryNotesCanvas,
@@ -150,7 +163,6 @@ LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
 LIBRARY_HANDOFF_LABEL_PREFIX = "Console/RAG handoff: "
-LIBRARY_LOCAL_SNAPSHOT_MODES = frozenset({"sources", "conversations", "import-export"})
 LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH = 30
 LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
 LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
@@ -162,100 +174,60 @@ LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH = 22
 LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH = 18
 LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
 LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"})
-LIBRARY_COLUMN_TITLES = {
-    "sources": ("Source Map", "Active Workbench", "Inspector"),
-    "conversations": ("Source Map", "Saved Conversations", "Conversation Inspector"),
-    "search": ("Source Map", "Search/RAG Workbench", "Evidence Inspector"),
-    "import-export": ("Source Map", "Import/Export Workbench", "Import/Export Inspector"),
-    "workspaces": ("Source Map", "Workspace Context", "Handoff Rules"),
-    "collections": ("Source Map", "Collections Reader", "Collection Inspector"),
-    "study": ("Source Map", "Study Handoff", "Inspector"),
-    "flashcards": ("Source Map", "Flashcards Handoff", "Inspector"),
-    "quizzes": ("Source Map", "Quizzes Handoff", "Inspector"),
-}
-LIBRARY_MODES = {
-    "sources": {
-        "label": "Content Hub",
-        "button_id": "library-mode-sources",
-        "description": (
-            "Content Hub mode: Library landing page for ingested content, notes, media, "
-            "conversations, collections, and retrieval."
-        ),
-        "next_action": "Open the owning module for deep work; Console handoff is secondary.",
-    },
-    "conversations": {
-        "label": "Conversations",
-        "button_id": "library-mode-conversations",
-        "description": (
-            "Conversations mode: browse saved chats inside Library, inspect metadata, "
-            "and prepare eligible conversation context."
-        ),
-        "next_action": "Select a saved conversation to inspect metadata and handoff eligibility.",
-        "show_in_strip": False,
-    },
-    "search": {
-        "label": "Search/RAG",
-        "button_id": "library-mode-search",
-        "description": (
-            "Ask Library sources, inspect evidence, then send selected snippets to Console."
-        ),
-        "next_action": "Query first; scope, evidence, and Console handoff stay visible below.",
-    },
-    "import-export": {
-        "label": "Import/Export",
-        "button_id": "library-mode-import-export",
-        "description": (
-            "Import/Export mode: Library owns source acquisition framing; "
-            "Ingest and Media own deeper file handling."
-        ),
-        "next_action": "Choose a handoff action below; imported material returns as Library inventory.",
-    },
-    "workspaces": {
-        "label": "Workspaces",
-        "button_id": "library-mode-workspaces",
-        "description": "Workspaces mode: scope Library material to project or task contexts.",
-        "next_action": "Workspace scoping is shown here before material is staged in Console.",
-    },
-    "collections": {
-        "label": "Collections",
-        "button_id": "library-mode-collections",
-        "description": "Collections mode: read and review saved Library content.",
-        "next_action": "Select or create a Collection record before item actions become available.",
-    },
-    "study": {
-        "label": "Study",
-        "button_id": "library-mode-study",
-        "description": "Study mode: turn Library material into study sessions.",
-        "next_action": "Open Study Dashboard to continue due cards, decks, and quizzes.",
-    },
-    "flashcards": {
-        "label": "Flashcards",
-        "button_id": "library-mode-flashcards",
-        "description": "Flashcards mode: generate or review cards from Library sources.",
-        "next_action": "Open Flashcards to work with the current source snapshot.",
-    },
-    "quizzes": {
-        "label": "Quizzes",
-        "button_id": "library-mode-quizzes",
-        "description": "Quizzes mode: generate or resume quizzes from Library sources.",
-        "next_action": "Open Quizzes to test recall against the current source snapshot.",
-    },
-}
 
 LIBRARY_STUDY_HANDOFF_MODES = {
     "study": {
-        "label": "Study",
+        # "header" mirrors the rail row title that opens this canvas
+        # (LibraryRailRow "Study decks", library_shell_state.py) so the
+        # canvas doesn't restate the mode name a second, differently-worded
+        # way (L3b Task 8/9 follow-up: UX wave C/D, handoff copy
+        # consolidation).
+        "header": "Study decks",
         "action_label": "Study Dashboard",
+        "purpose": "Plan study decks from Library sources.",
     },
     "flashcards": {
-        "label": "Flashcards",
+        "header": "Flashcards",
         "action_label": "Flashcards",
+        "purpose": "Generate or review cards from Library sources.",
     },
     "quizzes": {
-        "label": "Quizzes",
+        "header": "Quizzes",
         "action_label": "Quizzes",
+        "purpose": "Generate or resume quizzes from Library sources.",
     },
 }
+
+# Single shared ownership line for all three handoff canvases: Library only
+# prepares source context, Study owns everything downstream of "open".
+LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY = "Generation and review run in Study."
+
+# How many carried-forward source titles the handoff canvas names before
+# collapsing the rest into an "and N more" count.
+LIBRARY_STUDY_HANDOFF_TITLES_CAP = 3
+
+
+def _library_carries_forward_line(titles: Sequence[str]) -> str:
+    """Build the handoff canvas's capped, markup-escaped carries-forward line.
+
+    Args:
+        titles: Sampled source titles (notes/media/conversations) that will
+            carry forward into Study. Must be non-empty -- callers render no
+            line at all when there is no source context (see
+            ``_study_handoff_copy``).
+
+    Returns:
+        ``"Carries forward: a, b, c"`` when there are at most
+        ``LIBRARY_STUDY_HANDOFF_TITLES_CAP`` titles, else ``"Carries
+        forward: a, b, c and N more."`` with the remaining count appended.
+    """
+    escaped_titles = [escape_markup(title) for title in titles]
+    capped = escaped_titles[:LIBRARY_STUDY_HANDOFF_TITLES_CAP]
+    joined = ", ".join(capped)
+    remaining = len(escaped_titles) - len(capped)
+    if remaining > 0:
+        return f"Carries forward: {joined} and {remaining} more."
+    return f"Carries forward: {joined}"
 
 
 def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
@@ -287,20 +259,25 @@ def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
         "authenticated_principal_id": authenticated_principal_id,
         "workspace_scope": workspace_scope,
     }
-LIBRARY_MODE_BY_BUTTON_ID = {
-    mode["button_id"]: mode_id for mode_id, mode in LIBRARY_MODES.items()
-}
 
-# Maps a Library mode id to the shell rail row that selects that canvas so
-# navigation context and legacy mode switches land on the right canvas.
-LIBRARY_MODE_TO_ROW_ID = {
+# Maps a Library navigation-context ``mode`` value to the shell rail row
+# that selects that canvas -- covers exactly the mode values nav-context
+# callers emit/support today (L3b Task 8 audit): ``conversations`` (Personas'
+# conversations controller), ``search`` and ``collections`` (both directly
+# tested contracts of ``apply_navigation_context``, though no live emitter
+# currently sends them). ``notes`` is handled as its own dedicated branch in
+# ``_apply_navigation_context_state`` below (``open_notes_workspace``'s
+# route), not through this table. ``media`` has no navigation-context entry
+# point at all (the retired mode-strip machinery never had a "media" mode
+# either). Any other mode value -- including the retired
+# ``study``/``flashcards``/``quizzes`` mode values (those rows are now
+# "handoff" rows, not nav-context targets) and the retired
+# ``sources``/``workspaces``/``import-export`` values -- degrades quietly,
+# unchanged from before this table existed.
+LIBRARY_NAV_MODE_TO_ROW_ID = {
     "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
-    "collections": "browse-collections",
-    "search": "browse-search",
-    "study": "create-study",
-    "flashcards": "create-flashcards",
-    "quizzes": "create-quizzes",
-    "import-export": "ingest-import-export",
+    "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
+    "search": LIBRARY_ROW_BROWSE_SEARCH,
 }
 
 
@@ -383,34 +360,6 @@ class LibraryScreen(BaseAppScreen):
     # the app stylesheet (e.g. harness tests). The agentic-terminal TCSS uses
     # equal-specificity selectors and takes precedence when loaded.
     DEFAULT_CSS = """
-    #library-mode-bar {
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        overflow: hidden;
-    }
-
-    #library-mode-label {
-        width: 8;
-        min-width: 8;
-        height: 1;
-        min-height: 1;
-    }
-
-    Button.library-mode-chip {
-        width: auto;
-        min-width: 10;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
-
-    .library-mode-chip.is-active {
-        border: none;
-        text-style: bold underline;
-    }
-
     /* Standalone fallback chrome: the app bundle overrides these ID/class
        rules with $ds-grid-line tokens (css/tldw_cli_modular.tcss), but the
        screen must render its workbench borders when mounted outside TldwCli
@@ -538,7 +487,6 @@ class LibraryScreen(BaseAppScreen):
             "quizzes": None,
         }
         self._library_loaded = False
-        self._active_mode = "sources"
         self._library_rag_mode: str = "search"
         self._library_rag_query = ""
         self._library_rag_results = ()
@@ -627,6 +575,19 @@ class LibraryScreen(BaseAppScreen):
         # Sync now run. None = not edited this panel visit; fall back to the
         # persisted config value.
         self._library_notes_sync_folder_text: str | None = None
+        # Ingest canvas form echo -- a single bundled mutable dataclass
+        # (rather than a scatter of scalar fields like the sync panel
+        # above) since every field here is reset together on rail
+        # re-entry (see ``_reset_library_ingest_transient_state``); the
+        # job queue itself is registry-owned, not screen state.
+        self._library_ingest_form: LibraryIngestFormState = LibraryIngestFormState()
+        # Dedupe counter for the "poke the source snapshot on transitions
+        # into done" rule (Task 5's registry listener): only re-fetch when
+        # the registry's done-job count has grown since the last time this
+        # screen checked. Seeded from the live registry in ``on_mount``
+        # (not here) so a re-mounted, cached screen instance never treats
+        # jobs that finished in a previous mount as a fresh transition.
+        self._library_ingest_last_done_count: int = 0
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -635,7 +596,20 @@ class LibraryScreen(BaseAppScreen):
             self._apply_source_snapshot_timeout,
         )
         self._refresh_local_source_snapshot()
-        if self._active_mode == "collections" and not self._library_collections_loaded:
+        registry = self._library_ingest_registry()
+        if registry is not None:
+            counts_fn = getattr(registry, "counts", None)
+            if callable(counts_fn):
+                # Seed from whatever the registry already knows so a
+                # re-mounted (cached) screen instance doesn't treat jobs
+                # that finished during a previous mount as a brand-new
+                # done-transition and fire a redundant snapshot refresh.
+                self._library_ingest_last_done_count = counts_fn().get("done", 0)
+            registry.add_listener(self._handle_library_ingest_registry_changed)
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+            and not self._library_collections_loaded
+        ):
             # Deep-links that preset mode=collections call apply_navigation_context
             # BEFORE the screen is mounted (see app.py handle_screen_navigation),
             # so the is_mounted-guarded load there never fires. Kick the same
@@ -655,6 +629,34 @@ class LibraryScreen(BaseAppScreen):
                 group="library_note_detail",
             )
 
+    def on_unmount(self) -> None:
+        """Unregister the ingest registry listener registered in ``on_mount``.
+
+        ``on_unmount`` (not ``on_screen_suspend``) is the correct pairing:
+        a Library screen fetched from ``switch_screen``'s replace can come
+        back later as the *same cached Python instance*
+        (``_get_or_create_navigation_screen``), which re-runs ``on_mount``
+        on every re-entry -- so listener add/remove must be symmetric with
+        that same mount/unmount cycle, not the temporary suspend/resume
+        pair a screen gets while merely covered by another screen on the
+        stack (suspend does not tear down and re-mount this screen, so
+        pairing removal with it would silently stop live updates while
+        still fully composed and, per the plan brief, still able to
+        resume). The registry itself is a plain in-memory object owned by
+        the app, not this screen, and can keep firing mutations long after
+        this screen is gone -- the listener body also guards on
+        ``self.is_mounted`` (belt and braces, matching this file's
+        established convention elsewhere), though note that in this
+        Textual version ``is_mounted`` tracks "has been mounted at least
+        once" rather than "currently mounted" (it is never reset back to
+        ``False`` after removal) -- so this call is what actually closes
+        the window, not the guard.
+        """
+        super().on_unmount()
+        registry = self._library_ingest_registry()
+        if registry is not None:
+            registry.remove_listener(self._handle_library_ingest_registry_changed)
+
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.
 
@@ -668,7 +670,10 @@ class LibraryScreen(BaseAppScreen):
                 "new note" deep link). A ``note_id`` opens that note's
                 in-canvas editor directly (the retired Notes tab's
                 chat-sidebar deep link); ``mode="notes"`` alone (no
-                ``note_id``) lands on the Notes list instead.
+                ``note_id``) lands on the Notes list instead. An
+                ``ingest_media`` flag lands on the in-canvas Ingest >
+                Import media view (Home's ingest-jobs "Open details"
+                control, L3b Task 6).
         """
         if not isinstance(context, Mapping):
             return
@@ -726,12 +731,12 @@ class LibraryScreen(BaseAppScreen):
             max_length=200,
         )
         notes_create = bool(context.get(LIBRARY_NAV_CONTEXT_NOTES_CREATE))
-        target_mode = requested_mode if requested_mode in LIBRARY_MODES else ""
+        ingest_media = bool(context.get(LIBRARY_NAV_CONTEXT_INGEST))
+        target_mode = requested_mode if requested_mode in LIBRARY_NAV_MODE_TO_ROW_ID else ""
         if conversation_id and not target_mode:
             target_mode = LIBRARY_MODE_CONVERSATIONS
         if target_mode:
-            self._active_mode = target_mode
-            selected_row_id = LIBRARY_MODE_TO_ROW_ID.get(target_mode)
+            selected_row_id = LIBRARY_NAV_MODE_TO_ROW_ID.get(target_mode)
             if selected_row_id:
                 self._library_selected_row_id = selected_row_id
             self._invalidate_library_workspace_depth_state()
@@ -739,19 +744,33 @@ class LibraryScreen(BaseAppScreen):
             self._selected_conversation_id = conversation_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
         if requested_mode == "notes" and not note_id:
-            # "notes" is a canvas row, not a LIBRARY_MODES entry (see
+            # "notes" is a canvas row, not a nav-context table entry (see
             # target_mode above), so it needs its own selection here --
             # mirrors handle_library_notes_row's list-view entry state.
-            self._active_mode = "notes"
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
         if notes_create:
-            # Mirrors _select_library_rail_row(LIBRARY_ROW_CREATE_NOTE,
-            # "notes-create") -- the create-note rail row's own target_id.
-            # The rail row's flush of a dirty editor is handled upstream by
+            # Mirrors _select_library_rail_row(LIBRARY_ROW_CREATE_NOTE) --
+            # the create-note rail row's own target_id. The rail row's
+            # flush of a dirty editor is handled upstream by
             # apply_navigation_context's mounted dirty-editor branch; here we
-            # only apply the mode + selection the recompose reads.
-            self._active_mode = "notes-create"
+            # only apply the selection the recompose reads.
             self._library_selected_row_id = LIBRARY_ROW_CREATE_NOTE
+        if ingest_media:
+            # Home's ingest-jobs "Open details" control re-points here
+            # (L3b Task 6): running/queued/failed Library ingest jobs
+            # mirror into Home's Running and Needs Attention sections, and
+            # this deep link is their one-hop route back to the in-canvas
+            # ingest queue. Mirrors
+            # _select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA) -- unlike
+            # collections/note_id above, the ingest canvas reads the job
+            # registry directly on recompose, so no async data fetch (and
+            # therefore no on_mount deferral) is needed even pre-mount.
+            self._library_selected_row_id = LIBRARY_ROW_INGEST_MEDIA
+            # Mirrors _select_library_rail_row's reset: a cached LibraryScreen
+            # re-entered via this deep link (e.g. from Home's ingest-jobs
+            # "Open details" control) must never show a stale half-filled
+            # form left over from a previous Ingest visit.
+            self._reset_library_ingest_transient_state()
         if note_id:
             # Forward-compat entry point: the retired Notes tab's chat-sidebar
             # deep link carried a note id, and this rebuilds the editor for it.
@@ -759,7 +778,6 @@ class LibraryScreen(BaseAppScreen):
             # open_notes_workspace route carries none, landing on the list), so
             # this is exercised only by tests until such a producer is wired --
             # not orphaned wiring.
-            self._active_mode = "notes"
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
             self._selected_note_id = note_id
             self._library_notes_view = "editor"
@@ -779,14 +797,24 @@ class LibraryScreen(BaseAppScreen):
                     group="library_note_detail",
                 )
         if self.is_mounted:
-            if self._active_mode == "collections" and not self._library_collections_loaded:
+            if (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+                and not self._library_collections_loaded
+            ):
                 # Deep-link into Collections must load the snapshot the retired
                 # chip flow ran; the panel shows the records once loaded.
                 self.run_worker(self._sync_collections_panel(refresh_snapshot=True))
             else:
                 self.refresh(recompose=True)
 
-    @work(exclusive=True)
+    # Own group, deliberately separate from the "default" group the plain
+    # `self.run_worker(self._sync_collections_panel(...))` calls above use
+    # (they take no explicit group either). Both were previously exclusive
+    # in the SAME (default) group, so an ingest-completion poke into this
+    # worker (see `_handle_library_ingest_registry_changed`) could cancel
+    # an in-flight Collections load. A separate group makes the two
+    # `exclusive=True` scopes independent.
+    @work(exclusive=True, group="library_source_snapshot")
     async def _refresh_local_source_snapshot(self) -> None:
         (
             records,
@@ -1351,138 +1379,6 @@ class LibraryScreen(BaseAppScreen):
                 return f"Updated: {value}"
         return "Updated: unknown"
 
-    def _conversation_handoff_enabled(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-    ) -> bool:
-        return bool(
-            self._selected_conversation_record()
-            and workspace_depth_state.context_handoff_enabled
-            and not self._library_lookup_error
-        )
-
-    def _conversation_handoff_label(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-    ) -> str:
-        if not self._selected_conversation_record():
-            return "Handoff eligibility: select a conversation first."
-        if workspace_depth_state.context_handoff_enabled:
-            return "Handoff eligibility: ready for Console context."
-        return f"Handoff eligibility: blocked. {workspace_depth_state.context_handoff_tooltip}"
-
-    def _conversation_browser_rows(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-    ) -> tuple[Static | Button, ...]:
-        records = self._conversation_records()
-        self._ensure_selected_conversation_id()
-        rows: list[Static | Button] = [
-            Static(
-                "Saved Conversations",
-                id="library-conversations-browser-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Library-owned browser for saved chats; select one to inspect metadata before handoff.",
-                id="library-conversations-browser-purpose",
-            ),
-        ]
-        if not records:
-            rows.extend(
-                (
-                    Static(
-                        "No saved conversations available in Library.",
-                        id="library-conversations-empty",
-                        classes="ds-recovery-callout is-blocked",
-                    ),
-                    Static(
-                        "Create or save a Console chat, then return here to browse it.",
-                        id="library-conversations-empty-recovery",
-                    ),
-                    Button(
-                        "Open Console",
-                        id="library-conversations-open-console-empty",
-                        classes="library-source-action",
-                        tooltip="Open Console to create or save a conversation.",
-                    ),
-                    Static(
-                        "What appears here:",
-                        id="library-conversations-empty-contents-title",
-                        classes="destination-section",
-                    ),
-                    Static(
-                        "Saved chats with title, message count, workspace, and updated time.",
-                        id="library-conversations-empty-contents-metadata",
-                    ),
-                    Static(
-                        "Select a row to enable Console handoff actions.",
-                        id="library-conversations-empty-contents-handoff",
-                    ),
-                )
-            )
-            return tuple(rows)
-        for index, record in enumerate(records):
-            conversation_id = self._conversation_record_id(record, index)
-            title = self._source_title("conversations", record)
-            selected_prefix = "> " if conversation_id == self._selected_conversation_id else "  "
-            rows.append(
-                Button(
-                    f"{selected_prefix}{title}",
-                    id=f"library-conversation-select-{index}",
-                    classes="library-source-action library-conversation-select",
-                    tooltip="Select this conversation for Library inspection.",
-                )
-            )
-            rows.append(
-                Static(
-                    " | ".join(
-                        (
-                            self._conversation_message_count_label(record),
-                            self._conversation_workspace_label(record),
-                        )
-                    ),
-                    id=f"library-conversation-row-{index}",
-                )
-            )
-        selected = self._selected_conversation_record()
-        if selected is None:
-            return tuple(rows)
-        _, selected_record = selected
-        rows.extend(
-            (
-                Static(
-                    "Selected conversation",
-                    classes="destination-section",
-                ),
-                Static(
-                    self._source_title("conversations", selected_record),
-                    id="library-selected-conversation-title",
-                ),
-                Static(
-                    self._conversation_message_count_label(selected_record),
-                    id="library-selected-conversation-message-count",
-                ),
-                Static(
-                    self._conversation_workspace_label(selected_record),
-                    id="library-selected-conversation-workspace",
-                ),
-                Static(
-                    self._conversation_updated_label(selected_record),
-                    id="library-selected-conversation-updated",
-                ),
-                Static(
-                    "Source authority: local",
-                    id="library-selected-conversation-authority",
-                ),
-                Static(
-                    self._conversation_handoff_label(workspace_depth_state),
-                    id="library-selected-conversation-handoff",
-                ),
-            )
-        )
-        return tuple(rows)
-
     def _selected_conversation_handoff_payload(self) -> ChatHandoffPayload | None:
         selected = self._selected_conversation_record()
         if selected is None:
@@ -1748,270 +1644,6 @@ class LibraryScreen(BaseAppScreen):
     def _hub_spacer(self, widget_id: str) -> Static:
         return Static("", id=widget_id, classes="library-hub-spacer")
 
-    def _import_export_workflow_rows(self) -> tuple[Static, ...]:
-        return (
-            Static(
-                "Library Import/Export Workflow",
-                id="library-import-export-workflow-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Library owns source acquisition framing; Ingest and Media own deeper file handling.",
-                id="library-import-export-owner-boundary",
-            ),
-            Static(
-                "Import source material",
-                id="library-import-export-import-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Open Ingest to add files, URLs, transcripts, source packages, or external material.",
-                id="library-import-export-ingest-copy",
-            ),
-            Static(
-                "Imported material returns here as notes, media, conversations, or indexed sources.",
-                id="library-import-export-return-copy",
-            ),
-            Static(
-                "Media review",
-                id="library-import-export-media-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Full Media ingestion and review stays in Media.",
-                id="library-import-export-media-boundary",
-            ),
-            Static(
-                "Ownership boundaries",
-                id="library-import-export-boundaries-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Artifact export stays in Artifacts.",
-                id="library-import-export-artifact-boundary",
-            ),
-            Static(
-                "Generic file management stays outside Library.",
-                id="library-import-export-file-boundary",
-            ),
-            Static(
-                "Export is not wired here yet.",
-                id="library-import-export-export-blocked",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static(
-                "Return path: come back to Library after import to see new hub inventory.",
-                id="library-import-export-return-path",
-            ),
-        )
-
-    def _import_export_inspector_rows(self) -> tuple[Static, ...]:
-        return (
-            Static(
-                "Import/Export inspector",
-                id="library-inspector-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Current scope: source-level Library acquisition.",
-                id="library-import-export-inspector-scope",
-            ),
-            Static(
-                "Handoff target: Ingest for new source material; Media for media review.",
-                id="library-import-export-inspector-targets",
-            ),
-            Static(
-                "Prerequisite: choose the owner workflow before leaving Library.",
-                id="library-import-export-inspector-prerequisite",
-            ),
-            Static(
-                "Blocked: Library source export is planned but not implemented here.",
-                id="library-import-export-inspector-blocked",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static(
-                "Recovery: use owner screens for existing export paths until Library export is wired.",
-                id="library-import-export-inspector-recovery",
-            ),
-        )
-
-    def _source_action_meta(self, widget_id: str) -> str:
-        if widget_id == "library-open-notes":
-            return (
-                f"Notes: {self._hub_source_count_value('notes')} | "
-                "global browse | stage gated"
-            )
-        if widget_id == "library-open-media":
-            return (
-                f"Media: {self._hub_source_count_value('media')} | "
-                "global browse | stage gated"
-            )
-        if widget_id == "library-open-conversations":
-            return (
-                f"Conversations: {self._hub_source_count_value('conversations')} | "
-                "global browse | stage gated"
-            )
-        if widget_id == "library-open-search":
-            return "Retrieval | query first | stage evidence"
-        if widget_id == "library-open-collections":
-            return "Collections | read/review | items WIP"
-        return ""
-
-    def _source_module_action_widgets(self) -> tuple[Button | Static, ...]:
-        action_groups: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
-            (
-                "Sources",
-                (
-                    ("Open Notes", "library-open-notes", "Open saved notes and workspaces."),
-                    (
-                        "Open Media",
-                        "library-open-media",
-                        "Browse the media library, transcripts, analysis, and read-it-later.",
-                    ),
-                    (
-                        "Open Conversations",
-                        "library-open-conversations",
-                        "Open saved conversation browsing inside Library.",
-                    ),
-                ),
-            ),
-            (
-                "Retrieval",
-                (
-                    ("Search/RAG", "library-open-search", "Search or ask over indexed sources."),
-                ),
-            ),
-            (
-                "Movement",
-                (
-                    (
-                        "Import/Export Sources",
-                        "library-open-import-export",
-                        "Open source import and export tools.",
-                    ),
-                    (
-                        "Collections",
-                        "library-open-collections",
-                        "Read, review, and reuse saved Library content.",
-                    ),
-                ),
-            ),
-            (
-                "Learning",
-                (
-                    ("Study Dashboard", "library-open-study", "Open Study globally or with Library sources."),
-                    ("Flashcards", "library-open-flashcards", "Open Flashcards globally or with Library sources."),
-                    ("Quizzes", "library-open-quizzes", "Open Quizzes globally or with Library sources."),
-                ),
-            ),
-        )
-
-        widgets: list[Button | Static] = []
-        active_action_id = self._active_source_action_id()
-        hide_search_action = self._active_mode == "search"
-        hide_learning_actions = self._active_mode == "collections" or self._active_mode in LIBRARY_STUDY_HANDOFF_MODES
-        for group_index, (group_label, actions) in enumerate(action_groups):
-            if group_label == "Retrieval" and hide_search_action:
-                continue
-            if group_label == "Learning" and hide_learning_actions:
-                continue
-            if group_index > 0:
-                widgets.append(
-                    Static(
-                        "----",
-                        id=f"library-source-group-rule-{group_label.lower().replace(' ', '-')}",
-                        classes="library-source-group-rule",
-                    )
-                )
-            group_heading = Static(group_label, classes="destination-section library-source-group")
-            widgets.append(group_heading)
-            for index, (label, widget_id, tooltip) in enumerate(actions):
-                classes = "library-source-action"
-                if widget_id == active_action_id:
-                    classes = f"{classes} is-active"
-                    widgets.append(
-                        Static(
-                            f"> Active: {label}",
-                            id="library-source-active-marker",
-                            classes="library-source-active-marker",
-                        )
-                    )
-                button = Button(
-                    label,
-                    id=widget_id,
-                    classes=classes,
-                    tooltip=tooltip,
-                )
-                widgets.append(button)
-                meta = self._source_action_meta(widget_id)
-                if meta:
-                    widgets.append(
-                        Static(
-                            meta,
-                            id=f"{widget_id}-meta",
-                            classes="library-source-action-meta",
-                        )
-                    )
-                if index < len(actions) - 1:
-                    spacer = Static("", classes="library-source-action-spacer")
-                    widgets.append(spacer)
-        return tuple(widgets)
-
-    def _hub_inspector_rows(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-    ) -> tuple[Static, ...]:
-        handoff_copy = (
-            "Console handoff is secondary and uses eligible Library content only."
-            if self._has_local_sources()
-            else "Console handoff is secondary and unavailable until Library content exists."
-        )
-        return (
-            Static(
-                "Hub inspector",
-                id="library-inspector-title",
-                classes="destination-section",
-            ),
-            Static("Selected", id="library-hub-inspector-selected-title", classes="destination-section"),
-            Static(LIBRARY_INSPECTOR_EMPTY_COPY, id="library-inspector-empty"),
-            Static("Available now", id="library-hub-inspector-available-title", classes="destination-section"),
-            Static(
-                "Browse Notes, Media, Conversations, Collections, and Search/RAG owner screens.",
-                id="library-hub-inspector-available-now",
-            ),
-            Static("Blocked", id="library-hub-inspector-blocked-title", classes="destination-section"),
-            Static(
-                handoff_copy,
-                id="library-hub-inspector-console-boundary",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static("Next action", id="library-hub-inspector-next-title", classes="destination-section"),
-            Static(
-                LIBRARY_INSPECTOR_EMPTY_NEXT_ACTION_COPY,
-                id="library-inspector-empty-next-action",
-            ),
-            Static("Details", id="library-hub-inspector-details-title", classes="destination-section"),
-            Static(
-                "Notes owner: Notes screen handles editing, sync, templates, export, and delete.",
-                id="library-hub-inspector-notes-owner",
-            ),
-            Static(
-                "Media owner: Media screen handles browse, ingest review, analysis, and read-it-later.",
-                id="library-hub-inspector-media-owner",
-            ),
-            Static(
-                "Search/RAG owner: Library Search/RAG handles retrieval, evidence, and saved searches.",
-                id="library-hub-inspector-rag-owner",
-            ),
-            Static(
-                "Workspace boundary: browse/search remains global; active workspace gates staging and manipulation.",
-                id="library-hub-inspector-workspace-boundary",
-            ),
-            Static(
-                workspace_depth_state.handoff_label,
-                id="library-hub-inspector-handoff-state",
-            ),
-        )
 
     @classmethod
     def _source_record_id(cls, record: Mapping[str, Any]) -> str | None:
@@ -2145,35 +1777,31 @@ class LibraryScreen(BaseAppScreen):
     def _has_source_study_context(self) -> bool:
         return self._has_local_sources()
 
-    def _study_handoff_copy(self) -> dict[str, str]:
+    def _study_handoff_copy(self, kind: str) -> dict[str, str]:
         mode = LIBRARY_STUDY_HANDOFF_MODES.get(
-            self._active_mode,
+            kind,
             LIBRARY_STUDY_HANDOFF_MODES["study"],
         )
         titles = self._source_study_handoff_titles()
         has_context = self._has_source_study_context()
         action_label = mode["action_label"]
         if has_context and titles:
-            context_copy = f"Carries forward: {', '.join(titles)}"
+            context_copy = _library_carries_forward_line(titles)
         elif has_context:
             context_copy = "Carries forward: Library source snapshot (titles unavailable)"
         else:
-            context_copy = "No Library source snapshot will be carried forward."
+            # No Library sources at all: the carries-forward line is omitted
+            # entirely rather than stating the negative (the blocked
+            # "recovery" line below already carries that signal).
+            context_copy = ""
         return {
-            "label": mode["label"],
+            "header": mode["header"],
             "action_label": action_label,
+            "purpose": mode["purpose"],
             "context": context_copy,
-            "owner": (
-                "Library prepares source context only; Study owns sessions, "
-                "generation, review, and attempts."
-            ),
-            "wip": (
-                "WIP: provider-backed generation and collection-scoped study "
-                "remain owned by later Study slices."
-            ),
+            "owner": LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
             "recovery": (
-                "Source snapshot is ready; open "
-                f"{action_label} to continue with this Library context."
+                "Source snapshot is ready."
                 if has_context
                 else (
                     "Import sources or create notes first, or open "
@@ -2181,73 +1809,6 @@ class LibraryScreen(BaseAppScreen):
                 )
             ),
         }
-
-    def _status_label(self) -> str:
-        if not self._library_loaded:
-            return "Loading"
-        if self._library_lookup_recovery_state is not None:
-            return self._library_lookup_recovery_state.status_label
-        if self._library_lookup_error is None:
-            return "Ready" if self._has_local_sources() else "Empty"
-        if "unavailable" in self._library_lookup_error.lower():
-            return "Unavailable"
-        return "Blocked"
-
-    def _search_rag_status_label(self) -> str:
-        panel_state = self._library_rag_panel_state()
-        if panel_state.scope.status == "blocked":
-            if not panel_state.scope.has_available_sources:
-                return "Blocked: no Library sources"
-            return "Blocked: select Library source scope"
-        if panel_state.query_state.status == "blocked":
-            return f"Blocked: {panel_state.query_state.run_action.disabled_reason}"
-        if panel_state.retrieval_status == "searching":
-            return "Searching"
-        if panel_state.retrieval_status in {"blocked", "failed"}:
-            return "Blocked: retrieval unavailable"
-        if panel_state.retrieval_status == "empty":
-            return "No results"
-        if panel_state.selected_result is not None:
-            return "Evidence selected"
-        if panel_state.results:
-            return "Results ready"
-        return "Ready"
-
-    def _status_row_copy(self) -> str:
-        if self._active_mode == "conversations":
-            return f"Library | Conversations | {self._status_label()} | Local"
-        if self._active_mode == "search":
-            return f"Library | Search/RAG | {self._search_rag_status_label()} | Local"
-        if self._active_mode == "import-export":
-            return f"Library | Import/Export | {self._status_label()} | Local"
-        if self._active_mode == "collections":
-            collections_status = "Empty"
-            if self._library_collections_error:
-                collections_status = "Unavailable"
-            elif self._library_collections_records:
-                collections_status = "Ready"
-            return f"Library | Collections | {collections_status} | Local"
-        return (
-            "Library | Content hub, imports, Search/RAG, Workspaces, "
-            f"Collections, Study | {self._status_label()} | Local"
-        )
-
-    def _active_mode_contract(self) -> Mapping[str, str]:
-        return LIBRARY_MODES.get(self._active_mode, LIBRARY_MODES["sources"])
-
-    def _active_column_titles(self) -> tuple[str, str, str]:
-        return LIBRARY_COLUMN_TITLES.get(self._active_mode, LIBRARY_COLUMN_TITLES["sources"])
-
-    def _active_source_action_id(self) -> str:
-        return {
-            "conversations": "library-open-conversations",
-            "search": "library-open-search",
-            "collections": "library-open-collections",
-            "import-export": "library-open-import-export",
-        }.get(self._active_mode, "")
-
-    def _should_show_local_snapshot_region(self) -> bool:
-        return self._active_mode in LIBRARY_LOCAL_SNAPSHOT_MODES
 
     def _library_rag_panel_state(self) -> LibraryRagPanelState:
         # B2: explicit selection is every real source type NOT toggled off;
@@ -2309,100 +1870,6 @@ class LibraryScreen(BaseAppScreen):
             sync_profile_summary=self._library_sync_profile_summary,
         )
 
-    def _collections_inspector_rows(
-        self,
-        panel_state: LibraryCollectionsPanelState,
-    ) -> tuple[Static, ...]:
-        selected = panel_state.selected_collection
-        if selected is None:
-            return (
-                Static("Collections Inspector", id="library-inspector-title", classes="destination-section"),
-                Static("Selected: none", id="library-collection-inspector-empty"),
-                Static(
-                    (
-                        "Collections are for reading and reviewing saved content; "
-                        "the local item reader is not wired in this slice."
-                    ),
-                    id="library-collection-inspector-empty-next-action",
-                ),
-                Static(
-                    (
-                        "Global browsing/search remains available; active staging and manipulation "
-                        "stay workspace-gated."
-                    ),
-                    id="library-collection-inspector-global-rule",
-                ),
-                Static("Action status", classes="destination-section"),
-                Static(
-                    "Available now: create, rename, delete records",
-                    id="library-collection-inspector-empty-local-actions",
-                ),
-                Static(
-                    "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync",
-                    id="library-collection-inspector-empty-later-actions",
-                    classes="ds-recovery-callout is-blocked",
-                ),
-                Static(
-                    "Next: select or create a Collection record to inspect local item-reader readiness.",
-                    id="library-collection-inspector-empty-recovery",
-                ),
-            )
-        return (
-            Static("Selected Collection Record", id="library-inspector-title", classes="destination-section"),
-            Static(f"Selected: {selected.name}", id="library-collection-inspector-selected"),
-            Static(selected.name, id="library-collection-inspector-name"),
-            Static(
-                f"Stored item count: {selected.item_count_label}",
-                id="library-collection-inspector-item-count",
-            ),
-            Static(
-                "Collection item reader: not wired locally yet.",
-                id="library-collection-inspector-reader-state",
-            ),
-            Static(
-                "Workspace rule: Library browsing/search stays global; Console/RAG staging follows active workspace.",
-                id="library-collection-inspector-workspace-rule",
-            ),
-            Static("Action status", classes="destination-section"),
-            Static(
-                "Available now: create, rename, delete records",
-                id="library-collection-inspector-local-actions",
-            ),
-            Static(
-                "Blocked later: item reader, Search/RAG, Study, Console handoff, server sync",
-                id="library-collection-inspector-later-actions",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static(
-                "Next: collection item adapters are required before item-level actions unlock.",
-                id="library-collection-inspector-next",
-            ),
-            Static(
-                "Disabled: collection item Search/RAG is not wired yet.",
-                id="library-collection-inspector-rag-blocked",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static(
-                "Disabled: collection item Console handoff is not wired yet.",
-                id="library-collection-inspector-console-blocked",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static(
-                (
-                    "Recovery: use existing Library Search/RAG or individual eligible sources "
-                    "until collection item adapters are available."
-                ),
-                id="library-collection-inspector-recovery",
-            ),
-            Static("What this means", classes="destination-section"),
-            Static(
-                "This is a read-only sync dry run. No server writes can run from this screen.",
-                id="library-collection-inspector-sync-meaning",
-            ),
-            Static(selected.sync_status_label, id="library-collection-inspector-sync-status"),
-            Static(selected.sync_status_detail, id="library-collection-inspector-sync-detail"),
-        )
-
     def _workspace_handoff_summary_label(self, state: LibraryWorkspaceDepthState) -> str:
         """Shorten ``state.handoff_label`` for the Workspace group's Handoff row.
 
@@ -2454,94 +1921,29 @@ class LibraryScreen(BaseAppScreen):
             ),
         )
 
-    def _workspaces_inspector_rows(
-        self,
-        state: LibraryWorkspaceDepthState,
-    ) -> tuple[Static, ...]:
-        return (
-            Static("Handoff status", id="library-inspector-title", classes="destination-section"),
-            Static(state.handoff_label, id="library-workspaces-inspector-handoff"),
-            Static(
-                self._workspace_handoff_blocked_label(state),
-                id="library-workspaces-inspector-blocked",
-            ),
-            Static(
-                self._workspace_handoff_why_label(state),
-                id="library-workspaces-inspector-why",
-            ),
-            Static(
-                self._workspace_handoff_fix_label(state),
-                id="library-workspaces-inspector-fix",
-            ),
-            Static(
-                self._workspace_handoff_action_label(state),
-                id="library-workspaces-inspector-action",
-            ),
-            Static(
-                "Rule: browse/search stay global; staging is workspace-scoped.",
-                id="library-workspaces-inspector-rule",
-            ),
-        )
-
-    def _workspace_handoff_recovery_label(self, state: LibraryWorkspaceDepthState) -> str:
-        if not state.source_rows:
-            workspace_name = state.workspace_name.strip()
-            if workspace_name and workspace_name not in {"unavailable"}:
-                return f"import or assign sources to {workspace_name}"
-            return "import or assign sources to a workspace"
-        workspace_name = state.workspace_name.strip()
-        if workspace_name and workspace_name not in {"Local Default", "unavailable"}:
-            return f"Copy/link blocked sources to {workspace_name}"
-        return "Assign blocked sources to the active workspace"
-
-    def _workspace_handoff_blocked_label(self, state: LibraryWorkspaceDepthState) -> str:
-        if state.context_handoff_enabled:
-            return "Ready: all visible sources can be staged"
-        if not state.source_rows:
-            return "Blocked: no workspace sources"
-        workspace_name = state.workspace_name.strip()
-        if workspace_name and workspace_name not in {"Local Default", "unavailable"}:
-            return f"Blocked: some sources are outside {workspace_name}"
-        return "Blocked: sources need active workspace assignment"
-
-    def _workspace_handoff_fix_label(self, state: LibraryWorkspaceDepthState) -> str:
-        if state.context_handoff_enabled:
-            return "Fix: no action needed"
-        if not state.source_rows:
-            return f"Fix: {self._workspace_handoff_recovery_label(state)}"
-        return f"Fix: {self._workspace_handoff_recovery_label(state)}"
-
-    def _workspace_handoff_why_label(self, state: LibraryWorkspaceDepthState) -> str:
-        if state.context_handoff_enabled:
-            return "Why: all visible sources belong to the active workspace."
-        if not state.source_rows:
-            return "Why: no sources are assigned to this workspace yet."
-        return "Why: at least one visible source belongs to another workspace."
-
-    def _workspace_handoff_action_label(self, state: LibraryWorkspaceDepthState) -> str:
-        if state.context_handoff_enabled:
-            return "Action: Use in Console is available."
-        if not state.source_rows:
-            return "Action: Import sources or assign sources before staging."
-        return "Action: Copy/link blocked sources before staging."
-
-    def _study_handoff_detail_widget(self) -> Vertical:
-        copy = self._study_handoff_copy()
-        recovery_classes = (
-            "ds-recovery-callout"
-            if self._has_local_sources()
-            else "ds-recovery-callout is-blocked"
+    def _study_handoff_detail_widget(self, kind: str) -> Vertical:
+        """Build the handoff canvas body: purpose, carried-forward sources,
+        ownership, snapshot readiness, and the Open action -- five elements,
+        down from the seven-line original (UX wave D1: no duplicated mode/
+        purpose lines, no "Primary action:" line, no WIP roadmap callout).
+        """
+        copy = self._study_handoff_copy(kind)
+        # D2: the ds-recovery-callout warning treatment is for the blocked
+        # (no local sources) state only; ready renders as a plain Static.
+        recovery_kwargs: dict[str, str] = (
+            {} if self._has_local_sources() else {"classes": "ds-recovery-callout is-blocked"}
         )
         action_button_id = {
             "study": "library-open-study",
             "flashcards": "library-open-flashcards",
             "quizzes": "library-open-quizzes",
-        }.get(self._active_mode, "library-open-study")
+        }.get(kind, "library-open-study")
         handoff_toolbar = Horizontal(
             Button(
                 copy["action_label"],
                 id=action_button_id,
-                classes="library-canvas-action",
+                # D3: the Open action is the canvas's primary control.
+                classes="library-canvas-action console-action-primary",
                 compact=True,
                 tooltip=(
                     f"Open {copy['action_label']} with the current Library "
@@ -2552,35 +1954,37 @@ class LibraryScreen(BaseAppScreen):
             classes="ds-toolbar",
         )
         handoff_toolbar.styles.height = "auto"
-        return Vertical(
+        children: list[Static | Horizontal] = [
             Static(
-                f"{copy['label']} handoff",
+                copy["purpose"],
                 id="library-study-handoff-purpose",
-                classes="destination-section",
             ),
-            Static(
-                f"Primary action: {copy['action_label']}",
-                id="library-study-handoff-primary-action",
-            ),
-            Static(
-                copy["context"],
-                id="library-study-handoff-context",
-            ),
+        ]
+        if copy["context"]:
+            # D1: omitted entirely (not "No ... will be carried forward.")
+            # when there is no Library source snapshot at all.
+            children.append(
+                Static(
+                    copy["context"],
+                    id="library-study-handoff-context",
+                )
+            )
+        children.append(
             Static(
                 copy["owner"],
                 id="library-study-handoff-owner",
-            ),
-            Static(
-                copy["wip"],
-                id="library-study-handoff-wip",
-                classes="ds-recovery-callout",
-            ),
+            )
+        )
+        children.append(
             Static(
                 copy["recovery"],
                 id="library-study-handoff-recovery",
-                classes=recovery_classes,
-            ),
-            handoff_toolbar,
+                **recovery_kwargs,
+            )
+        )
+        children.append(handoff_toolbar)
+        return Vertical(
+            *children,
             id="library-study-handoff-detail",
             classes="library-rag-region",
         )
@@ -2699,308 +2103,6 @@ class LibraryScreen(BaseAppScreen):
             )
         )
         return widgets
-
-    def _library_action_widgets(
-        self,
-        *,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-        collection_scoped_actions_deferred: bool,
-        handoff_disabled: bool,
-        handoff_tooltip: str,
-        collections_panel_state: LibraryCollectionsPanelState | None = None,
-    ) -> tuple[Any, ...]:
-        if self._active_mode == "workspaces":
-            return self._workspace_action_widgets(
-                workspace_depth_state,
-                handoff_disabled=handoff_disabled,
-                handoff_tooltip=handoff_tooltip,
-            )
-        if self._active_mode == "conversations":
-            handoff_ready = self._conversation_handoff_enabled(workspace_depth_state)
-            recovery_copy = self._conversation_handoff_label(workspace_depth_state)
-            return (
-                Static("Conversation actions", classes="destination-section"),
-                Button(
-                    "Open in Console",
-                    id="library-conversation-open-console",
-                    classes="library-source-action",
-                    disabled=not handoff_ready,
-                    tooltip=(
-                        "Open this conversation as Console context."
-                        if handoff_ready
-                        else recovery_copy
-                    ),
-                ),
-                Static(
-                    (
-                        "Selected conversation can be handed off when workspace policy allows it."
-                        if self._selected_conversation_record()
-                        else "Select a conversation first to enable these actions."
-                    ),
-                    id="library-conversation-action-disabled-reason",
-                ),
-                Button(
-                    "Use as source",
-                    id="library-conversation-use-source",
-                    classes="library-source-action",
-                    disabled=not handoff_ready,
-                    tooltip=(
-                        "Use this conversation as a source for Console/RAG context."
-                        if handoff_ready
-                        else recovery_copy
-                    ),
-                ),
-                Static(
-                    recovery_copy,
-                    id="library-conversation-action-state",
-                    classes="ds-recovery-callout" if handoff_ready else "ds-recovery-callout is-blocked",
-                ),
-            )
-        if self._active_mode == "import-export":
-            return (
-                Static("Import/Export actions", classes="destination-section"),
-                Button(
-                    "Open Ingest",
-                    id="library-import-export-open-ingest",
-                    classes="library-source-action",
-                    tooltip=(
-                        "Open Ingest for files, URLs, transcripts, and source packages. "
-                        "Return to Library to see imported content."
-                    ),
-                ),
-                Static(
-                    "Route: Ingest. Return path: imported material appears in Library inventory.",
-                    id="library-import-export-ingest-route-copy",
-                ),
-                Button(
-                    "Open Media",
-                    id="library-import-export-open-media",
-                    classes="library-source-action",
-                    tooltip="Open Media for full media ingestion, review, and analysis.",
-                ),
-                Static(
-                    "Route: Media. Use when the task is media review, not generic source movement.",
-                    id="library-import-export-media-route-copy",
-                ),
-                Button(
-                    "Export Library sources",
-                    id="library-import-export-export-sources",
-                    classes="library-source-action",
-                    disabled=True,
-                    tooltip="Source-level Library export is not wired yet.",
-                ),
-                Static(
-                    "Blocked: export from this Library panel is not wired yet. Use owner screens where available.",
-                    id="library-import-export-action-blocked",
-                    classes="ds-recovery-callout is-blocked",
-                ),
-            )
-        if self._active_mode == "collections":
-            return (
-                Static("Collection item actions", classes="destination-section"),
-                Static(
-                    "Read/review collection items when a local item adapter is available.",
-                    id="library-collection-actions-local-readiness",
-                ),
-                Static(
-                    "Item actions unavailable until collection items exist.",
-                    id="library-collection-actions-disabled-reason",
-                    classes="ds-recovery-callout is-blocked",
-                ),
-                Static(
-                    "Disabled: collection item Search/RAG, Study, Console handoff, "
-                    "and server sync promotion are not wired yet.",
-                    id="library-collection-actions-wip-reason",
-                    classes="ds-recovery-callout is-blocked",
-                ),
-                Button(
-                    "Study Dashboard",
-                    id="library-open-study",
-                    classes="library-source-action",
-                    disabled=True,
-                    tooltip="Collection-scoped Study is not available yet.",
-                ),
-                Button(
-                    "Flashcards",
-                    id="library-open-flashcards",
-                    classes="library-source-action",
-                    disabled=True,
-                    tooltip="Collection-scoped Flashcards are not available yet.",
-                ),
-                Button(
-                    "Quizzes",
-                    id="library-open-quizzes",
-                    classes="library-source-action",
-                    disabled=True,
-                    tooltip="Collection-scoped Quizzes are not available yet.",
-                ),
-                Button(
-                    "Use in Console",
-                    id="library-use-in-console",
-                    classes="library-source-action",
-                    disabled=True,
-                    tooltip="Collection-scoped Console handoff is not available yet.",
-                ),
-            )
-        if self._active_mode == "search":
-            return ()
-        if self._active_mode in LIBRARY_STUDY_HANDOFF_MODES:
-            copy = self._study_handoff_copy()
-            active_action_id = {
-                "study": "library-open-study",
-                "flashcards": "library-open-flashcards",
-                "quizzes": "library-open-quizzes",
-            }[self._active_mode]
-            recovery_classes = (
-                "ds-recovery-callout"
-                if self._has_local_sources()
-                else "ds-recovery-callout is-blocked"
-            )
-
-            def action_classes(button_id: str) -> str:
-                classes = "library-source-action"
-                if button_id == active_action_id:
-                    classes = f"{classes} is-active"
-                return classes
-
-            return (
-                Static(
-                    f"{copy['label']} actions",
-                    id="library-study-actions-title",
-                    classes="destination-section",
-                ),
-                Static(
-                    (
-                        "Open with the current Library source snapshot."
-                        if self._has_local_sources()
-                        else "Open globally; no Library source snapshot is available."
-                    ),
-                    id="library-study-actions-summary",
-                    classes=recovery_classes,
-                ),
-                Button(
-                    "Study Dashboard",
-                    id="library-open-study",
-                    classes=action_classes("library-open-study"),
-                    tooltip="Open Study globally or with the current Library source snapshot.",
-                ),
-                Button(
-                    "Flashcards",
-                    id="library-open-flashcards",
-                    classes=action_classes("library-open-flashcards"),
-                    tooltip="Open Flashcards globally or with the current Library source snapshot.",
-                ),
-                Button(
-                    "Quizzes",
-                    id="library-open-quizzes",
-                    classes=action_classes("library-open-quizzes"),
-                    tooltip="Open Quizzes globally or with the current Library source snapshot.",
-                ),
-                Button(
-                    "Use in Console",
-                    id="library-use-in-console",
-                    classes="library-source-action",
-                    disabled=handoff_disabled,
-                    tooltip=handoff_tooltip,
-                ),
-            )
-        if self._active_mode == "sources":
-            return (
-                Static(
-                    "Hub actions",
-                    id="library-hub-actions-title",
-                    classes="destination-section",
-                ),
-                Static(
-                    "Selected: none",
-                    id="library-hub-actions-guidance",
-                ),
-                Static(
-                    "Available now: open source modules and owner screens.",
-                    id="library-hub-actions-selection",
-                ),
-                Static(
-                    "Blocked: Use in Console requires workspace-eligible Library content.",
-                    id="library-hub-actions-boundary",
-                    classes="ds-recovery-callout is-blocked",
-                ),
-                Button(
-                    "Use in Console",
-                    id="library-use-in-console",
-                    classes="library-source-action",
-                    disabled=handoff_disabled,
-                    tooltip=handoff_tooltip,
-                ),
-                Static(
-                    "Next action: open a source mode, import content, or create a note.",
-                    id="library-hub-actions-next",
-                ),
-            )
-        return (
-            Static("Knowledge workflow", classes="destination-section"),
-            Static(
-                (
-                    "Collection-scoped Study, Flashcards, Quizzes, and Console "
-                    "are later-stage."
-                    if collection_scoped_actions_deferred
-                    else "Turn Library material into study sessions, flashcards, and quizzes."
-                ),
-                id="library-study-purpose",
-            ),
-            Static(
-                (
-                    "Use Collections to organize source groups locally; scoped "
-                    "execution remains deferred."
-                    if collection_scoped_actions_deferred
-                    else "Study generation entry uses the visible Library source snapshot."
-                ),
-                id="library-study-generation-entry",
-            ),
-            Button(
-                "Study Dashboard",
-                id="library-open-study",
-                classes="library-source-action",
-                disabled=collection_scoped_actions_deferred,
-                tooltip=(
-                    "Collection-scoped Study is not available yet."
-                    if collection_scoped_actions_deferred
-                    else "Open the Study dashboard for due cards, decks, quizzes, and resume actions."
-                ),
-            ),
-            Button(
-                "Flashcards",
-                id="library-open-flashcards",
-                classes="library-source-action",
-                disabled=collection_scoped_actions_deferred,
-                tooltip=(
-                    "Collection-scoped Flashcards are not available yet."
-                    if collection_scoped_actions_deferred
-                    else "Open flashcards for selected or imported Library material."
-                ),
-            ),
-            Button(
-                "Quizzes",
-                id="library-open-quizzes",
-                classes="library-source-action",
-                disabled=collection_scoped_actions_deferred,
-                tooltip=(
-                    "Collection-scoped Quizzes are not available yet."
-                    if collection_scoped_actions_deferred
-                    else "Open quizzes for selected or imported Library material."
-                ),
-            ),
-            Button(
-                "Use in Console",
-                id="library-use-in-console",
-                classes="library-source-action",
-                disabled=handoff_disabled or collection_scoped_actions_deferred,
-                tooltip=(
-                    "Collection-scoped Console handoff is not available yet."
-                    if collection_scoped_actions_deferred
-                    else handoff_tooltip
-                ),
-            ),
-        )
 
     def compose_content(self) -> ComposeResult:
         shell_input = self._build_library_shell_input()
@@ -3181,8 +2283,30 @@ class LibraryScreen(BaseAppScreen):
                         delete_pending=bool(self._library_collection_pending_delete_id),
                         id="library-collections-panel",
                     )
-                elif shell.canvas_kind == "mode":
-                    yield from self._compose_mode_canvas(shell.canvas_target)
+                elif shell.canvas_kind == "ingest-media":
+                    yield LibraryIngestCanvas(
+                        self._build_library_ingest_state(),
+                        id="library-ingest-canvas",
+                    )
+                elif shell.canvas_kind == "handoff":
+                    # Study/Flashcards/Quizzes rows (L3b Task 8): a first-class
+                    # canvas kind of their own, sourced entirely from
+                    # LIBRARY_STUDY_HANDOFF_MODES. UX wave D1 collapsed this
+                    # to a single header (the row's own title -- "Flashcards"
+                    # / "Study decks" / "Quizzes") plus the consolidated
+                    # handoff detail widget below; the header no longer
+                    # restates the mode name a second, differently-worded way
+                    # (formerly "Flashcards mode" + a duplicated description
+                    # + next-action line).
+                    handoff_copy = LIBRARY_STUDY_HANDOFF_MODES.get(
+                        shell.canvas_target, LIBRARY_STUDY_HANDOFF_MODES["study"]
+                    )
+                    yield Static(
+                        handoff_copy["header"],
+                        id="library-active-mode-title",
+                        classes="destination-section",
+                    )
+                    yield self._study_handoff_detail_widget(shell.canvas_target)
                 else:
                     yield Static(
                         shell.canvas_empty_copy,
@@ -3547,6 +2671,123 @@ class LibraryScreen(BaseAppScreen):
         # status/activity above: re-entering the panel re-reads the
         # committed config value.
         self._library_notes_sync_folder_text = None
+
+    def _reset_library_ingest_transient_state(self) -> None:
+        """Clear the ingest canvas's form to defaults on rail re-entry.
+
+        Called on every ``_select_library_rail_row`` switch (mirrors
+        ``_reset_library_notes_sync_transient_state``'s placement) so a
+        stale in-progress form from a previous Ingest visit never
+        reappears when the user comes back to the canvas. The job queue
+        itself is registry-owned and untouched by this reset -- only the
+        local form echo resets.
+        """
+        self._library_ingest_form = LibraryIngestFormState()
+
+    def _library_ingest_registry(self) -> Any:
+        """Return the app's ingest job registry, or ``None`` when absent."""
+        return getattr(self.app_instance, "library_ingest_jobs", None)
+
+    def _handle_library_ingest_registry_changed(self) -> None:
+        """Registry listener: live-recompose the ingest canvas + poke the
+        source snapshot when a job finishes (Task 5).
+
+        Registered against ``self.app_instance.library_ingest_jobs`` in
+        ``on_mount``, removed in ``on_unmount``. Per the registry's own
+        contract (``LibraryIngestJobRegistry._notify_listeners``), this
+        fires synchronously on the UI thread after every successful
+        ``submit``/``mark_running``/``mark_done``/``mark_failed``/
+        ``requeue`` -- from two different call shapes:
+
+        - **Synchronously inside a message handler.** The "Start ingest"
+          and "Retry" button handlers call ``submit_library_ingest_job``/
+          ``retry_library_ingest_job`` directly, which mutate the registry
+          (firing this listener) *before* the handler's own trailing
+          ``self.refresh(recompose=True)`` runs.
+        - **Marshaled from the queue-runner's worker thread**, via
+          ``call_from_thread`` for ``mark_running``/``mark_done``/
+          ``mark_failed`` -- these land outside any message handler,
+          as their own turn of the UI event loop.
+
+        Both shapes are safe to handle with a plain, synchronous
+        ``self.refresh(recompose=True)`` call (no ``call_after_refresh``
+        indirection needed): ``Widget.refresh(recompose=True)`` never
+        recomposes inline -- it only sets ``_recompose_required = True``
+        and schedules the actual (async) ``_check_recompose`` via
+        ``call_next``, which runs on a later turn of the event loop. That
+        makes calling it redundant, or from inside another handler that
+        will also call it, harmless: the flag is idempotent and the
+        second scheduled check becomes a no-op once the first has already
+        cleared it. (Verified by reading
+        ``textual.widget.Widget.refresh``/``_check_recompose`` -- Textual
+        8.2.7.)
+
+        Behavior:
+
+        - Recomposes the canvas ONLY when the ingest canvas is the
+          currently selected rail row -- a job transition must never yank
+          a user looking at a different canvas away from it.
+        - Independently of the canvas recompose, pokes
+          ``_refresh_local_source_snapshot()`` (which updates the rail's
+          ``Media (N)`` count) whenever the registry's done-job count has
+          grown since this screen last checked -- deduped via
+          ``_library_ingest_last_done_count`` so a running/failed
+          transition (or a second notification for the same completed
+          job) never re-triggers the snapshot fetch. This fires
+          regardless of which canvas is selected, since the rail is
+          always visible.
+        - A no-op when the screen isn't mounted -- belt-and-braces
+          alongside ``on_unmount``'s removal (see that method's
+          docstring for why removal can't simply happen earlier, e.g. on
+          suspend). Note ``self.is_mounted`` never flips back to
+          ``False`` after removal in this Textual version -- it only
+          guards a callback that somehow fires before this screen's very
+          first mount -- so ``on_unmount``'s ``remove_listener`` call is
+          what actually prevents post-teardown notifications, not this
+          guard.
+        """
+        if not self.is_mounted:
+            return
+        if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
+            self.refresh(recompose=True)
+        registry = self._library_ingest_registry()
+        counts_fn = getattr(registry, "counts", None)
+        done_count = counts_fn().get("done", 0) if callable(counts_fn) else 0
+        if done_count != self._library_ingest_last_done_count:
+            grew = done_count > self._library_ingest_last_done_count
+            self._library_ingest_last_done_count = done_count
+            if grew:
+                self._refresh_local_source_snapshot()
+
+    def _build_library_ingest_state(self) -> LibraryIngestCanvasState:
+        """Build the ingest canvas's full display state from the live registry + form.
+
+        Reads directly from ``self.app_instance.library_ingest_jobs`` via
+        quiet-degrade ``getattr`` (never assuming the seam exists) rather
+        than caching a screen-owned copy, so every render -- the canvas
+        compose -- sees the registry's current truth, including
+        transitions a live-update listener applies between renders. The
+        Open in Library/Retry/Dismiss row-action handlers do NOT go
+        through this method -- they resolve their target job directly by
+        ``job_id`` from ``registry.jobs()`` (see
+        ``_library_ingest_job_by_id``), never by re-deriving and indexing
+        into a row snapshot, so an async queue mutation between render and
+        click can never mis-target a different job (PR #591 review, F1).
+        """
+        registry = self._library_ingest_registry()
+        jobs_fn = getattr(registry, "jobs", None)
+        jobs = jobs_fn() if callable(jobs_fn) else ()
+        runtime_state = getattr(
+            getattr(self.app_instance, "runtime_policy", None), "state", None
+        )
+        runtime_source = str(getattr(runtime_state, "active_source", "local") or "local")
+        return build_library_ingest_state(
+            jobs,
+            form=self._library_ingest_form,
+            runtime_source=runtime_source,
+            media_db_available=getattr(self.app_instance, "media_db", None) is not None,
+            registry_available=registry is not None,
+        )
 
     def _ensure_library_notes_sync_config_loaded(self) -> None:
         """Seed sync direction/conflict/auto-sync from config on first entry.
@@ -4446,36 +3687,6 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._open_selected_library_note_handoff()
 
-    def _compose_mode_canvas(self, mode: str) -> ComposeResult:
-        """Render the canvas body for a mode row (moved middle-pane content)."""
-        self._active_mode = mode
-        active_mode = LIBRARY_MODES.get(mode, LIBRARY_MODES["sources"])
-        active_mode_copy_visible = mode not in {
-            "collections",
-            "search",
-            "sources",
-            "workspaces",
-        }
-        if active_mode_copy_visible:
-            yield Static(
-                f"{active_mode['label']} mode",
-                id="library-active-mode-title",
-                classes="destination-section",
-            )
-            yield Static(
-                active_mode["description"],
-                id="library-active-mode-description",
-            )
-            yield Static(
-                active_mode["next_action"],
-                id="library-active-mode-next-action",
-            )
-        if mode in LIBRARY_STUDY_HANDOFF_MODES:
-            yield self._study_handoff_detail_widget()
-        elif mode == "import-export":
-            for row in self._import_export_workflow_rows():
-                yield row
-
     def _library_rail_preferences(self):
         """Read persisted Library rail section preferences."""
         app_config = getattr(self.app_instance, "app_config", None)
@@ -4633,7 +3844,7 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-rail-row")
     async def handle_library_rail_row(self, event: Button.Pressed) -> None:
-        """Dispatch a Library rail row press: navigate, browse, or open a mode."""
+        """Dispatch a Library rail row press: navigate, browse, or open a canvas."""
         event.stop()
         button = event.button
         target_kind = str(getattr(button, "target_kind", "") or "")
@@ -4646,21 +3857,22 @@ class LibraryScreen(BaseAppScreen):
         if target_kind == "canvas":
             if target_id == "conversations":
                 self._library_conversation_query = ""
-            await self._select_library_rail_row(row_id, target_id or "conversations")
+            await self._select_library_rail_row(row_id)
             return
-        if target_kind == "mode":
-            await self._select_library_rail_row(row_id, target_id)
+        if target_kind == "handoff":
+            # Study/Flashcards/Quizzes rows (L3b Task 8): resolves to the
+            # handoff canvas.
+            await self._select_library_rail_row(row_id)
             return
         # Unknown target kind: select the row and recompose from selection.
-        await self._select_library_rail_row(row_id, self._active_mode)
+        await self._select_library_rail_row(row_id)
 
-    async def _select_library_rail_row(self, row_id: str, active_mode: str) -> None:
+    async def _select_library_rail_row(self, row_id: str) -> None:
         """Apply a rail-row selection and recompose the canvas from it.
 
         Shared by the rail-row press handler and in-canvas mode shortcuts so
         that the single source of selection truth (``_library_selected_row_id``)
-        always drives the recomposed canvas -- setting ``_active_mode`` alone is
-        reverted by the next ``refresh(recompose=True)``.
+        always drives the recomposed canvas.
 
         A dirty note edit is flushed first (awaited) so leaving via the rail
         never silently discards unsaved text; an unresolved save conflict
@@ -4670,7 +3882,6 @@ class LibraryScreen(BaseAppScreen):
         if self._library_note_autosave_state == "conflict":
             return
         self._library_selected_row_id = row_id
-        self._active_mode = active_mode
         # A rail-row press is always a fresh entry into a content type, so
         # the media canvas must never resume a previously opened viewer
         # (e.g. Browse Media -> open item -> Browse Conversations -> Browse
@@ -4687,8 +3898,12 @@ class LibraryScreen(BaseAppScreen):
         self._library_notes_filter_records = None
         self._reset_library_note_editor_state()
         self._reset_library_notes_sync_transient_state()
+        self._reset_library_ingest_transient_state()
         self._invalidate_library_workspace_depth_state()
-        if self._active_mode == "collections" and not self._library_collections_loaded:
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+            and not self._library_collections_loaded
+        ):
             # First Collections entry must load the snapshot the retired chip
             # flow ran; _sync_collections_panel recomposes once records arrive.
             await self._sync_collections_panel(refresh_snapshot=True)
@@ -4726,7 +3941,6 @@ class LibraryScreen(BaseAppScreen):
         if conversation_id:
             self._selected_conversation_id = conversation_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
-        self._active_mode = "conversations"
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-media-type-filter")
@@ -4772,7 +3986,6 @@ class LibraryScreen(BaseAppScreen):
         if media_id:
             self._selected_media_id = media_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-        self._active_mode = "media"
         self._library_media_view = "viewer"
         self._library_media_detail = None
         self._library_media_editing = False
@@ -5291,6 +4504,335 @@ class LibraryScreen(BaseAppScreen):
             if self._library_notes_view == "sync" and self.is_mounted:
                 self.refresh(recompose=True)
 
+    # ----- Ingest canvas -----------------------------------------------
+
+    @on(Input.Changed, "#library-ingest-path")
+    async def handle_library_ingest_path_changed(self, event: Input.Changed) -> None:
+        """Track the ingest path text as the user types it (state only).
+
+        Also live-updates the Start button's disabled state, AND the
+        blank-path quiet line (L3b AB wave, A4), via targeted DOM surgery
+        (mirroring ``update_library_collection_name_input``) rather than a
+        full canvas recompose, so typing never disturbs the Input's cursor
+        position. The quiet line is conditionally yielded by
+        ``LibraryIngestCanvas.compose`` (mirrors ``unavailable_line``) --
+        unlike the Start button's ``disabled`` flag, which is always a
+        mounted widget whose attribute can just be flipped, a
+        newly-appearing/disappearing quiet line has to be mounted/removed
+        here since there is no recompose to do it for us.
+
+        Args:
+            event: Input change event emitted by the path field.
+        """
+        event.stop()
+        self._library_ingest_form.path = event.value
+        try:
+            start_button = self.query_one("#library-ingest-start", Button)
+        except (NoMatches, QueryError):
+            return
+        new_state = self._build_library_ingest_state()
+        start_button.disabled = not new_state.start_enabled
+        try:
+            quiet_line = self.query_one("#library-ingest-start-quiet-line", Static)
+        except (NoMatches, QueryError):
+            quiet_line = None
+        if new_state.start_quiet_line:
+            if quiet_line is None:
+                container = start_button.parent
+                if container is not None:
+                    await container.mount(
+                        Static(
+                            new_state.start_quiet_line,
+                            id="library-ingest-start-quiet-line",
+                            classes="library-ingest-quiet-line",
+                            markup=False,
+                        ),
+                        before=start_button,
+                    )
+        elif quiet_line is not None:
+            await quiet_line.remove()
+
+    @on(Input.Changed, "#library-ingest-title")
+    def handle_library_ingest_title_changed(self, event: Input.Changed) -> None:
+        """Track the ingest title text as the user types it (state only)."""
+        event.stop()
+        self._library_ingest_form.title = event.value
+
+    @on(Input.Changed, "#library-ingest-author")
+    def handle_library_ingest_author_changed(self, event: Input.Changed) -> None:
+        """Track the ingest author text as the user types it (state only)."""
+        event.stop()
+        self._library_ingest_form.author = event.value
+
+    @on(Input.Changed, "#library-ingest-keywords")
+    def handle_library_ingest_keywords_changed(self, event: Input.Changed) -> None:
+        """Track the ingest keywords text as the user types it (state only)."""
+        event.stop()
+        self._library_ingest_form.keywords = event.value
+
+    @on(Input.Changed, "#library-ingest-chunk-size")
+    def handle_library_ingest_chunk_size_changed(self, event: Input.Changed) -> None:
+        """Track the chunk-size text as typed (display-echo only).
+
+        Parsed and clamped to ``[100, 5000]`` only at submit time (see
+        ``clamp_chunk_size``) -- never here.
+        """
+        event.stop()
+        self._library_ingest_form.chunk_size = event.value
+
+    @on(Button.Pressed, "#library-ingest-browse")
+    def handle_library_ingest_browse(self, event: Button.Pressed) -> None:
+        """Push a ``FileOpen`` dialog to pick a local file to ingest.
+
+        Mirrors ``handle_library_notes_import``'s dialog flow exactly (the
+        working ``FileOpen`` reference, invoked the same simple
+        ``title=``-only way). The callback writes the chosen path straight
+        into the form and recomposes so the Input and the Start button's
+        gate both reflect it immediately; validation still runs at Start
+        so a path typed by hand (not picked via this dialog) is caught
+        too.
+
+        Args:
+            event: Button press event emitted by the "Browse…" action.
+        """
+        event.stop()
+
+        async def browse_callback(selected_path: Path | None) -> None:
+            if selected_path is None:
+                return
+            self._library_ingest_form.path = str(selected_path)
+            self.refresh(recompose=True)
+
+        self.app.push_screen(
+            FileOpen(title="Import Media"),
+            browse_callback,
+        )
+
+    @on(Collapsible.Toggled, "#library-ingest-advanced")
+    def sync_library_ingest_advanced_open(self, event: Collapsible.Toggled) -> None:
+        """Track manual expand/collapse so recomposes preserve the user's choice.
+
+        Mirrors ``sync_library_rag_history_collapsed`` exactly (see that
+        handler's docstring for the full reasoning): ``Collapsible``'s
+        ``collapsed`` reactive is defined with ``init=False``, so
+        ``_watch_collapsed`` -- and therefore this ``Toggled`` message --
+        fires only on an actual *change* of the reactive, never merely from
+        ``compose()`` constructing a fresh ``Collapsible(collapsed=...)``
+        with a value that happens to equal the reactive's own default.
+        Concretely: the widget always passes
+        ``collapsed=not state.form.advanced_open``, and the reactive's
+        default is ``True`` -- so a compose only posts a spurious ``Toggled``
+        when it constructs the panel already-expanded (``advanced_open`` is
+        ``True``, i.e. ``collapsed=False`` differs from the ``True``
+        default), which immediately reasserts the same ``True`` this
+        handler already holds. Every recompose this handler must survive
+        (the analyze/chunk toggles, a registry-listener-driven job
+        transition) is triggered by something OTHER than a manual header
+        click, so this handler is never invoked by them -- only a real
+        user click (or a future programmatic ``collapsible.collapsed =``
+        assignment) fires it, exactly like the history panel's precedent.
+        """
+        event.stop()
+        self._library_ingest_form.advanced_open = not event.collapsible.collapsed
+
+    @on(Button.Pressed, "#library-ingest-analyze-toggle")
+    def handle_library_ingest_analyze_toggle(self, event: Button.Pressed) -> None:
+        """Flip the "Analyze after ingest" form toggle.
+
+        Args:
+            event: Button press event emitted by the analyze toggle.
+        """
+        event.stop()
+        self._library_ingest_form.analyze = not self._library_ingest_form.analyze
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-ingest-chunk-toggle")
+    def handle_library_ingest_chunk_toggle(self, event: Button.Pressed) -> None:
+        """Flip the "Chunk content" form toggle.
+
+        Args:
+            event: Button press event emitted by the chunk toggle.
+        """
+        event.stop()
+        self._library_ingest_form.chunk = not self._library_ingest_form.chunk
+        self.refresh(recompose=True)
+
+    def _notify_library_ingest_warning(self, message: str) -> None:
+        notify = getattr(self.app_instance, "notify", None)
+        if callable(notify):
+            notify(message, severity="warning")
+
+    @on(Button.Pressed, "#library-ingest-start")
+    def handle_library_ingest_start(self, event: Button.Pressed) -> None:
+        """Validate the form and submit a new Library ingest job.
+
+        An invalid/missing path is a quiet warning notice, matching every
+        other Library form failure path in this screen; a missing
+        ``submit_library_ingest_job`` seam (registry absent) gets the same
+        treatment. On success, the path AND title fields clear (L3b AB
+        wave, A1) -- title is per-file, so it must not silently reapply to
+        the next file in a batch -- while author/keywords/advanced options
+        persist, since those are batch metadata a user submitting several
+        files in a row shouldn't have to retype for every submission.
+
+        Args:
+            event: Button press event emitted by the "Start ingest" action.
+        """
+        event.stop()
+        form = self._library_ingest_form
+        raw_path = form.path.strip()
+        if not raw_path:
+            self._notify_library_ingest_warning("Please choose a file to ingest.")
+            return
+        try:
+            validated_path = validate_path_simple(
+                Path(raw_path).expanduser(), require_exists=True
+            )
+        except ValueError:
+            logger.warning(f"Rejected Library ingest path {raw_path!r}.", exc_info=True)
+            self._notify_library_ingest_warning("Could not find that file.")
+            return
+        submit = getattr(self.app_instance, "submit_library_ingest_job", None)
+        if not callable(submit):
+            self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
+            return
+        submit(
+            source_path=str(validated_path),
+            title=self._safe_text(form.title, max_length=300),
+            author=self._safe_text(form.author, max_length=200),
+            keywords=parse_keywords(form.keywords),
+            perform_analysis=form.analyze,
+            chunk_enabled=form.chunk,
+            chunk_size=clamp_chunk_size(form.chunk_size),
+        )
+        form.path = ""
+        form.title = ""
+        self.refresh(recompose=True)
+
+    @staticmethod
+    def _ingest_job_id_from_button(button_id: str | None, prefix: str) -> str | None:
+        """Parse a job id from a Library-ingest row-action button id.
+
+        Row-action buttons (``library-ingest-open-{job_id}``/``-retry-``/
+        ``-dismiss-``) are keyed by the registry-assigned ``job_id``, NOT
+        by row index (PR #591 review, F1): the queue mutates
+        asynchronously between a render and a click (runner completions,
+        retry-supersede, new submissions), so re-deriving a fresh row
+        snapshot and indexing into it at click time can silently resolve
+        to a DIFFERENT job than the one the user actually pressed. A
+        prefix-strip is exact regardless of how the queue has shifted
+        since the button was rendered.
+
+        Args:
+            button_id: The pressed button's ``id``.
+            prefix: The button-id prefix to strip (e.g.
+                ``"library-ingest-open-"``).
+
+        Returns:
+            The job id, or ``None`` when ``button_id`` is missing or
+            doesn't carry the expected prefix (defensive only -- every
+            real row-action button always does).
+        """
+        if not button_id or not button_id.startswith(prefix):
+            return None
+        job_id = button_id[len(prefix):]
+        return job_id or None
+
+    def _library_ingest_job_by_id(self, job_id: str) -> LibraryIngestJob | None:
+        """Resolve a job by id from the live registry snapshot, or ``None``.
+
+        Reads ``registry.jobs()`` fresh on every call (never a cached row
+        list) so a click always resolves against the queue's current
+        truth, including any transition that landed between render and
+        click.
+        """
+        registry = self._library_ingest_registry()
+        jobs_fn = getattr(registry, "jobs", None)
+        jobs = jobs_fn() if callable(jobs_fn) else ()
+        return next((job for job in jobs if job.job_id == job_id), None)
+
+    @on(Button.Pressed, ".library-ingest-open")
+    async def handle_library_ingest_open(self, event: Button.Pressed) -> None:
+        """Open a done ingest job's resulting media item in the Library viewer.
+
+        Args:
+            event: Button press event emitted by an "Open in Library" row action.
+        """
+        event.stop()
+        job_id = self._ingest_job_id_from_button(event.button.id, "library-ingest-open-")
+        if job_id is None:
+            return
+        job = self._library_ingest_job_by_id(job_id)
+        if job is None or job.media_id is None:
+            return
+        await self._open_library_item_by_id("media", str(job.media_id))
+
+    @on(Button.Pressed, ".library-ingest-retry")
+    def handle_library_ingest_retry(self, event: Button.Pressed) -> None:
+        """Requeue a failed ingest job.
+
+        Args:
+            event: Button press event emitted by a "Retry" row action.
+        """
+        event.stop()
+        job_id = self._ingest_job_id_from_button(event.button.id, "library-ingest-retry-")
+        if job_id is None:
+            return
+        retry = getattr(self.app_instance, "retry_library_ingest_job", None)
+        if callable(retry):
+            # ``retry_library_ingest_job``/``LibraryIngestJobRegistry.requeue``
+            # are already id-based and validate state themselves (FAILED,
+            # not already superseded/dismissed) -- a stale or now-wrong-state
+            # job id is a safe no-op, not a mis-targeted retry.
+            retry(job_id)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-ingest-dismiss")
+    def handle_library_ingest_dismiss(self, event: Button.Pressed) -> None:
+        """Dismiss a failed ingest job row (L3b AB wave, B2).
+
+        A thin wrapper over ``LibraryIngestJobRegistry.dismiss`` -- valid
+        only for a ``FAILED`` row; a quiet no-op (mirrors every other
+        Library seam-absent path in this screen) when the registry itself
+        is unavailable. The registry's own listener
+        (``_handle_library_ingest_registry_changed``) already recomposes
+        on a successful dismiss; the trailing ``refresh(recompose=True)``
+        here is redundant-but-harmless belt-and-braces, matching
+        ``handle_library_ingest_retry``.
+
+        Args:
+            event: Button press event emitted by a "Dismiss" row action.
+        """
+        event.stop()
+        job_id = self._ingest_job_id_from_button(event.button.id, "library-ingest-dismiss-")
+        if job_id is None:
+            return
+        registry = self._library_ingest_registry()
+        dismiss = getattr(registry, "dismiss", None)
+        if callable(dismiss):
+            # Same id-based no-op safety as retry above -- ``dismiss`` only
+            # ever acts on a currently-FAILED, not-yet-hidden job_id.
+            dismiss(job_id)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-ingest-clear-finished")
+    def handle_library_ingest_clear_finished(self, event: Button.Pressed) -> None:
+        """Clear every done+failed ingest job in one shot (L3b AB wave, B2).
+
+        A thin wrapper over ``LibraryIngestJobRegistry.clear_finished``; a
+        quiet no-op when the registry itself is unavailable (matching
+        ``handle_library_ingest_dismiss``/``handle_library_ingest_retry``).
+
+        Args:
+            event: Button press event emitted by the "Clear finished" action.
+        """
+        event.stop()
+        registry = self._library_ingest_registry()
+        clear_finished = getattr(registry, "clear_finished", None)
+        if callable(clear_finished):
+            clear_finished()
+        self.refresh(recompose=True)
+
     @on(Button.Pressed, ".library-notes-row")
     async def handle_library_notes_row(self, event: Button.Pressed) -> None:
         """Select a note row and open the in-canvas Library note editor.
@@ -5316,7 +4858,6 @@ class LibraryScreen(BaseAppScreen):
         if note_id:
             self._selected_note_id = note_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-        self._active_mode = "notes"
         self._library_notes_view = "editor"
         self._library_note_detail = None
         self._library_note_version = None
@@ -5701,7 +5242,6 @@ class LibraryScreen(BaseAppScreen):
 
         self._selected_note_id = created_id
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-        self._active_mode = "notes"
         self._library_notes_view = "editor"
         self._library_note_detail = None
         self._library_note_version = None
@@ -6526,7 +6066,7 @@ class LibraryScreen(BaseAppScreen):
         query = self._safe_text(event.value, max_length=LIBRARY_RAG_QUERY_MAX_LENGTH)
         self._library_rag_query = query
         self._library_rag_mode = "search"
-        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH, "search")
+        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH)
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
             # A dirty note editor sitting in an unresolved save conflict
             # aborts the row switch (`_select_library_rail_row` returns
@@ -6596,364 +6136,19 @@ class LibraryScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             pass
 
-    @on(Button.Pressed, ".library-mode-chip")
-    async def switch_library_mode(self, event: Button.Pressed) -> None:
-        mode_id = LIBRARY_MODE_BY_BUTTON_ID.get(event.button.id or "")
-        if mode_id is None:
-            return
-        event.stop()
-        await self._set_active_mode(mode_id)
-
-    async def _set_active_mode(self, mode_id: str) -> None:
-        if mode_id == self._active_mode:
-            return
-        self._active_mode = mode_id
-        self._invalidate_library_workspace_depth_state()
-        await self._refresh_active_mode_widgets()
-
-    def _legacy_workbench_present(self) -> bool:
-        """Whether the retired 3-pane workbench chrome is still mounted.
-
-        The Library shell replaces the mode strip + contract grid with a rail +
-        canvas. The legacy granular sync helpers below target ids that no longer
-        render, so they early-return through this guard and navigation flows
-        instead go through a full ``refresh(recompose=True)``.
-        """
-        return bool(self.query("#library-source-detail"))
-
-    async def _refresh_active_mode_widgets(self) -> None:
-        if not self._legacy_workbench_present():
-            self.refresh(recompose=True)
-            return
-        active_mode = self._active_mode_contract()
-        source_column_title, detail_column_title, inspector_column_title = self._active_column_titles()
-        self.query_one("#library-status-row", Static).update(self._status_row_copy())
-        self.query_one("#library-source-browser-title", Static).update(source_column_title)
-        self.query_one("#library-source-detail-title", Static).update(detail_column_title)
-        self.query_one("#library-source-inspector-title", Static).update(inspector_column_title)
-        active_mode_copy_visible = self._active_mode not in {
-            "collections",
-            "search",
-            "sources",
-            "workspaces",
-        }
-        self.query_one("#library-active-mode-title", Static).update(
-            f"{active_mode['label']} mode" if active_mode_copy_visible else ""
-        )
-        self.query_one("#library-active-mode-description", Static).update(
-            active_mode["description"] if active_mode_copy_visible else ""
-        )
-        self.query_one("#library-active-mode-next-action", Static).update(
-            active_mode["next_action"] if active_mode_copy_visible else ""
-        )
-        self.query_one("#library-active-mode-title", Static).display = active_mode_copy_visible
-        self.query_one("#library-active-mode-description", Static).display = active_mode_copy_visible
-        self.query_one("#library-active-mode-next-action", Static).display = active_mode_copy_visible
-        local_snapshot_regions = list(self.query("#library-local-snapshot-region"))
-        if local_snapshot_regions:
-            local_snapshot_regions[0].display = self._should_show_local_snapshot_region()
-        for mode_id, mode in LIBRARY_MODES.items():
-            if not mode.get("show_in_strip", True):
-                continue
-            self.query_one(f"#{mode['button_id']}", Button).set_class(
-                mode_id == self._active_mode,
-                "is-active",
-            )
-        active_source_action_id = self._active_source_action_id()
-        for button_id in (
-            "library-open-notes",
-            "library-open-media",
-            "library-open-conversations",
-            "library-open-import-export",
-            "library-open-search",
-            "library-open-collections",
-        ):
-            buttons = list(self.query(f"#{button_id}"))
-            if buttons:
-                buttons[0].set_class(button_id == active_source_action_id, "is-active")
-        await self._sync_source_module_actions()
-        workspace_depth_state = self._library_workspace_depth_state(refresh=True)
-        self.query_one("#library-workspace-scope", Static).update(
-            self._library_workspace_scope_label(workspace_depth_state)
-        )
-        await self._sync_local_snapshot_region(workspace_depth_state)
-        await self._sync_study_handoff_detail()
-        await self._sync_search_rag_panel(workspace_depth_state=workspace_depth_state)
-        await self._sync_collections_panel(refresh_snapshot=True)
-        await self._sync_workspaces_panel(workspace_depth_state)
-        await self._sync_action_region(workspace_depth_state)
-
-    async def _sync_source_module_actions(self) -> None:
-        """Rebuild source-map actions so active-mode owned action IDs stay unique."""
-        if not self.query("#library-source-browser"):
-            return
-        browser = self.query_one("#library-source-browser", Vertical)
-        source_title = self.query_one("#library-source-browser-title", Static)
-        quick_actions_title = self.query_one("#library-quick-actions-title", Static)
-        children = list(browser.children)
-        action_widgets: list[Any] = []
-        collect = False
-        for child in children:
-            if child is source_title:
-                collect = True
-                continue
-            if child is quick_actions_title:
-                break
-            if collect:
-                action_widgets.append(child)
-        for widget in action_widgets:
-            await widget.remove()
-        await browser.mount(*self._source_module_action_widgets(), before=quick_actions_title)
-
-    async def _sync_search_rag_panel(
-        self,
-        *,
-        workspace_depth_state: LibraryWorkspaceDepthState | None = None,
-    ) -> None:
-        if not self._legacy_workbench_present():
-            return
-        mounted_widgets = list(self.query("#library-search-rag-panel"))
-        for widget in mounted_widgets:
-            await widget.remove()
-        if self._active_mode != "search":
-            await self._sync_inspector_mode_region(
-                None,
-                workspace_depth_state=workspace_depth_state,
-            )
-            return
-        panel_state = self._library_rag_panel_state()
-        detail = self.query_one("#library-source-detail", Vertical)
-        await detail.mount(
-            LibrarySearchRagPanel(panel_state, id="library-search-rag-panel"),
-            after="#library-source-detail-title",
-        )
-        await self._sync_inspector_mode_region(panel_state)
-
-    async def _sync_study_handoff_detail(self) -> None:
-        if not self._legacy_workbench_present():
-            return
-        mounted_widgets = list(self.query("#library-study-handoff-detail"))
-        for widget in mounted_widgets:
-            await widget.remove()
-        if self._active_mode not in LIBRARY_STUDY_HANDOFF_MODES:
-            return
-        detail = self.query_one("#library-source-detail", Vertical)
-        await detail.mount(
-            self._study_handoff_detail_widget(),
-            after="#library-active-mode-next-action",
-        )
-
-    async def _sync_inspector_mode_region(
-        self,
-        panel_state: LibraryRagPanelState | None,
-        *,
-        workspace_depth_state: LibraryWorkspaceDepthState | None = None,
-    ) -> None:
-        regions = list(self.query("#library-inspector-mode-region"))
-        if not regions:
-            return
-        region = regions[0]
-        await region.remove_children()
-        if panel_state is not None:
-            await region.mount(
-                LibrarySearchRagInspectorPanel(
-                    panel_state,
-                    id="library-rag-inspector",
-                    classes="library-rag-region",
-                )
-            )
-            return
-        if self._active_mode == "collections":
-            for row in self._collections_inspector_rows(self._library_collections_panel_state()):
-                await region.mount(row)
-            return
-        if self._active_mode == "workspaces":
-            state = workspace_depth_state or self._library_workspace_depth_state()
-            for row in self._workspaces_inspector_rows(state):
-                await region.mount(row)
-            return
-        if self._active_mode == "conversations":
-            state = workspace_depth_state or self._library_workspace_depth_state()
-            selected = self._selected_conversation_record()
-            await region.mount(
-                Static("Conversation inspector", id="library-inspector-title", classes="destination-section")
-            )
-            if selected is None:
-                await region.mount(
-                    Static(
-                        "No conversation selected.",
-                        id="library-conversation-inspector-empty",
-                    )
-                )
-                await region.mount(
-                    Static(
-                        "Select a saved conversation to inspect metadata and handoff eligibility.",
-                        id="library-conversation-inspector-empty-next-action",
-                    )
-                )
-                return
-            _, record = selected
-            for row in (
-                Static(
-                    self._source_title("conversations", record),
-                    id="library-conversation-inspector-title",
-                ),
-                Static(
-                    self._conversation_message_count_label(record),
-                    id="library-conversation-inspector-message-count",
-                ),
-                Static(
-                    "Source authority: local",
-                    id="library-conversation-inspector-authority",
-                ),
-                Static(
-                    self._conversation_handoff_label(state),
-                    id="library-conversation-inspector-handoff",
-                ),
-                Static(
-                    "Owner: Console/Conversations retains editing and saved-history management.",
-                    id="library-conversation-inspector-owner",
-                ),
-            ):
-                await region.mount(row)
-            return
-        if self._active_mode == "import-export":
-            for row in self._import_export_inspector_rows():
-                await region.mount(row)
-            return
-        state = workspace_depth_state or self._library_workspace_depth_state()
-        for row in self._hub_inspector_rows(state):
-            await region.mount(row)
-
-    async def _sync_local_snapshot_region(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState,
-    ) -> None:
-        regions = list(self.query("#library-local-snapshot-region"))
-        if not regions:
-            return
-        region = regions[0]
-        # Textual removes children asynchronously; wait before remounting reused IDs.
-        await region.remove_children()
-        if not self._should_show_local_snapshot_region():
-            return
-        if not self._library_loaded:
-            await region.mount(
-                Static(
-                    "Loading local Library sources...",
-                    id="library-source-loading",
-                )
-            )
-            return
-        if self._library_lookup_error:
-            recovery_state = self._library_lookup_recovery_state
-            await region.mount(
-                Static(
-                    self._library_lookup_error,
-                    id=(
-                        recovery_state.stable_selector
-                        if recovery_state is not None
-                        else "library-source-error"
-                    ),
-                )
-            )
-            return
-        if self._active_mode == "conversations":
-            for row in self._conversation_browser_rows(workspace_depth_state):
-                await region.mount(row)
-            return
-        if self._active_mode == "import-export":
-            for row in self._import_export_workflow_rows():
-                await region.mount(row)
-            return
-        if not self._has_local_sources():
-            await region.mount(Static(LIBRARY_EMPTY_COPY, id="library-source-empty"))
-            await region.mount(
-                Static(
-                    LIBRARY_EMPTY_NEXT_ACTION_COPY,
-                    id="library-source-empty-next-action",
-                )
-            )
-
     async def _sync_collections_panel(self, *, refresh_snapshot: bool = False) -> None:
-        if not self._legacy_workbench_present():
-            if self._active_mode != "collections":
-                self._library_collection_pending_delete_id = ""
-                return
-            if refresh_snapshot:
-                await self._refresh_library_collections_snapshot()
-            self.refresh(recompose=True)
-            return
-        for widget in list(self.query("#library-collections-panel")):
-            await widget.remove()
-        if self._active_mode != "collections":
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
             self._library_collection_pending_delete_id = ""
             return
         if refresh_snapshot:
             await self._refresh_library_collections_snapshot()
-        status_rows = list(self.query("#library-status-row"))
-        if status_rows:
-            status_rows[0].update(self._status_row_copy())
-        panel_state = self._library_collections_panel_state()
-        detail = self.query_one("#library-source-detail", Vertical)
-        await detail.mount(
-            LibraryCollectionsPanel(
-                panel_state,
-                name_value=self._library_collection_name_input,
-                description_value=self._library_collection_description_input,
-                delete_pending=bool(self._library_collection_pending_delete_id),
-                id="library-collections-panel",
-            ),
-            after="#library-active-mode-next-action",
-        )
-        await self._sync_inspector_mode_region(None)
-
-    async def _sync_workspaces_panel(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState | None = None,
-    ) -> None:
-        if not self._legacy_workbench_present():
-            return
-        for widget in list(self.query("#library-workspaces-depth-panel")):
-            await widget.remove()
-        if self._active_mode != "workspaces":
-            return
-        state = workspace_depth_state or self._library_workspace_depth_state()
-        detail = self.query_one("#library-source-detail", Vertical)
-        panel = Vertical(id="library-workspaces-depth-panel")
-        await detail.mount(panel, after="#library-source-detail-title")
-        for row in self._workspaces_detail_rows(state):
-            await panel.mount(row)
-        await self._sync_inspector_mode_region(None)
-
-    async def _sync_action_region(
-        self,
-        workspace_depth_state: LibraryWorkspaceDepthState | None = None,
-    ) -> None:
-        regions = list(self.query("#library-action-region"))
-        if not regions:
-            return
-        region = regions[0]
-        await region.remove_children()
-        workspace_depth_state = workspace_depth_state or self._library_workspace_depth_state()
-        handoff_disabled, handoff_tooltip = self._workspace_handoff_action_state(
-            workspace_depth_state
-        )
-        for widget in self._library_action_widgets(
-            workspace_depth_state=workspace_depth_state,
-            collection_scoped_actions_deferred=self._active_mode == "collections",
-            handoff_disabled=handoff_disabled,
-            handoff_tooltip=handoff_tooltip,
-            collections_panel_state=(
-                self._library_collections_panel_state()
-                if self._active_mode == "collections"
-                else None
-            ),
-        ):
-            await region.mount(widget)
+        self.refresh(recompose=True)
 
     async def _refresh_collections_panel_action_state_widgets(self) -> None:
-        if self._active_mode != "collections" or not list(self.query("#library-collections-panel")):
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS
+            or not list(self.query("#library-collections-panel"))
+        ):
             return
 
         panel_state = self._library_collections_panel_state()
@@ -7203,8 +6398,10 @@ class LibraryScreen(BaseAppScreen):
     async def open_import_export_from_library_rag(self, event: Button.Pressed) -> None:
         event.stop()
         # Drive the shell selection so the recomposed canvas resolves to the
-        # Import/Export mode; flipping _active_mode alone reverts on recompose.
-        await self._select_library_rail_row("ingest-import-export", "import-export")
+        # Ingest canvas. The Import/Export row/mode this used to target is
+        # retired -- the Ingest ▸ Import media canvas row is its only
+        # surviving successor.
+        await self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
 
     @on(Button.Pressed, "#library-rag-mode-toggle")
     def cycle_library_rag_mode(self, event: Button.Pressed) -> None:
@@ -7480,7 +6677,6 @@ class LibraryScreen(BaseAppScreen):
             # one carried over from a previously opened item.
             self._selected_media_id = record_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
-            self._active_mode = "media"
             self._library_media_view = "viewer"
             self._library_media_detail = None
             self._library_media_editing = False
@@ -7506,7 +6702,6 @@ class LibraryScreen(BaseAppScreen):
             # open-target fields -- equivalent final state to the note_id
             # navigation-context branch's inline field-by-field reset.
             self._reset_library_note_editor_state()
-            self._active_mode = "notes"
             self._library_notes_view = "editor"
             self._selected_note_id = record_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
@@ -7544,7 +6739,7 @@ class LibraryScreen(BaseAppScreen):
         # entering Conversations via the rail; _select_library_rail_row
         # itself does not touch it.
         self._library_conversation_query = ""
-        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS, "conversations")
+        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS)
 
     async def _fetch_library_conversation_by_id(
         self, conversation_id: str
@@ -7604,7 +6799,7 @@ class LibraryScreen(BaseAppScreen):
 
     def action_library_rag_use_in_console(self) -> None:
         """Keyboard shortcut for staging selected Search/RAG evidence in Console."""
-        if self._active_mode != "search":
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
             return
         self._stage_library_rag_result_in_console()
 
@@ -7683,7 +6878,10 @@ class LibraryScreen(BaseAppScreen):
         # when a search settles with nothing to show. Every other refresh
         # path leaves the user's manual expand/collapse alone.
         self._library_rag_history_collapsed = bool(self._library_rag_results)
-        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH
+            or not self.query("#library-search-rag-panel")
+        ):
             return
         await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
 
@@ -7692,13 +6890,13 @@ class LibraryScreen(BaseAppScreen):
         *,
         force_history_collapse: bool = False,
     ) -> None:
-        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH
+            or not self.query("#library-search-rag-panel")
+        ):
             return
 
         panel_state = self._library_rag_panel_state()
-        status_rows = list(self.query("#library-status-row"))
-        if status_rows:
-            status_rows[0].update(self._status_row_copy())
 
         await self._refresh_library_rag_query_status_widgets(panel_state)
 
@@ -7855,53 +7053,6 @@ class LibraryScreen(BaseAppScreen):
             f" | Conversations {counts.get('conversations', 0)}"
         )
 
-    @on(Button.Pressed, "#library-open-notes")
-    async def open_notes(self, event: Button.Pressed) -> None:
-        """Switch to the Notes canvas in-place.
-
-        Part of the retired 3-pane workbench chrome (see
-        ``_legacy_workbench_present``): ``#library-open-notes`` is no
-        longer composed by the current rail + canvas shell, so this
-        handler is unreachable in practice, mirroring ``open_media``/
-        ``open_conversations``. Kept in sync with the shell's native
-        (non-route) mode-switch pattern regardless, since the standalone
-        Notes screen this used to hand off to via
-        ``NavigateToScreen("notes")`` has been retired.
-        """
-        event.stop()
-        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES, "notes")
-
-    @on(Button.Pressed, "#library-open-media")
-    def open_media(self) -> None:
-        self.post_message(NavigateToScreen("media"))
-
-    @on(Button.Pressed, "#library-open-conversations")
-    async def open_conversations(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._set_active_mode("conversations")
-
-    @on(Button.Pressed, "#library-conversations-open-console-empty")
-    def open_console_from_empty_conversations(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(NavigateToScreen("chat"))
-
-    @on(Button.Pressed, ".library-conversation-select")
-    async def select_library_conversation(self, event: Button.Pressed) -> None:
-        event.stop()
-        raw_id = event.button.id or ""
-        try:
-            index = int(raw_id.rsplit("-", 1)[-1])
-        except ValueError:
-            return
-        records = self._conversation_records()
-        if index < 0 or index >= len(records):
-            return
-        self._selected_conversation_id = self._conversation_record_id(records[index], index)
-        workspace_depth_state = self._library_workspace_depth_state(refresh=True)
-        await self._sync_local_snapshot_region(workspace_depth_state)
-        await self._sync_inspector_mode_region(None, workspace_depth_state=workspace_depth_state)
-        await self._sync_action_region(workspace_depth_state)
-
     def _open_selected_conversation_handoff(self) -> None:
         workspace_state = self._library_workspace_depth_state()
         payload = self._selected_conversation_handoff_payload()
@@ -7973,21 +7124,6 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self._open_selected_media_handoff()
 
-    @on(Button.Pressed, "#library-open-import-export")
-    async def open_import_export(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._set_active_mode("import-export")
-
-    @on(Button.Pressed, "#library-import-export-open-ingest")
-    def open_import_export_ingest(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(NavigateToScreen("ingest"))
-
-    @on(Button.Pressed, "#library-import-export-open-media")
-    def open_import_export_media(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(NavigateToScreen("media"))
-
     @on(Button.Pressed, "#library-workspace-import-sources")
     def open_workspace_import_sources(self) -> None:
         self.post_message(NavigateToScreen("ingest"))
@@ -8022,20 +7158,10 @@ class LibraryScreen(BaseAppScreen):
             return
 
         self._invalidate_library_workspace_depth_state()
-        await self._refresh_active_mode_widgets()
+        self.refresh(recompose=True)
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(f"Created local workspace {workspace_name}.", severity="information")
-
-    @on(Button.Pressed, "#library-open-search")
-    async def open_search_mode(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._set_active_mode("search")
-
-    @on(Button.Pressed, "#library-open-collections")
-    async def open_collections_mode(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._set_active_mode("collections")
 
     def _open_study_section(self, initial_section: str = "dashboard") -> None:
         open_study_screen = getattr(self.app_instance, "open_study_screen", None)

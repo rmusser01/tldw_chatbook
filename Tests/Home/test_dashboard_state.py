@@ -3,6 +3,7 @@ from tldw_chatbook.Home.dashboard_state import (
     HomeActiveWorkItem,
     HomeDashboardInput,
     build_home_controls,
+    build_home_triage_state,
     choose_home_selected_item,
     choose_next_best_action,
     summarize_home_dashboard,
@@ -466,3 +467,116 @@ def test_build_home_controls_omits_review_flashcards_control_when_not_due():
     controls = build_home_controls(HomeDashboardInput(model_ready=True, flashcards_due_count=0))
 
     assert all(c.control_id != "home-review-flashcards" for c in controls)
+
+
+# --- C1: primary emphasis follows the selected row -------------------------
+
+
+def test_canvas_primary_control_follows_selected_failed_item():
+    triage = build_home_triage_state(_items_input(), selected_row_id="sched:fail-1", now=_NOW)
+
+    assert triage.canvas.primary_control_id == "home-retry"
+    assert any(c.control_id == "home-review-flashcards" for c in triage.canvas.actions) is False
+
+
+def test_canvas_primary_control_follows_selected_approval_item():
+    triage = build_home_triage_state(_items_input(), now=_NOW)
+
+    assert triage.selected_row_id == "wf:approve-1"
+    assert triage.canvas.primary_control_id == "home-approve"
+
+
+def test_canvas_primary_control_follows_selected_flashcards_due_row():
+    triage = build_home_triage_state(
+        HomeDashboardInput(model_ready=True, flashcards_due_count=12),
+        selected_row_id=HOME_FLASHCARDS_DUE_ROW_ID,
+        now=_NOW,
+    )
+
+    assert triage.canvas.primary_control_id == "home-review-flashcards"
+
+
+def test_canvas_primary_control_defers_to_open_details_for_running_item():
+    triage = build_home_triage_state(_items_input(), selected_row_id="watch:run-1", now=_NOW)
+
+    assert triage.selected_row_id == "watch:run-1"
+    assert triage.canvas.primary_control_id == "home-open-details"
+
+
+def test_canvas_primary_control_is_empty_when_nothing_selectable():
+    triage = build_home_triage_state(HomeDashboardInput(model_ready=True), now=_NOW)
+
+    assert triage.selected_row_id == ""
+    assert triage.canvas.primary_control_id == ""
+
+
+def test_canvas_primary_control_flips_between_failed_item_and_flashcards_row():
+    """Selecting a different row moves primary emphasis with it (no button
+    stays permanently accented) -- mirrors the live pilot: failed ingest
+    selected -> Retry primary, Review flashcards not; select the
+    flashcards row -> flips."""
+    state = _items_input(flashcards_due_count=5)
+
+    failed_triage = build_home_triage_state(state, selected_row_id="sched:fail-1", now=_NOW)
+    assert failed_triage.canvas.primary_control_id == "home-retry"
+    control_ids = {c.control_id for c in failed_triage.canvas.actions}
+    assert "home-review-flashcards" in control_ids  # both controls coexist
+    assert failed_triage.canvas.primary_control_id != "home-review-flashcards"
+
+    flashcards_triage = build_home_triage_state(
+        state, selected_row_id=HOME_FLASHCARDS_DUE_ROW_ID, now=_NOW
+    )
+    assert flashcards_triage.canvas.primary_control_id == "home-review-flashcards"
+
+
+# --- C2: status is stated once on the Home canvas ---------------------------
+
+
+def test_canvas_lines_merge_status_and_source_once_for_selected_item():
+    triage = build_home_triage_state(_items_input(), selected_row_id="wf:approve-1", now=_NOW)
+
+    assert triage.canvas.lines == (
+        "● pending_approval · Workflows · since 3m",
+        "Route: workflows",
+    )
+
+
+def test_canvas_lines_merge_status_and_source_for_running_item():
+    triage = build_home_triage_state(_items_input(), selected_row_id="watch:run-1", now=_NOW)
+
+    assert triage.canvas.lines == (
+        "● running · Watchlists · since now",
+        "Route: watchlists",
+    )
+
+
+def test_canvas_lines_omit_since_clause_when_age_is_blank():
+    triage = build_home_triage_state(
+        _items_input(
+            active_work_items=(
+                HomeActiveWorkItem(
+                    item_id="x:1",
+                    title="No timestamp item",
+                    source="ACP",
+                    status="running",
+                ),
+            )
+        ),
+        selected_row_id="x:1",
+        now=_NOW,
+    )
+
+    assert triage.canvas.lines == ("● running · ACP", "Route: chat")
+
+
+def test_canvas_lines_for_flashcards_due_row_are_sensible_not_duplicated():
+    triage = build_home_triage_state(
+        HomeDashboardInput(model_ready=True, flashcards_due_count=12),
+        selected_row_id=HOME_FLASHCARDS_DUE_ROW_ID,
+        now=_NOW,
+    )
+
+    assert triage.canvas.lines == (
+        "● due for review · Library",
+        "Route: study",
+    )

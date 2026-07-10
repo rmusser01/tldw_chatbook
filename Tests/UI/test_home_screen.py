@@ -5,6 +5,7 @@ import pytest
 from textual.app import App
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_INGEST, TAB_LIBRARY
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Home.active_work_adapter import (
     HomeConsoleLaunch,
@@ -992,6 +993,53 @@ async def test_home_flashcards_due_row_absent_when_count_zero():
 
 
 @pytest.mark.asyncio
+async def test_home_canvas_primary_control_follows_selection_between_failed_item_and_flashcards():
+    """C1: primary emphasis follows the selected row rather than sticking
+    to one permanently-accented button. Failed ingest item selected (the
+    default selection here, since it is the only attention-worthy item) ->
+    Retry is primary and Review flashcards is not; selecting the
+    flashcards-due row flips it."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        flashcards_due_count=12,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:1",
+                title="report.xyz",
+                source="Library",
+                status="failed",
+                detail_route="library",
+            ),
+        ),
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        retry_button = home.query_one("#home-retry")
+        review_flashcards_button = home.query_one("#home-review-flashcards")
+        assert retry_button.has_class("console-action-primary")
+        assert not review_flashcards_button.has_class("console-action-primary")
+
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == HOME_FLASHCARDS_DUE_ROW_ID
+        )
+        await pilot.click(f"#{row_button.id}")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+        review_flashcards_button = home.query_one("#home-review-flashcards")
+        assert review_flashcards_button.has_class("console-action-primary")
+        # The Retry control itself stays available (the failed item is
+        # still active work), it just no longer carries primary emphasis.
+        assert not home.query_one("#home-retry").has_class("console-action-primary")
+
+
+@pytest.mark.asyncio
 async def test_home_flashcards_due_snapshot_reads_in_memory_db_via_real_worker():
     """F4b (PR #590 review, Qodo): ``_refresh_home_chatbook_artifact_snapshot``
     (``@work(thread=True)``) must not call the flashcards-due provider
@@ -1053,3 +1101,376 @@ async def test_pending_console_launch_does_not_create_home_live_work_controls():
 
         assert len(home.query("#home-pause")) == 0
         assert len(home.query("#home-open-in-console")) == 0
+
+
+# --- Library ingest jobs -> Home Running / Needs Attention (L3b Task 6) ---
+
+
+@pytest.mark.asyncio
+async def test_home_running_section_shows_running_library_ingest_job():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:ingest-job-1",
+                title="quarterly.txt",
+                source="Library",
+                status="running",
+                detail_route="library",
+                console_available=False,
+                updated_at="",
+            ),
+        ),
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        running_body = home.query_one("#home-rail-section-body-running")
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-1"
+        )
+        assert row_button in running_body.children
+        assert "quarterly.txt" in str(row_button.label)
+        assert "Library" in str(row_button.label)
+        assert not any(
+            str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-1"
+            for btn in home.query_one("#home-rail-section-body-attention").query("Button")
+        )
+
+
+@pytest.mark.asyncio
+async def test_home_needs_attention_section_shows_failed_library_ingest_job():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:ingest-job-3",
+                title="broken.pdf",
+                source="Library",
+                status="failed",
+                detail_route="library",
+                console_available=False,
+                updated_at="",
+            ),
+        ),
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        attention_body = home.query_one("#home-rail-section-body-attention")
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == "local:ingest:ingest-job-3"
+        )
+        assert row_button in attention_body.children
+        assert "broken.pdf" in str(row_button.label)
+
+
+@pytest.mark.asyncio
+async def test_home_running_section_survives_markup_hostile_ingest_job_title():
+    """(Critical, L3b Task 6 fix wave) A running ingest job whose source
+    filename contains Rich-markup-like bracket syntax (e.g. dropped into
+    the Library ingest form) must not crash Home's mount. The raw
+    basename flows from ``LibraryIngestJob.source_path`` through the
+    real ``LocalNotificationHomeActiveWorkAdapter`` into a Textual
+    ``Button`` label in ``HomeRail.compose()`` -- Button labels parse
+    Rich markup, so an unescaped hostile title previously raised
+    ``MarkupError`` during compose, breaking Home's mount entirely for
+    as long as the job stayed queued/running/failed.
+
+    Uses ``a [b="c].txt`` rather than the reviewer's illustrative
+    ``weird [/bracket].txt``: title is derived via
+    ``Path(source_path).name``, and a literal ``/`` can never survive
+    inside a real basename (POSIX reserves it as the separator, so
+    ``Path.name`` strips everything before it) -- confirmed empirically
+    that ``[/bracket].txt`` alone does not reproduce a crash through this
+    exact code path, while an unterminated-quoted-value bracket sequence
+    does (same hazard class, same ``MarkupError`` failure mode, verified
+    against ``textual.markup.to_content`` directly). Kept short so the
+    escaped form survives HomeRail's 20-char row-title truncation intact.
+
+    Deliberately drives the REAL adapter (submitting to
+    ``app.library_ingest_jobs``, exactly like the Library ingest canvas
+    does) rather than ``_home_dashboard_test_input``, so this exercises
+    the actual fix in ``_local_ingest_job_items`` -- not just HomeRail's
+    own row-title truncation.
+    """
+    app = _build_test_app()
+    job = app.library_ingest_jobs.submit(source_path='/tmp/a [b="c].txt')
+    app.library_ingest_jobs.mark_running(job.job_id)
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        # Reaching this line at all is the core assertion: a MarkupError
+        # during compose/mount would have raised before ``run_test``'s
+        # context manager ever returned control here.
+        home = _active_home_screen(host)
+
+        running_body = home.query_one("#home-rail-section-body-running")
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")).startswith("local:ingest:")
+        )
+        assert row_button in running_body.children
+        # The rendered (parsed) label shows the literal filename text --
+        # rich.markup.escape's backslash is consumed by the markup parser
+        # itself, leaving the bracket as a plain character rather than the
+        # start of a (would-be-crashing) tag.
+        assert 'a [b="c].txt' in str(row_button.label)
+
+
+def test_app_detail_hook_navigates_library_with_ingest_context_for_handled_ingest_detail():
+    """Home's ``Open details`` control on a Library ingest job routes to the
+    Library screen carrying the ingest nav-context flag -- the one-hop route
+    an ingest job takes from Home's Running/Needs Attention feed back to the
+    in-canvas ingest queue (mirrors the subscriptions staging special-case
+    right above this test).
+    """
+    app = _build_test_app()
+    adapter = RecordingHomeActiveWorkAdapter(
+        responses={
+            HomeControlAction.OPEN_DETAILS: HomeControlResult(
+                action=HomeControlAction.OPEN_DETAILS,
+                status=HomeControlResultStatus.HANDLED,
+                message="Opening Library ingest job details.",
+                target_id="local:ingest:ingest-job-1",
+                target_route="library",
+            ),
+        }
+    )
+    app.home_active_work_adapter = adapter
+    app.notify = Mock()
+    app.post_message = Mock()
+
+    result = app.open_active_home_item_details(
+        target_id="local:ingest:ingest-job-1",
+        target_route="library",
+    )
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    app.post_message.assert_called_once()
+    posted = app.post_message.call_args.args[0]
+    assert posted.screen_name == "library"
+    assert posted.screen_context == {LIBRARY_NAV_CONTEXT_INGEST: True}
+
+
+def test_app_detail_hook_invalidates_cached_library_screen_for_ingest_detail():
+    """Home's ``Open details`` deep link must drop any cached Library screen
+    before navigating (mirrors ``open_notes_workspace``).
+
+    Library is a CACHEABLE route: without invalidation the deep link switches
+    to an already-mounted-then-unmounted cached instance that advances the
+    screen stack but never repaints (the live symptom -- the terminal keeps
+    rendering Home even though the app is "on" Library). The flashcards deep
+    link never hit this because Study is not a cacheable route and always
+    builds a fresh screen. This is the RED regression guard for that fix.
+    """
+    app = _build_test_app()
+    adapter = RecordingHomeActiveWorkAdapter(
+        responses={
+            HomeControlAction.OPEN_DETAILS: HomeControlResult(
+                action=HomeControlAction.OPEN_DETAILS,
+                status=HomeControlResultStatus.HANDLED,
+                message="Opening Library ingest job details.",
+                target_id="local:ingest:ingest-job-1",
+                target_route="library",
+            ),
+        }
+    )
+    app.home_active_work_adapter = adapter
+    app.notify = Mock()
+    app.post_message = Mock()
+    library_sentinel = object()
+    app._screen_cache = {TAB_LIBRARY: library_sentinel}
+
+    app.open_active_home_item_details(
+        target_id="local:ingest:ingest-job-1",
+        target_route="library",
+    )
+
+    assert TAB_LIBRARY not in app._screen_cache
+    posted = app.post_message.call_args.args[0]
+    assert posted.screen_name == "library"
+    assert posted.screen_context == {LIBRARY_NAV_CONTEXT_INGEST: True}
+
+
+@pytest.mark.asyncio
+async def test_home_open_details_button_click_navigates_library_for_failed_ingest_job():
+    """(L3b live-QA repro) Clicking the REAL ``Open details`` canvas button on
+    a failed Library ingest job in Needs Attention must drive the full UI hop
+    -- button press -> _activate_home_control -> app.open_active_home_item_details
+    -> NavigateToScreen("library", {ingest}) -- not just the direct app-method
+    call the sibling test above exercises. Uses the real registry + real
+    adapter (submit + mark_failed, exactly like the Library ingest canvas) so
+    the failed job flows through ``_local_ingest_job_items`` into active work.
+    """
+    app = _build_test_app()
+    job = app.library_ingest_jobs.submit(source_path="/tmp/report.xyz")
+    app.library_ingest_jobs.mark_failed(job.job_id, error="Unsupported extension")
+    app.notify = Mock()
+    app.post_message = Mock()
+    # A Library screen the user already visited is cached under TAB_LIBRARY.
+    # The live bug: switching back to this cached-then-unmounted instance from
+    # the ingest deep link advanced the screen stack to Library but never
+    # repainted (the terminal stayed on Home). The fix drops the cached
+    # instance so a fresh Library screen composes + mounts + repaints.
+    library_sentinel = object()
+    app._screen_cache = {TAB_LIBRARY: library_sentinel}
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        # Select the failed ingest row in Needs Attention via a real press.
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == f"local:ingest:{job.job_id}"
+        )
+        await pilot.click(row_button)
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+        await pilot.click("#home-open-details")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    navigations = [
+        call.args[0]
+        for call in app.post_message.call_args_list
+        if getattr(call.args[0], "screen_name", None) == "library"
+    ]
+    assert navigations, (
+        "Open details did not post a Library navigation; "
+        f"post_message calls: {app.post_message.call_args_list}"
+    )
+    assert navigations[-1].screen_context == {LIBRARY_NAV_CONTEXT_INGEST: True}
+    # The stale cached Library screen must be dropped so the deep link lands
+    # on a freshly composed, repainted ingest canvas (regression guard for the
+    # live "advances to Library but keeps rendering Home" symptom).
+    assert app._screen_cache.get(TAB_LIBRARY) is not library_sentinel
+    assert TAB_LIBRARY not in app._screen_cache
+
+
+def test_retry_active_home_item_requeues_ingest_job_via_real_seam():
+    """(L3b live-QA repro) Retry on a failed Library ingest job in Needs
+    Attention must requeue through the real ``retry_library_ingest_job``
+    seam (L3b Task 2) instead of degrading to the adapter's honest
+    "not connected to an active run service yet" fallback -- the adapter has
+    no visibility into the in-memory ingest job registry, so it can never
+    handle this target shape on its own.
+    """
+    app = _build_test_app()
+    job = app.library_ingest_jobs.submit(source_path="/tmp/report.xyz")
+    app.library_ingest_jobs.mark_failed(job.job_id, error="Unsupported extension")
+    app.notify = Mock()
+    jobs_before = len(app.library_ingest_jobs.jobs())
+
+    result = app.retry_active_home_item(target_id=f"local:ingest:{job.job_id}")
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    app.notify.assert_called_once_with(
+        "Retry queued for report.xyz.",
+        severity="information",
+    )
+    jobs_after = app.library_ingest_jobs.jobs()
+    # (L3b AB wave, B1) Retry supersedes the original failed job instead of
+    # leaving both visible -- net job count is unchanged.
+    assert len(jobs_after) == jobs_before
+    newest = jobs_after[0]  # jobs() is newest-first.
+    assert newest.job_id != job.job_id
+    assert newest.source_path == "/tmp/report.xyz"
+
+
+def test_retry_active_home_item_unknown_ingest_id_warns_without_requeue():
+    """An ingest target id that no longer maps to a ``FAILED`` job (already
+    retried, unknown, or finished by the time Retry is pressed) must warn
+    honestly rather than silently no-op or crash --
+    ``LibraryIngestJobRegistry.requeue`` is a documented no-op (returns
+    ``None``) for exactly this case.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+    jobs_before = len(app.library_ingest_jobs.jobs())
+
+    result = app.retry_active_home_item(target_id="local:ingest:does-not-exist")
+
+    assert result.status is HomeControlResultStatus.UNAVAILABLE
+    app.notify.assert_called_once_with(
+        "This ingest job can no longer be retried.",
+        severity="warning",
+    )
+    assert len(app.library_ingest_jobs.jobs()) == jobs_before
+
+
+def test_retry_active_home_item_non_ingest_target_still_routes_through_adapter():
+    """Non-ingest Retry targets (approvals/watchlist runs/schedules) must be
+    unaffected by the ingest special-case and keep degrading through the
+    adapter's honest "not connected" fallback -- regression guard for
+    existing behavior the ingest fix must not disturb.
+    """
+    app = _build_test_app()
+    app.notify = Mock()
+
+    result = app.retry_active_home_item(target_id="local:watchlist_run:5")
+
+    assert result.status is HomeControlResultStatus.UNAVAILABLE
+    app.notify.assert_called_once_with(
+        "Retry is not connected to an active run service yet. "
+        "Open details or Console to inspect the work.",
+        severity="warning",
+    )
+
+
+@pytest.mark.asyncio
+async def test_home_retry_button_click_requeues_failed_ingest_job():
+    """(L3b live-QA repro) Clicking the REAL ``Retry`` canvas button on a
+    failed Library ingest job in Needs Attention must drive the full UI hop
+    -- button press -> _activate_home_control -> app.retry_active_home_item
+    -> the real ``retry_library_ingest_job`` requeue seam -- not just the
+    direct app-method call the sibling test above exercises, and not the
+    adapter's generic "not connected to an active run service yet" toast
+    (the live-QA finding this test guards against). Uses the real registry
+    (submit + mark_failed, exactly like the Library ingest canvas), mirroring
+    ``test_home_open_details_button_click_navigates_library_for_failed_ingest_job``.
+    """
+    app = _build_test_app()
+    job = app.library_ingest_jobs.submit(source_path="/tmp/report.xyz")
+    app.library_ingest_jobs.mark_failed(job.job_id, error="Unsupported extension")
+    app.notify = Mock()
+    jobs_before = len(app.library_ingest_jobs.jobs())
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        # Select the failed ingest row in Needs Attention via a real press.
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == f"local:ingest:{job.job_id}"
+        )
+        await pilot.click(row_button)
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+        await pilot.click("#home-retry")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    notify_messages = [call.args[0] for call in app.notify.call_args_list]
+    assert "Retry queued for report.xyz." in notify_messages, (
+        f"Retry did not requeue the failed ingest job; notify calls: {notify_messages}"
+    )
+    assert not any("not connected" in str(message) for message in notify_messages)
+    # (L3b AB wave, B1) Retry supersedes the original failed job -- net job
+    # count is unchanged (one hidden, one added).
+    assert len(app.library_ingest_jobs.jobs()) == jobs_before

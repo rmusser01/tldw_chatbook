@@ -25,7 +25,7 @@ class HomeCanvas(Vertical):
         self,
         canvas: HomeCanvasState,
         *,
-        action_button_factory: Callable[[str, str], Any],
+        action_button_factory: Callable[[str, str, bool], Any],
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -70,10 +70,14 @@ class HomeCanvas(Vertical):
             toolbar.styles.height = "auto"
             with toolbar:
                 for control in self.canvas.actions:
-                    yield self.action_button_factory(control.label, control.control_id)
+                    yield self.action_button_factory(
+                        control.label,
+                        control.control_id,
+                        control.control_id == self.canvas.primary_control_id,
+                    )
                 if self.canvas.next_action_is_canvas:
                     yield self.action_button_factory(
-                        self.canvas.next_action.label, "home-primary-action"
+                        self.canvas.next_action.label, "home-primary-action", False
                     )
         if not self.canvas.next_action_is_canvas:
             yield Static(
@@ -83,5 +87,5 @@ class HomeCanvas(Vertical):
                 markup=False,
             )
             yield self.action_button_factory(
-                self.canvas.next_action.label, "home-primary-action"
+                self.canvas.next_action.label, "home-primary-action", False
             )

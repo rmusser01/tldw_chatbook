@@ -8,20 +8,36 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from textual.app import App
+from textual.app import App, ComposeResult
+from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
 
+from tldw_chatbook.app import LibraryIngestQueueMixin
 from tldw_chatbook.Constants import (
+    LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.Library.library_ingest_jobs import (
+    IngestJobState,
+    LibraryIngestJob,
+    LibraryIngestJobRegistry,
+)
+from tldw_chatbook.Library.library_ingest_state import (
+    LibraryIngestFormState,
+    build_library_ingest_state,
+)
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_INGEST_MEDIA,
 )
+from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 from tldw_chatbook.Study_Interop.local_quiz_service import LocalQuizService
 from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
 from tldw_chatbook.Study_Interop.quiz_scope_service import QuizScopeService
@@ -29,6 +45,7 @@ from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
@@ -40,6 +57,32 @@ from Tests.UI.test_library_content_hub import StaticLibraryCollectionsService
 from Tests.UI.test_screen_navigation import _build_test_app
 
 LIBRARY_TEST_SIZE = (170, 48)
+
+
+# --- D1: capped, markup-escaped carries-forward line (pure logic) ----------
+
+
+def test_library_carries_forward_line_lists_up_to_three_titles_with_no_cap_suffix():
+    line = library_screen_module._library_carries_forward_line(
+        ["Research Note", "Transcript A", "Planning Chat"]
+    )
+
+    assert line == "Carries forward: Research Note, Transcript A, Planning Chat"
+
+
+def test_library_carries_forward_line_caps_at_three_and_counts_the_rest():
+    line = library_screen_module._library_carries_forward_line(
+        ["Research Note", "Transcript A", "Planning Chat", "Design Doc", "Roadmap"]
+    )
+
+    assert line == "Carries forward: Research Note, Transcript A, Planning Chat and 2 more."
+
+
+def test_library_carries_forward_line_escapes_markup_in_titles():
+    line = library_screen_module._library_carries_forward_line(["[bold]Unsafe[/bold] title"])
+
+    assert line == r"Carries forward: \[bold]Unsafe\[/bold] title"
+
 
 # Gated fakes block a real executor thread on a threading.Event until a test
 # releases it. A test that fails (or forgets to release) before that point
@@ -315,7 +358,16 @@ async def test_library_shell_open_in_console_triggers_handoff():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_flashcards_row_renders_mode_canvas():
+async def test_library_shell_flashcards_row_renders_handoff_canvas():
+    """Create > Flashcards is a "handoff" rail row (L3b Task 8, not the
+    retired "mode" kind): pressing it renders the consolidated handoff
+    canvas (UX wave D1) -- one header (the row's own title), one purpose
+    line, the capped carries-forward line, one ownership line, the ready
+    snapshot line (plain, D2), and the primary "Open Flashcards" action
+    button (D3). The duplicated mode/purpose lines, the "Primary action:"
+    line, the "Flashcards handoff" sub-header, and the WIP roadmap callout
+    from the pre-D1 layout are gone.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -331,12 +383,50 @@ async def test_library_shell_flashcards_row_renders_mode_canvas():
         detail = screen.query_one("#library-study-handoff-detail")
         assert canvas in detail.ancestors
 
+        # Header: the row's own title, not a second "X mode" restatement.
+        title = screen.query_one("#library-active-mode-title", Static)
+        assert str(title.renderable) == "Flashcards"
+        assert title.has_class("destination-section")
+
+        # Removed duplicated mode/purpose lines and the WIP/primary-action
+        # lines: they no longer render at all.
+        assert not screen.query("#library-active-mode-description")
+        assert not screen.query("#library-active-mode-next-action")
+        assert not screen.query("#library-study-handoff-primary-action")
+        assert not screen.query("#library-study-handoff-wip")
+
+        purpose = screen.query_one("#library-study-handoff-purpose", Static)
+        assert str(purpose.renderable) == "Generate or review cards from Library sources."
+        visible = _visible_text(screen)
+        assert "Flashcards handoff" not in visible
+        assert "Primary action:" not in visible
+        assert "WIP:" not in visible
+
+        context = screen.query_one("#library-study-handoff-context", Static)
+        assert str(context.renderable) == (
+            "Carries forward: Quarterly planning sync, Design review notes"
+        )
+
+        owner = screen.query_one("#library-study-handoff-owner", Static)
+        assert str(owner.renderable) == "Generation and review run in Study."
+
+        # D2: ready state is a plain line, no warning-callout classes.
+        recovery = screen.query_one("#library-study-handoff-recovery", Static)
+        assert str(recovery.renderable) == "Source snapshot is ready."
+        assert not recovery.has_class("ds-recovery-callout")
+        assert not recovery.has_class("is-blocked")
+
+        # D3: the Open action carries primary emphasis.
+        open_button = screen.query_one("#library-open-flashcards", Button)
+        assert canvas in open_button.ancestors
+        assert open_button.has_class("console-action-primary")
+
 
 @pytest.mark.asyncio
 async def test_library_shell_search_row_renders_first_class_canvas():
     """Browse ▸ Search/RAG is a first-class canvas row now, not a legacy
     "mode" row: pressing it mounts ``LibrarySearchRagPanel`` directly (no
-    ``_compose_mode_canvas`` indirection), and -- unlike a real mode row
+    ``_compose_mode_canvas`` indirection), and -- unlike a handoff row
     (e.g. Flashcards, see the sibling test above) -- the shared mode-title
     block never renders for it.
     """
@@ -373,19 +463,22 @@ async def test_library_shell_rag_open_import_export_switches_canvas_and_selectio
 
         screen.query_one("#library-rag-open-import-export").press()
         await _wait_for_selector(
-            screen, pilot, "#library-import-export-workflow-title"
+            screen, pilot, "#library-ingest-canvas"
         )
 
-        # The canvas now renders the Import/Export mode body, driven by the
-        # shell selection rather than a bare _active_mode flip.
+        # The canvas now renders the real Ingest canvas, driven by the shell
+        # selection rather than a bare _active_mode flip. The Import/Export
+        # mode this recovery button used to drive is retired -- the removed
+        # row/mode's only surviving successor is the Ingest ▸ Import media
+        # canvas row.
         canvas = screen.query_one("#library-canvas")
-        title = screen.query_one("#library-import-export-workflow-title")
-        assert canvas in title.ancestors
+        ingest_canvas = screen.query_one("#library-ingest-canvas")
+        assert canvas in ingest_canvas.ancestors
         assert not screen.query("#library-search-rag-panel")
 
-        # ...and the rail selection marker moved to the Import/Export row.
-        assert screen._library_selected_row_id == "ingest-import-export"
-        row = screen.query_one("#library-row-ingest-import-export")
+        # ...and the rail selection marker moved to the Import media row.
+        assert screen._library_selected_row_id == "ingest-import-media"
+        row = screen.query_one("#library-row-ingest-import-media")
         assert row.has_class("library-rail-row-selected")
 
 
@@ -812,7 +905,7 @@ async def test_library_shell_search_outcome_resolves_status_after_leaving_canvas
         # Leave the Search canvas while the gated fake is still in flight.
         screen.query_one("#library-row-browse-media").press()
         await pilot.pause()
-        assert screen._active_mode == "media"
+        assert screen._library_selected_row_id == "browse-media"
 
         service.release_event.set()
 
@@ -3259,6 +3352,101 @@ async def test_library_shell_note_id_deeplink_opens_note_editor():
 
 
 @pytest.mark.asyncio
+async def test_library_shell_ingest_nav_context_deeplink_lands_on_ingest_canvas():
+    """Home's ingest-jobs ``Open details`` control re-points here (L3b Task
+    6): a ``LIBRARY_NAV_CONTEXT_INGEST`` navigation context must land the
+    shell on the in-canvas Ingest > Import media view, mirroring how
+    pressing the Ingest rail row does (``LIBRARY_ROW_INGEST_MEDIA`` / canvas
+    kind ``ingest-media``). Unlike the collections/note_id deep links, the
+    ingest canvas needs no async data fetch, so setting the selected row id
+    pre-mount is sufficient -- there is no on_mount deferral to add.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    screen = LibraryScreen(app)
+
+    # Mirrors the real app.py ordering: handle_screen_navigation calls
+    # apply_navigation_context BEFORE switch_screen mounts the destination
+    # screen (see test_library_shell_collections_deeplink_loads_before_mount).
+    assert screen.is_mounted is False
+    screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+        assert screen.query_one("#library-ingest-path")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_form():
+    """(Minor, L3b Task 6 fix wave) A cached ``LibraryScreen`` re-entered via
+    Home's ingest-jobs ``Open details`` deep link must never show a stale
+    half-filled Import media form left over from a previous Ingest visit --
+    ``_select_library_rail_row`` (the rail-row entry path) already resets
+    the form on every switch via ``_reset_library_ingest_transient_state``,
+    but the ``LIBRARY_NAV_CONTEXT_INGEST`` deep-link branch in
+    ``_apply_navigation_context_state`` skipped that call, so a post-mount
+    re-entry through the deep link (unlike the pre-mount case covered by
+    ``test_library_shell_ingest_nav_context_deeplink_lands_on_ingest_canvas``)
+    kept whatever the user had typed on their prior visit.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # Pre-fill the ingest form programmatically, as if the user had
+        # already typed into it on a previous Ingest visit.
+        screen._library_ingest_form = LibraryIngestFormState(
+            path="/tmp/stale-upload.txt",
+            title="Stale title",
+            author="Stale author",
+            keywords="stale, keywords",
+        )
+
+        # Home's "Open details" control re-enters via this same navigation
+        # context on an already-mounted (cached) screen.
+        screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+        assert screen._library_ingest_form == LibraryIngestFormState()
+        path_input = screen.query_one("#library-ingest-path", Input)
+        assert path_input.value == ""
+
+
+@pytest.mark.asyncio
+async def test_library_shell_unknown_nav_context_mode_degrades_quietly():
+    """A retired/unknown navigation-context ``mode`` (e.g. the removed
+    Import/Export placeholder row's old mode value) must not raise and must
+    leave the current rail selection untouched -- carried Minor from L3b
+    Task 3.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        selected_before = screen._library_selected_row_id
+
+        screen.apply_navigation_context({"mode": "import-export"})
+        await pilot.pause()
+
+        assert screen._library_selected_row_id == selected_before
+
+
+@pytest.mark.asyncio
 async def test_library_shell_workspaces_body_lives_under_details():
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -4374,10 +4562,10 @@ async def test_library_shell_note_flush_on_rail_switch_saves_before_switching():
             raise AssertionError("Rail switch never triggered the flush save.")
 
         # The save is still sleeping: the rail switch must not have applied yet.
-        assert screen._active_mode == "notes"
+        assert screen._library_selected_row_id == "browse-notes"
 
         for _ in range(150):
-            if screen._active_mode == "media":
+            if screen._library_selected_row_id == "browse-media":
                 break
             await pilot.pause(0.02)
         else:
@@ -4400,8 +4588,9 @@ async def test_library_shell_note_flush_on_notes_create_deeplink_saves_before_sw
     runs it on a mounted, dirty editor. Without the flush the recompose to
     the create view destroys the ``#library-note-body`` the debounced
     autosave would have read, silently dropping the last edits. Proven by
-    the (deliberately slow) save being in flight while the mode is still
-    ``notes`` and only becoming ``notes-create`` once it resolves.
+    the (deliberately slow) save being in flight while the selected row is
+    still ``browse-notes`` and only becoming ``create-note`` once it
+    resolves.
     """
     app = _build_test_app()
     service = _DelayedSaveLibraryNotesScopeService(_two_notes())
@@ -4427,10 +4616,10 @@ async def test_library_shell_note_flush_on_notes_create_deeplink_saves_before_sw
             raise AssertionError("notes_create deep link never triggered the flush save.")
 
         # The save is still sleeping: the create view must not have applied yet.
-        assert screen._active_mode == "notes"
+        assert screen._library_selected_row_id == "browse-notes"
 
         for _ in range(150):
-            if screen._active_mode == "notes-create":
+            if screen._library_selected_row_id == "create-note":
                 break
             await pilot.pause(0.02)
         else:
@@ -6641,7 +6830,6 @@ async def test_library_shell_search_result_open_note_lands_in_editor():
             raise AssertionError("Open never landed on the note editor.")
         await pilot.pause()
 
-        assert screen._active_mode == "notes"
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
         title = screen.query_one("#library-note-title", Input)
         assert title.value == "Q3 retro"
@@ -6687,7 +6875,6 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
             raise AssertionError("Open never landed on the media viewer.")
         await pilot.pause()
 
-        assert screen._active_mode == "media"
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
         title = str(screen.query_one("#library-media-viewer-title").renderable)
         assert title == "Interview Recording"
@@ -6748,7 +6935,6 @@ async def test_library_shell_search_result_open_conversation_fetches_missing_id(
             await pilot.pause()
             await pilot.pause()
 
-            assert screen._active_mode == "conversations"
             assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
             preview = str(
                 screen.query_one("#library-conversation-preview-lines").renderable
@@ -6794,3 +6980,888 @@ async def test_library_shell_search_result_without_provenance_has_no_open_button
 
         assert not screen.query(".library-rag-result-open")
         assert not list(screen.query("#library-rag-open-result-0"))
+
+
+# --- Ingest canvas (L3b Task 4) --------------------------------------------
+#
+# Unlike ``LibraryHarness`` (whose ``app_instance`` is a separate, never-run
+# ``TldwCli``), submitting a real ingest job needs ``self.app_instance`` to
+# literally be the running app: ``submit_library_ingest_job`` starts an
+# ``@work``-decorated background worker and marshals every registry
+# mutation back via ``call_from_thread`` -- neither works without a live
+# message pump. ``_LibraryIngestCanvasHarness`` mixes the real
+# ``LibraryIngestQueueMixin`` (app.py) straight into a minimal running
+# ``App`` and pushes ``LibraryScreen(self)`` -- mirroring
+# ``_IngestRunnerHarness`` (Tests/Library/test_library_ingest_runner.py)
+# combined with ``LibraryHarness``'s screen-hosting shape. Notes/
+# conversations use the existing static empty fakes purely so
+# ``_list_local_source_snapshot`` doesn't bail into its lookup-error state
+# (which would otherwise blank out the media viewer on Open in Library);
+# only Media needs to be real here, wired to the SAME db the ingest
+# queue-runner writes to.
+
+_INGEST_POLL_ATTEMPTS = 500
+_INGEST_POLL_INTERVAL = 0.02
+
+
+class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
+    """Runs a real LibraryScreen against a running app mixing the real
+    ingest queue-runner + registry + an optional real file-backed
+    MediaDatabase."""
+
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook"
+        / "css"
+        / "tldw_cli_modular.tcss"
+    )
+
+    def __init__(self, media_db):
+        super().__init__()
+        self.library_ingest_jobs = LibraryIngestJobRegistry()
+        self.media_db = media_db
+        self.notes_scope_service = StaticLibraryNotesScopeService([])
+        self.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+        if media_db is not None:
+            self.media_reading_scope_service = MediaReadingScopeService(
+                LocalMediaReadingService(media_db), None
+            )
+
+    async def on_mount(self) -> None:
+        await self.push_screen(LibraryScreen(self))
+
+
+async def _open_library_ingest_canvas(screen, pilot):
+    screen.query_one("#library-row-ingest-import-media").press()
+    await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
+    """(a) Full happy path: a real tmp .txt through a real file-backed
+    MediaDatabase -- type the path, Start, poll until the row reaches
+    done, then Open in Library lands in the media viewer on the item that
+    was actually ingested."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    source = tmp_path / "tides.txt"
+    source.write_text("Tides are driven by the moon's gravity.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+
+        path_input = screen.query_one("#library-ingest-path", Input)
+        path_input.value = str(source)
+        await pilot.pause()
+
+        start_button = screen.query_one("#library-ingest-start", Button)
+        assert start_button.disabled is False
+        start_button.press()
+        await pilot.pause()
+
+        # Path clears immediately on submit (metadata fields would persist).
+        assert screen.query_one("#library-ingest-path", Input).value == ""
+
+        # Task 4 has no live-update listener yet (that's Task 5) -- the
+        # canvas only re-renders on a user-triggered recompose, so poll the
+        # registry directly, then force one recompose once the job is done.
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = harness.library_ingest_jobs.jobs()
+            if jobs and jobs[0].state == IngestJobState.DONE:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(f"Job never reached DONE: {harness.library_ingest_jobs.jobs()}")
+
+        screen.refresh(recompose=True)
+        await pilot.pause()
+
+        row_text = str(screen.query_one("#library-ingest-row-0").renderable)
+        assert row_text.startswith("✓ done · tides.txt")
+        # Row-action buttons are keyed by job_id, not row index (PR #591
+        # review, F1) -- this is the first (only) job submitted against a
+        # fresh registry, so its id is deterministically "ingest-job-1".
+        assert screen.query_one("#library-ingest-open-ingest-job-1")
+
+        screen.query_one("#library-ingest-open-ingest-job-1").press()
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            if screen._library_media_detail is not None:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Media detail never loaded after Open in Library.")
+
+        assert screen._library_media_view == "viewer"
+        viewer_title = str(screen.query_one("#library-media-viewer-title").renderable)
+        assert "tides" in viewer_title.lower()
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_invalid_path_notifies_and_submits_nothing(tmp_path):
+    """(b) An invalid path (rejected by validate_path_simple) is a quiet
+    warning notice -- no job is ever submitted."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    harness = _LibraryIngestCanvasHarness(db)
+    harness.notify = Mock()
+
+    def _reject_path(*_args, **_kwargs):
+        raise ValueError("rejected for test")
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(library_screen_module, "validate_path_simple", _reject_path)
+
+        async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = harness.screen_stack[-1]
+            await _wait_for_library_shell(screen, pilot)
+            await _open_library_ingest_canvas(screen, pilot)
+
+            screen.query_one("#library-ingest-path", Input).value = "/tmp/whatever.txt"
+            await pilot.pause()
+            screen.query_one("#library-ingest-start", Button).press()
+            await pilot.pause()
+
+            harness.notify.assert_called_once()
+            args, kwargs = harness.notify.call_args
+            assert kwargs.get("severity") == "warning"
+            assert harness.library_ingest_jobs.jobs() == ()
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues(tmp_path):
+    """(c) A failed job (missing file, submitted programmatically) renders
+    a failed row with Retry; pressing Retry appends a fresh queued job and
+    (L3b AB wave, B1) supersedes the original -- the queue shows exactly
+    ONE row for the retried file, not two."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    missing = tmp_path / "does-not-exist.txt"
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        failing_job = harness.submit_library_ingest_job(source_path=str(missing))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
+            if jobs[failing_job.job_id].state == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Job never reached FAILED.")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        # Row-action buttons are keyed by job_id, not row index (PR #591
+        # review, F1) -- this is the only job in a fresh registry, so its
+        # id is deterministically "ingest-job-1".
+        await _wait_for_selector(screen, pilot, "#library-ingest-retry-ingest-job-1")
+        row_text = str(screen.query_one("#library-ingest-row-0").renderable)
+        assert row_text.startswith("✗ failed · does-not-exist.txt")
+
+        jobs_before = len(harness.library_ingest_jobs.jobs())
+        screen.query_one("#library-ingest-retry-ingest-job-1", Button).press()
+        await pilot.pause()
+
+        jobs_after = harness.library_ingest_jobs.jobs()
+        # B1: the original failed job is superseded, not kept alongside the
+        # fresh copy -- net job count is unchanged (one hidden, one added).
+        assert len(jobs_after) == jobs_before
+        newest = jobs_after[0]
+        assert newest.job_id != failing_job.job_id
+        assert newest.source_path == str(missing)
+
+        # The canvas itself must show exactly one row -- not the retried
+        # QUEUED copy sitting alongside a still-visible failed original.
+        await pilot.pause()
+        assert len(list(screen.query(".library-ingest-row"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_submit_clears_path_and_title_keeps_metadata(
+    tmp_path,
+):
+    """(A1) On successful submit, both the path AND title fields clear --
+    title is per-file -- while author/keywords/toggles persist so a batch
+    of files sharing metadata doesn't need to be retyped for every
+    submission."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    source = tmp_path / "tides.txt"
+    source.write_text("Tides are driven by the moon's gravity.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+
+        screen.query_one("#library-ingest-path", Input).value = str(source)
+        screen.query_one("#library-ingest-title", Input).value = "Tides 101"
+        screen.query_one("#library-ingest-author", Input).value = "Jane Doe"
+        screen.query_one("#library-ingest-keywords", Input).value = "ocean, moon"
+        await pilot.pause()
+
+        screen.query_one("#library-ingest-start", Button).press()
+        await pilot.pause()
+
+        assert screen._library_ingest_form.path == ""
+        assert screen._library_ingest_form.title == ""
+        assert screen._library_ingest_form.author == "Jane Doe"
+        assert screen._library_ingest_form.keywords == "ocean, moon"
+        assert screen.query_one("#library-ingest-path", Input).value == ""
+        assert screen.query_one("#library-ingest-title", Input).value == ""
+        assert screen.query_one("#library-ingest-author", Input).value == "Jane Doe"
+        assert screen.query_one("#library-ingest-keywords", Input).value == "ocean, moon"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_dismiss_button_removes_failed_row(tmp_path):
+    """(B2) Pressing Dismiss on a failed row removes it from the canvas AND
+    the registry -- the row is gone, not just visually hidden."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    missing = tmp_path / "does-not-exist.txt"
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        failing_job = harness.submit_library_ingest_job(source_path=str(missing))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
+            if jobs[failing_job.job_id].state == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Job never reached FAILED.")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        # Row-action buttons are keyed by job_id, not row index (PR #591
+        # review, F1) -- this is the only job in a fresh registry, so its
+        # id is deterministically "ingest-job-1".
+        await _wait_for_selector(screen, pilot, "#library-ingest-dismiss-ingest-job-1")
+
+        screen.query_one("#library-ingest-dismiss-ingest-job-1", Button).press()
+        await pilot.pause()
+
+        assert harness.library_ingest_jobs.jobs() == ()
+        assert not list(screen.query(".library-ingest-row"))
+        assert screen.query_one("#library-ingest-queue-empty")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_dismiss_targets_correct_job_across_stale_render(
+    tmp_path,
+):
+    """(F1 regression, PR #591 review) A Dismiss button pressed AFTER the
+    queue has reordered underneath it -- but BEFORE the canvas has
+    re-rendered to reflect that reorder -- must still act on the job it
+    was rendered for, never on whatever job happens to now sit at the
+    same row index.
+
+    Sequence: render the queue with exactly one FAILED job ("the
+    target"), capture a direct reference to ITS Dismiss button, then
+    freeze the canvas's own ``refresh(recompose=True)`` (a no-op stand-in)
+    to hold the DOM in that exact "just rendered, not yet caught up"
+    state -- reproducing the real production window between a registry
+    mutation and Textual actually applying the scheduled recompose on a
+    later event-loop turn (see
+    ``LibraryScreen._handle_library_ingest_registry_changed``'s
+    docstring). Only then is a second, newer job appended straight to the
+    registry -- it sorts first in the newest-first ``jobs()`` snapshot,
+    so "row index 0" now means something different than it did when the
+    captured button was built -- and only then is the captured (frozen,
+    still-mounted) button actually pressed.
+
+    Job_id-keyed button ids resolve the ORIGINAL target job regardless of
+    that index shift (dismissed; the new job is untouched and still
+    queued). The index-keyed scheme this replaces instead re-derives row
+    0 fresh at press time -- landing on the new QUEUED job, whose
+    ``can_dismiss`` is False -- and silently no-ops, leaving the failed
+    row the user was looking at un-dismissed (confirmed by running this
+    exact test against the pre-fix handlers: it fails with the target job
+    still present/un-dismissed).
+    """
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    missing = tmp_path / "does-not-exist.txt"
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        target_job = harness.submit_library_ingest_job(source_path=str(missing))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
+            if jobs[target_job.job_id].state == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Job never reached FAILED.")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, f"#library-ingest-dismiss-{target_job.job_id}")
+        stale_dismiss_button = screen.query_one(
+            f"#library-ingest-dismiss-{target_job.job_id}", Button
+        )
+
+        # Freeze the canvas mid-render: block the registry-listener-driven
+        # recompose so the DOM stays exactly as it was when the button
+        # above was captured, rather than racing Textual's own recompose
+        # scheduling (unreliable to depend on from a test).
+        screen.refresh = lambda *args, **kwargs: None
+
+        # Append a newer job DIRECTLY on the registry (not through
+        # ``submit_library_ingest_job``) so it stays QUEUED forever --
+        # nothing ever claims it, so no background-thread timing is
+        # involved.
+        newer_job = harness.library_ingest_jobs.submit(source_path=str(tmp_path / "newer.txt"))
+        assert newer_job.job_id != target_job.job_id
+        # Confirm the reorder actually happened underneath the frozen DOM.
+        assert harness.library_ingest_jobs.jobs()[0].job_id == newer_job.job_id
+
+        # Press the button captured BEFORE the mutation above -- this is
+        # the "stale render, but the click still lands" race from F1.
+        stale_dismiss_button.press()
+        await pilot.pause()
+
+        jobs_by_id = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
+        assert target_job.job_id not in jobs_by_id, (
+            "Dismiss must remove the job the button was rendered for, "
+            "even after the queue reordered underneath it."
+        )
+        assert newer_job.job_id in jobs_by_id
+        assert jobs_by_id[newer_job.job_id].state == IngestJobState.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_failed(
+    tmp_path,
+):
+    """(B2) Pressing "Clear finished" removes every done+failed job from
+    the registry in one shot, leaving the queue empty when nothing else is
+    queued/running."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    source = tmp_path / "tides.txt"
+    source.write_text("Tides are driven by the moon's gravity.", encoding="utf-8")
+    missing = tmp_path / "does-not-exist.txt"
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        done_job = harness.submit_library_ingest_job(source_path=str(source))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(done_job.job_id) and jobs[done_job.job_id].state == IngestJobState.DONE:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Job never reached DONE.")
+
+        failing_job = harness.submit_library_ingest_job(source_path=str(missing))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(failing_job.job_id) and jobs[failing_job.job_id].state == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Job never reached FAILED.")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-clear-finished")
+
+        screen.query_one("#library-ingest-clear-finished", Button).press()
+        await pilot.pause()
+
+        counts = harness.library_ingest_jobs.counts()
+        assert counts["done"] == 0
+        assert counts["failed"] == 0
+        assert not list(screen.query(".library-ingest-row"))
+        assert screen.query_one("#library-ingest-queue-empty")
+        assert not list(screen.query("#library-ingest-clear-finished"))
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_quiet_line_toggles_live_while_typing(tmp_path):
+    """(A4, live-QA repro) ``handle_library_ingest_path_changed`` deliberately
+    avoids a full canvas recompose while typing (to preserve the Input's
+    cursor position) -- it must still keep the quiet line in sync via the
+    same kind of targeted, no-recompose update it already does for the
+    Start button's ``disabled`` flag. Before the fix, the quiet line stayed
+    stuck showing (from the initial mount) even after a path was typed and
+    Start had already gone enabled."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+
+        assert screen.query_one("#library-ingest-start-quiet-line", Static)
+        assert screen.query_one("#library-ingest-start", Button).disabled is True
+
+        screen.query_one("#library-ingest-path", Input).value = str(tmp_path / "a.txt")
+        await pilot.pause()
+
+        assert not list(screen.query("#library-ingest-start-quiet-line"))
+        assert screen.query_one("#library-ingest-start", Button).disabled is False
+
+        # Clearing the path back out must bring the quiet line back too --
+        # the same targeted update in reverse.
+        screen.query_one("#library-ingest-path", Input).value = ""
+        await pilot.pause()
+
+        assert screen.query_one("#library-ingest-start-quiet-line", Static)
+        assert screen.query_one("#library-ingest-start", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_db_unavailable_disables_start(tmp_path):
+    """(d) A missing media DB disables Start with the exact blocked copy."""
+    harness = _LibraryIngestCanvasHarness(None)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+
+        unavailable_line = screen.query_one("#library-ingest-unavailable-line")
+        assert str(unavailable_line.renderable) == "Media database is unavailable."
+
+        screen.query_one("#library-ingest-path", Input).value = str(tmp_path / "a.txt")
+        await pilot.pause()
+        assert screen.query_one("#library-ingest-start", Button).disabled is True
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_advanced_expand_survives_toggle_and_listener_recompose(tmp_path):
+    """(F1, whole-branch review fix) The Advanced options collapsible must
+    stay expanded across BOTH kinds of recompose the ingest canvas can hit
+    while the panel is open: the analyze/chunk toggle handlers' own
+    ``refresh(recompose=True)``, and the registry listener's recompose on a
+    job transition (``_handle_library_ingest_registry_changed``). Before the
+    fix, the widget hardcoded ``collapsed=True`` on every compose, so
+    pressing "Analyze after ingest" INSIDE the panel closed it out from
+    under the user (mirrors
+    ``test_library_shell_history_manual_expand_survives_scope_toggle_recompose``).
+    """
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-advanced")
+    source = tmp_path / "note.txt"
+    source.write_text("Advanced options must survive a recompose.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+
+        # Starts collapsed.
+        assert screen.query_one("#library-ingest-advanced", Collapsible).collapsed is True
+
+        # Mirror a user click on the collapsible header (expand).
+        screen.query_one("#library-ingest-advanced", Collapsible).collapsed = False
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            if screen._library_ingest_form.advanced_open is True:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Manual expand never synced back to advanced_open.")
+
+        # Pressing the analyze toggle (INSIDE the panel) recomposes the canvas.
+        screen.query_one("#library-ingest-analyze-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-ingest-advanced")
+
+        assert screen.query_one("#library-ingest-advanced", Collapsible).collapsed is False
+
+        # A registry-listener-driven recompose (job transition) must also
+        # leave the panel expanded -- submit programmatically, exactly like
+        # the queue-runner's own call_from_thread-marshaled transitions.
+        harness.submit_library_ingest_job(source_path=str(source))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = harness.library_ingest_jobs.jobs()
+            if jobs and jobs[0].state == IngestJobState.DONE:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(f"Job never reached DONE: {harness.library_ingest_jobs.jobs()}")
+        await pilot.pause()
+
+        assert screen.query_one("#library-ingest-advanced", Collapsible).collapsed is False
+
+
+class _IngestCanvasWidgetHost(App):
+    """Bare host for mounting ``LibraryIngestCanvas`` directly with a
+    hand-built state -- used only to exercise the widget's markup-escaping
+    in isolation, without a full Library screen."""
+
+    def __init__(self, state):
+        super().__init__()
+        self._state = state
+
+    def compose(self):
+        yield LibraryIngestCanvas(self._state, id="library-ingest-canvas")
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_renders_markup_hostile_filename_without_crash():
+    """(e) A filename containing Rich-markup-like syntax (brackets that
+    look like closing tags) must render without raising MarkupError --
+    mirrors the ``docs [/archive] cleanup`` lesson already fixed for the
+    Search/RAG history rows."""
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="weird [/bracket] name.txt",
+        state=IngestJobState.FAILED,
+        error="failed near [bold]tag[/bold] marker",
+        submitted_at=1.0,
+        started_at=1.0,
+        finished_at=2.0,
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        row = host.query_one("#library-ingest-row-0", Static)
+        # Reaching this line at all is the core assertion: a MarkupError
+        # during compose/mount would have raised before ``run_test``'s
+        # context manager ever returned control here.
+        assert "bracket" in str(row.renderable)
+        assert "tag" in str(row.renderable)
+        # Row-action buttons are keyed by job_id, not row index (PR #591
+        # review, F1).
+        assert host.query_one("#library-ingest-retry-ingest-job-1")
+
+
+# --- L3b AB wave: widget-level (A4/A5/A6/B2) --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_metadata_placeholders_are_optional_labeled():
+    """(A5) Title/Author/Keywords placeholders spell out "(optional)" so
+    the form doesn't read as if every field were required."""
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        assert (
+            host.query_one("#library-ingest-title", Input).placeholder
+            == "Title (optional)"
+        )
+        assert (
+            host.query_one("#library-ingest-author", Input).placeholder
+            == "Author (optional)"
+        )
+        assert (
+            host.query_one("#library-ingest-keywords", Input).placeholder
+            == "Keywords, comma-separated (optional)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_chunk_size_input_labeled_and_disable_follows_toggle():
+    """(A6) The chunk-size Input gets a "Chunk size (words)" placeholder and
+    is visually disabled whenever "Chunk content" is toggled off (submit
+    already ignores it when disabled; this only adds the visual affordance)."""
+    off_state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(chunk=False)
+    )
+    host = _IngestCanvasWidgetHost(off_state)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        chunk_size_input = host.query_one("#library-ingest-chunk-size", Input)
+        assert chunk_size_input.placeholder == "Chunk size (words)"
+        assert chunk_size_input.disabled is True
+
+    on_state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(chunk=True)
+    )
+    host2 = _IngestCanvasWidgetHost(on_state)
+    async with host2.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        assert host2.query_one("#library-ingest-chunk-size", Input).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_start_quiet_line_renders_when_path_blank():
+    state = build_library_ingest_state((), form=LibraryIngestFormState(path=""))
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        line = host.query_one("#library-ingest-start-quiet-line", Static)
+        assert str(line.renderable) == "Enter a file path to start."
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_start_quiet_line_absent_when_path_typed():
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/tmp/a.txt")
+    )
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        assert not list(host.query("#library-ingest-start-quiet-line"))
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_counts_line_hidden_when_no_jobs():
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        assert not list(host.query("#library-ingest-queue-counts"))
+        assert host.query_one("#library-ingest-queue-empty", Static)
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_counts_line_shown_when_jobs_present():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.QUEUED,
+        submitted_at=1.0,
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        counts_line = host.query_one("#library-ingest-queue-counts", Static)
+        assert str(counts_line.renderable) == "1 queued"
+        assert not list(host.query("#library-ingest-queue-empty"))
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_failed_row_renders_dismiss_next_to_retry():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/broken.pdf",
+        state=IngestJobState.FAILED,
+        error="unsupported format",
+        submitted_at=1.0,
+        started_at=1.0,
+        finished_at=2.0,
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        # Row-action buttons are keyed by job_id, not row index (PR #591
+        # review, F1).
+        assert host.query_one("#library-ingest-retry-ingest-job-1", Button)
+        dismiss_button = host.query_one("#library-ingest-dismiss-ingest-job-1", Button)
+        assert "library-ingest-row-action" in dismiss_button.classes
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_clear_finished_absent_with_no_finished_jobs():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.QUEUED,
+        submitted_at=1.0,
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        assert not list(host.query("#library-ingest-clear-finished"))
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_clear_finished_present_with_a_failed_job():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/broken.pdf",
+        state=IngestJobState.FAILED,
+        error="unsupported format",
+        submitted_at=1.0,
+        started_at=1.0,
+        finished_at=2.0,
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        clear_button = host.query_one("#library-ingest-clear-finished", Button)
+        # Plain (not primary/accented like #library-ingest-start), and not a
+        # per-row action (it sits below all queue rows, not next to one).
+        assert "library-canvas-action" in clear_button.classes
+        assert "library-ingest-row-action" not in clear_button.classes
+
+
+# --- Live updates: registry listener -> canvas refresh + count poke
+# (L3b Task 5) --------------------------------------------------------------
+#
+# Task 4's tests above (e.g. the "happy path" test's comment) deliberately
+# forced a manual ``screen.refresh(recompose=True)`` once a job reached
+# DONE, because no live-update listener existed yet. These pilots assert
+# the opposite: NO manual recompose anywhere in the test body -- the
+# registry listener registered in ``LibraryScreen.on_mount`` must be the
+# only thing driving the row/rail updates onto screen.
+
+
+class _DummyReplacementScreen(Screen):
+    """Minimal screen used only to replace ``LibraryScreen`` on the stack.
+
+    ``App.switch_screen`` pops the previous top screen and -- since it is
+    not installed/present in any other stack -- awaits its ``.remove()``,
+    which actually unmounts it (firing ``on_unmount``). Merely *pushing* a
+    screen on top would only suspend the one underneath, which is exactly
+    the lifecycle event ``LibraryScreen.on_unmount`` documents itself as
+    deliberately NOT keying off of.
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static("replacement", id="dummy-replacement-static")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_live_updates_without_manual_recompose(tmp_path):
+    """(a) With the ingest canvas open, a *programmatic* submit (calling
+    the app seam directly, exactly like the queue-runner's own
+    ``call_from_thread``-marshaled transitions, and unlike a button press
+    whose handler does its own trailing recompose) must still make the
+    queue row appear, flip to done, and grow the rail ``Media (N)`` count
+    -- all without this test ever calling ``refresh(recompose=True)``
+    itself."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-live")
+    source = tmp_path / "river.txt"
+    source.write_text("Rivers carve valleys over millennia.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+
+        media_button = screen.query_one("#library-row-browse-media", Button)
+        assert "Media (0)" in str(media_button.label)
+
+        harness.submit_library_ingest_job(source_path=str(source))
+
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            if screen.query("#library-ingest-row-0"):
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(
+                f"Ingest row never appeared without a manual recompose. "
+                f"Visible text: {_visible_text(screen)}"
+            )
+
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            rows = list(screen.query("#library-ingest-row-0"))
+            if rows and str(rows[0].renderable).startswith("✓ done"):
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(
+                f"Row never reached done without a manual recompose: "
+                f"{harness.library_ingest_jobs.jobs()}"
+            )
+
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            media_button = screen.query_one("#library-row-browse-media", Button)
+            if "Media (1)" in str(media_button.label):
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(
+                f"Rail Media count never incremented after completion. "
+                f"Label: {media_button.label!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_registry_listener_removed_on_unmount(tmp_path):
+    """(b) The registry listener registered in ``on_mount`` is removed in
+    ``on_unmount``: replacing ``LibraryScreen`` on the stack (real
+    unmount, not a suspend-only push) drops the registry's listener count
+    to zero, and a subsequent mutation neither raises nor resurrects the
+    removed screen."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-unmount")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        assert screen in harness.screen_stack
+        assert len(harness.library_ingest_jobs._listeners) == 1
+
+        await harness.switch_screen(_DummyReplacementScreen())
+        await pilot.pause()
+        await pilot.pause()
+
+        # Note: Textual's ``Widget.is_mounted`` tracks "has been mounted at
+        # least once" (flipped True on first mount, never reset), so it is
+        # NOT the right signal for "was later removed" -- stack membership
+        # is (mirrors how ``App._replace_screen`` itself decides whether
+        # to actually call ``.remove()``: not installed + not present in
+        # any screen stack).
+        assert screen not in harness.screen_stack
+        assert len(harness.library_ingest_jobs._listeners) == 0
+
+        # Must not raise, and must not resurrect/recompose the removed
+        # screen -- the queue-runner will run this (missing) file to a
+        # FAILED transition on a background thread, exercising the exact
+        # call_from_thread-marshaled notify path against zero listeners.
+        harness.submit_library_ingest_job(source_path=str(tmp_path / "ghost.txt"))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = harness.library_ingest_jobs.jobs()
+            if jobs and jobs[0].state == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Ghost job never reached FAILED.")
+
+        assert screen not in harness.screen_stack
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_different_canvas_isolation(tmp_path):
+    """(c) Completing a job while a DIFFERENT canvas (Notes) is selected
+    must not yank the user onto the ingest canvas -- the selected row and
+    composed widgets stay on Notes -- but the rail ``Media (N)`` count
+    still updates once the job completes."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-isolation")
+    source = tmp_path / "delta.txt"
+    source.write_text("Deltas form where rivers meet the sea.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-notes").press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+
+        harness.submit_library_ingest_job(source_path=str(source))
+
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            media_button = screen.query_one("#library-row-browse-media", Button)
+            if "Media (1)" in str(media_button.label):
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(
+                f"Rail Media count never incremented while Notes was open. "
+                f"Label: {media_button.label!r}"
+            )
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert screen._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA
+        assert not screen.query("#library-ingest-path")
+        assert not list(screen.query(".library-ingest-row"))

@@ -346,7 +346,7 @@ class LibraryRagScopeState:
                         unavailable_what="Library Search/RAG",
                         why="No Library sources are available for retrieval",
                         next_action="Add or import Library sources before querying",
-                        recovery_action="Library Import/Export",
+                        recovery_action="Library Import media",
                         owner="Library source index",
                     ),
                     "Recovery checklist",

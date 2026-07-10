@@ -15,6 +15,7 @@ from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
 )
+from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 from Tests.UI.test_destination_shells import (
@@ -309,11 +310,12 @@ async def test_library_search_rag_empty_sources_has_mode_local_blocked_status() 
         assert "3. Select evidence, then Use in Console." in visible_text
         assert "Why: Enter a question or search query." not in visible_text
         recovery_button = screen.query_one("#library-rag-open-import-export", Button)
-        assert str(recovery_button.label) == "Open Import/Export"
-        assert recovery_button.tooltip == "Open Library Import/Export to add sources."
-        # Pressing this button drives the shell selection to the Import/Export
-        # row so the recomposed canvas renders that mode; the canvas-switch
-        # behavior itself is covered by test_library_shell.py.
+        assert str(recovery_button.label) == "Open Import media"
+        assert recovery_button.tooltip == "Open Library Import media to add sources."
+        # Pressing this button drives the shell selection to the Ingest ▸
+        # Import media canvas row (the Import/Export row/mode it used to
+        # target is retired); the canvas-switch behavior itself is covered
+        # by test_library_shell.py.
 
 
 @pytest.mark.asyncio
@@ -814,7 +816,7 @@ async def test_library_search_rag_worker_completion_ignores_unmounted_screen(mon
     # mount guard is the sole thing preventing the DOM refresh. The code under
     # test refreshes via _refresh_search_rag_panel_state_widgets (not the stale
     # _sync_search_rag_panel), so that is the method the test must poison.
-    screen._active_mode = "search"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
     screen._library_rag_query = "Find evidence"
     monkeypatch.setattr(screen, "query", lambda *args, **kwargs: [object()])
 

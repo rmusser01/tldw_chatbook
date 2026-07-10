@@ -1,4 +1,5 @@
-from tldw_chatbook.Constants import TAB_INGEST
+import pytest
+
 from tldw_chatbook.Library.library_shell_state import (
     LibraryShellInput,
     build_library_shell_state,
@@ -38,9 +39,8 @@ def test_shell_sections_rows_and_targets_are_fixed():
         "canvas", "notes-create",
     )
     ingest = shell.sections[2]
-    assert [r.title for r in ingest.rows] == ["Import media", "Import / Export"]
-    assert ingest.rows[0].target_id == TAB_INGEST
-    assert (ingest.rows[1].target_kind, ingest.rows[1].target_id) == ("mode", "import-export")
+    assert [r.title for r in ingest.rows] == ["Import media"]
+    assert (ingest.rows[0].target_kind, ingest.rows[0].target_id) == ("canvas", "ingest-media")
     assert all(r.count is None for r in shell.sections[1].rows)
 
 
@@ -66,9 +66,28 @@ def test_media_selection_yields_media_canvas():
     assert shell.selected_row_id == "browse-media"
 
 
-def test_mode_selection_yields_mode_canvas():
+def test_handoff_selection_yields_handoff_canvas():
+    # create-study/-flashcards/-quizzes are "handoff" rows (L3b Task 8), not
+    # legacy "mode" rows: their canvas_kind is the dedicated "handoff" kind,
+    # with canvas_target carrying which of the three handoffs is active.
     shell = build_library_shell_state(LibraryShellInput(), selected_row_id="create-flashcards")
-    assert (shell.canvas_kind, shell.canvas_target) == ("mode", "flashcards")
+    assert (shell.canvas_kind, shell.canvas_target) == ("handoff", "flashcards")
+
+
+@pytest.mark.parametrize(
+    ("row_id", "expected_target"),
+    [
+        ("create-study", "study"),
+        ("create-flashcards", "flashcards"),
+        ("create-quizzes", "quizzes"),
+    ],
+)
+def test_handoff_rows_target_handoff_kind_and_carry_their_target_id(row_id, expected_target):
+    shell = build_library_shell_state(LibraryShellInput(), selected_row_id=row_id)
+    row = next(r for r in shell.sections[1].rows if r.row_id == row_id)
+    assert row.target_kind == "handoff"
+    assert row.target_id == expected_target
+    assert (shell.canvas_kind, shell.canvas_target) == ("handoff", expected_target)
 
 
 def test_browse_search_selection_yields_search_canvas():
@@ -111,13 +130,23 @@ def test_create_note_row_targets_notes_create_canvas():
     assert shell.selected_row_id == "create-note"
 
 
-def test_screen_and_unknown_rows_resolve_to_empty_canvas():
+def test_unknown_rows_resolve_to_empty_canvas():
     # browse-notes and create-note used to be "screen" rows resolving to an
     # empty canvas; they now target real canvases (see the two tests above).
-    # ingest-import-media remains the surviving "screen" row.
-    for row_id in ("ingest-import-media", "nope", ""):
+    # ingest-import-media is likewise now a "canvas" row (see the test
+    # below) -- no row remains "screen"-kind, so only unknown/empty
+    # selections still land on the empty landing canvas.
+    for row_id in ("nope", ""):
         shell = build_library_shell_state(LibraryShellInput(), selected_row_id=row_id)
         assert shell.canvas_kind == "empty", row_id
+
+
+def test_ingest_import_media_selection_yields_ingest_media_canvas():
+    shell = build_library_shell_state(
+        LibraryShellInput(), selected_row_id="ingest-import-media"
+    )
+    assert (shell.canvas_kind, shell.canvas_target) == ("ingest-media", "")
+    assert shell.selected_row_id == "ingest-import-media"
 
 
 def test_server_header_line():

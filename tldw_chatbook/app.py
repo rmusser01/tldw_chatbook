@@ -34,7 +34,8 @@ from textual.widget import Widget
 import asyncio
 from PIL import Image
 from loguru import logger as loguru_logger, logger
-from textual import on
+from rich.markup import escape as escape_markup
+from textual import on, work
 from textual.app import App, ComposeResult
 from textual.widgets import (
     Static, Button, Input, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch, Markdown
@@ -81,6 +82,7 @@ from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_L
     TAB_SCHEDULES, TAB_WORKFLOWS, TAB_MCP, TAB_ACP, TAB_SKILLS, TAB_SETTINGS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
     LIBRARY_NAV_CONTEXT_MODE, LIBRARY_NAV_CONTEXT_NOTE_ID, LIBRARY_NAV_CONTEXT_NOTES_CREATE, \
+    LIBRARY_NAV_CONTEXT_INGEST, \
     get_tab_display_label
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
@@ -105,7 +107,13 @@ from tldw_chatbook.Chat import (
 )
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
+from tldw_chatbook.Library.library_ingest_jobs import (
+    DEFAULT_CHUNK_SIZE,
+    LibraryIngestJob,
+    LibraryIngestJobRegistry,
+)
 from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
+from tldw_chatbook.Local_Ingestion import detect_file_type, ingest_local_file
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -1127,8 +1135,315 @@ class PlaceholderWindow(Container):
                     await result
 
 
+def _sanitize_library_ingest_error(exc: Exception) -> str:
+    """Reduce an ingest-time exception to a single-line, capped error string.
+
+    Args:
+        exc: The exception raised by the ingest seam.
+
+    Returns:
+        The first line of ``str(exc)``, stripped and capped at 200
+        characters. Falls back to the exception's class name when
+        ``str(exc)`` is empty.
+    """
+    message = str(exc).strip()
+    first_line = message.splitlines()[0].strip() if message else ""
+    if not first_line:
+        first_line = exc.__class__.__name__
+    return first_line[:200]
+
+
+class LibraryIngestQueueMixin:
+    """Library ingest job submission seam + serial queue-runner.
+
+    Mixed into :class:`TldwCli` (and headless test harnesses -- see
+    ``Tests/Library/test_library_ingest_runner.py``) rather than being
+    defined directly on the App class, so the queue-runner can be exercised
+    without booting the full app. A host class is expected to provide:
+
+    - ``self.library_ingest_jobs``: a ``LibraryIngestJobRegistry`` instance
+      constructed once (e.g. in ``__init__``/app wiring).
+    - ``self.media_db``: an ``Optional[MediaDatabase]``.
+    - Textual's ``App``/``Widget`` worker machinery (``@work`` and
+      ``call_from_thread``), since this mixin is always combined with one
+      of those base classes.
+
+    The queue-runner worker (``_run_library_ingest_queue``) is the *only*
+    intended caller of the registry's ``mark_running``/``mark_done``/
+    ``mark_failed`` transition methods. Every job it dequeues is driven
+    either ``queued`` -> ``running`` -> ``done``/``failed``, *or* straight
+    from ``queued`` to ``failed`` when an error occurs before
+    ``mark_running`` is ever reached -- e.g. an unsupported/undetectable
+    file type raised by ``detect_file_type``, which runs before
+    ``mark_running`` is called. Either way, one job's failure is caught
+    locally so it never kills the loop or strands a later queued job.
+    """
+
+    def submit_library_ingest_job(
+        self,
+        *,
+        source_path: str,
+        title: str = "",
+        author: str = "",
+        keywords: tuple[str, ...] = (),
+        perform_analysis: bool = False,
+        chunk_enabled: bool = False,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> LibraryIngestJob:
+        """Submit a new Library ingest job and start the runner if idle.
+
+        UI-thread only. Appends a ``QUEUED`` job to ``self.library_ingest_jobs``.
+        When ``self.media_db`` is unavailable, the job is failed immediately
+        (with the exact copy ``"Media database is unavailable."``) and the
+        queue-runner is never started for it.
+
+        Args:
+            source_path: The file path to ingest.
+            title: Optional title form field.
+            author: Optional author form field.
+            keywords: Keywords form field.
+            perform_analysis: Whether to run post-ingest analysis.
+            chunk_enabled: Whether to chunk the ingested content.
+            chunk_size: Requested chunk size when ``chunk_enabled``.
+
+        Returns:
+            The newly created job: ``QUEUED`` normally, or immediately
+            ``FAILED`` when ``media_db`` is unavailable.
+        """
+        job = self.library_ingest_jobs.submit(
+            source_path=source_path,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+        )
+        if self.media_db is None:
+            failed = self.library_ingest_jobs.mark_failed(
+                job.job_id, error="Media database is unavailable."
+            )
+            return failed if failed is not None else job
+        self._start_library_ingest_queue_if_idle()
+        return job
+
+    def retry_library_ingest_job(self, job_id: str) -> Optional[LibraryIngestJob]:
+        """Requeue a previously failed job and start the runner if idle.
+
+        UI-thread only. A thin wrapper over
+        ``LibraryIngestJobRegistry.requeue`` -- a no-op (returns ``None``)
+        when ``job_id`` is unknown or the job is not currently ``FAILED``.
+
+        Args:
+            job_id: The failed job to requeue.
+
+        Returns:
+            The newly appended ``QUEUED`` job (or immediately ``FAILED``
+            when ``media_db`` is unavailable), or ``None`` when nothing was
+            requeued.
+        """
+        requeued = self.library_ingest_jobs.requeue(job_id)
+        if requeued is None:
+            return None
+        if self.media_db is None:
+            failed = self.library_ingest_jobs.mark_failed(
+                requeued.job_id, error="Media database is unavailable."
+            )
+            return failed if failed is not None else requeued
+        self._start_library_ingest_queue_if_idle()
+        return requeued
+
+    def _start_library_ingest_queue_if_idle(self) -> None:
+        """Start the queue-runner worker, unless one is already active.
+
+        UI-thread only. Sets ``runner_active = True`` synchronously, before
+        scheduling the worker, so a rapid double-submission can never
+        double-start the runner.
+
+        If scheduling the ``@work`` worker itself raises synchronously
+        (e.g. the app isn't in a state that accepts new workers), the
+        ``runner_active`` flag is rolled back to ``False`` before
+        re-raising -- otherwise a scheduling failure here would leave the
+        registry permanently believing a runner is active when none was
+        ever started, silently stranding every future submission.
+        """
+        if self.library_ingest_jobs.runner_active:
+            return
+        self.library_ingest_jobs.runner_active = True
+        try:
+            self._run_library_ingest_queue()
+        except Exception:
+            self.library_ingest_jobs.runner_active = False
+            raise
+
+    def _claim_next_ingest_job_or_release(self) -> Optional[LibraryIngestJob]:
+        """Atomically claim the next queued job, or release the runner.
+
+        UI-thread only; must only ever be invoked via ``call_from_thread``
+        from the queue-runner worker thread (see
+        ``_run_library_ingest_queue``), never called directly from that
+        thread.
+
+        Atomicity contract: this is a single, plain synchronous UI-thread
+        call, so the "is there another queued job?" check and the "clear
+        ``runner_active``" decision happen in the same turn of the UI event
+        loop with no ``await``/yield between them. No other UI-thread code
+        -- in particular ``submit_library_ingest_job``/
+        ``retry_library_ingest_job``, which only start a fresh runner when
+        ``runner_active`` is ``False`` -- can run in between. This closes
+        the exit race the previous two-step implementation had: it used to
+        call ``next_queued()`` and, only in a *separate* later
+        ``call_from_thread`` (in the ``finally`` block), clear
+        ``runner_active``. A submission landing on the UI thread in the gap
+        between those two calls would append a ``QUEUED`` job while
+        ``runner_active`` was still (stale-)``True``, so it would never
+        start a new runner -- stranding the job until some unrelated later
+        submission happened to start one. Collapsing the check and the
+        ``runner_active`` mutation into one call removes that gap entirely.
+        Do not reintroduce a two-``call_from_thread`` exit path.
+
+        Returns:
+            The next ``QUEUED`` job (a registry copy), if one exists --
+            ``runner_active`` is left untouched (still ``True``) and the
+            runner must keep looping. ``None`` when the queue is genuinely
+            empty -- ``runner_active`` is cleared before returning, and the
+            runner must exit.
+        """
+        job = self.library_ingest_jobs.next_queued()
+        if job is not None:
+            return job
+        self.library_ingest_jobs.runner_active = False
+        return None
+
+    def _release_ingest_runner_after_crash(self) -> None:
+        """Safety-net cleanup for the queue-runner's ``finally`` block.
+
+        UI-thread only; invoked via ``call_from_thread`` from the
+        queue-runner worker's ``finally``, on every exit path (clean or
+        not).
+
+        On the normal, clean-exit path this is a no-op: the runner already
+        exited because ``_claim_next_ingest_job_or_release`` returned
+        ``None``, which already cleared ``runner_active``. It only does
+        real work when the worker thread is unwinding from something that
+        bypassed that atomic exit -- i.e. an exception escaped a job's own
+        isolation (see ``_run_library_ingest_queue``) or the marshaled
+        call itself raised. In that case: clear ``runner_active`` if it is
+        still set, and, since the crash may have left one or more jobs
+        ``QUEUED`` with nothing left to drain them, restart the runner
+        when the queue is non-empty at that moment. Restarting here is
+        safe: this method runs on the UI thread, and the dying worker
+        thread is already unwinding and will not touch the registry again.
+        """
+        if self.library_ingest_jobs.runner_active:
+            self.library_ingest_jobs.runner_active = False
+        if self.library_ingest_jobs.next_queued() is not None:
+            self._start_library_ingest_queue_if_idle()
+
+    @work(exclusive=True, thread=True, group="library_ingest_queue")
+    def _run_library_ingest_queue(self) -> None:
+        """Serially drain the Library ingest queue on a background thread.
+
+        Runs until ``self.library_ingest_jobs`` has no more ``QUEUED`` jobs,
+        then clears ``runner_active`` (via
+        ``_claim_next_ingest_job_or_release``, atomically -- see that
+        method's docstring) and exits -- a later submission/retry starts a
+        fresh worker. Every registry touch is marshaled onto the UI thread
+        via ``call_from_thread`` because ``LibraryIngestJobRegistry`` does
+        no internal locking (see its module docstring). A single job's
+        exception (missing file, unsupported type, DB error, ...) is
+        caught locally and turned into a ``mark_failed`` transition; it
+        never aborts the loop.
+
+        The outer ``try/finally`` is a separate safety net for failures
+        *outside* that per-job isolation -- e.g. the marshaled claim call
+        itself raising (a genuinely unexpected/"catastrophic" failure, not
+        a per-job ingest error). The local ``clean_exit`` flag is only set
+        right before the natural, queue-is-empty ``return``; it lets
+        ``finally`` tell that ordinary case apart from a crash. This
+        matters because on a clean exit, ``_claim_next_ingest_job_or_release``
+        has *already* atomically handled ``runner_active`` -- by the time
+        ``finally`` runs, an unrelated fresh submission may have legitimately
+        raced in and started a brand-new runner (correctly, since
+        ``runner_active`` was truthfully ``False`` at that point). Invoking
+        the crash-recovery callable unconditionally would risk that stale
+        ``finally`` clobbering the *new* runner's ``runner_active`` flag.
+        Skipping it on a clean exit avoids that. See
+        ``_release_ingest_runner_after_crash``.
+        """
+        clean_exit = False
+        try:
+            while True:
+                job = self.call_from_thread(self._claim_next_ingest_job_or_release)
+                if job is None:
+                    clean_exit = True
+                    return
+                try:
+                    detected_type = detect_file_type(job.source_path) or ""
+                    self.call_from_thread(
+                        self.library_ingest_jobs.mark_running,
+                        job.job_id,
+                        detected_type=detected_type,
+                    )
+                    result = ingest_local_file(
+                        file_path=Path(job.source_path),
+                        media_db=self.media_db,
+                        title=job.title or None,
+                        author=job.author or None,
+                        keywords=list(job.keywords) or None,
+                        perform_analysis=job.perform_analysis,
+                        chunk_options=(
+                            {
+                                "method": "sentences",
+                                "size": job.chunk_size,
+                                "overlap": 100,
+                            }
+                            if job.chunk_enabled
+                            else None
+                        ),
+                    )
+                    media_id = result["media_id"]
+                    if media_id is None and self.media_db is not None:
+                        # Re-ingesting an unchanged file takes the DB's
+                        # update path, whose return carries no media id.
+                        # Resolve it by canonical URL so the done row keeps
+                        # its "Open in Library" action. ``self.media_db`` is
+                        # unreachable-``None`` here in practice (submit
+                        # already fails the job before this point when it's
+                        # absent), but this guard is cheap insurance against
+                        # an ``AttributeError`` on a stale/racy reference.
+                        existing = self.media_db.get_media_by_url(
+                            f"file://{Path(job.source_path).absolute()}"
+                        )
+                        if existing is not None:
+                            media_id = existing.get("id")
+                    self.call_from_thread(
+                        self.library_ingest_jobs.mark_done,
+                        job.job_id,
+                        media_id=media_id,
+                    )
+                except Exception as exc:
+                    # loguru's traceback capture is `.opt(exception=True)`,
+                    # NOT the stdlib `exc_info=True` kwarg (a silent no-op
+                    # under loguru) -- log the full traceback here before
+                    # mark_failed so a debugging session isn't left with only
+                    # the registry's sanitized, single-line error string.
+                    logger.opt(exception=True).error(
+                        f"Library ingest job failed (job_id={job.job_id}, "
+                        f"source={job.source_path})."
+                    )
+                    self.call_from_thread(
+                        self.library_ingest_jobs.mark_failed,
+                        job.job_id,
+                        error=_sanitize_library_ingest_error(exc),
+                    )
+        finally:
+            if not clean_exit:
+                self.call_from_thread(self._release_ingest_runner_after_crash)
+
+
 # --- Main App ---
-class TldwCli(App[None]):  # Specify return type for run() if needed, None is common
+class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
     # Keep legacy identifier for tests while retaining product name
     TITLE = "tldw CLI • tldw chatbook"
@@ -1810,7 +2125,52 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         return self._handle_home_control_action(HomeControlAction.RESUME, target_id=target_id)
 
     def retry_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
-        """Retry the active Home item through the configured adapter."""
+        """Retry the active Home item through the configured adapter.
+
+        Library ingest job targets (``local:ingest:<job_id>``) are requeued
+        directly through ``retry_library_ingest_job`` -- the real requeue
+        seam over ``self.library_ingest_jobs`` -- instead of falling through
+        to ``_handle_home_control_action``/the adapter, which has no
+        visibility into the in-memory ingest job registry and always
+        degrades to the honest "not connected to an active run service yet"
+        fallback for this target shape. Non-ingest targets (approvals,
+        watchlist runs, schedules) are unaffected and still route through
+        the adapter exactly as before.
+        """
+        if target_id is not None and str(target_id).startswith("local:ingest:"):
+            job_id = str(target_id)[len("local:ingest:"):]
+            requeued = self.retry_library_ingest_job(job_id)
+            if requeued is None:
+                # Unknown job id, or the job is no longer FAILED (e.g. it
+                # was already retried/finished by the time the button was
+                # pressed) -- ``requeue`` is a documented no-op in that case.
+                result = HomeControlResult(
+                    action=HomeControlAction.RETRY,
+                    status=HomeControlResultStatus.UNAVAILABLE,
+                    message="This ingest job can no longer be retried.",
+                    severity="warning",
+                    recovery_route="library",
+                    target_id=target_id,
+                )
+            else:
+                # The basename is a user-controlled filename (arbitrary
+                # source path picked in the Library ingest form) that flows
+                # straight into a Home toast, which parses Rich markup --
+                # same hazard class as the open-details title fix. Escape
+                # defensively.
+                basename = escape_markup(
+                    Path(str(requeued.source_path)).name or str(requeued.source_path)
+                )
+                result = HomeControlResult(
+                    action=HomeControlAction.RETRY,
+                    status=HomeControlResultStatus.HANDLED,
+                    message=f"Retry queued for {basename}.",
+                    recovery_route="library",
+                    target_id=f"local:ingest:{requeued.job_id}",
+                    target_route="library",
+                )
+            self.notify(result.message, severity=result.severity)
+            return result
         return self._handle_home_control_action(HomeControlAction.RETRY, target_id=target_id)
 
     def open_home_flashcards_review(self) -> None:
@@ -1844,7 +2204,32 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if result.status is HomeControlResultStatus.HANDLED and result.target_route:
             if result.target_route == "subscriptions":
                 self._stage_subscription_watchlist_run_context(result.target_id or target_id)
-            self.post_message(NavigateToScreen(result.target_route))
+                self.post_message(NavigateToScreen(result.target_route))
+            elif result.target_route == "library" and str(
+                result.target_id or target_id or ""
+            ).startswith("local:ingest:"):
+                # Home's ingest-jobs Running/Needs Attention rows one-hop
+                # back to the Library ingest canvas via the nav-context
+                # contract instead of a bare route (mirrors the
+                # subscriptions staging special-case above).
+                #
+                # Drop the cached Library screen first (mirrors
+                # ``open_notes_workspace``'s ``invalidate_screen_cache``):
+                # Library is a CACHEABLE route, so without this the deep
+                # link switches to the already-mounted-then-unmounted cached
+                # instance, which fails to repaint -- the app's screen stack
+                # advances to Library (logs confirm the switch) but the
+                # terminal keeps showing Home. Study (the flashcards deep
+                # link) never hit this because TAB_STUDY is not cacheable and
+                # always builds a fresh screen. Forcing a fresh Library
+                # screen restores the clean compose+mount+repaint that the
+                # ingest canvas landing depends on.
+                self.invalidate_screen_cache({TAB_LIBRARY})
+                self.post_message(
+                    NavigateToScreen("library", {LIBRARY_NAV_CONTEXT_INGEST: True})
+                )
+            else:
+                self.post_message(NavigateToScreen(result.target_route))
         return result
 
     def _stage_subscription_watchlist_run_context(self, target_id: str | None) -> None:
@@ -2103,6 +2488,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             policy_enforcer=self.service_policy_enforcer,
         )
         self.library_rag_search_service = LibraryLocalRagSearchService(self)
+        self.library_ingest_jobs = LibraryIngestJobRegistry()
 
     def _wire_research_services(self) -> None:
         """Initialize source-aware research services if the broad parity wiring has not already done so."""
@@ -2216,6 +2602,11 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_event_service=self.notifications_scope_service,
             runtime_policy=self.runtime_policy,
             flashcards_due_provider=self._local_flashcards_due_count,
+            # self.library_ingest_jobs is a plain in-memory registry (no DB,
+            # no I/O) assigned later in __init__ (_wire_study_services); this
+            # lambda closes over self so it resolves lazily on first Home
+            # compose rather than at wiring time here.
+            ingest_jobs_provider=lambda: self.library_ingest_jobs.jobs(),
         )
         try:
             self.server_claims_service = ServerClaimsService.from_config(

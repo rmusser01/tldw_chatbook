@@ -29,6 +29,7 @@ SERVER_EVENT_STATE_RECONNECT_REQUIRED = "reconnect_required"
 SERVER_EVENT_STATE_UNAVAILABLE = "unavailable"
 
 HOME_FLASHCARDS_DUE_ROW_ID = "home-flashcards-due"
+HOME_FLASHCARDS_DUE_STATUS_CATEGORY = "due"
 
 APPROVAL_STATUSES = frozenset({"approval_required", "pending_approval", "pending"})
 RUNNING_STATUSES = frozenset({"running", "queued", "active", "scheduled"})
@@ -580,6 +581,7 @@ class HomeCanvasState:
     actions: tuple[HomeControl, ...]
     next_action: HomeAction
     next_action_is_canvas: bool
+    primary_control_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -629,6 +631,38 @@ def _header_line(state: HomeDashboardInput) -> str:
     return f"Home | {readiness} \u00b7 {runtime}"
 
 
+def _canvas_primary_control_id(
+    category: str,
+    controls: tuple[HomeControl, ...],
+) -> str:
+    """Pick which canvas control (if any) carries primary emphasis.
+
+    Primary emphasis follows the selected row rather than sticking to one
+    permanently-accented button: a failed item's Retry, an
+    approval-pending item's Approve, or the synthetic flashcards-due row's
+    Review flashcards. Anything else (running/paused/no selection) defers
+    to Open details when it is present; otherwise nothing is primary.
+
+    Args:
+        category: The selected row's status category (``HomeRailRow.
+            status_category``), or ``UNKNOWN_RUN_STATUS`` when nothing is
+            selected.
+        controls: The canvas's rendered controls.
+
+    Returns:
+        The control_id that should carry primary styling, or "" for none.
+    """
+    if category == HOME_FLASHCARDS_DUE_STATUS_CATEGORY:
+        candidate = "home-review-flashcards"
+    elif category == FAILED_RUN_STATUS:
+        candidate = "home-retry"
+    elif category == APPROVAL_RUN_STATUS:
+        candidate = "home-approve"
+    else:
+        candidate = "home-open-details"
+    return candidate if any(control.control_id == candidate for control in controls) else ""
+
+
 def build_home_triage_state(
     state: HomeDashboardInput,
     *,
@@ -672,7 +706,7 @@ def build_home_triage_state(
                 title=f"Flashcards due: {state.flashcards_due_count}",
                 age_label="",
                 source="Library",
-                status_category="due",
+                status_category=HOME_FLASHCARDS_DUE_STATUS_CATEGORY,
                 detail_route="study",
             )
         )
@@ -708,17 +742,21 @@ def build_home_triage_state(
         selected = all_rows.get(fallback_item.item_id) if fallback_item else None
     next_action = choose_next_best_action(state)
     if selected is not None:
+        controls = build_home_controls(state)
         if selected.row_id == HOME_FLASHCARDS_DUE_ROW_ID:
             # Synthetic row: no backing HomeActiveWorkItem to look up.
             canvas = HomeCanvasState(
                 title=f"Flashcards due: {state.flashcards_due_count}",
                 lines=(
-                    "Source: Library \u00b7 Status: due for review",
+                    f"{selected.glyph} due for review \u00b7 Library",
                     "Route: study",
                 ),
-                actions=build_home_controls(state),
+                actions=controls,
                 next_action=next_action,
                 next_action_is_canvas=False,
+                primary_control_id=_canvas_primary_control_id(
+                    HOME_FLASHCARDS_DUE_STATUS_CATEGORY, controls
+                ),
             )
         else:
             item = next(
@@ -726,17 +764,21 @@ def build_home_triage_state(
                 for i in tuple(state.active_work_items) + tuple(state.recent_work_items)
                 if i.item_id == selected.row_id
             )
+            status_line = f"{selected.glyph} {item.status} \u00b7 {item.source}"
+            if selected.age_label:
+                status_line += f" \u00b7 since {selected.age_label}"
             canvas = HomeCanvasState(
                 title=item.title,
                 lines=(
-                    f"Source: {item.source} \u00b7 Status: {item.status}",
-                    f"{selected.glyph} {selected.status_category or 'item'}"
-                    + (f" since {selected.age_label}" if selected.age_label else ""),
+                    status_line,
                     f"Route: {item.detail_route}",
                 ),
-                actions=build_home_controls(state),
+                actions=controls,
                 next_action=next_action,
                 next_action_is_canvas=False,
+                primary_control_id=_canvas_primary_control_id(
+                    selected.status_category, controls
+                ),
             )
         selected_id = selected.row_id
     else:
@@ -749,6 +791,7 @@ def build_home_triage_state(
             actions=controls,
             next_action=next_action,
             next_action_is_canvas=not controls,
+            primary_control_id=_canvas_primary_control_id(UNKNOWN_RUN_STATUS, controls),
         )
         selected_id = ""
 
