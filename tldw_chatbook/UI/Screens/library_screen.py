@@ -93,6 +93,7 @@ from ...Library.library_rail_state import (
     serialize_library_rail_preferences,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
@@ -248,14 +249,26 @@ LIBRARY_STUDY_HANDOFF_MODES = {
     "study": {
         "label": "Study",
         "action_label": "Study Dashboard",
+        # Copied (not moved) from LIBRARY_MODES["study"] by L3b Task 8 so the
+        # live "handoff" canvas (compose_content's canvas_kind == "handoff"
+        # branch) no longer depends on LIBRARY_MODES at all -- LIBRARY_MODES
+        # itself is dead chrome slated for wholesale deletion in Task 9, and
+        # this table is what survives that deletion (see the module-level
+        # LIBRARY_MODES entry for the now-unused original).
+        "description": "Study mode: turn Library material into study sessions.",
+        "next_action": "Open Study Dashboard to continue due cards, decks, and quizzes.",
     },
     "flashcards": {
         "label": "Flashcards",
         "action_label": "Flashcards",
+        "description": "Flashcards mode: generate or review cards from Library sources.",
+        "next_action": "Open Flashcards to work with the current source snapshot.",
     },
     "quizzes": {
         "label": "Quizzes",
         "action_label": "Quizzes",
+        "description": "Quizzes mode: generate or resume quizzes from Library sources.",
+        "next_action": "Open Quizzes to test recall against the current source snapshot.",
     },
 }
 
@@ -293,8 +306,11 @@ LIBRARY_MODE_BY_BUTTON_ID = {
     mode["button_id"]: mode_id for mode_id, mode in LIBRARY_MODES.items()
 }
 
-# Maps a Library mode id to the shell rail row that selects that canvas so
-# navigation context and legacy mode switches land on the right canvas.
+# Maps a Library mode id to the shell rail row that selects that canvas.
+# Superseded by LIBRARY_NAV_MODE_TO_ROW_ID below (L3b Task 8): navigation
+# context now reads that dedicated table instead, decoupling it from
+# LIBRARY_MODES/legacy mode switches. This dict is otherwise unreferenced
+# and is retired alongside LIBRARY_MODES in L3b Task 9.
 LIBRARY_MODE_TO_ROW_ID = {
     "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
     "collections": "browse-collections",
@@ -302,6 +318,25 @@ LIBRARY_MODE_TO_ROW_ID = {
     "study": "create-study",
     "flashcards": "create-flashcards",
     "quizzes": "create-quizzes",
+}
+
+# Maps a Library navigation-context ``mode`` value to the shell rail row
+# that selects that canvas -- covers exactly the mode values nav-context
+# callers emit/support today (L3b Task 8 audit): ``conversations`` (Personas'
+# conversations controller), ``search`` and ``collections`` (both directly
+# tested contracts of ``apply_navigation_context``, though no live emitter
+# currently sends them). ``notes`` is handled as its own dedicated branch in
+# ``_apply_navigation_context_state`` below (``open_notes_workspace``'s
+# route), not through this table. ``media`` has no navigation-context entry
+# point at all (LIBRARY_MODES never had a "media" mode either). Any other
+# mode value -- including the retired ``study``/``flashcards``/``quizzes``
+# mode values (those rows are now "handoff" rows, not nav-context targets)
+# and the retired ``sources``/``workspaces``/``import-export`` values --
+# degrades quietly, unchanged from before this table existed.
+LIBRARY_NAV_MODE_TO_ROW_ID = {
+    "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
+    "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
+    "search": LIBRARY_ROW_BROWSE_SEARCH,
 }
 
 
@@ -659,7 +694,10 @@ class LibraryScreen(BaseAppScreen):
                 # done-transition and fire a redundant snapshot refresh.
                 self._library_ingest_last_done_count = counts_fn().get("done", 0)
             registry.add_listener(self._handle_library_ingest_registry_changed)
-        if self._active_mode == "collections" and not self._library_collections_loaded:
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+            and not self._library_collections_loaded
+        ):
             # Deep-links that preset mode=collections call apply_navigation_context
             # BEFORE the screen is mounted (see app.py handle_screen_navigation),
             # so the is_mounted-guarded load there never fires. Kick the same
@@ -782,12 +820,12 @@ class LibraryScreen(BaseAppScreen):
         )
         notes_create = bool(context.get(LIBRARY_NAV_CONTEXT_NOTES_CREATE))
         ingest_media = bool(context.get(LIBRARY_NAV_CONTEXT_INGEST))
-        target_mode = requested_mode if requested_mode in LIBRARY_MODES else ""
+        target_mode = requested_mode if requested_mode in LIBRARY_NAV_MODE_TO_ROW_ID else ""
         if conversation_id and not target_mode:
             target_mode = LIBRARY_MODE_CONVERSATIONS
         if target_mode:
             self._active_mode = target_mode
-            selected_row_id = LIBRARY_MODE_TO_ROW_ID.get(target_mode)
+            selected_row_id = LIBRARY_NAV_MODE_TO_ROW_ID.get(target_mode)
             if selected_row_id:
                 self._library_selected_row_id = selected_row_id
             self._invalidate_library_workspace_depth_state()
@@ -852,7 +890,10 @@ class LibraryScreen(BaseAppScreen):
                     group="library_note_detail",
                 )
         if self.is_mounted:
-            if self._active_mode == "collections" and not self._library_collections_loaded:
+            if (
+                self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+                and not self._library_collections_loaded
+            ):
                 # Deep-link into Collections must load the snapshot the retired
                 # chip flow ran; the panel shows the records once loaded.
                 self.run_worker(self._sync_collections_panel(refresh_snapshot=True))
@@ -2138,9 +2179,9 @@ class LibraryScreen(BaseAppScreen):
     def _has_source_study_context(self) -> bool:
         return self._has_local_sources()
 
-    def _study_handoff_copy(self) -> dict[str, str]:
+    def _study_handoff_copy(self, kind: str) -> dict[str, str]:
         mode = LIBRARY_STUDY_HANDOFF_MODES.get(
-            self._active_mode,
+            kind,
             LIBRARY_STUDY_HANDOFF_MODES["study"],
         )
         titles = self._source_study_handoff_titles()
@@ -2518,8 +2559,8 @@ class LibraryScreen(BaseAppScreen):
             return "Action: Import sources or assign sources before staging."
         return "Action: Copy/link blocked sources before staging."
 
-    def _study_handoff_detail_widget(self) -> Vertical:
-        copy = self._study_handoff_copy()
+    def _study_handoff_detail_widget(self, kind: str) -> Vertical:
+        copy = self._study_handoff_copy(kind)
         recovery_classes = (
             "ds-recovery-callout"
             if self._has_local_sources()
@@ -2529,7 +2570,7 @@ class LibraryScreen(BaseAppScreen):
             "study": "library-open-study",
             "flashcards": "library-open-flashcards",
             "quizzes": "library-open-quizzes",
-        }.get(self._active_mode, "library-open-study")
+        }.get(kind, "library-open-study")
         handoff_toolbar = Horizontal(
             Button(
                 copy["action_label"],
@@ -3142,6 +3183,31 @@ class LibraryScreen(BaseAppScreen):
                     )
                 elif shell.canvas_kind == "mode":
                     yield from self._compose_mode_canvas(shell.canvas_target)
+                elif shell.canvas_kind == "handoff":
+                    # Study/Flashcards/Quizzes rows (L3b Task 8): a first-class
+                    # canvas kind of their own, replicating the same trio
+                    # widget ids/classes _compose_mode_canvas used to render
+                    # for these three modes, but sourced entirely from
+                    # LIBRARY_STUDY_HANDOFF_MODES rather than LIBRARY_MODES so
+                    # this branch has no dependency on the retired mode
+                    # machinery Task 9 deletes.
+                    handoff_copy = LIBRARY_STUDY_HANDOFF_MODES.get(
+                        shell.canvas_target, LIBRARY_STUDY_HANDOFF_MODES["study"]
+                    )
+                    yield Static(
+                        f"{handoff_copy['label']} mode",
+                        id="library-active-mode-title",
+                        classes="destination-section",
+                    )
+                    yield Static(
+                        handoff_copy["description"],
+                        id="library-active-mode-description",
+                    )
+                    yield Static(
+                        handoff_copy["next_action"],
+                        id="library-active-mode-next-action",
+                    )
+                    yield self._study_handoff_detail_widget(shell.canvas_target)
                 else:
                     yield Static(
                         shell.canvas_empty_copy,
@@ -4542,7 +4608,7 @@ class LibraryScreen(BaseAppScreen):
                 id="library-active-mode-next-action",
             )
         if mode in LIBRARY_STUDY_HANDOFF_MODES:
-            yield self._study_handoff_detail_widget()
+            yield self._study_handoff_detail_widget(mode)
 
     def _library_rail_preferences(self):
         """Read persisted Library rail section preferences."""
@@ -4719,6 +4785,11 @@ class LibraryScreen(BaseAppScreen):
         if target_kind == "mode":
             await self._select_library_rail_row(row_id, target_id)
             return
+        if target_kind == "handoff":
+            # Study/Flashcards/Quizzes rows (L3b Task 8): resolves to the
+            # handoff canvas, mirroring the "mode" branch above.
+            await self._select_library_rail_row(row_id, target_id)
+            return
         # Unknown target kind: select the row and recompose from selection.
         await self._select_library_rail_row(row_id, self._active_mode)
 
@@ -4757,7 +4828,10 @@ class LibraryScreen(BaseAppScreen):
         self._reset_library_notes_sync_transient_state()
         self._reset_library_ingest_transient_state()
         self._invalidate_library_workspace_depth_state()
-        if self._active_mode == "collections" and not self._library_collections_loaded:
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+            and not self._library_collections_loaded
+        ):
             # First Collections entry must load the snapshot the retired chip
             # flow ran; _sync_collections_panel recomposes once records arrive.
             await self._sync_collections_panel(refresh_snapshot=True)
@@ -7151,7 +7225,7 @@ class LibraryScreen(BaseAppScreen):
 
     async def _sync_collections_panel(self, *, refresh_snapshot: bool = False) -> None:
         if not self._legacy_workbench_present():
-            if self._active_mode != "collections":
+            if self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS:
                 self._library_collection_pending_delete_id = ""
                 return
             if refresh_snapshot:
@@ -7227,7 +7301,10 @@ class LibraryScreen(BaseAppScreen):
             await region.mount(widget)
 
     async def _refresh_collections_panel_action_state_widgets(self) -> None:
-        if self._active_mode != "collections" or not list(self.query("#library-collections-panel")):
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS
+            or not list(self.query("#library-collections-panel"))
+        ):
             return
 
         panel_state = self._library_collections_panel_state()
@@ -7880,7 +7957,7 @@ class LibraryScreen(BaseAppScreen):
 
     def action_library_rag_use_in_console(self) -> None:
         """Keyboard shortcut for staging selected Search/RAG evidence in Console."""
-        if self._active_mode != "search":
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
             return
         self._stage_library_rag_result_in_console()
 
@@ -7959,7 +8036,10 @@ class LibraryScreen(BaseAppScreen):
         # when a search settles with nothing to show. Every other refresh
         # path leaves the user's manual expand/collapse alone.
         self._library_rag_history_collapsed = bool(self._library_rag_results)
-        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH
+            or not self.query("#library-search-rag-panel")
+        ):
             return
         await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
 
@@ -7968,7 +8048,10 @@ class LibraryScreen(BaseAppScreen):
         *,
         force_history_collapse: bool = False,
     ) -> None:
-        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH
+            or not self.query("#library-search-rag-panel")
+        ):
             return
 
         panel_state = self._library_rag_panel_state()

@@ -1,3 +1,5 @@
+import pytest
+
 from tldw_chatbook.Library.library_shell_state import (
     LibraryShellInput,
     build_library_shell_state,
@@ -64,9 +66,28 @@ def test_media_selection_yields_media_canvas():
     assert shell.selected_row_id == "browse-media"
 
 
-def test_mode_selection_yields_mode_canvas():
+def test_handoff_selection_yields_handoff_canvas():
+    # create-study/-flashcards/-quizzes are "handoff" rows (L3b Task 8), not
+    # legacy "mode" rows: their canvas_kind is the dedicated "handoff" kind,
+    # with canvas_target carrying which of the three handoffs is active.
     shell = build_library_shell_state(LibraryShellInput(), selected_row_id="create-flashcards")
-    assert (shell.canvas_kind, shell.canvas_target) == ("mode", "flashcards")
+    assert (shell.canvas_kind, shell.canvas_target) == ("handoff", "flashcards")
+
+
+@pytest.mark.parametrize(
+    ("row_id", "expected_target"),
+    [
+        ("create-study", "study"),
+        ("create-flashcards", "flashcards"),
+        ("create-quizzes", "quizzes"),
+    ],
+)
+def test_handoff_rows_target_handoff_kind_and_carry_their_target_id(row_id, expected_target):
+    shell = build_library_shell_state(LibraryShellInput(), selected_row_id=row_id)
+    row = next(r for r in shell.sections[1].rows if r.row_id == row_id)
+    assert row.target_kind == "handoff"
+    assert row.target_id == expected_target
+    assert (shell.canvas_kind, shell.canvas_target) == ("handoff", expected_target)
 
 
 def test_browse_search_selection_yields_search_canvas():

@@ -1591,7 +1591,7 @@ async def test_library_media_action_switches_to_native_mode_without_route_handof
         screen.query_one("#library-row-browse-media", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-canvas")
 
-        assert getattr(screen, "_active_mode") == "media"
+        assert getattr(screen, "_library_selected_row_id") == "browse-media"
         assert screen.query_one("#library-media-canvas")
 
     assert seen_routes == []
@@ -1619,7 +1619,6 @@ async def test_library_notes_action_switches_to_canvas_without_route_handoff():
         await _wait_for_selector(screen, pilot, "#library-notes-canvas")
 
         assert getattr(screen, "_library_selected_row_id") == "browse-notes"
-        assert getattr(screen, "_active_mode") == "notes"
         assert screen.query_one("#library-notes-canvas")
 
     assert seen_routes == []
@@ -1645,7 +1644,7 @@ async def test_library_conversations_action_switches_to_native_mode_without_rout
         screen.query_one("#library-row-browse-conversations", Button).press()
         await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
 
-        assert getattr(screen, "_active_mode") == "conversations"
+        assert getattr(screen, "_library_selected_row_id") == "browse-conversations"
         assert screen.query_one("#library-conversations-canvas")
 
     assert seen_routes == []
@@ -1697,7 +1696,7 @@ async def test_library_search_action_switches_to_search_mode_without_route_hando
         screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
-        assert getattr(screen, "_active_mode") == "search"
+        assert getattr(screen, "_library_selected_row_id") == "browse-search"
 
     assert seen_routes == []
 

@@ -149,7 +149,7 @@ def build_library_shell_state(
             row_id="create-study",
             section_id="create",
             title="Study decks",
-            target_kind="mode",
+            target_kind="handoff",
             target_id="study",
             count=state.study_decks_count,
             count_known=True,
@@ -158,7 +158,7 @@ def build_library_shell_state(
             row_id="create-flashcards",
             section_id="create",
             title="Flashcards",
-            target_kind="mode",
+            target_kind="handoff",
             target_id="flashcards",
             count=None,
             count_known=True,
@@ -181,7 +181,7 @@ def build_library_shell_state(
             row_id="create-quizzes",
             section_id="create",
             title="Quizzes",
-            target_kind="mode",
+            target_kind="handoff",
             target_id="quizzes",
             count=state.quizzes_count,
             count_known=True,
@@ -231,6 +231,13 @@ def build_library_shell_state(
     elif selected_row.target_kind == "mode":
         # Mode rows resolve to mode canvas
         canvas_kind = "mode"
+        canvas_target = selected_row.target_id
+        canvas_empty_copy = LIBRARY_CANVAS_LANDING_COPY
+    elif selected_row.target_kind == "handoff":
+        # Handoff rows (study/flashcards/quizzes) resolve to the handoff
+        # canvas: a Library-owned trio plus the Study handoff detail widget,
+        # mirroring the (legacy) mode-row resolution above.
+        canvas_kind = "handoff"
         canvas_target = selected_row.target_id
         canvas_empty_copy = LIBRARY_CANVAS_LANDING_COPY
     else:

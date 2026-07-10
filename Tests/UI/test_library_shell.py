@@ -332,7 +332,14 @@ async def test_library_shell_open_in_console_triggers_handoff():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_flashcards_row_renders_mode_canvas():
+async def test_library_shell_flashcards_row_renders_handoff_canvas():
+    """Create > Flashcards is a "handoff" rail row (L3b Task 8, not the
+    retired "mode" kind): pressing it renders the same title/description/
+    next-action trio ``_compose_mode_canvas`` used to render for mode rows,
+    now sourced from ``LIBRARY_STUDY_HANDOFF_MODES`` via the dedicated
+    ``canvas_kind == "handoff"`` branch, plus the Study handoff detail
+    widget and its "Open Flashcards" action button.
+    """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
     host = LibraryHarness(app)
@@ -348,12 +355,27 @@ async def test_library_shell_flashcards_row_renders_mode_canvas():
         detail = screen.query_one("#library-study-handoff-detail")
         assert canvas in detail.ancestors
 
+        title = screen.query_one("#library-active-mode-title", Static)
+        assert str(title.renderable) == "Flashcards mode"
+        description = screen.query_one("#library-active-mode-description", Static)
+        assert (
+            str(description.renderable)
+            == "Flashcards mode: generate or review cards from Library sources."
+        )
+        next_action = screen.query_one("#library-active-mode-next-action", Static)
+        assert (
+            str(next_action.renderable)
+            == "Open Flashcards to work with the current source snapshot."
+        )
+        open_button = screen.query_one("#library-open-flashcards", Button)
+        assert canvas in open_button.ancestors
+
 
 @pytest.mark.asyncio
 async def test_library_shell_search_row_renders_first_class_canvas():
     """Browse ▸ Search/RAG is a first-class canvas row now, not a legacy
     "mode" row: pressing it mounts ``LibrarySearchRagPanel`` directly (no
-    ``_compose_mode_canvas`` indirection), and -- unlike a real mode row
+    ``_compose_mode_canvas`` indirection), and -- unlike a handoff row
     (e.g. Flashcards, see the sibling test above) -- the shared mode-title
     block never renders for it.
     """

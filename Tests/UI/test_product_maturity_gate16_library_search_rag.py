@@ -15,6 +15,7 @@ from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
 )
+from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 from Tests.UI.test_destination_shells import (
@@ -815,7 +816,7 @@ async def test_library_search_rag_worker_completion_ignores_unmounted_screen(mon
     # mount guard is the sole thing preventing the DOM refresh. The code under
     # test refreshes via _refresh_search_rag_panel_state_widgets (not the stale
     # _sync_search_rag_panel), so that is the method the test must poison.
-    screen._active_mode = "search"
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SEARCH
     screen._library_rag_query = "Find evidence"
     monkeypatch.setattr(screen, "query", lambda *args, **kwargs: [object()])
 
