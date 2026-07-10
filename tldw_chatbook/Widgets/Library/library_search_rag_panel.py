@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
-from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Input, Static
+from rich.markup import escape as escape_markup
 
-from ...Library.library_rag_state import LibraryRagPanelState, LibraryRagResultRow
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Button, Collapsible, Input, Static
+from textual.widget import Widget
+
+from ...Library.library_rag_state import (
+    LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
+    LibraryRagPanelState,
+    LibraryRagQueryState,
+    LibraryRagResultRow,
+    LibraryRagScopeState,
+    LibraryRagSourceOption,
+    searching_status_line,
+)
 
 
 _SELECTED_EVIDENCE_DETAIL_IDS = (
@@ -32,7 +43,7 @@ _SELECTED_EVIDENCE_DETAIL_IDS = (
 )
 
 
-class LibrarySearchRagPanel(Vertical):
+class LibrarySearchRagPanel(VerticalScroll):
     """Display the source scope, query controls, and evidence results."""
 
     def __init__(self, state: LibraryRagPanelState, **kwargs) -> None:
@@ -49,61 +60,31 @@ class LibrarySearchRagPanel(Vertical):
             id="library-rag-query-controls",
             classes=_query_region_classes(self.state),
         ):
-            yield Static(
-                _section_rule("Query"),
-                id="library-rag-query-section-rule",
-                classes="library-rag-section-rule",
+            yield Button(
+                _mode_toggle_label(self.state),
+                id="library-rag-mode-toggle",
+                tooltip="Cycle Search/RAG mode.",
             )
-            yield Static(
-                "Retrieval Query",
-                id="library-rag-query-heading",
-                classes="destination-section",
+            yield Input(
+                value=self.state.query_state.query,
+                placeholder="Ask or search Library sources",
+                id="library-rag-query-input",
             )
-            yield Static(
-                f"Mode: {self.state.query_state.mode_label} | Top {self.state.query_state.top_k}",
-                id="library-rag-query-status",
+            for child in library_rag_query_status_children(self.state):
+                yield child
+            yield Button(
+                self.state.query_state.run_action.label,
+                id=self.state.query_state.run_action.widget_id,
+                disabled=not self.state.query_state.run_action.enabled,
+                tooltip=self.state.query_state.run_action.tooltip,
             )
-            yield Static(_query_blocked_summary(self.state), id="library-rag-query-blocked")
-            yield Static(
-                _query_blocked_callout(self.state),
-                id="library-rag-query-blocked-callout",
-                classes=_query_callout_classes(self.state),
-            )
-            with Horizontal(id="library-rag-query-row"):
-                yield Input(
-                    value=self.state.query_state.query,
-                    placeholder="Ask or search Library sources",
-                    id="library-rag-query-input",
-                )
-                yield Button(
-                    self.state.query_state.run_action.label,
-                    id=self.state.query_state.run_action.widget_id,
-                    disabled=not self.state.query_state.run_action.enabled,
-                    tooltip=self.state.query_state.run_action.tooltip,
-                )
-            yield Static(
-                _run_disabled_reason(self.state),
-                id="library-rag-run-disabled-reason",
-                classes="library-rag-disabled-reason",
-            )
-            yield Static(
-                "Enter: run query | Tab: move panes | Enter on result: select | u: Use in Console",
-                id="library-rag-query-shortcuts",
-            )
-            if self._show_query_recovery:
-                yield Static(self.state.query_state.recovery_copy, id="library-rag-query-recovery")
 
         with Vertical(
             id="library-rag-source-scope",
             classes=_scope_region_classes(self.state),
         ):
             yield Static(
-                _section_rule("Scope"),
-                id="library-rag-scope-section-rule",
-                classes="library-rag-section-rule",
-            )
-            yield Static(
-                "Scope Controls",
+                "Sources",
                 id="library-rag-scope-heading",
                 classes="destination-section",
             )
@@ -111,101 +92,27 @@ class LibrarySearchRagPanel(Vertical):
                 _scope_summary(self.state),
                 id="library-rag-scope-summary",
             )
-            yield Static(
-                _scope_table_header(),
-                id="library-rag-scope-table-header",
-                classes="library-rag-table-header",
-            )
-            for widget_id, copy in _scope_rows(self.state).items():
-                yield Static(copy, id=widget_id, classes="library-rag-scope-row")
-            if self.state.scope.recovery_copy:
-                yield Static(self.state.scope.recovery_copy, id="library-rag-scope-recovery")
-                yield Button(
-                    "Open Import/Export",
-                    id="library-rag-open-import-export",
-                    classes="library-rag-recovery-action",
-                    tooltip="Open Library Import/Export to add sources.",
-                )
+            for toggle in library_rag_scope_toggle_children(self.state):
+                yield toggle
+            for child in library_rag_scope_recovery_children(self.state):
+                yield child
 
         with Vertical(id="library-rag-results", classes="library-rag-region"):
             yield Static(
-                _section_rule("Evidence"),
-                id="library-rag-results-section-rule",
-                classes="library-rag-section-rule",
+                _results_heading_text(self.state),
+                id="library-rag-results-heading",
+                classes="destination-section",
             )
-            yield Static("Evidence Results", id="library-rag-results-heading", classes="destination-section")
-            yield Static(
-                _attribution_placeholder(self.state),
-                id="library-rag-attribution-placeholder",
-            )
-            if self.state.results:
-                for index, result in enumerate(self.state.results):
-                    score = "" if result.score is None else f" | score {result.score:.3f}"
-                    selected = result.result_id == self.state.selected_result_id
-                    yield Static(
-                        f"{index + 1}. {result.title}{score}",
-                        id=f"library-rag-result-{index}",
-                        classes=(
-                            "library-rag-result-row is-selected"
-                            if selected
-                            else "library-rag-result-row"
-                        ),
-                    )
-                    yield Button(
-                        "Selected evidence" if selected else "Select evidence",
-                        id=f"library-rag-select-result-{index}",
-                        classes="library-rag-result-action",
-                        tooltip="Select this evidence result for Console handoff.",
-                    )
-                    yield Static(
-                        result.row_badge_label,
-                        id=f"library-rag-result-badges-{index}",
-                        classes="library-rag-result-badges",
-                    )
-                    yield Static(
-                        result.snippet,
-                        id=f"library-rag-result-snippet-{index}",
-                    )
-                    if result.citation_labels:
-                        yield Static(
-                            f"Citations: {', '.join(result.citation_labels)}",
-                            id=f"library-rag-result-citations-{index}",
-                        )
-                    if selected:
-                        yield Button(
-                            self.state.use_in_console_action.label,
-                            id="library-rag-use-selected-in-console",
-                            classes=(
-                                "library-rag-console-action "
-                                "library-rag-center-console-action"
-                            ),
-                            disabled=not self.state.use_in_console_action.enabled,
-                            tooltip=self.state.use_in_console_action.tooltip,
-                        )
-            elif self.state.retrieval_status == "searching":
-                yield Static("Searching Library sources...", id="library-rag-searching")
-            elif self.state.recovery_copy and self.state.recovery_selector:
-                yield Static(
-                    self.state.recovery_copy,
-                    id=self.state.recovery_selector,
-                )
-            else:
-                yield Static(
-                    "No evidence yet. Run Search/RAG to populate results.",
-                    id="library-rag-results-empty",
-                )
-                yield Static(
-                    _evidence_empty_guidance(),
-                    id="library-rag-evidence-empty-guidance",
-                    classes="library-rag-empty-guidance",
-                )
+            for child in library_rag_results_body_children(self.state):
+                yield child
 
-    @property
-    def _show_query_recovery(self) -> bool:
-        return bool(
-            self.state.query_state.recovery_copy
-            and self.state.scope.status != "blocked"
-        )
+        with Collapsible(
+            title="Recent searches",
+            collapsed=self.state.history_collapsed,
+            id="library-rag-history",
+        ):
+            for child in library_rag_history_children(self.state):
+                yield child
 
 
 def _scope_summary(state: LibraryRagPanelState) -> str:
@@ -219,100 +126,328 @@ def _scope_summary(state: LibraryRagPanelState) -> str:
     )
 
 
-def _scope_table_header() -> str:
-    """Return the compact source-scope table header."""
-    return "Scope                | Count        | Eligibility        | Next action"
+def _scope_toggle_label(option: LibraryRagSourceOption) -> str:
+    """Return a toggle Button's visible label for one scope source option."""
+    marker = "✓" if option.selected else "○"
+    return f"{marker} {option.label} ({option.count})"
 
 
-def _scope_rows(state: LibraryRagPanelState) -> dict[str, str]:
-    """Return Stage C source-scope rows with stable selectors."""
-    counts = {option.source_type: option.count for option in state.scope.options}
-    total = state.scope.total_count
-    selected = len(state.scope.selected_source_types)
-    notes = counts.get("notes", 0)
-    media = counts.get("media", 0)
-    conversations = counts.get("conversations", 0)
-    collections = counts.get("collections", 0)
-    return {
-        "library-rag-scope-row-all": (
-            f"All Library          | {total} sources    | Browse/search     | Add source"
+def library_rag_scope_toggle_children(state: LibraryRagPanelState) -> list[Widget]:
+    """Return one full-width toggle `Button` per real source type (B2).
+
+    Shared by the panel's own `compose()` and the screen's incremental
+    refresh so both build identical toggles from the same state. Only
+    `LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES` (notes/media/conversations) get
+    a toggle -- workspaces/collections have no retrieval seam of their own.
+
+    Args:
+        state: Current Library Search/RAG panel display state.
+
+    Returns:
+        One toggle `Button` per real source type, disabled when that
+        source's count is 0.
+    """
+    return [
+        Button(
+            _scope_toggle_label(option),
+            id=f"library-rag-scope-toggle-{option.source_type}",
+            classes="library-rag-scope-toggle",
+            disabled=not option.available,
+            tooltip=f"Toggle {option.label} in the retrieval scope.",
+        )
+        for option in state.scope.options
+        if option.source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
+    ]
+
+
+def library_rag_scope_shows_recovery(scope: LibraryRagScopeState) -> bool:
+    """True when the scope region should render its recovery dump + Import/Export.
+
+    Only the genuinely-empty-library case (no sources available at all)
+    gets the full recovery presentation; a user deselecting every scope
+    toggle with sources still available is covered by the query region's
+    quiet line instead (A1/B2) -- an Import/Export button would not fix
+    that case.
+    """
+    return bool(scope.recovery_copy) and not scope.has_available_sources
+
+
+def library_rag_scope_recovery_children(state: LibraryRagPanelState) -> list[Widget]:
+    """Return the scope region's recovery Static + Import/Export button, or none.
+
+    Shared by `compose()` and the screen's incremental refresh.
+    """
+    if not library_rag_scope_shows_recovery(state.scope):
+        return []
+    return [
+        Static(state.scope.recovery_copy, id="library-rag-scope-recovery"),
+        Button(
+            "Open Import/Export",
+            id="library-rag-open-import-export",
+            classes="library-rag-recovery-action",
+            tooltip="Open Library Import/Export to add sources.",
         ),
-        "library-rag-scope-row-workspace": (
-            f"Workspace eligible   | {selected} scopes     | Stage after pick  | Select evidence"
+    ]
+
+
+def _query_blocked_is_quiet(query_state: LibraryRagQueryState) -> bool:
+    """True when the run gate's blocker renders as a single quiet line (A1)."""
+    return query_state.blocked_is_empty_query or query_state.blocked_is_no_scope
+
+
+def library_rag_query_shows_full_recovery(query_state: LibraryRagQueryState) -> bool:
+    """True when the query region should render the callout + recovery dump.
+
+    Reserved for real failures (unsafe query, missing dependencies/index, no
+    provider for RAG mode) -- the empty-query and no-scope gates render a
+    single quiet line instead (A1), and the ready/searching states render
+    neither.
+    """
+    return bool(query_state.recovery_copy) and not _query_blocked_is_quiet(query_state)
+
+
+def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widget]:
+    """Return the query region's conditional status widgets (A1/A2).
+
+    Shared by `compose()` and the screen's incremental refresh. At most one
+    of a single muted quiet line (empty-query / no-scope gates) or the full
+    callout + recovery-copy block (real failures) renders; the ready and
+    searching states render neither -- an enabled (or "Searching…") Run
+    button plus the input IS the rest of the state.
+
+    Args:
+        state: Current Library Search/RAG panel display state.
+
+    Returns:
+        Zero, one, or two widgets to render between the query Input and the
+        Run button.
+    """
+    query_state = state.query_state
+    if query_state.blocked_is_empty_query:
+        return [
+            Static(
+                "Enter a question or search query.",
+                id="library-rag-query-quiet-line",
+                classes="library-rag-quiet-line",
+            )
+        ]
+    if query_state.blocked_is_no_scope:
+        return [
+            Static(
+                "Select at least one source.",
+                id="library-rag-query-quiet-line",
+                classes="library-rag-quiet-line",
+            )
+        ]
+    if library_rag_query_shows_full_recovery(query_state):
+        reason = query_state.run_action.disabled_reason
+        return [
+            Static(
+                f"Blocked | {reason}",
+                id="library-rag-query-blocked-callout",
+                classes="library-rag-callout is-blocked",
+            ),
+            Static(query_state.recovery_copy, id="library-rag-query-recovery"),
+        ]
+    return []
+
+
+def _mode_toggle_label(state: LibraryRagPanelState) -> str:
+    """Return the visible mode-cycle button label."""
+    return f"mode: {state.query_state.mode_label} ▸"
+
+
+def _results_heading_text(state: LibraryRagPanelState) -> str:
+    """Return the Evidence region heading, surfacing top-k (A3)."""
+    return f"Evidence · top {state.query_state.top_k} per source"
+
+
+def library_rag_result_row_children(
+    row: LibraryRagResultRow,
+    index: int,
+    selected_result_id: str,
+) -> list[Widget]:
+    """Return one evidence row's child widgets (C1): content first, Open primary.
+
+    Shared by the panel's own `compose()` and the screen's incremental DOM
+    refresh (`_refresh_library_rag_results_widgets`) so both build identical
+    rows from the same state.
+
+    Args:
+        row: The evidence row to render.
+        index: The row's position among the currently rendered results,
+            used to build stable per-row widget ids.
+        selected_result_id: The panel's currently selected result id, if any.
+
+    Returns:
+        Title -> badges -> snippet -> citations (when present) -> an action
+        row with Open first (primary emphasis, when the row is openable)
+        then Select evidence.
+    """
+    selected = row.result_id == selected_result_id
+    score = "" if row.score is None else f" | score {row.score:.3f}"
+    children: list[Widget] = [
+        Static(
+            f"{index + 1}. {row.title}{score}",
+            id=f"library-rag-result-{index}",
+            classes=(
+                "library-rag-result-row is-selected"
+                if selected
+                else "library-rag-result-row"
+            ),
         ),
-        "library-rag-scope-row-notes": (
-            f"Notes                | {notes} sources    | Retrieval-ready   | Run query"
+        Static(
+            row.row_badge_label,
+            id=f"library-rag-result-badges-{index}",
+            classes="library-rag-result-badges",
         ),
-        "library-rag-scope-row-media": (
-            f"Media                | {media} sources    | Retrieval-ready   | Run query"
+        Static(row.snippet, id=f"library-rag-result-snippet-{index}"),
+    ]
+    if row.citation_labels:
+        children.append(
+            Static(
+                f"Citations: {', '.join(row.citation_labels)}",
+                id=f"library-rag-result-citations-{index}",
+            )
+        )
+    actions: list[Widget] = []
+    if row.can_open:
+        actions.append(
+            Button(
+                "Open",
+                id=f"library-rag-open-result-{index}",
+                classes="library-rag-result-open console-action-primary",
+                tooltip="Open this result's source in its Library editor/viewer.",
+            )
+        )
+    actions.append(
+        Button(
+            "Selected evidence" if selected else "Select evidence",
+            id=f"library-rag-select-result-{index}",
+            classes="library-rag-result-action",
+            tooltip="Select this evidence result for Console handoff.",
+        )
+    )
+    children.append(Horizontal(*actions, classes="library-rag-result-actions"))
+    return children
+
+
+def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widget]:
+    """Return the Evidence region's body widgets below the heading.
+
+    Shared by `compose()` and the screen's incremental refresh
+    (`_refresh_library_rag_results_widgets`) so both render identically:
+    exactly one of evidence rows (plus a per-row Console handoff button on
+    the selected row), the in-flight searching line, explicit retrieval
+    recovery copy, or empty-state guidance, depending on retrieval status
+    and result count.
+
+    Args:
+        state: Current Library Search/RAG panel display state.
+
+    Returns:
+        The widgets to mount directly below the Evidence heading.
+    """
+    if state.results:
+        children: list[Widget] = []
+        for index, result in enumerate(state.results):
+            children.extend(
+                library_rag_result_row_children(result, index, state.selected_result_id)
+            )
+            if result.result_id == state.selected_result_id:
+                children.append(
+                    Button(
+                        state.use_in_console_action.label,
+                        id="library-rag-use-selected-in-console",
+                        classes=(
+                            "library-rag-console-action "
+                            "library-rag-center-console-action"
+                        ),
+                        disabled=not state.use_in_console_action.enabled,
+                        tooltip=state.use_in_console_action.tooltip,
+                    )
+                )
+        return children
+    if state.retrieval_status == "searching":
+        return [
+            Static(
+                searching_status_line(state.scope.selected_source_types),
+                id="library-rag-searching-line",
+            )
+        ]
+    if state.recovery_copy and state.recovery_selector:
+        return [Static(state.recovery_copy, id=state.recovery_selector)]
+    return [
+        Static(
+            "No evidence yet. Run Search/RAG to populate results.",
+            id="library-rag-results-empty",
         ),
-        "library-rag-scope-row-conversations": (
-            f"Conversations        | {conversations} sources    | Retrieval-ready   | Run query"
+        Static(
+            _evidence_empty_guidance(),
+            id="library-rag-evidence-empty-guidance",
+            classes="library-rag-empty-guidance",
         ),
-        "library-rag-scope-row-collections": (
-            f"Collections          | {collections} records    | Read/review WIP   | Open collection"
-        ),
-        "library-rag-scope-row-import-export": (
-            "Import/Export recovery | add sources | Source intake      | Import source"
-        ),
-    }
+    ]
 
 
-def _query_blocked_summary(state: LibraryRagPanelState) -> str:
-    """Return a one-line visible blocker for terminal screenshots."""
-    reason = state.query_state.run_action.disabled_reason
-    if not reason:
-        return "Ready: run Search/RAG over selected Library sources."
-    return f"Blocked: {reason[:1].lower()}{reason[1:]}"
+def library_rag_history_children(state: LibraryRagPanelState) -> list[Widget]:
+    """Return the `Recent searches` collapsible's child widgets (D1).
 
+    Shared by the widget's own `compose` and the screen's incremental
+    DOM refresh so both build identical rows from the same state.
 
-def _query_blocked_callout(state: LibraryRagPanelState) -> str:
-    """Return a visible query readiness callout."""
-    reason = state.query_state.run_action.disabled_reason
-    if not reason:
-        return "Ready | Run retrieval over selected Library sources."
-    return f"Blocked | {_query_recovery_sentence(reason)}"
+    Args:
+        state: Current Library Search/RAG panel display state.
 
-
-def _query_recovery_sentence(reason: str) -> str:
-    """Normalize query blocker copy for compact terminal callouts."""
-    if reason == "Enter a question or search query.":
-        return "Enter a question before running retrieval."
-    if reason == "Select at least one Library source.":
-        return "Select at least one Library source before running retrieval."
-    return reason
-
-
-def _run_disabled_reason(state: LibraryRagPanelState) -> str:
-    """Return visible run-button readiness copy."""
-    reason = state.query_state.run_action.disabled_reason
-    if not reason:
-        return "Run ready: selected Library sources are queryable."
-    return f"Run disabled: {reason[:1].lower()}{reason[1:]}"
-
-
-def _query_callout_classes(state: LibraryRagPanelState) -> str:
-    """Return state classes for the query readiness callout."""
-    if state.query_state.run_action.enabled:
-        return "library-rag-callout is-ready"
-    return "library-rag-callout is-blocked"
+    Returns:
+        When history is empty, a single muted placeholder `Static`.
+        Otherwise: a muted hint `Static` first, then one full-width
+        `Button` per history entry (most recent first), then a
+        `Clear history` `Button` last.
+    """
+    if not state.history:
+        return [
+            Static(
+                "No recent searches.",
+                id="library-rag-history-empty",
+                classes="library-rag-history-empty",
+            )
+        ]
+    children: list[Widget] = [
+        Static(
+            "Select an entry to run it again.",
+            id="library-rag-history-hint",
+            classes="library-rag-history-hint",
+        )
+    ]
+    children.extend(
+        Button(
+            # Textual parses a plain string Button label as markup: an
+            # unescaped stored entry like "docs [/archive] cleanup" raises
+            # MarkupError at construction time -- and because history is
+            # persisted before this rebuild, the crash would recur on every
+            # Search-canvas entry after restart. Escaping mirrors the
+            # `_sanitize_display_text(escape=True)` path result titles and
+            # snippets already use.
+            escape_markup(entry),
+            id=f"library-rag-history-{index}",
+            classes="library-rag-history-row",
+        )
+        for index, entry in enumerate(state.history)
+    )
+    children.append(
+        Button(
+            "Clear history",
+            id="library-rag-history-clear",
+            classes="library-rag-history-clear",
+        )
+    )
+    return children
 
 
 def _evidence_empty_guidance() -> str:
     """Return empty evidence workflow guidance."""
     return "Add or import sources, run a query, then select evidence for Console."
-
-
-def _attribution_placeholder(state: LibraryRagPanelState) -> str:
-    """Return citation/snippet carry-through placeholder copy."""
-    if state.selected_result is None:
-        return "Citation/snippet carry-through: reserved for selected evidence."
-    return "Citation/snippet carry-through placeholder: selected evidence preserves source, chunk, snippet, and citations."
-
-
-def _section_rule(label: str) -> str:
-    """Return a full-width terminal section rule label."""
-    return f"-- {label} " + "-" * 48
 
 
 def _console_handoff_summary(state: LibraryRagPanelState) -> str:
@@ -354,7 +489,7 @@ def _query_region_classes(state: LibraryRagPanelState) -> str:
     """Return query-region classes that reserve recovery height only when needed."""
     return (
         "library-rag-region has-recovery"
-        if state.query_state.recovery_copy and state.scope.status != "blocked"
+        if library_rag_query_shows_full_recovery(state.query_state)
         else "library-rag-region"
     )
 
@@ -363,7 +498,7 @@ def _scope_region_classes(state: LibraryRagPanelState) -> str:
     """Return source-scope classes that keep the ready state compact."""
     return (
         "library-rag-region has-recovery"
-        if state.scope.recovery_copy
+        if library_rag_scope_shows_recovery(state.scope)
         else "library-rag-region"
     )
 

@@ -850,6 +850,62 @@ class StudyScopeService:
             records = records[:limit]
         return records
 
+    async def count_decks(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+    ) -> int:
+        """Count non-deleted flashcard decks in the given mode.
+
+        Args:
+            mode: The study backend to count in; only ``StudyBackend.LOCAL``
+                is supported (see Raises).
+
+        Returns:
+            The exact number of non-deleted local decks.
+
+        Raises:
+            ValueError: For server mode (no count-only backend seam exists;
+                see the inline comment).
+        """
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._deck_action_id(normalized_mode, "list"))
+        if normalized_mode == StudyBackend.LOCAL:
+            return int(await self._maybe_await(self._service_for_mode(normalized_mode).count_decks()))
+        # The server study backend does not expose a dedicated count-only
+        # seam today (``list_decks``'s server branch pages through the full
+        # deck collection to build normalized records). Rather than issuing
+        # a full paginated fetch just to read a number, mirror the
+        # unsupported-count contract established by
+        # ``NotesScopeService.count_notes``.
+        raise ValueError("Server study deck counts are not supported; use list_decks for a scoped total.")
+
+    async def count_due_flashcards(
+        self,
+        *,
+        mode: StudyBackend | str | None = None,
+    ) -> int:
+        """Count flashcards due for review in the given mode.
+
+        Args:
+            mode: The study backend to count in; only ``StudyBackend.LOCAL``
+                is supported (see Raises).
+
+        Returns:
+            The exact number of local flashcards due for review.
+
+        Raises:
+            ValueError: For server mode (no count-only backend seam exists;
+                see the inline comment).
+        """
+        normalized_mode = self._normalize_mode(mode)
+        self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=False))
+        if normalized_mode == StudyBackend.LOCAL:
+            return int(await self._maybe_await(self._service_for_mode(normalized_mode).count_due_flashcards()))
+        # Mirror ``count_decks``'s unsupported-count contract: the server
+        # study backend has no dedicated due-flashcard count seam.
+        raise ValueError("Server due-flashcard counts are not supported; use list_flashcards for a scoped total.")
+
     async def create_deck(
         self,
         *,

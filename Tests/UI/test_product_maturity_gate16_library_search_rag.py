@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 from tldw_chatbook.Library.library_rag_service import (
@@ -246,15 +246,20 @@ async def test_library_search_rag_panel_exposes_blocked_recovery_for_empty_query
         assert run_button.disabled is True
         assert "Enter a question or search query" in str(run_button.tooltip)
         assert not screen.query(".library-rag-result-action")
-        # The blocked state now surfaces on the in-panel query callout
-        # (the retired 3-pane status row is gone; the header is fixed
-        # "Library | Local" regardless of mode).
-        assert "Blocked: enter a question or search query." in visible_text
-        assert "Blocked | Enter a question before running retrieval." in visible_text
+        # A1: the empty-query gate is a single quiet line now -- no summary
+        # Static, callout box, "Run disabled:" reason, or recovery dump.
+        assert screen.query_one("#library-rag-query-quiet-line", Static)
+        assert "Enter a question or search query." in visible_text
+        assert not screen.query("#library-rag-query-blocked-callout")
+        assert not screen.query("#library-rag-query-recovery")
+        assert not screen.query("#library-rag-run-disabled-reason")
+        assert "Blocked: enter a question or search query." not in visible_text
+        assert "Blocked | Enter a question before running retrieval." not in visible_text
         assert "Scope: all local | Notes 1 | Media 1 | Conversations 1" in visible_text
-        assert "Query" in visible_text
-        assert "Enter: run query | Tab: move panes | Enter on result: select | u: Use in Console" in visible_text
-        assert "Enter a question or search query" in visible_text
+        # A4: the retired-workbench shortcuts line is gone; Enter-to-run
+        # keeps working (covered by the keyboard-enter pilot below).
+        assert not screen.query("#library-rag-query-shortcuts")
+        assert "Tab: move panes" not in visible_text
 
 
 @pytest.mark.asyncio
@@ -382,11 +387,13 @@ async def test_library_search_rag_run_query_renders_service_results_and_calls_sc
         screen.query_one("#library-rag-run-query", Button).press()
         await _wait_for_selector(screen, pilot, "#library-rag-result-0")
 
+        # Default canvas mode is "search" (keyword); RAG-mode gating and
+        # dispatch are covered separately by the mode-toggle pilots.
         assert service.calls == [
             {
                 "query": query,
                 "scope": ("notes", "media", "conversations"),
-                "mode": "rag",
+                "mode": "search",
                 "top_k": 5,
                 "include_citations": True,
             }
@@ -707,6 +714,16 @@ async def test_library_search_rag_server_result_launches_server_console_live_wor
 
 @pytest.mark.asyncio
 async def test_library_search_rag_run_query_renders_persistent_recovery_without_service() -> None:
+    """RAG mode with no ``_rag_service`` on the app is blocked at the
+    query-readiness gate itself (``provider_ready``), never reaching the
+    retrieval service -- the provider gate added in L3a front-runs the
+    previous service-level "RAG unavailable" recovery for this scenario
+    (the retrieval service still double-guards internally for non-UI
+    callers, but the Run button is disabled before that code can run). The
+    default canvas mode is "search" (keyword, always available given
+    seeded local seams), so reaching this state requires explicitly
+    cycling to RAG mode first.
+    """
     app = _build_test_app()
     _seed_library_sources(app)
     host = DestinationHarness(app, "library")
@@ -717,16 +734,36 @@ async def test_library_search_rag_run_query_renders_persistent_recovery_without_
         await _wait_for_library_shell_ready(screen, pilot)
 
         screen.query_one("#library-row-browse-search", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
+        await _wait_for_selector(screen, pilot, "#library-rag-mode-toggle")
+        screen.query_one("#library-rag-mode-toggle", Button).press()
+
+        # Mode toggle drives a full-screen recompose: poll for the new mode
+        # label rather than assuming a fixed number of pauses is enough.
+        for _ in range(150):
+            toggles = list(screen.query("#library-rag-mode-toggle"))
+            if toggles and str(toggles[0].label) == "mode: RAG Answer ▸":
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError("Mode toggle never switched to RAG Answer.")
+
         screen.query_one("#library-rag-query-input", Input).value = query
-        await _wait_for_query_ready(screen, pilot, query)
+        # `.value` lands on the widget synchronously, but the screen's own
+        # query state (and therefore the disabled reason) only catches up
+        # once the Input.Changed handler runs -- poll for the settled
+        # blocked reason rather than the transient "no query yet" one.
+        for _ in range(150):
+            if "provider/model before asking for a RAG answer" in _visible_text(screen):
+                break
+            await pilot.pause(0.02)
+        else:
+            raise AssertionError(
+                f"RAG mode never blocked Run without a provider. "
+                f"Visible text: {_visible_text(screen)}"
+            )
 
-        screen.query_one("#library-rag-run-query", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-rag-service-error")
-
-        visible_text = _visible_text(screen)
-        assert "Unavailable: Library Search/RAG retrieval." in visible_text
-        assert "Owner: Library retrieval service." in visible_text
+        assert screen.query_one("#library-rag-run-query", Button).disabled is True
+        assert not screen.query("#library-rag-service-error")
 
 
 @pytest.mark.asyncio
@@ -759,7 +796,7 @@ async def test_library_search_rag_run_query_preserves_panel_instances_during_upd
         panel = screen.query_one("#library-search-rag-panel")
 
         screen.query_one("#library-rag-run-query", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-rag-searching")
+        await _wait_for_selector(screen, pilot, "#library-rag-searching-line")
 
         assert screen.query_one("#library-search-rag-panel") is panel
 

@@ -28,6 +28,8 @@ SERVER_EVENT_STATE_REQUERY_REQUIRED = "requery_required"
 SERVER_EVENT_STATE_RECONNECT_REQUIRED = "reconnect_required"
 SERVER_EVENT_STATE_UNAVAILABLE = "unavailable"
 
+HOME_FLASHCARDS_DUE_ROW_ID = "home-flashcards-due"
+
 APPROVAL_STATUSES = frozenset({"approval_required", "pending_approval", "pending"})
 RUNNING_STATUSES = frozenset({"running", "queued", "active", "scheduled"})
 PAUSED_STATUSES = frozenset({"paused"})
@@ -91,6 +93,7 @@ class HomeDashboardInput:
     active_detail_route: str = "chat"
     active_work_items: tuple[HomeActiveWorkItem, ...] = ()
     recent_work_items: tuple[HomeActiveWorkItem, ...] = ()
+    flashcards_due_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -307,6 +310,16 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
                     chatbook_item.item_id,
                 )
             )
+    if state.flashcards_due_count > 0:
+        controls.append(
+            HomeControl(
+                "home-review-flashcards",
+                "Review flashcards",
+                "study",
+                "flashcards_due",
+                None,
+            )
+        )
     return tuple(controls)
 
 
@@ -650,6 +663,20 @@ def build_home_triage_state(
         _item_row(item, "recent", reference_now) for item in state.recent_work_items
     )
 
+    if state.flashcards_due_count > 0:
+        attention_rows.append(
+            HomeRailRow(
+                row_id=HOME_FLASHCARDS_DUE_ROW_ID,
+                section_id="attention",
+                glyph="●",
+                title=f"Flashcards due: {state.flashcards_due_count}",
+                age_label="",
+                source="Library",
+                status_category="due",
+                detail_route="study",
+            )
+        )
+
     sections = (
         HomeRailSectionState(
             "attention",
@@ -681,23 +708,36 @@ def build_home_triage_state(
         selected = all_rows.get(fallback_item.item_id) if fallback_item else None
     next_action = choose_next_best_action(state)
     if selected is not None:
-        item = next(
-            i
-            for i in tuple(state.active_work_items) + tuple(state.recent_work_items)
-            if i.item_id == selected.row_id
-        )
-        canvas = HomeCanvasState(
-            title=item.title,
-            lines=(
-                f"Source: {item.source} \u00b7 Status: {item.status}",
-                f"{selected.glyph} {selected.status_category or 'item'}"
-                + (f" since {selected.age_label}" if selected.age_label else ""),
-                f"Route: {item.detail_route}",
-            ),
-            actions=build_home_controls(state),
-            next_action=next_action,
-            next_action_is_canvas=False,
-        )
+        if selected.row_id == HOME_FLASHCARDS_DUE_ROW_ID:
+            # Synthetic row: no backing HomeActiveWorkItem to look up.
+            canvas = HomeCanvasState(
+                title=f"Flashcards due: {state.flashcards_due_count}",
+                lines=(
+                    "Source: Library \u00b7 Status: due for review",
+                    "Route: study",
+                ),
+                actions=build_home_controls(state),
+                next_action=next_action,
+                next_action_is_canvas=False,
+            )
+        else:
+            item = next(
+                i
+                for i in tuple(state.active_work_items) + tuple(state.recent_work_items)
+                if i.item_id == selected.row_id
+            )
+            canvas = HomeCanvasState(
+                title=item.title,
+                lines=(
+                    f"Source: {item.source} \u00b7 Status: {item.status}",
+                    f"{selected.glyph} {selected.status_category or 'item'}"
+                    + (f" since {selected.age_label}" if selected.age_label else ""),
+                    f"Route: {item.detail_route}",
+                ),
+                actions=build_home_controls(state),
+                next_action=next_action,
+                next_action_is_canvas=False,
+            )
         selected_id = selected.row_id
     else:
         # Count-only inputs (no item list) still expose their controls so

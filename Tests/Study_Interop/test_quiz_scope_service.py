@@ -12,6 +12,10 @@ class FakeLocalQuizService:
         self.calls.append(("list_quizzes", q, limit, offset))
         return {"items": [{"id": "quiz-local-1", "name": "Renal Review", "total_questions": 1}], "count": 1}
 
+    def count_quizzes(self):
+        self.calls.append(("count_quizzes",))
+        return 4
+
     def create_quiz(self, *, name, description=None, time_limit_seconds=None, passing_score=None, workspace_id=None):
         self.calls.append(("create_quiz", name, description, time_limit_seconds, passing_score, workspace_id))
         return {"id": "quiz-local-1", "name": name, "description": description, "total_questions": 0}
@@ -301,6 +305,31 @@ async def test_quiz_scope_service_routes_quiz_list_by_backend():
     assert local_quizzes[0]["record_id"] == "local:quiz:quiz-local-1"
     assert server_quizzes[0]["record_id"] == "server:quiz:7"
     assert server_quizzes[0]["time_limit_seconds"] == 300
+
+
+@pytest.mark.asyncio
+async def test_quiz_scope_service_routes_quiz_count_to_local_service():
+    local = FakeLocalQuizService()
+    scope = QuizScopeService(
+        local_service=local,
+        server_service=FakeServerQuizService(),
+    )
+
+    count = await scope.count_quizzes(mode="local")
+
+    assert count == 4
+    assert local.calls == [("count_quizzes",)]
+
+
+@pytest.mark.asyncio
+async def test_quiz_scope_service_count_quizzes_rejects_server_mode():
+    scope = QuizScopeService(
+        local_service=FakeLocalQuizService(),
+        server_service=FakeServerQuizService(),
+    )
+
+    with pytest.raises(ValueError, match="not supported"):
+        await scope.count_quizzes(mode="server")
 
 
 @pytest.mark.asyncio

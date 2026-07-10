@@ -1,6 +1,8 @@
 from tldw_chatbook.Home.dashboard_state import (
+    HOME_FLASHCARDS_DUE_ROW_ID,
     HomeActiveWorkItem,
     HomeDashboardInput,
+    build_home_controls,
     choose_home_selected_item,
     choose_next_best_action,
     summarize_home_dashboard,
@@ -410,3 +412,57 @@ def test_triage_empty_input_makes_next_action_the_canvas():
     by_id = {s.section_id: s for s in triage.sections}
     assert by_id["attention"].empty_copy == "No approvals or failures pending."
     assert triage.details_lines  # system status relocated here
+
+
+def test_triage_flashcards_due_row_appears_in_attention_section_when_count_positive():
+    triage = build_home_triage_state(
+        HomeDashboardInput(model_ready=True, flashcards_due_count=12),
+        now=_NOW,
+    )
+    by_id = {section.section_id: section for section in triage.sections}
+    attention = by_id["attention"]
+    row = next(r for r in attention.rows if r.row_id == HOME_FLASHCARDS_DUE_ROW_ID)
+
+    assert attention.count == 1
+    assert row.title == "Flashcards due: 12"
+    assert row.source == "Library"
+    assert row.detail_route == "study"
+
+
+def test_triage_flashcards_due_row_absent_when_count_zero():
+    triage = build_home_triage_state(
+        HomeDashboardInput(model_ready=True, flashcards_due_count=0),
+        now=_NOW,
+    )
+    by_id = {section.section_id: section for section in triage.sections}
+    row_ids = [row.row_id for row in by_id["attention"].rows]
+
+    assert HOME_FLASHCARDS_DUE_ROW_ID not in row_ids
+
+
+def test_triage_selecting_flashcards_due_row_builds_canvas_without_stopiteration():
+    triage = build_home_triage_state(
+        HomeDashboardInput(model_ready=True, flashcards_due_count=12),
+        selected_row_id=HOME_FLASHCARDS_DUE_ROW_ID,
+        now=_NOW,
+    )
+
+    assert triage.selected_row_id == HOME_FLASHCARDS_DUE_ROW_ID
+    assert triage.canvas.title == "Flashcards due: 12"
+    assert triage.canvas.next_action_is_canvas is False
+
+
+def test_build_home_controls_includes_review_flashcards_control_when_due():
+    controls = build_home_controls(HomeDashboardInput(model_ready=True, flashcards_due_count=12))
+    control = next(c for c in controls if c.control_id == "home-review-flashcards")
+
+    assert control.label == "Review flashcards"
+    assert control.target_route == "study"
+    assert control.applies_to == "flashcards_due"
+    assert control.target_id is None
+
+
+def test_build_home_controls_omits_review_flashcards_control_when_not_due():
+    controls = build_home_controls(HomeDashboardInput(model_ready=True, flashcards_due_count=0))
+
+    assert all(c.control_id != "home-review-flashcards" for c in controls)

@@ -105,6 +105,7 @@ from tldw_chatbook.Chat import (
 )
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
+from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -1812,6 +1813,22 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Retry the active Home item through the configured adapter."""
         return self._handle_home_control_action(HomeControlAction.RETRY, target_id=target_id)
 
+    def open_home_flashcards_review(self) -> None:
+        """Open the Study screen directly on the flashcards review surface."""
+        self.open_study_screen(initial_section="flashcards")
+
+    def _local_flashcards_due_count(self) -> int | None:
+        """Count due flashcards for the Home mirror; None when the DB is absent."""
+        db = getattr(self, "chachanotes_db", None)
+        counter = getattr(db, "count_due_flashcards", None)
+        if not callable(counter):
+            return None
+        try:
+            return int(counter())
+        except Exception:
+            logger.debug("Home flashcards-due count failed.", exc_info=True)
+            return None
+
     def open_active_home_item_details(
         self,
         *,
@@ -2085,6 +2102,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_quiz_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self.library_rag_search_service = LibraryLocalRagSearchService(self)
 
     def _wire_research_services(self) -> None:
         """Initialize source-aware research services if the broad parity wiring has not already done so."""
@@ -2197,6 +2215,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             chatbook_service=self.local_chatbook_service,
             server_event_service=self.notifications_scope_service,
             runtime_policy=self.runtime_policy,
+            flashcards_due_provider=self._local_flashcards_due_count,
         )
         try:
             self.server_claims_service = ServerClaimsService.from_config(
