@@ -83,6 +83,51 @@ def test_available_seams_and_typed_path_enable_start():
     assert state.start_enabled is True
 
 
+# --- start_quiet_line (L3b AB wave, A4) ------------------------------------
+
+
+def test_start_quiet_line_shown_when_path_blank_and_seams_available():
+    state = build_library_ingest_state((), form=LibraryIngestFormState(path=""))
+    assert state.start_quiet_line == "Enter a file path to start."
+
+
+def test_start_quiet_line_hidden_once_path_is_typed():
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/tmp/a.txt")
+    )
+    assert state.start_quiet_line == ""
+
+
+def test_start_quiet_line_shown_for_whitespace_only_path():
+    state = build_library_ingest_state((), form=LibraryIngestFormState(path="   "))
+    assert state.start_quiet_line == "Enter a file path to start."
+
+
+def test_start_quiet_line_hidden_when_media_db_unavailable():
+    """The db-unavailable line takes precedence -- never show two gate
+    lines at once."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path=""),
+        media_db_available=False,
+    )
+    assert state.unavailable_line == MEDIA_DB_UNAVAILABLE_COPY
+    assert state.start_quiet_line == ""
+
+
+def test_start_quiet_line_hidden_when_registry_unavailable():
+    """The ingest-unavailable line takes precedence -- never show two gate
+    lines at once."""
+    state = build_library_ingest_state(
+        (),
+        form=LibraryIngestFormState(path=""),
+        media_db_available=False,
+        registry_available=False,
+    )
+    assert state.unavailable_line == INGEST_UNAVAILABLE_COPY
+    assert state.start_quiet_line == ""
+
+
 def test_blank_path_with_whitespace_only_disables_start():
     state = build_library_ingest_state(
         (), form=LibraryIngestFormState(path="   ")
@@ -196,6 +241,7 @@ def test_failed_row_line_format():
     assert row.line == "✗ failed · report.txt · File not found"
     assert row.can_open is False
     assert row.can_retry is True
+    assert row.can_dismiss is True
 
 
 def test_basename_used_for_nested_path():
@@ -213,7 +259,10 @@ def test_row_order_mirrors_input_order():
     assert [row.job_id for row in state.queue_rows] == ["ingest-job-2", "ingest-job-1"]
 
 
-def test_queue_counts_line_lists_all_states_in_order():
+def test_queue_counts_line_lists_only_nonzero_states_in_fixed_order():
+    """(L3b AB wave, A2) The counts line hides zero-count states entirely --
+    segments are just ``{n} {state}`` (no "job"/"jobs" noun), joined by
+    ` · `, always in queued -> running -> done -> failed order."""
     jobs = (
         _job(job_id="ingest-job-1", state=IngestJobState.QUEUED),
         _job(job_id="ingest-job-2", state=IngestJobState.RUNNING, started_at=1.0),
@@ -222,21 +271,60 @@ def test_queue_counts_line_lists_all_states_in_order():
         _job(job_id="ingest-job-5", state=IngestJobState.FAILED, started_at=1.0, finished_at=2.0, error="x"),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
-    assert state.queue_counts_line == (
-        "1 queued job · 1 running job · 2 done jobs · 1 failed job"
+    assert state.queue_counts_line == "1 queued · 1 running · 2 done · 1 failed"
+
+
+def test_queue_counts_line_omits_zero_states():
+    jobs = (
+        _job(job_id="ingest-job-1", state=IngestJobState.DONE, started_at=1.0, finished_at=2.0, media_id=1),
+        _job(job_id="ingest-job-2", state=IngestJobState.DONE, started_at=1.0, finished_at=2.0, media_id=2),
+        _job(job_id="ingest-job-3", state=IngestJobState.FAILED, started_at=1.0, finished_at=2.0, error="x"),
     )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert state.queue_counts_line == "2 done · 1 failed"
 
 
-def test_queue_counts_line_with_no_jobs():
+def test_queue_counts_line_hidden_with_no_jobs():
     state = build_library_ingest_state((), form=LibraryIngestFormState())
-    assert state.queue_counts_line == (
-        "0 queued jobs · 0 running jobs · 0 done jobs · 0 failed jobs"
-    )
+    assert state.queue_counts_line == ""
 
 
 def test_empty_queue_has_no_rows():
     state = build_library_ingest_state((), form=LibraryIngestFormState())
     assert state.queue_rows == ()
+
+
+# --- queue_show_clear_finished (L3b AB wave, B2) ---------------------------
+
+
+def test_show_clear_finished_false_with_no_jobs():
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    assert state.queue_show_clear_finished is False
+
+
+def test_show_clear_finished_false_with_only_active_jobs():
+    jobs = (
+        _job(job_id="ingest-job-1", state=IngestJobState.QUEUED),
+        _job(job_id="ingest-job-2", state=IngestJobState.RUNNING, started_at=1.0),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert state.queue_show_clear_finished is False
+
+
+def test_show_clear_finished_true_with_a_done_job():
+    jobs = (
+        _job(state=IngestJobState.DONE, started_at=1.0, finished_at=2.0, media_id=1),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert state.queue_show_clear_finished is True
+
+
+def test_show_clear_finished_true_with_a_failed_job():
+    jobs = (
+        _job(state=IngestJobState.FAILED, started_at=1.0, finished_at=2.0, error="x"),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert state.queue_show_clear_finished is True
 
 
 def test_form_state_echoed_back_unchanged():

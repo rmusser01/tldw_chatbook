@@ -1337,7 +1337,9 @@ def test_retry_active_home_item_requeues_ingest_job_via_real_seam():
         severity="information",
     )
     jobs_after = app.library_ingest_jobs.jobs()
-    assert len(jobs_after) == jobs_before + 1
+    # (L3b AB wave, B1) Retry supersedes the original failed job instead of
+    # leaving both visible -- net job count is unchanged.
+    assert len(jobs_after) == jobs_before
     newest = jobs_after[0]  # jobs() is newest-first.
     assert newest.job_id != job.job_id
     assert newest.source_path == "/tmp/report.xyz"
@@ -1422,4 +1424,6 @@ async def test_home_retry_button_click_requeues_failed_ingest_job():
         f"Retry did not requeue the failed ingest job; notify calls: {notify_messages}"
     )
     assert not any("not connected" in str(message) for message in notify_messages)
-    assert len(app.library_ingest_jobs.jobs()) == jobs_before + 1
+    # (L3b AB wave, B1) Retry supersedes the original failed job -- net job
+    # count is unchanged (one hidden, one added).
+    assert len(app.library_ingest_jobs.jobs()) == jobs_before

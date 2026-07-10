@@ -92,6 +92,17 @@ class LibraryIngestJob:
             transitions to ``RUNNING``; ``None`` until then.
         finished_at: ``time.monotonic()`` timestamp taken when the job
             transitions to ``DONE`` or ``FAILED``; ``None`` until then.
+        superseded: ``True`` once a ``FAILED`` job has been retried via
+            ``requeue`` (L3b AB wave, B1) -- hides it from ``jobs()``/
+            ``counts()`` and makes ``mark_running``/``mark_done``/
+            ``mark_failed``/``requeue``/``dismiss`` safe no-ops against its
+            ``job_id``. Never set anywhere except inside ``requeue``.
+        dismissed: ``True`` once a ``FAILED`` job has been dismissed via
+            ``dismiss`` (L3b AB wave, B2) -- same hiding/no-op effect as
+            ``superseded``, but a distinct field so the two "this job is
+            gone" reasons (auto-superseded-by-retry vs. user-dismissed)
+            never get confused with one another. Never set anywhere except
+            inside ``dismiss``.
     """
 
     job_id: str
@@ -109,6 +120,8 @@ class LibraryIngestJob:
     submitted_at: float = 0.0
     started_at: float | None = None
     finished_at: float | None = None
+    superseded: bool = False
+    dismissed: bool = False
 
 
 class LibraryIngestJobRegistry:
@@ -255,23 +268,28 @@ class LibraryIngestJobRegistry:
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
-            unknown. Unknown ids never raise.
+            unknown or hidden (``superseded``/``dismissed``). Unknown ids
+            never raise.
 
-        No state-machine guard: this unconditionally overwrites whatever
-        state the job was in (it does not check that it was ``QUEUED``
-        first). The queue-runner (``_run_library_ingest_queue`` in
-        ``app.py``) is the sole intended caller of ``mark_running``/
-        ``mark_done``/``mark_failed``, and it always drives a job either
-        ``queued`` -> ``running`` -> ``done``/``failed``, or straight
-        ``queued`` -> ``failed`` as the fast-fail path (an error, e.g. an
-        undetectable file type, raised before ``mark_running`` is ever
-        reached). Calling this out of that order is not rejected here.
+        No state-machine guard beyond the hidden check above: this
+        unconditionally overwrites whatever state a *visible* job was in
+        (it does not check that it was ``QUEUED`` first). The queue-runner
+        (``_run_library_ingest_queue`` in ``app.py``) is the sole intended
+        caller of ``mark_running``/``mark_done``/``mark_failed``, and it
+        always drives a job either ``queued`` -> ``running`` ->
+        ``done``/``failed``, or straight ``queued`` -> ``failed`` as the
+        fast-fail path (an error, e.g. an undetectable file type, raised
+        before ``mark_running`` is ever reached). Calling this out of that
+        order is not rejected here.
         """
         index = self._find_index(job_id)
         if index is None:
             return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
         updated = replace(
-            self._jobs[index],
+            current,
             state=IngestJobState.RUNNING,
             detected_type=detected_type,
             started_at=time.monotonic(),
@@ -289,17 +307,22 @@ class LibraryIngestJobRegistry:
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
-            unknown. Unknown ids never raise.
+            unknown or hidden (``superseded``/``dismissed``). Unknown ids
+            never raise.
 
-        No state-machine guard: see ``mark_running``'s docstring. The
-        queue-runner is the sole intended caller and only ever reaches this
-        after a preceding ``mark_running`` on the same job.
+        No state-machine guard beyond the hidden check above: see
+        ``mark_running``'s docstring. The queue-runner is the sole intended
+        caller and only ever reaches this after a preceding
+        ``mark_running`` on the same job.
         """
         index = self._find_index(job_id)
         if index is None:
             return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
         updated = replace(
-            self._jobs[index],
+            current,
             state=IngestJobState.DONE,
             media_id=media_id,
             finished_at=time.monotonic(),
@@ -317,19 +340,23 @@ class LibraryIngestJobRegistry:
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
-            unknown. Unknown ids never raise.
+            unknown or hidden (``superseded``/``dismissed``). Unknown ids
+            never raise.
 
-        No state-machine guard: see ``mark_running``'s docstring. The
-        queue-runner is the sole intended caller, and reaches this from
-        either ``running`` (a mid-ingest exception) or, as the fast-fail
-        path, directly from ``queued`` (an error before ``mark_running``
-        was ever called).
+        No state-machine guard beyond the hidden check above: see
+        ``mark_running``'s docstring. The queue-runner is the sole intended
+        caller, and reaches this from either ``running`` (a mid-ingest
+        exception) or, as the fast-fail path, directly from ``queued`` (an
+        error before ``mark_running`` was ever called).
         """
         index = self._find_index(job_id)
         if index is None:
             return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
         updated = replace(
-            self._jobs[index],
+            current,
             state=IngestJobState.FAILED,
             error=error,
             finished_at=time.monotonic(),
@@ -339,28 +366,38 @@ class LibraryIngestJobRegistry:
         return replace(updated)
 
     def requeue(self, job_id: str) -> LibraryIngestJob | None:
-        """Append a fresh ``QUEUED`` copy of a ``FAILED`` job.
+        """Append a fresh ``QUEUED`` copy of a ``FAILED`` job, superseding it.
 
-        Only works on ``FAILED`` jobs -- calling this on a job in any other
-        state (or an unknown id) is a no-op that returns ``None``. The
-        original failed job is left untouched in the registry (so it still
-        shows up in ``jobs()``/history); a brand-new job with a brand-new
-        ``job_id`` and fresh timestamps is appended, copying only the form
-        fields (``source_path``/``title``/``author``/``keywords``/
-        ``perform_analysis``/``chunk_enabled``/``chunk_size``).
+        Only works on a ``FAILED``, not-yet-hidden job -- calling this on a
+        job in any other state, an unknown id, or an already
+        ``superseded``/``dismissed`` id is a no-op that returns ``None``
+        (this rejects retrying the same original twice, which would
+        otherwise silently fork duplicate retries off one dead job_id).
+
+        (L3b AB wave, B1) The original failed job is marked ``superseded``
+        -- it stays in the registry's internal history (so its data is not
+        lost) but is filtered out of ``jobs()``/``counts()`` from this
+        point on, and every further ``mark_running``/``mark_done``/
+        ``mark_failed``/``requeue``/``dismiss`` call against its ``job_id``
+        becomes a safe no-op. A brand-new job with a brand-new ``job_id``
+        and fresh timestamps is appended, copying only the form fields
+        (``source_path``/``title``/``author``/``keywords``/
+        ``perform_analysis``/``chunk_enabled``/``chunk_size``) -- so the
+        canvas queue shows exactly ONE row per retried file, not two.
 
         Args:
             job_id: The failed job to requeue.
 
         Returns:
             The newly appended ``QUEUED`` job (a copy), or ``None`` when
-            ``job_id`` is unknown or not currently ``FAILED``.
+            ``job_id`` is unknown, not currently ``FAILED``, or already
+            hidden.
         """
         index = self._find_index(job_id)
         if index is None:
             return None
         source = self._jobs[index]
-        if source.state != IngestJobState.FAILED:
+        if source.state != IngestJobState.FAILED or source.superseded or source.dismissed:
             return None
         new_job = LibraryIngestJob(
             job_id=self._allocate_job_id(),
@@ -374,24 +411,93 @@ class LibraryIngestJobRegistry:
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
         )
+        self._jobs[index] = replace(source, superseded=True)
         self._jobs.append(new_job)
         self._notify_listeners()
         return replace(new_job)
 
+    def dismiss(self, job_id: str) -> LibraryIngestJob | None:
+        """Hide a ``FAILED`` job from ``jobs()``/``counts()``.
+
+        (L3b AB wave, B2) Valid ONLY for a ``FAILED``, not-yet-hidden job --
+        calling this on a job in any other state, an unknown id, or an
+        already ``superseded``/``dismissed`` id is a no-op that returns
+        ``None`` and does not fire the listener. On success the job is
+        marked ``dismissed`` (kept in the registry's internal history, like
+        ``requeue``'s ``superseded`` marking, but filtered out of every
+        public read from this point on) and every further
+        ``mark_running``/``mark_done``/``mark_failed``/``requeue``/
+        ``dismiss`` call against its ``job_id`` becomes a safe no-op.
+
+        Args:
+            job_id: The failed job to dismiss.
+
+        Returns:
+            The dismissed job (a copy, ``dismissed=True``), or ``None``
+            when ``job_id`` is unknown, not currently ``FAILED``, or
+            already hidden.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.state != IngestJobState.FAILED or current.superseded or current.dismissed:
+            return None
+        updated = replace(current, dismissed=True)
+        self._jobs[index] = updated
+        self._notify_listeners()
+        return replace(updated)
+
+    def clear_finished(self) -> int:
+        """Remove every ``DONE``/``FAILED`` job (visible or already hidden).
+
+        (L3b AB wave, B2) Unlike ``dismiss``/``requeue``'s ``superseded``
+        marking (a soft hide that keeps history around), this is an actual
+        removal from the registry's internal list -- it doubles as the only
+        way to garbage-collect the ``superseded``/``dismissed`` jobs that
+        accumulate there over a long session (the registry is in-memory-only
+        with no other eviction; see the module docstring's accepted v1
+        limits). Queued/running jobs are never touched.
+
+        Returns:
+            The number of jobs actually removed (0 when there was nothing
+            to clear -- a no-op that does not fire the listener).
+        """
+        before = len(self._jobs)
+        self._jobs = [
+            job
+            for job in self._jobs
+            if job.state not in (IngestJobState.DONE, IngestJobState.FAILED)
+        ]
+        removed = before - len(self._jobs)
+        if removed:
+            self._notify_listeners()
+        return removed
+
     # -- reads -----------------------------------------------------
 
     def jobs(self) -> tuple[LibraryIngestJob, ...]:
-        """Return an immutable, newest-first snapshot of all known jobs.
+        """Return an immutable, newest-first snapshot of all visible jobs.
+
+        Superseded (B1, retried) and dismissed (B2) jobs are filtered out --
+        see their respective docstrings.
 
         Returns:
             A tuple of job copies, most-recently-submitted/requeued first.
             Mutating an element of the returned tuple can never affect
             registry state (see the module docstring).
         """
-        return tuple(replace(job) for job in reversed(self._jobs))
+        return tuple(
+            replace(job)
+            for job in reversed(self._jobs)
+            if not (job.superseded or job.dismissed)
+        )
 
     def counts(self) -> dict[str, int]:
-        """Return per-state job counts.
+        """Return per-state job counts across visible jobs only.
+
+        Superseded (B1, retried) and dismissed (B2) jobs are excluded --
+        see their respective docstrings.
 
         Returns:
             A dict keyed by every ``IngestJobState`` value (``"queued"``,
@@ -400,5 +506,7 @@ class LibraryIngestJobRegistry:
         """
         counts = {state.value: 0 for state in IngestJobState}
         for job in self._jobs:
+            if job.superseded or job.dismissed:
+                continue
             counts[job.state.value] += 1
         return counts

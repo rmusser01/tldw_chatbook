@@ -1293,3 +1293,51 @@ def test_local_notification_adapter_opens_local_ingest_job_details():
     assert result.status is HomeControlResultStatus.HANDLED
     assert result.target_route == "library"
     assert result.target_id == "local:ingest:ingest-job-1"
+
+
+def test_local_notification_adapter_excludes_superseded_ingest_job_after_retry():
+    """(L3b AB wave, B1 ripple) Retrying a failed Library ingest job through
+    the real registry supersedes the original -- ``jobs()`` no longer
+    includes it, so it must vanish from Home's Needs Attention too, with
+    only the fresh requeued copy taking its place."""
+    from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
+
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/broken.pdf")
+    registry.mark_running(job.job_id)
+    registry.mark_failed(job.job_id, error="unsupported format")
+    requeued = registry.requeue(job.job_id)
+    assert requeued is not None
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=registry.jobs)
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    items = {item.item_id: item for item in dashboard_input.active_work_items}
+    assert f"local:ingest:{job.job_id}" not in items
+    assert set(items) == {f"local:ingest:{requeued.job_id}"}
+    assert items[f"local:ingest:{requeued.job_id}"].status == "queued"
+
+
+def test_local_notification_adapter_excludes_dismissed_ingest_job():
+    """(L3b AB wave, B2 ripple) Dismissing a failed Library ingest job
+    through the real registry hides it from ``jobs()`` -- it must vanish
+    from Home's Needs Attention too."""
+    from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
+
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/broken.pdf")
+    registry.mark_running(job.job_id)
+    registry.mark_failed(job.job_id, error="unsupported format")
+    dismissed = registry.dismiss(job.job_id)
+    assert dismissed is not None
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=registry.jobs)
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.active_work_items == ()

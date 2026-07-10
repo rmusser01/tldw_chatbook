@@ -14,7 +14,6 @@ from pathlib import PurePath
 from typing import Sequence
 
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
-from tldw_chatbook.Library.library_notes_sync_state import count_noun
 
 # Exact copy values (binding -- see the L3b plan's Global Constraints).
 INGEST_HEADER_COPY = "Import media"
@@ -23,6 +22,7 @@ MEDIA_DB_UNAVAILABLE_COPY = "Media database is unavailable."
 INGEST_UNAVAILABLE_COPY = "Ingest is unavailable in this runtime."
 QUEUE_HEADING_COPY = "Queue"
 QUEUE_EMPTY_COPY = "No ingest jobs yet."
+START_QUIET_LINE_COPY = "Enter a file path to start."
 
 DEFAULT_CHUNK_SIZE = 500
 MIN_CHUNK_SIZE = 100
@@ -95,6 +95,13 @@ class IngestQueueRow:
             -- gates the row's "Open in Library" action.
         can_retry: True only for a ``failed`` job -- gates the row's
             "Retry" action.
+        can_dismiss: True only for a ``failed`` job -- gates the row's
+            "Dismiss" action (L3b AB wave, B2). Currently identical to
+            ``can_retry`` (both actions are FAILED-only per the registry's
+            ``dismiss``/``requeue`` contracts) but kept as its own field
+            rather than reusing ``can_retry`` so the two actions stay
+            independently testable if a future change ever lets one apply
+            where the other doesn't.
         media_id: The job's resulting media id, when known (``done`` jobs
             only).
     """
@@ -104,6 +111,7 @@ class IngestQueueRow:
     line: str
     can_open: bool
     can_retry: bool
+    can_dismiss: bool = False
     media_id: int | None = None
 
 
@@ -128,11 +136,26 @@ class LibraryIngestCanvasState:
         start_enabled: Whether the "Start ingest" button is enabled --
             requires a working registry, an available media DB, and a
             non-blank typed path.
+        start_quiet_line: (L3b AB wave, A4) A muted line (``"Enter a file
+            path to start."``) rendered adjacent to the Start button when
+            the path field is blank but both seams are otherwise available.
+            Empty once a path is typed, or whenever ``unavailable_line`` is
+            already showing -- the db-unavailable/ingest-unavailable lines
+            always take precedence so at most one gate line ever renders.
         queue_heading: The queue section heading (always ``"Queue"``).
-        queue_counts_line: A per-state job counts summary.
+        queue_counts_line: A per-state job counts summary (L3b AB wave, A2)
+            -- empty when the queue itself is empty (``QUEUE_EMPTY_COPY``
+            covers that case instead); otherwise only non-zero states,
+            queued -> running -> done -> failed order.
         queue_rows: Newest-first queue rows (mirrors the registry's own
             ``jobs()`` snapshot order -- callers pass that tuple straight
             through, unsorted).
+        queue_show_clear_finished: (L3b AB wave, B2) Whether the "Clear
+            finished" button should render below the queue rows -- true
+            whenever at least one ``done`` or ``failed`` job is present in
+            ``jobs`` (computed from the raw jobs, not from ``queue_rows``,
+            so a defensively-malformed done-without-``media_id`` row --
+            which renders with ``can_open=False`` -- still counts).
     """
 
     header: str
@@ -140,9 +163,11 @@ class LibraryIngestCanvasState:
     unavailable_line: str
     form: LibraryIngestFormState
     start_enabled: bool
+    start_quiet_line: str
     queue_heading: str
     queue_counts_line: str
     queue_rows: tuple[IngestQueueRow, ...]
+    queue_show_clear_finished: bool
 
 
 def _basename(source_path: str) -> str:
@@ -231,22 +256,30 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
         line=f"{_GLYPH_FAILED} failed · {basename} · {job.error}",
         can_open=False,
         can_retry=True,
+        can_dismiss=True,
         media_id=job.media_id,
     )
 
 
 def _queue_counts_line(jobs: Sequence[LibraryIngestJob]) -> str:
-    """Build the per-state job counts summary line.
+    """Build the per-state job counts summary line (L3b AB wave, A2).
 
-    Always lists all four ``IngestJobState`` values (even at zero) in
-    ``queued, running, done, failed`` order, so the line's shape never
-    shifts as jobs move between states.
+    Empty when ``jobs`` is empty (the canvas shows ``QUEUE_EMPTY_COPY``
+    instead in that case -- see ``build_library_ingest_state``). Otherwise
+    lists only the non-zero ``IngestJobState`` values, always in
+    ``queued, running, done, failed`` order so the segment order never
+    shifts as jobs move between states -- only which segments are present
+    does. Each segment is ``"{n} {state}"`` (no "job"/"jobs" noun, unlike
+    ``count_noun`` elsewhere in this module -- e.g. ``"2 done · 1
+    failed"``), joined by ``" · "``.
     """
     counts = {state.value: 0 for state in IngestJobState}
     for job in jobs:
         counts[job.state.value] += 1
     return " · ".join(
-        count_noun(counts[state.value], f"{state.value} job") for state in IngestJobState
+        f"{counts[state.value]} {state.value}"
+        for state in IngestJobState
+        if counts[state.value]
     )
 
 
@@ -298,16 +331,27 @@ def build_library_ingest_state(
     start_enabled = (
         registry_available and media_db_available and bool(form.path.strip())
     )
+    # (L3b AB wave, A4) Only render the blank-path nudge when neither
+    # blocking gate line is already showing -- at most one gate line ever
+    # renders at once.
+    start_quiet_line = (
+        START_QUIET_LINE_COPY if not unavailable_line and not form.path.strip() else ""
+    )
     queue_rows = tuple(_build_queue_row(job, now=resolved_now) for job in jobs)
+    queue_show_clear_finished = any(
+        job.state in (IngestJobState.DONE, IngestJobState.FAILED) for job in jobs
+    )
     return LibraryIngestCanvasState(
         header=INGEST_HEADER_COPY,
         server_quiet_line=server_quiet_line,
         unavailable_line=unavailable_line,
         form=form,
         start_enabled=start_enabled,
+        start_quiet_line=start_quiet_line,
         queue_heading=QUEUE_HEADING_COPY,
         queue_counts_line=_queue_counts_line(jobs),
         queue_rows=queue_rows,
+        queue_show_clear_finished=queue_show_clear_finished,
     )
 
 

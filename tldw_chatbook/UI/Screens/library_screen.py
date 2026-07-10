@@ -4472,13 +4472,19 @@ class LibraryScreen(BaseAppScreen):
     # ----- Ingest canvas -----------------------------------------------
 
     @on(Input.Changed, "#library-ingest-path")
-    def handle_library_ingest_path_changed(self, event: Input.Changed) -> None:
+    async def handle_library_ingest_path_changed(self, event: Input.Changed) -> None:
         """Track the ingest path text as the user types it (state only).
 
-        Also live-updates the Start button's disabled state via a targeted
-        query (mirroring ``update_library_collection_name_input``) rather
-        than a full canvas recompose, so typing never disturbs the Input's
-        cursor position.
+        Also live-updates the Start button's disabled state, AND the
+        blank-path quiet line (L3b AB wave, A4), via targeted DOM surgery
+        (mirroring ``update_library_collection_name_input``) rather than a
+        full canvas recompose, so typing never disturbs the Input's cursor
+        position. The quiet line is conditionally yielded by
+        ``LibraryIngestCanvas.compose`` (mirrors ``unavailable_line``) --
+        unlike the Start button's ``disabled`` flag, which is always a
+        mounted widget whose attribute can just be flipped, a
+        newly-appearing/disappearing quiet line has to be mounted/removed
+        here since there is no recompose to do it for us.
 
         Args:
             event: Input change event emitted by the path field.
@@ -4489,7 +4495,27 @@ class LibraryScreen(BaseAppScreen):
             start_button = self.query_one("#library-ingest-start", Button)
         except (NoMatches, QueryError):
             return
-        start_button.disabled = not self._build_library_ingest_state().start_enabled
+        new_state = self._build_library_ingest_state()
+        start_button.disabled = not new_state.start_enabled
+        try:
+            quiet_line = self.query_one("#library-ingest-start-quiet-line", Static)
+        except (NoMatches, QueryError):
+            quiet_line = None
+        if new_state.start_quiet_line:
+            if quiet_line is None:
+                container = start_button.parent
+                if container is not None:
+                    await container.mount(
+                        Static(
+                            new_state.start_quiet_line,
+                            id="library-ingest-start-quiet-line",
+                            classes="library-ingest-quiet-line",
+                            markup=False,
+                        ),
+                        before=start_button,
+                    )
+        elif quiet_line is not None:
+            await quiet_line.remove()
 
     @on(Input.Changed, "#library-ingest-title")
     def handle_library_ingest_title_changed(self, event: Input.Changed) -> None:
@@ -4608,9 +4634,11 @@ class LibraryScreen(BaseAppScreen):
         An invalid/missing path is a quiet warning notice, matching every
         other Library form failure path in this screen; a missing
         ``submit_library_ingest_job`` seam (registry absent) gets the same
-        treatment. On success, only the path field clears -- title/author/
-        keywords/advanced options persist so a batch of files sharing
-        metadata doesn't need to be retyped for every submission.
+        treatment. On success, the path AND title fields clear (L3b AB
+        wave, A1) -- title is per-file, so it must not silently reapply to
+        the next file in a batch -- while author/keywords/advanced options
+        persist, since those are batch metadata a user submitting several
+        files in a row shouldn't have to retype for every submission.
 
         Args:
             event: Button press event emitted by the "Start ingest" action.
@@ -4643,6 +4671,7 @@ class LibraryScreen(BaseAppScreen):
             chunk_size=clamp_chunk_size(form.chunk_size),
         )
         form.path = ""
+        form.title = ""
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-ingest-open")
@@ -4680,6 +4709,54 @@ class LibraryScreen(BaseAppScreen):
         retry = getattr(self.app_instance, "retry_library_ingest_job", None)
         if callable(retry):
             retry(row.job_id)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-ingest-dismiss")
+    def handle_library_ingest_dismiss(self, event: Button.Pressed) -> None:
+        """Dismiss a failed ingest job row (L3b AB wave, B2).
+
+        A thin wrapper over ``LibraryIngestJobRegistry.dismiss`` -- valid
+        only for a ``FAILED`` row; a quiet no-op (mirrors every other
+        Library seam-absent path in this screen) when the registry itself
+        is unavailable. The registry's own listener
+        (``_handle_library_ingest_registry_changed``) already recomposes
+        on a successful dismiss; the trailing ``refresh(recompose=True)``
+        here is redundant-but-harmless belt-and-braces, matching
+        ``handle_library_ingest_retry``.
+
+        Args:
+            event: Button press event emitted by a "Dismiss" row action.
+        """
+        event.stop()
+        index = self._trailing_index(event.button.id)
+        rows = self._build_library_ingest_state().queue_rows
+        if index is None or not (0 <= index < len(rows)):
+            return
+        row = rows[index]
+        if not row.can_dismiss:
+            return
+        registry = self._library_ingest_registry()
+        dismiss = getattr(registry, "dismiss", None)
+        if callable(dismiss):
+            dismiss(row.job_id)
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, "#library-ingest-clear-finished")
+    def handle_library_ingest_clear_finished(self, event: Button.Pressed) -> None:
+        """Clear every done+failed ingest job in one shot (L3b AB wave, B2).
+
+        A thin wrapper over ``LibraryIngestJobRegistry.clear_finished``; a
+        quiet no-op when the registry itself is unavailable (matching
+        ``handle_library_ingest_dismiss``/``handle_library_ingest_retry``).
+
+        Args:
+            event: Button press event emitted by the "Clear finished" action.
+        """
+        event.stop()
+        registry = self._library_ingest_registry()
+        clear_finished = getattr(registry, "clear_finished", None)
+        if callable(clear_finished):
+            clear_finished()
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-notes-row")

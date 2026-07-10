@@ -7077,7 +7077,9 @@ async def test_library_shell_ingest_canvas_invalid_path_notifies_and_submits_not
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues(tmp_path):
     """(c) A failed job (missing file, submitted programmatically) renders
-    a failed row with Retry; pressing Retry appends a fresh queued job."""
+    a failed row with Retry; pressing Retry appends a fresh queued job and
+    (L3b AB wave, B1) supersedes the original -- the queue shows exactly
+    ONE row for the retried file, not two."""
     db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
     missing = tmp_path / "does-not-exist.txt"
     harness = _LibraryIngestCanvasHarness(db)
@@ -7105,10 +7107,170 @@ async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues
         await pilot.pause()
 
         jobs_after = harness.library_ingest_jobs.jobs()
-        assert len(jobs_after) == jobs_before + 1
+        # B1: the original failed job is superseded, not kept alongside the
+        # fresh copy -- net job count is unchanged (one hidden, one added).
+        assert len(jobs_after) == jobs_before
         newest = jobs_after[0]
         assert newest.job_id != failing_job.job_id
         assert newest.source_path == str(missing)
+
+        # The canvas itself must show exactly one row -- not the retried
+        # QUEUED copy sitting alongside a still-visible failed original.
+        await pilot.pause()
+        assert len(list(screen.query(".library-ingest-row"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_submit_clears_path_and_title_keeps_metadata(
+    tmp_path,
+):
+    """(A1) On successful submit, both the path AND title fields clear --
+    title is per-file -- while author/keywords/toggles persist so a batch
+    of files sharing metadata doesn't need to be retyped for every
+    submission."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    source = tmp_path / "tides.txt"
+    source.write_text("Tides are driven by the moon's gravity.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+
+        screen.query_one("#library-ingest-path", Input).value = str(source)
+        screen.query_one("#library-ingest-title", Input).value = "Tides 101"
+        screen.query_one("#library-ingest-author", Input).value = "Jane Doe"
+        screen.query_one("#library-ingest-keywords", Input).value = "ocean, moon"
+        await pilot.pause()
+
+        screen.query_one("#library-ingest-start", Button).press()
+        await pilot.pause()
+
+        assert screen._library_ingest_form.path == ""
+        assert screen._library_ingest_form.title == ""
+        assert screen._library_ingest_form.author == "Jane Doe"
+        assert screen._library_ingest_form.keywords == "ocean, moon"
+        assert screen.query_one("#library-ingest-path", Input).value == ""
+        assert screen.query_one("#library-ingest-title", Input).value == ""
+        assert screen.query_one("#library-ingest-author", Input).value == "Jane Doe"
+        assert screen.query_one("#library-ingest-keywords", Input).value == "ocean, moon"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_dismiss_button_removes_failed_row(tmp_path):
+    """(B2) Pressing Dismiss on a failed row removes it from the canvas AND
+    the registry -- the row is gone, not just visually hidden."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    missing = tmp_path / "does-not-exist.txt"
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        failing_job = harness.submit_library_ingest_job(source_path=str(missing))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
+            if jobs[failing_job.job_id].state == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Job never reached FAILED.")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-dismiss-0")
+
+        screen.query_one("#library-ingest-dismiss-0", Button).press()
+        await pilot.pause()
+
+        assert harness.library_ingest_jobs.jobs() == ()
+        assert not list(screen.query(".library-ingest-row"))
+        assert screen.query_one("#library-ingest-queue-empty")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_failed(
+    tmp_path,
+):
+    """(B2) Pressing "Clear finished" removes every done+failed job from
+    the registry in one shot, leaving the queue empty when nothing else is
+    queued/running."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    source = tmp_path / "tides.txt"
+    source.write_text("Tides are driven by the moon's gravity.", encoding="utf-8")
+    missing = tmp_path / "does-not-exist.txt"
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        done_job = harness.submit_library_ingest_job(source_path=str(source))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(done_job.job_id) and jobs[done_job.job_id].state == IngestJobState.DONE:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Job never reached DONE.")
+
+        failing_job = harness.submit_library_ingest_job(source_path=str(missing))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
+            if jobs.get(failing_job.job_id) and jobs[failing_job.job_id].state == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Job never reached FAILED.")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-ingest-clear-finished")
+
+        screen.query_one("#library-ingest-clear-finished", Button).press()
+        await pilot.pause()
+
+        counts = harness.library_ingest_jobs.counts()
+        assert counts["done"] == 0
+        assert counts["failed"] == 0
+        assert not list(screen.query(".library-ingest-row"))
+        assert screen.query_one("#library-ingest-queue-empty")
+        assert not list(screen.query("#library-ingest-clear-finished"))
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_quiet_line_toggles_live_while_typing(tmp_path):
+    """(A4, live-QA repro) ``handle_library_ingest_path_changed`` deliberately
+    avoids a full canvas recompose while typing (to preserve the Input's
+    cursor position) -- it must still keep the quiet line in sync via the
+    same kind of targeted, no-recompose update it already does for the
+    Start button's ``disabled`` flag. Before the fix, the quiet line stayed
+    stuck showing (from the initial mount) even after a path was typed and
+    Start had already gone enabled."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+
+        assert screen.query_one("#library-ingest-start-quiet-line", Static)
+        assert screen.query_one("#library-ingest-start", Button).disabled is True
+
+        screen.query_one("#library-ingest-path", Input).value = str(tmp_path / "a.txt")
+        await pilot.pause()
+
+        assert not list(screen.query("#library-ingest-start-quiet-line"))
+        assert screen.query_one("#library-ingest-start", Button).disabled is False
+
+        # Clearing the path back out must bring the quiet line back too --
+        # the same targeted update in reverse.
+        screen.query_one("#library-ingest-path", Input).value = ""
+        await pilot.pause()
+
+        assert screen.query_one("#library-ingest-start-quiet-line", Static)
+        assert screen.query_one("#library-ingest-start", Button).disabled is True
 
 
 @pytest.mark.asyncio
@@ -7225,6 +7387,168 @@ async def test_library_ingest_canvas_renders_markup_hostile_filename_without_cra
         assert "bracket" in str(row.renderable)
         assert "tag" in str(row.renderable)
         assert host.query_one("#library-ingest-retry-0")
+
+
+# --- L3b AB wave: widget-level (A4/A5/A6/B2) --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_metadata_placeholders_are_optional_labeled():
+    """(A5) Title/Author/Keywords placeholders spell out "(optional)" so
+    the form doesn't read as if every field were required."""
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        assert (
+            host.query_one("#library-ingest-title", Input).placeholder
+            == "Title (optional)"
+        )
+        assert (
+            host.query_one("#library-ingest-author", Input).placeholder
+            == "Author (optional)"
+        )
+        assert (
+            host.query_one("#library-ingest-keywords", Input).placeholder
+            == "Keywords, comma-separated (optional)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_chunk_size_input_labeled_and_disable_follows_toggle():
+    """(A6) The chunk-size Input gets a "Chunk size (words)" placeholder and
+    is visually disabled whenever "Chunk content" is toggled off (submit
+    already ignores it when disabled; this only adds the visual affordance)."""
+    off_state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(chunk=False)
+    )
+    host = _IngestCanvasWidgetHost(off_state)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        chunk_size_input = host.query_one("#library-ingest-chunk-size", Input)
+        assert chunk_size_input.placeholder == "Chunk size (words)"
+        assert chunk_size_input.disabled is True
+
+    on_state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(chunk=True)
+    )
+    host2 = _IngestCanvasWidgetHost(on_state)
+    async with host2.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        assert host2.query_one("#library-ingest-chunk-size", Input).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_start_quiet_line_renders_when_path_blank():
+    state = build_library_ingest_state((), form=LibraryIngestFormState(path=""))
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        line = host.query_one("#library-ingest-start-quiet-line", Static)
+        assert str(line.renderable) == "Enter a file path to start."
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_start_quiet_line_absent_when_path_typed():
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/tmp/a.txt")
+    )
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        assert not list(host.query("#library-ingest-start-quiet-line"))
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_counts_line_hidden_when_no_jobs():
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        assert not list(host.query("#library-ingest-queue-counts"))
+        assert host.query_one("#library-ingest-queue-empty", Static)
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_counts_line_shown_when_jobs_present():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.QUEUED,
+        submitted_at=1.0,
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        counts_line = host.query_one("#library-ingest-queue-counts", Static)
+        assert str(counts_line.renderable) == "1 queued"
+        assert not list(host.query("#library-ingest-queue-empty"))
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_failed_row_renders_dismiss_next_to_retry():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/broken.pdf",
+        state=IngestJobState.FAILED,
+        error="unsupported format",
+        submitted_at=1.0,
+        started_at=1.0,
+        finished_at=2.0,
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        assert host.query_one("#library-ingest-retry-0", Button)
+        dismiss_button = host.query_one("#library-ingest-dismiss-0", Button)
+        assert "library-ingest-row-action" in dismiss_button.classes
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_clear_finished_absent_with_no_finished_jobs():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/report.txt",
+        state=IngestJobState.QUEUED,
+        submitted_at=1.0,
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        assert not list(host.query("#library-ingest-clear-finished"))
+
+
+@pytest.mark.asyncio
+async def test_library_ingest_canvas_clear_finished_present_with_a_failed_job():
+    job = LibraryIngestJob(
+        job_id="ingest-job-1",
+        source_path="/tmp/broken.pdf",
+        state=IngestJobState.FAILED,
+        error="unsupported format",
+        submitted_at=1.0,
+        started_at=1.0,
+        finished_at=2.0,
+    )
+    state = build_library_ingest_state((job,), form=LibraryIngestFormState())
+    host = _IngestCanvasWidgetHost(state)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await pilot.pause()
+        clear_button = host.query_one("#library-ingest-clear-finished", Button)
+        # Plain (not primary/accented like #library-ingest-start), and not a
+        # per-row action (it sits below all queue rows, not next to one).
+        assert "library-canvas-action" in clear_button.classes
+        assert "library-ingest-row-action" not in clear_button.classes
 
 
 # --- Live updates: registry listener -> canvas refresh + count poke

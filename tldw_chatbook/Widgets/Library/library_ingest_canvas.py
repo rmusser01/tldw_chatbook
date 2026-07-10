@@ -79,19 +79,19 @@ class LibraryIngestCanvas(VerticalScroll):
         )
         yield Input(
             value=state.form.title,
-            placeholder="Title",
+            placeholder="Title (optional)",
             id="library-ingest-title",
             classes="library-ingest-field",
         )
         yield Input(
             value=state.form.author,
-            placeholder="Author",
+            placeholder="Author (optional)",
             id="library-ingest-author",
             classes="library-ingest-field",
         )
         yield Input(
             value=state.form.keywords,
-            placeholder="Keywords (comma-separated)",
+            placeholder="Keywords, comma-separated (optional)",
             id="library-ingest-keywords",
             classes="library-ingest-field",
         )
@@ -121,8 +121,17 @@ class LibraryIngestCanvas(VerticalScroll):
             )
             yield Input(
                 value=state.form.chunk_size,
+                placeholder="Chunk size (words)",
                 id="library-ingest-chunk-size",
                 classes="library-ingest-field",
+                disabled=not state.form.chunk,
+            )
+        if state.start_quiet_line:
+            yield Static(
+                state.start_quiet_line,
+                id="library-ingest-start-quiet-line",
+                classes="library-ingest-quiet-line",
+                markup=False,
             )
         yield Button(
             "Start ingest",
@@ -137,11 +146,12 @@ class LibraryIngestCanvas(VerticalScroll):
             classes="destination-section",
             markup=False,
         )
-        yield Static(
-            state.queue_counts_line,
-            id="library-ingest-queue-counts",
-            markup=False,
-        )
+        if state.queue_counts_line:
+            yield Static(
+                state.queue_counts_line,
+                id="library-ingest-queue-counts",
+                markup=False,
+            )
         if not state.queue_rows:
             yield Static(
                 QUEUE_EMPTY_COPY,
@@ -155,22 +165,55 @@ class LibraryIngestCanvas(VerticalScroll):
             # what keeps a hostile filename from raising MarkupError at
             # mount time (the L3a lesson; mirrors
             # ``library_rag_history_children``'s escaped Button labels).
+            row_classes = "library-ingest-row"
+            if row.can_open or row.can_retry:
+                # A row with an action button below it gets its own
+                # bottom-margin trimmed to 0 (A3) -- the button's own
+                # ``.library-ingest-row-action`` margin supplies the "tight
+                # gap above, blank line below" spacing instead, so the
+                # button reads as belonging to THIS row rather than the one
+                # below it. Plain rows (queued/running, or a done row with
+                # no action) keep their own margin for row-to-row spacing.
+                row_classes += " library-ingest-row-with-actions"
             yield Static(
                 escape_markup(row.line),
                 id=f"library-ingest-row-{index}",
-                classes="library-ingest-row",
+                classes=row_classes,
             )
             if row.can_open:
                 yield Button(
                     "Open in Library",
                     id=f"library-ingest-open-{index}",
-                    classes="library-canvas-action library-ingest-open",
+                    classes=(
+                        "library-canvas-action library-ingest-open "
+                        "library-ingest-row-action"
+                    ),
                     compact=True,
                 )
             if row.can_retry:
                 yield Button(
                     "Retry",
                     id=f"library-ingest-retry-{index}",
-                    classes="library-canvas-action library-ingest-retry",
+                    classes=(
+                        "library-canvas-action library-ingest-retry "
+                        "library-ingest-row-action"
+                    ),
                     compact=True,
                 )
+            if row.can_dismiss:
+                yield Button(
+                    "Dismiss",
+                    id=f"library-ingest-dismiss-{index}",
+                    classes=(
+                        "library-canvas-action library-ingest-dismiss "
+                        "library-ingest-row-action"
+                    ),
+                    compact=True,
+                )
+        if state.queue_show_clear_finished:
+            yield Button(
+                "Clear finished",
+                id="library-ingest-clear-finished",
+                classes="library-canvas-action",
+                compact=True,
+            )

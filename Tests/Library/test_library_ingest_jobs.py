@@ -143,9 +143,10 @@ def test_requeue_failed_job_appends_fresh_queued_copy() -> None:
     assert requeued.finished_at is None
     assert requeued.submitted_at >= failed.submitted_at
 
-    # The original failed job is left untouched in the registry.
+    # (L3b AB wave, B1) The original failed job is superseded -- retry
+    # supersedes the failed original, so it no longer appears in jobs().
     jobs_by_id = {j.job_id: j for j in registry.jobs()}
-    assert jobs_by_id[failed.job_id].state == IngestJobState.FAILED
+    assert failed.job_id not in jobs_by_id
 
 
 def test_jobs_returns_newest_first_immutable_snapshot() -> None:
@@ -275,3 +276,187 @@ def test_runner_active_defaults_false_and_is_a_plain_attribute() -> None:
 
     registry.runner_active = True
     assert registry.runner_active is True
+
+
+# --- L3b AB wave: B1 (retry supersedes) / B2 (dismiss + clear_finished) ---
+
+
+def test_requeue_supersedes_original_from_jobs_and_counts() -> None:
+    """B1: retrying a failed job hides the original from jobs()/counts() --
+    the queue must show ONE row per retried file (the fresh copy), not two."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+    failed = registry.mark_failed(job.job_id, error="boom")
+
+    requeued = registry.requeue(failed.job_id)
+
+    job_ids = [j.job_id for j in registry.jobs()]
+    assert requeued.job_id in job_ids
+    assert failed.job_id not in job_ids
+    assert len(job_ids) == 1
+    counts = registry.counts()
+    assert counts["failed"] == 0
+    assert counts["queued"] == 1
+
+
+def test_requeue_twice_on_same_original_is_a_noop_second_time() -> None:
+    """A superseded original must not be requeue-able again -- otherwise a
+    stale Retry button (or a double click) could silently fork duplicate
+    retries off the same dead job_id."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+    failed = registry.mark_failed(job.job_id, error="boom")
+
+    first = registry.requeue(failed.job_id)
+    assert first is not None
+
+    second = registry.requeue(failed.job_id)
+    assert second is None
+    assert len(registry.jobs()) == 1
+
+
+def test_mark_methods_are_noop_for_a_superseded_job_id() -> None:
+    """Once a failed job is superseded by retry, mark_running/mark_done/
+    mark_failed against its (now-hidden) job_id must be safe no-ops -- they
+    must not resurrect it into jobs()/counts() or fire the listener."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+    failed = registry.mark_failed(job.job_id, error="boom")
+    registry.requeue(failed.job_id)
+
+    calls: list[int] = []
+    registry.add_listener(lambda: calls.append(1))
+
+    assert registry.mark_running(failed.job_id) is None
+    assert registry.mark_done(failed.job_id, media_id=1) is None
+    assert registry.mark_failed(failed.job_id, error="still boom") is None
+    assert calls == []
+    assert len(registry.jobs()) == 1
+
+
+def test_dismiss_only_valid_for_failed_jobs() -> None:
+    registry = LibraryIngestJobRegistry()
+
+    queued_job = registry.submit(source_path="/tmp/a.txt")
+    assert registry.dismiss(queued_job.job_id) is None
+
+    running_job = registry.submit(source_path="/tmp/b.txt")
+    registry.mark_running(running_job.job_id)
+    assert registry.dismiss(running_job.job_id) is None
+
+    done_job = registry.submit(source_path="/tmp/c.txt")
+    registry.mark_running(done_job.job_id)
+    registry.mark_done(done_job.job_id, media_id=7)
+    assert registry.dismiss(done_job.job_id) is None
+
+    # None of the above were actually dismissed.
+    job_ids = [j.job_id for j in registry.jobs()]
+    assert queued_job.job_id in job_ids
+    assert running_job.job_id in job_ids
+    assert done_job.job_id in job_ids
+
+
+def test_dismiss_unknown_job_id_returns_none() -> None:
+    registry = LibraryIngestJobRegistry()
+
+    assert registry.dismiss("ingest-job-999") is None
+
+
+def test_dismiss_failed_job_removes_from_jobs_and_counts() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+    failed = registry.mark_failed(job.job_id, error="boom")
+
+    dismissed = registry.dismiss(failed.job_id)
+
+    assert dismissed is not None
+    assert dismissed.job_id == failed.job_id
+    assert registry.jobs() == ()
+    assert registry.counts()["failed"] == 0
+
+
+def test_dismiss_twice_is_a_noop_second_time() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+    failed = registry.mark_failed(job.job_id, error="boom")
+    registry.dismiss(failed.job_id)
+
+    calls: list[int] = []
+    registry.add_listener(lambda: calls.append(1))
+
+    assert registry.dismiss(failed.job_id) is None
+    assert calls == []
+
+
+def test_dismiss_fires_listener_once_and_not_when_it_is_a_noop() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+    failed = registry.mark_failed(job.job_id, error="boom")
+    queued_job = registry.submit(source_path="/tmp/b.txt")
+
+    calls: list[int] = []
+    registry.add_listener(lambda: calls.append(1))
+
+    # No-op: not a FAILED job -- must not fire.
+    registry.dismiss(queued_job.job_id)
+    assert calls == []
+
+    registry.dismiss(failed.job_id)
+    assert len(calls) == 1
+
+
+def test_clear_finished_removes_all_done_and_failed_returns_count() -> None:
+    registry = LibraryIngestJobRegistry()
+    queued_job = registry.submit(source_path="/tmp/queued.txt")
+    running_job = registry.submit(source_path="/tmp/running.txt")
+    registry.mark_running(running_job.job_id)
+    done_job = registry.submit(source_path="/tmp/done.txt")
+    registry.mark_running(done_job.job_id)
+    registry.mark_done(done_job.job_id, media_id=1)
+    failed_job = registry.submit(source_path="/tmp/failed.txt")
+    registry.mark_running(failed_job.job_id)
+    registry.mark_failed(failed_job.job_id, error="boom")
+
+    removed = registry.clear_finished()
+
+    assert removed == 2
+    job_ids = [j.job_id for j in registry.jobs()]
+    assert set(job_ids) == {queued_job.job_id, running_job.job_id}
+    counts = registry.counts()
+    assert counts["done"] == 0
+    assert counts["failed"] == 0
+    assert counts["queued"] == 1
+    assert counts["running"] == 1
+
+
+def test_clear_finished_is_a_noop_when_nothing_to_clear() -> None:
+    registry = LibraryIngestJobRegistry()
+    registry.submit(source_path="/tmp/queued.txt")
+
+    calls: list[int] = []
+    registry.add_listener(lambda: calls.append(1))
+
+    removed = registry.clear_finished()
+
+    assert removed == 0
+    assert calls == []
+
+
+def test_clear_finished_fires_listener_once() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+    registry.mark_done(job.job_id, media_id=1)
+
+    calls: list[int] = []
+    registry.add_listener(lambda: calls.append(1))
+
+    registry.clear_finished()
+
+    assert len(calls) == 1
