@@ -2149,6 +2149,19 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 # back to the Library ingest canvas via the nav-context
                 # contract instead of a bare route (mirrors the
                 # subscriptions staging special-case above).
+                #
+                # Drop the cached Library screen first (mirrors
+                # ``open_notes_workspace``'s ``invalidate_screen_cache``):
+                # Library is a CACHEABLE route, so without this the deep
+                # link switches to the already-mounted-then-unmounted cached
+                # instance, which fails to repaint -- the app's screen stack
+                # advances to Library (logs confirm the switch) but the
+                # terminal keeps showing Home. Study (the flashcards deep
+                # link) never hit this because TAB_STUDY is not cacheable and
+                # always builds a fresh screen. Forcing a fresh Library
+                # screen restores the clean compose+mount+repaint that the
+                # ingest canvas landing depends on.
+                self.invalidate_screen_cache({TAB_LIBRARY})
                 self.post_message(
                     NavigateToScreen("library", {LIBRARY_NAV_CONTEXT_INGEST: True})
                 )
