@@ -11,6 +11,8 @@ LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
 LIBRARY_ROW_BROWSE_MEDIA = "browse-media"
 LIBRARY_ROW_BROWSE_NOTES = "browse-notes"
+LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
+LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
 
 
@@ -25,6 +27,8 @@ class LibraryRailRow:
     target_id: str
     count: int | None = None
     count_known: bool = True
+    count_display: str = ""
+    count_emphasis: str = ""
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,9 @@ class LibraryShellInput:
     runtime_source: str = "local"
     server_label: str | None = None
     details_lines: tuple[str, ...] = ()
+    study_decks_count: int | None = None
+    flashcards_due_count: int | None = None
+    quizzes_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -110,19 +117,19 @@ def build_library_shell_state(
             count_known=state.notes_known,
         ),
         LibraryRailRow(
-            row_id="browse-collections",
+            row_id=LIBRARY_ROW_BROWSE_COLLECTIONS,
             section_id="browse",
             title="Collections",
-            target_kind="mode",
+            target_kind="canvas",
             target_id="collections",
             count=state.collections_count,
             count_known=state.collections_known,
         ),
         LibraryRailRow(
-            row_id="browse-search",
+            row_id=LIBRARY_ROW_BROWSE_SEARCH,
             section_id="browse",
             title="Search / RAG",
-            target_kind="mode",
+            target_kind="canvas",
             target_id="search",
             count=None,
             count_known=True,
@@ -145,7 +152,7 @@ def build_library_shell_state(
             title="Study decks",
             target_kind="mode",
             target_id="study",
-            count=None,
+            count=state.study_decks_count,
             count_known=True,
         ),
         LibraryRailRow(
@@ -156,6 +163,20 @@ def build_library_shell_state(
             target_id="flashcards",
             count=None,
             count_known=True,
+            count_display=(
+                f" due: {state.flashcards_due_count}"
+                if state.flashcards_due_count is not None
+                else ""
+            ),
+            count_emphasis=(
+                (
+                    "bright"
+                    if state.flashcards_due_count > 0
+                    else "dim"
+                )
+                if state.flashcards_due_count is not None
+                else ""
+            ),
         ),
         LibraryRailRow(
             row_id="create-quizzes",
@@ -163,7 +184,7 @@ def build_library_shell_state(
             title="Quizzes",
             target_kind="mode",
             target_id="quizzes",
-            count=None,
+            count=state.quizzes_count,
             count_known=True,
         ),
     )

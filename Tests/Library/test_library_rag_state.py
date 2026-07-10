@@ -11,6 +11,8 @@ from tldw_chatbook.Library.library_rag_state import (
     LibraryRagQueryState,
     LibraryRagResultRow,
     LibraryRagScopeState,
+    searching_status_line,
+    update_search_history,
 )
 
 
@@ -88,6 +90,32 @@ def test_query_state_blocks_empty_query_and_runtime_blockers() -> None:
     assert ready_query.top_k == 5
     assert ready_query.status == "ready"
     assert ready_query.run_action.enabled is True
+
+
+def test_query_state_blocked_is_empty_query_and_no_scope_properties() -> None:
+    """A1: `blocked_is_empty_query`/`blocked_is_no_scope` key the Search
+    canvas's single quiet line, distinct from real-failure blockers (which
+    keep the full callout + recovery-copy presentation).
+    """
+    empty_query = LibraryRagQueryState.from_values(query="")
+    assert empty_query.blocked_is_empty_query is True
+    assert empty_query.blocked_is_no_scope is False
+
+    no_scope = LibraryRagQueryState.from_values(query="find it", has_source_scope=False)
+    assert no_scope.blocked_is_empty_query is False
+    assert no_scope.blocked_is_no_scope is True
+
+    unsafe_query = LibraryRagQueryState.from_values(query="<script>alert(1)</script>")
+    assert unsafe_query.blocked_is_empty_query is False
+    assert unsafe_query.blocked_is_no_scope is False
+
+    missing_index = LibraryRagQueryState.from_values(query="find it", index_ready=False)
+    assert missing_index.blocked_is_empty_query is False
+    assert missing_index.blocked_is_no_scope is False
+
+    ready = LibraryRagQueryState.from_values(query="find it")
+    assert ready.blocked_is_empty_query is False
+    assert ready.blocked_is_no_scope is False
 
 
 def test_query_state_validates_and_sanitizes_external_values() -> None:
@@ -241,6 +269,34 @@ def test_panel_state_tracks_retrieval_status_and_console_action_readiness() -> N
 
     assert searching.retrieval_status == "searching"
     assert searching.next_action == "Wait for retrieval results."
+    # C2: the run action itself carries the in-flight state.
+    assert searching.query_state.run_action.label == "Searching…"
+    assert searching.query_state.run_action.enabled is False
+
+
+def test_panel_state_searching_status_overrides_run_action_only_when_reached() -> None:
+    """C2: "searching" only overrides an otherwise-open run gate -- a query
+    that's ALSO blocked (e.g. no source scope) keeps its real blocked label,
+    since the gate ladder never reaches the searching branch for it.
+    """
+    searching_ready = LibraryRagPanelState.from_values(
+        source_counts={"notes": 1},
+        query="Find policy evidence",
+        retrieval_status="searching",
+    )
+    assert searching_ready.retrieval_status == "searching"
+    assert searching_ready.query_state.run_action.label == "Searching…"
+    assert searching_ready.query_state.run_action.enabled is False
+    assert searching_ready.query_state.run_action.widget_id == "library-rag-run-query"
+
+    searching_blocked = LibraryRagPanelState.from_values(
+        source_counts={"notes": 0},
+        query="Find policy evidence",
+        retrieval_status="searching",
+    )
+    assert searching_blocked.retrieval_status == "blocked"
+    assert searching_blocked.query_state.run_action.label == "Run Search/RAG"
+    assert searching_blocked.query_state.run_action.enabled is False
 
 
 def test_panel_state_defaults_stable_selectors_for_recovery_paths() -> None:
@@ -280,3 +336,84 @@ def test_explicit_empty_scope_selection_is_not_defaulted_to_all_sources() -> Non
     assert panel.scope.has_selected_sources is False
     assert panel.retrieval_status == "blocked"
     assert panel.query_state.run_action.disabled_reason == "Select at least one Library source."
+
+
+class TestUpdateSearchHistory:
+    def test_prepends_new_query(self):
+        assert update_search_history(("b",), "a") == ("a", "b")
+
+    def test_exact_match_dedupes_to_front(self):
+        assert update_search_history(("a", "b", "c"), "b") == ("b", "a", "c")
+
+    def test_caps_at_ten_entries(self):
+        history = tuple(f"q{i}" for i in range(10))
+        result = update_search_history(history, "new")
+        assert len(result) == 10
+        assert result[0] == "new"
+        assert "q9" not in result
+
+    def test_truncates_entries_to_200_chars(self):
+        result = update_search_history((), "x" * 500)
+        assert result == ("x" * 200,)
+
+    def test_blank_query_is_ignored(self):
+        assert update_search_history(("a",), "   ") == ("a",)
+
+
+class TestSearchingStatusLine:
+    def test_lists_selected_sources(self):
+        assert searching_status_line(("notes", "media")) == "searching · notes, media…"
+
+    def test_empty_scope_still_reads_searching(self):
+        assert searching_status_line(()) == "searching…"
+
+
+class TestResultRowOpenTarget:
+    def test_note_result_opens_notes(self):
+        row = LibraryRagResultRow.from_result(
+            {"source_id": "note-42", "title": "T", "snippet": "s",
+             "provenance": {"source_type": "note"}}
+        )
+        assert row.open_source_type == "notes"
+        assert row.can_open is True
+
+    def test_media_and_conversation_map(self):
+        media = LibraryRagResultRow.from_result(
+            {"source_id": "7", "title": "T", "snippet": "s",
+             "provenance": {"source_type": "media"}}
+        )
+        convo = LibraryRagResultRow.from_result(
+            {"source_id": "c1", "title": "T", "snippet": "s",
+             "provenance": {"source_type": "conversation"}}
+        )
+        assert media.open_source_type == "media"
+        assert convo.open_source_type == "conversations"
+
+    def test_unknown_type_or_missing_id_cannot_open(self):
+        no_type = LibraryRagResultRow.from_result(
+            {"source_id": "x", "title": "T", "snippet": "s"}
+        )
+        no_id = LibraryRagResultRow.from_result(
+            {"title": "T", "snippet": "s", "provenance": {"source_type": "note"}}
+        )
+        assert no_type.can_open is False
+        assert no_id.can_open is False
+
+
+class TestPanelStateHistory:
+    def test_from_values_carries_history(self):
+        state = LibraryRagPanelState.from_values(history=("a", "b"))
+        assert state.history == ("a", "b")
+
+    def test_history_defaults_empty(self):
+        assert LibraryRagPanelState.from_values().history == ()
+
+    def test_history_collapsed_defaults_false_and_passes_through(self):
+        """D1: `history_collapsed` is a plain passthrough -- the caller (the
+        screen) owns when it changes; the pure layer just carries it.
+        """
+        assert LibraryRagPanelState.from_values().history_collapsed is False
+        assert (
+            LibraryRagPanelState.from_values(history_collapsed=True).history_collapsed
+            is True
+        )

@@ -6,7 +6,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Library.library_conversations_state import (
     LibraryConversationsCanvasState,
@@ -57,6 +57,12 @@ class LibraryConversationsCanvas(Vertical):
         )
         status.display = bool(status_text)
         yield status
+
+        yield Input(
+            value=self.canvas.query,
+            placeholder="Filter conversations… (Enter)",
+            id="library-conversations-filter",
+        )
 
         conversation_list = Vertical(id="library-conversations-list")
         conversation_list.styles.height = "auto"

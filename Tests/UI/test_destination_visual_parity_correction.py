@@ -514,7 +514,9 @@ async def test_library_source_snapshot_times_out_to_stable_error(monkeypatch):
     )
 
     start = time.perf_counter()
-    records, counts, total_known, error, recovery_state = await screen._list_local_source_snapshot()
+    records, counts, total_known, error, recovery_state, study_counts = (
+        await screen._list_local_source_snapshot()
+    )
     elapsed = time.perf_counter() - start
 
     assert records == {"notes": (), "media": (), "conversations": ()}
@@ -522,6 +524,7 @@ async def test_library_source_snapshot_times_out_to_stable_error(monkeypatch):
     assert total_known == {"notes": True, "media": True, "conversations": True}
     assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
     assert recovery_state is None
+    assert study_counts == {"study_decks": None, "flashcards_due": None, "quizzes": None}
     assert elapsed < 0.05
 
 
@@ -557,7 +560,9 @@ async def test_library_source_snapshot_timeout_handles_blocking_async_services(m
     )
 
     start = time.perf_counter()
-    records, counts, total_known, error, recovery_state = await screen._list_local_source_snapshot()
+    records, counts, total_known, error, recovery_state, study_counts = (
+        await screen._list_local_source_snapshot()
+    )
     elapsed = time.perf_counter() - start
 
     assert records == {"notes": (), "media": (), "conversations": ()}
@@ -565,6 +570,7 @@ async def test_library_source_snapshot_timeout_handles_blocking_async_services(m
     assert total_known == {"notes": True, "media": True, "conversations": True}
     assert error == library_screen_module.LIBRARY_SERVICE_ERROR_COPY
     assert recovery_state is None
+    assert study_counts == {"study_decks": None, "flashcards_due": None, "quizzes": None}
     assert elapsed < 0.05
 
 

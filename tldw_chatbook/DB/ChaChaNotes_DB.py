@@ -7466,6 +7466,25 @@ UPDATE db_schema_version
         
         return [dict(row) for row in cursor.fetchall()]
 
+    def count_due_flashcards(self) -> int:
+        """Count flashcards due for review.
+
+        Returns:
+            The number of non-deleted, non-suspended flashcards in
+            non-deleted decks whose ``next_review`` is unset or has
+            passed -- the exact total the Library rail badge displays.
+            Uses the identical WHERE clause as ``get_due_flashcards``.
+        """
+        query = """
+            SELECT COUNT(*) AS cnt FROM flashcards f
+            JOIN decks d ON d.id = f.deck_id
+            WHERE f.is_deleted = 0 AND f.is_suspended = 0 AND d.is_deleted = 0
+              AND (f.next_review IS NULL OR f.next_review <= CURRENT_TIMESTAMP)
+        """
+        cursor = self.execute_query(query)
+        row = cursor.fetchone()
+        return int(row["cnt"] if row else 0)
+
     def get_deck(self, deck_id: str) -> Optional[Dict[str, Any]]:
         """Get a flashcard deck by ID."""
         conn = self.get_connection()
@@ -7496,7 +7515,20 @@ UPDATE db_schema_version
             (limit, offset),
         )
         return [dict(row) for row in cursor.fetchall()]
-    
+
+    def count_decks(self) -> int:
+        """Count all non-deleted flashcard decks.
+
+        Returns:
+            The number of decks with ``is_deleted = 0`` -- the exact
+            total the Library rail badge displays. Soft-deleted decks
+            are excluded, matching ``list_decks``' visibility.
+        """
+        query = "SELECT COUNT(*) AS cnt FROM decks WHERE is_deleted = 0"
+        cursor = self.execute_query(query)
+        row = cursor.fetchone()
+        return int(row["cnt"] if row else 0)
+
     def create_deck(self, name: str, description: Optional[str] = None) -> str:
         """Create a new flashcard deck."""
         deck_id = self._generate_uuid()
@@ -8404,6 +8436,20 @@ UPDATE db_schema_version
         count_row = count_cursor.fetchone()
         total = int(count_row["count"]) if count_row else 0
         return {"items": items, "count": total}
+
+    def count_quizzes(self) -> int:
+        """Count all non-deleted quizzes.
+
+        Returns:
+            The number of quizzes with ``deleted = 0`` -- the exact
+            total the Library rail badge displays. Note the quizzes
+            table uses the column name ``deleted``, not ``is_deleted``
+            as ``notes``/``decks``/``flashcards`` do.
+        """
+        query = "SELECT COUNT(*) AS cnt FROM quizzes WHERE deleted = 0"
+        cursor = self.execute_query(query)
+        row = cursor.fetchone()
+        return int(row["cnt"] if row else 0)
 
     def update_quiz(self, quiz_id: str, updates: Dict[str, Any], client_id: str = "unknown") -> bool:
         """Update quiz fields using optimistic version checks when supplied."""

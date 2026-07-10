@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.timer import Timer
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...config import get_cli_setting, save_setting_to_cli_config
@@ -70,7 +70,14 @@ from ...Library.library_rag_service import (
     LibraryRagSearchRequest,
     run_library_rag_search,
 )
-from ...Library.library_rag_state import LibraryRagPanelState
+from ...Library.library_rag_state import (
+    LIBRARY_RAG_QUERY_MAX_LENGTH,
+    LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
+    LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
+    LIBRARY_SEARCH_HISTORY_LIMIT,
+    LibraryRagPanelState,
+    update_search_history,
+)
 from ...Library.library_rail_state import (
     LIBRARY_RAIL_SECTION_IDS,
     coerce_library_rail_preferences,
@@ -80,6 +87,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_CREATE_NOTE,
     LibraryShellInput,
     build_library_shell_state,
@@ -106,6 +114,12 @@ from ...Widgets.Library import (
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
     library_dim_label_text,
+    library_rag_history_children,
+    library_rag_query_shows_full_recovery,
+    library_rag_query_status_children,
+    library_rag_results_body_children,
+    library_rag_scope_recovery_children,
+    library_rag_scope_shows_recovery,
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
@@ -147,13 +161,7 @@ LIBRARY_HUB_INVENTORY_READINESS_COLUMN_WIDTH = 16
 LIBRARY_HUB_INVENTORY_OWNER_COLUMN_WIDTH = 22
 LIBRARY_HUB_INVENTORY_ACTION_COLUMN_WIDTH = 18
 LIBRARY_MEDIA_HANDOFF_EXCERPT_CHARS = 500
-LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset(
-    {
-        "library-rag-results-section-rule",
-        "library-rag-results-heading",
-        "library-rag-attribution-placeholder",
-    }
-)
+LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"})
 LIBRARY_COLUMN_TITLES = {
     "sources": ("Source Map", "Active Workbench", "Inspector"),
     "conversations": ("Source Map", "Saved Conversations", "Conversation Inspector"),
@@ -518,13 +526,41 @@ class LibraryScreen(BaseAppScreen):
         }
         self._library_lookup_error: str | None = None
         self._library_lookup_recovery_state: DestinationRecoveryState | None = None
+        # Decorative Create-rail counts (study decks, flashcards due,
+        # quizzes): None until the local source snapshot has loaded, and
+        # None per-key thereafter when that count's service seam is absent
+        # or its fetch failed -- see ``_study_count_or_none``. Unlike the
+        # three browse sources, a missing/failed study count never carries
+        # an error copy; the row just renders uncounted.
+        self._library_study_counts: dict[str, int | None] = {
+            "study_decks": None,
+            "flashcards_due": None,
+            "quizzes": None,
+        }
         self._library_loaded = False
         self._active_mode = "sources"
+        self._library_rag_mode: str = "search"
         self._library_rag_query = ""
         self._library_rag_results = ()
         self._library_rag_retrieval_status = ""
         self._library_rag_recovery_state: DestinationRecoveryState | None = None
         self._library_rag_selected_result_id = ""
+        # B2: source types the user has toggled OFF (deselected) in the
+        # scope region. Empty = every available source is in scope (the
+        # default). Persists across rail switches within the session, same
+        # as mode, but is never written to config.
+        self._library_rag_scope_deselected: set[str] = set()
+        # D1: whether the `Recent searches` collapsible should render
+        # collapsed. Only `_apply_library_rag_search_outcome` (the
+        # results-arrival transition) is allowed to change this; every
+        # other refresh must leave the user's manual expand/collapse alone.
+        self._library_rag_history_collapsed: bool = False
+        self._library_search_history: tuple[str, ...] = self._load_library_search_history()
+        # Serializes history-collapsible content rebuilds: the "searching"
+        # status refresh (called synchronously before the search worker is
+        # scheduled) and that worker's own "outcome" refresh can otherwise
+        # interleave mid-rebuild and mount duplicate row IDs.
+        self._library_rag_history_refresh_lock = asyncio.Lock()
         self._library_collections_loaded = False
         self._library_collections_records = ()
         self._library_collections_selected_id = ""
@@ -758,8 +794,11 @@ class LibraryScreen(BaseAppScreen):
             total_known,
             lookup_error,
             recovery_state,
+            study_counts,
         ) = await self._list_local_source_snapshot()
-        self._apply_local_source_snapshot(records, counts, total_known, lookup_error, recovery_state)
+        self._apply_local_source_snapshot(
+            records, counts, total_known, lookup_error, recovery_state, study_counts
+        )
 
     def _apply_local_source_snapshot(
         self,
@@ -768,12 +807,18 @@ class LibraryScreen(BaseAppScreen):
         total_known: dict[str, bool],
         lookup_error: str | None = None,
         recovery_state: DestinationRecoveryState | None = None,
+        study_counts: dict[str, int | None] | None = None,
     ) -> None:
         self._local_source_records = records
         self._local_source_counts = counts
         self._local_source_total_known = total_known
         self._library_lookup_error = lookup_error
         self._library_lookup_recovery_state = recovery_state
+        self._library_study_counts = (
+            study_counts
+            if study_counts is not None
+            else {"study_decks": None, "flashcards_due": None, "quizzes": None}
+        )
         self._library_loaded = True
         self._invalidate_library_workspace_depth_state()
         if self.is_mounted:
@@ -789,6 +834,7 @@ class LibraryScreen(BaseAppScreen):
             {"notes": True, "media": True, "conversations": True},
             LIBRARY_SERVICE_ERROR_COPY,
             None,
+            {"study_decks": None, "flashcards_due": None, "quizzes": None},
         )
 
     @staticmethod
@@ -1002,6 +1048,47 @@ class LibraryScreen(BaseAppScreen):
             return None
         return result if isinstance(result, int) else None
 
+    async def _study_count_or_none(self, count_callable: Any, label: str, **kwargs: Any) -> int | None:
+        """Fetch a decorative Create-rail count, degrading quietly on failure.
+
+        Runs inside the same ``asyncio.gather`` as the local source snapshot
+        fetch (see ``_list_local_source_snapshot``). Unlike the three browse
+        sources (notes/media/conversations), study/quiz counts are purely
+        decorative rail badges: the underlying scope-service methods can
+        raise ``PolicyDeniedError`` (via ``_enforce_policy``) or a plain
+        ``ValueError`` (e.g. local backend unavailable) depending on the
+        runtime, and none of that should ever surface as Library error copy
+        or fail the snapshot fetch -- it just degrades to ``None``, which
+        the rail renders as an uncounted row.
+
+        Args:
+            count_callable: The bound count method to invoke (e.g.
+                ``study_scope_service.count_decks``).
+            label: Human-readable label for the debug log on failure.
+            **kwargs: Forwarded to ``count_callable``.
+
+        Returns:
+            The exact count, or ``None`` if the call failed or returned
+            something other than an ``int``.
+        """
+        # SQLite ``:memory:`` connections are thread-local (``threading.local``
+        # on ``CharactersRAGDB``) -- only the thread that created the DB has
+        # the migrated schema. Forcing this single COUNT(*) query onto a
+        # worker thread would open a brand-new, unmigrated in-memory
+        # connection and fail. Same guard as
+        # ``LibraryLocalRagSearchService._search_conversations`` and
+        # ``_fetch_library_conversation_by_id``.
+        chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
+        isolate_in_worker = not bool(getattr(chachanotes_db, "is_memory_db", False))
+        try:
+            result = await self._run_library_service_call(
+                count_callable, isolate_in_worker=isolate_in_worker, **kwargs
+            )
+        except Exception:
+            logger.debug(f"Failed to fetch {label} count for Library create rail.", exc_info=True)
+            return None
+        return result if isinstance(result, int) else None
+
     async def _list_local_source_snapshot(
         self,
     ) -> tuple[
@@ -1010,15 +1097,21 @@ class LibraryScreen(BaseAppScreen):
         dict[str, bool],
         str | None,
         DestinationRecoveryState | None,
+        dict[str, int | None],
     ]:
         notes_service = getattr(self.app_instance, "notes_scope_service", None)
         media_service = getattr(self.app_instance, "media_reading_scope_service", None)
         conversation_service = getattr(self.app_instance, "chat_conversation_scope_service", None)
+        study_service = getattr(self.app_instance, "study_scope_service", None)
+        quiz_service = getattr(self.app_instance, "study_quiz_scope_service", None)
         list_notes = getattr(notes_service, "list_notes", None)
         list_media = getattr(media_service, "list_media_items", None)
         list_conversations = getattr(conversation_service, "list_conversations", None)
         count_notes = getattr(notes_service, "count_notes", None)
         count_notes_available = callable(count_notes)
+        count_decks = getattr(study_service, "count_decks", None)
+        count_due_flashcards = getattr(study_service, "count_due_flashcards", None)
+        count_quizzes = getattr(quiz_service, "count_quizzes", None)
         notes_user_id = getattr(self.app_instance, "notes_user_id", None) or "default_user"
 
         empty_records: dict[str, tuple[Mapping[str, Any], ...]] = {
@@ -1028,8 +1121,20 @@ class LibraryScreen(BaseAppScreen):
         }
         empty_counts = {"notes": 0, "media": 0, "conversations": 0}
         empty_total_known = {"notes": True, "media": True, "conversations": True}
+        empty_study_counts: dict[str, int | None] = {
+            "study_decks": None,
+            "flashcards_due": None,
+            "quizzes": None,
+        }
         if not all(callable(call) for call in (list_notes, list_media, list_conversations)):
-            return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_UNAVAILABLE_COPY, None
+            return (
+                empty_records,
+                empty_counts,
+                empty_total_known,
+                LIBRARY_SERVICE_UNAVAILABLE_COPY,
+                None,
+                empty_study_counts,
+            )
 
         gathered_calls = [
             self._run_library_service_call(
@@ -1056,10 +1161,29 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             ),
         ]
+        # Optional decorative/exact counts are appended (and unpacked back)
+        # by key so this stays simple as the number of optional seams
+        # grows -- see ``_notes_true_count_or_none``/``_study_count_or_none``
+        # for the per-count degrade-to-None contract.
+        optional_calls: list[tuple[str, Any]] = []
         if count_notes_available:
-            gathered_calls.append(
-                self._notes_true_count_or_none(count_notes, scope="local_note", user_id=notes_user_id)
+            optional_calls.append(
+                (
+                    "notes_true_count",
+                    self._notes_true_count_or_none(count_notes, scope="local_note", user_id=notes_user_id),
+                )
             )
+        if callable(count_decks):
+            optional_calls.append(
+                ("study_decks", self._study_count_or_none(count_decks, "study decks"))
+            )
+        if callable(count_due_flashcards):
+            optional_calls.append(
+                ("flashcards_due", self._study_count_or_none(count_due_flashcards, "flashcards due"))
+            )
+        if callable(count_quizzes):
+            optional_calls.append(("quizzes", self._study_count_or_none(count_quizzes, "quizzes")))
+        gathered_calls.extend(call for _, call in optional_calls)
 
         try:
             gathered_results = await asyncio.wait_for(
@@ -1080,19 +1204,31 @@ class LibraryScreen(BaseAppScreen):
                 empty_total_known,
                 recovery_state.visible_copy,
                 recovery_state,
+                empty_study_counts,
             )
         except Exception:
             logger.warning(
                 "Failed to load local Library source snapshot.",
                 exc_info=True,
             )
-            return empty_records, empty_counts, empty_total_known, LIBRARY_SERVICE_ERROR_COPY, None
+            return (
+                empty_records,
+                empty_counts,
+                empty_total_known,
+                LIBRARY_SERVICE_ERROR_COPY,
+                None,
+                empty_study_counts,
+            )
 
-        if count_notes_available:
-            notes_result, media_result, conversation_result, notes_true_count = gathered_results
-        else:
-            notes_result, media_result, conversation_result = gathered_results
-            notes_true_count = None
+        notes_result, media_result, conversation_result, *optional_results = gathered_results
+        optional_values = dict(zip((key for key, _ in optional_calls), optional_results))
+
+        notes_true_count = optional_values.get("notes_true_count")
+        study_counts: dict[str, int | None] = {
+            "study_decks": optional_values.get("study_decks"),
+            "flashcards_due": optional_values.get("flashcards_due"),
+            "quizzes": optional_values.get("quizzes"),
+        }
 
         notes, notes_count, notes_total_known = self._response_records_and_count(notes_result)
         if notes_true_count is not None:
@@ -1122,6 +1258,7 @@ class LibraryScreen(BaseAppScreen):
             },
             None,
             None,
+            study_counts,
         )
 
     def _has_local_sources(self) -> bool:
@@ -2113,6 +2250,15 @@ class LibraryScreen(BaseAppScreen):
         return self._active_mode in LIBRARY_LOCAL_SNAPSHOT_MODES
 
     def _library_rag_panel_state(self) -> LibraryRagPanelState:
+        # B2: explicit selection is every real source type NOT toggled off;
+        # `LibraryRagScopeState.from_source_counts` intersects this with
+        # actual availability, so a deselected-but-empty source can't
+        # falsely count as "selected".
+        selected_source_types = tuple(
+            source_type
+            for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
+            if source_type not in self._library_rag_scope_deselected
+        )
         return LibraryRagPanelState.from_values(
             source_counts={
                 "notes": self._local_source_counts.get("notes", 0),
@@ -2122,7 +2268,7 @@ class LibraryScreen(BaseAppScreen):
                 "collections": 0,
             },
             query=self._library_rag_query,
-            mode="rag",
+            mode=self._library_rag_mode,
             results=self._library_rag_results,
             selected_result_id=self._library_rag_selected_result_id,
             retrieval_status=self._library_rag_retrieval_status,
@@ -2136,9 +2282,15 @@ class LibraryScreen(BaseAppScreen):
                 if self._library_rag_recovery_state is not None
                 else ""
             ),
+            # Deliberately always ready: the UI path never imports torch (or
+            # any other optional Search/RAG dependency), and the retrieval
+            # service double-guards missing runtimes/indexes at call time.
             dependencies_ready=True,
             index_ready=True,
-            provider_ready=True,
+            provider_ready=(getattr(self.app_instance, "_rag_service", None) is not None),
+            selected_source_types=selected_source_types,
+            history=self._library_search_history,
+            history_collapsed=self._library_rag_history_collapsed,
         )
 
     def _library_collections_panel_state(self) -> LibraryCollectionsPanelState:
@@ -2872,7 +3024,7 @@ class LibraryScreen(BaseAppScreen):
             rail = LibraryRail(
                 shell,
                 preferences,
-                query=self._library_conversation_query,
+                query=self._library_rag_query,
                 search_placeholder=self._library_rail_search_placeholder(),
                 workspaces_body_factory=self._compose_workspaces_rail_body,
                 id="library-rail",
@@ -3016,6 +3168,19 @@ class LibraryScreen(BaseAppScreen):
                         mode="create",
                         id="library-notes-canvas",
                     )
+                elif shell.canvas_kind == "search":
+                    yield LibrarySearchRagPanel(
+                        self._library_rag_panel_state(),
+                        id="library-search-rag-panel",
+                    )
+                elif shell.canvas_kind == "collections":
+                    yield LibraryCollectionsPanel(
+                        self._library_collections_panel_state(),
+                        name_value=self._library_collection_name_input,
+                        description_value=self._library_collection_description_input,
+                        delete_pending=bool(self._library_collection_pending_delete_id),
+                        id="library-collections-panel",
+                    )
                 elif shell.canvas_kind == "mode":
                     yield from self._compose_mode_canvas(shell.canvas_target)
                 else:
@@ -3069,6 +3234,9 @@ class LibraryScreen(BaseAppScreen):
             runtime_source=active_source,
             server_label=str(server_label) if server_label else None,
             details_lines=self._library_details_lines(active_source, server_label),
+            study_decks_count=self._library_study_counts.get("study_decks"),
+            flashcards_due_count=self._library_study_counts.get("flashcards_due"),
+            quizzes_count=self._library_study_counts.get("quizzes"),
         )
 
     def _library_details_lines(
@@ -4304,19 +4472,6 @@ class LibraryScreen(BaseAppScreen):
             )
         if mode in LIBRARY_STUDY_HANDOFF_MODES:
             yield self._study_handoff_detail_widget()
-        elif mode == "search":
-            yield LibrarySearchRagPanel(
-                self._library_rag_panel_state(),
-                id="library-search-rag-panel",
-            )
-        elif mode == "collections":
-            yield LibraryCollectionsPanel(
-                self._library_collections_panel_state(),
-                name_value=self._library_collection_name_input,
-                description_value=self._library_collection_description_input,
-                delete_pending=bool(self._library_collection_pending_delete_id),
-                id="library-collections-panel",
-            )
         elif mode == "import-export":
             for row in self._import_export_workflow_rows():
                 yield row
@@ -4332,6 +4487,109 @@ class LibraryScreen(BaseAppScreen):
                 if isinstance(rail_state, dict):
                     raw = rail_state.get("sections")
         return coerce_library_rail_preferences(raw)
+
+    def _load_library_search_history(self) -> tuple[str, ...]:
+        """Read persisted Library Search/RAG query history, defensively.
+
+        Two sources are consulted, in order:
+
+        1. `self.app_instance.app_config["library"]["search"]["history"]` --
+           the in-memory config dict. This is the primary source: it is what
+           pilots seed directly, and it reflects any history recorded during
+           the current session (`_record_library_search_history` mutates it
+           in place, alongside persisting to disk).
+        2. `get_cli_setting("library.search")` -- a live re-read of
+           `config.toml` via `load_cli_config_and_ensure_existence()`. This
+           fallback exists because `app.app_config` comes from
+           `load_settings()`, whose merged output does NOT reliably surface
+           the `[library.search]` TOML table (it can come back empty even
+           when `config.toml` has history on disk) -- so a freshly started
+           app would otherwise always see empty history despite having
+           persisted some in a prior session. `get_cli_setting` reads the
+           CLI config file directly and does carry the value.
+
+        Only source (1) is used when it already yields a list, so pilots
+        that seed `app_config` directly stay authoritative and never touch
+        disk. Missing keys or a malformed shape from either source quietly
+        fall back to no history; entries are coerced to trimmed strings and
+        capped to the same shape `update_search_history` produces (<= 10
+        entries, <= 200 chars each).
+
+        `config.toml` is user-editable, so each entry is also run through
+        `_safe_text` (control-character stripping, dangerous-pattern
+        removal, length validation) before it ever becomes a history
+        `Button` label -- belt-and-suspenders alongside the markup escape
+        `library_rag_history_children` applies at render time.
+        """
+        app_config = getattr(self.app_instance, "app_config", None)
+        raw = None
+        if isinstance(app_config, dict):
+            library_config = app_config.get("library")
+            if isinstance(library_config, dict):
+                search_config = library_config.get("search")
+                if isinstance(search_config, dict):
+                    raw = search_config.get("history")
+        if not isinstance(raw, list):
+            try:
+                # Dotted 1-arg form: get_cli_setting("library.search") splits
+                # on the first '.' into section="library", key="search" and
+                # returns config["library"]["search"] (the search sub-dict,
+                # not the history list) -- deliberately NOT the 3-arg
+                # ("library.search", "history", default) form, which treats
+                # "library.search" as a single literal top-level section key
+                # and never matches the nested TOML table.
+                search_config = get_cli_setting("library.search")
+            except Exception:
+                search_config = None
+            if isinstance(search_config, dict):
+                raw = search_config.get("history")
+        if not isinstance(raw, list):
+            return ()
+        entries = tuple(
+            sanitized
+            for entry in raw
+            if (
+                sanitized := self._safe_text(
+                    entry, max_length=LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS
+                )
+            )
+        )
+        return entries[:LIBRARY_SEARCH_HISTORY_LIMIT]
+
+    def _record_library_search_history(self, query: str) -> None:
+        """Update in-memory and persisted Library Search/RAG query history."""
+        self._library_search_history = update_search_history(
+            self._library_search_history, query
+        )
+        self._persist_library_search_history(list(self._library_search_history))
+
+    def _persist_library_search_history(self, history_list: list[str]) -> None:
+        """Write `history_list` into the in-memory config and to disk.
+
+        Shared by `_record_library_search_history` (append a new query) and
+        `clear_library_search_history` (D1: empty the list) so both funnel
+        through one persistence path.
+        """
+        app_config = getattr(self.app_instance, "app_config", None)
+        if isinstance(app_config, dict):
+            library_config = app_config.get("library")
+            if not isinstance(library_config, dict):
+                library_config = {}
+                app_config["library"] = library_config
+            search_config = library_config.get("search")
+            if not isinstance(search_config, dict):
+                search_config = {}
+                library_config["search"] = search_config
+            search_config["history"] = history_list
+        self._save_library_search_history(history_list)
+
+    @work(thread=True)
+    def _save_library_search_history(self, history: list[str]) -> None:
+        """Persist Library Search/RAG query history without blocking the UI thread."""
+        try:
+            save_setting_to_cli_config("library.search", "history", history)
+        except Exception:
+            pass
 
     def _set_library_rail_section(self, section_id: str, open_state: bool) -> None:
         """Persist one section preference and sync the rail body/header."""
@@ -6250,17 +6508,34 @@ class LibraryScreen(BaseAppScreen):
         self.post_message(NavigateToScreen("media"))
 
     @on(Input.Submitted, "#library-search-input")
-    def handle_library_search_submitted(self, event: Input.Submitted) -> None:
-        """Filter the conversations canvas from the rail search box.
+    async def handle_library_search_submitted(self, event: Input.Submitted) -> None:
+        """Submit the rail-top query to the Search canvas (fast `search` mode).
+
+        The rail search box is the single query truth for Library
+        Search/RAG: submitting it seeds ``_library_rag_query``, selects the
+        promoted Search canvas, and (for a non-blank query) runs it through
+        the same exclusive-worker gate as the in-panel query box
+        (``_start_library_rag_query``). A blank submit still lands on the
+        Search canvas -- so a bare Enter always goes somewhere sensible --
+        but never invokes the search service.
 
         Args:
             event: Input submit event emitted by the rail's search box.
         """
         event.stop()
-        self._library_conversation_query = self._safe_text(event.value, max_length=200)
-        self._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
-        self._active_mode = "conversations"
-        self.refresh(recompose=True)
+        query = self._safe_text(event.value, max_length=LIBRARY_RAG_QUERY_MAX_LENGTH)
+        self._library_rag_query = query
+        self._library_rag_mode = "search"
+        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_SEARCH, "search")
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_SEARCH:
+            # A dirty note editor sitting in an unresolved save conflict
+            # aborts the row switch (`_select_library_rail_row` returns
+            # early without moving `_library_selected_row_id`) -- the rail
+            # submit must not run a query against a canvas the user never
+            # actually reached, and must not record a history entry for it.
+            return
+        if query.strip():
+            await self._start_library_rag_query()
         self.call_after_refresh(self._focus_library_search_input)
 
     def _focus_library_search_input(self) -> None:
@@ -6276,21 +6551,50 @@ class LibraryScreen(BaseAppScreen):
             pass
 
     def _library_rail_search_placeholder(self) -> str:
-        """Placeholder for the rail search box, reflecting the active browse.
+        """Placeholder for the rail search box.
 
-        The rail search only filters conversations (see
-        ``handle_library_search_submitted``), so it is precise when the
-        Conversations browse is active and a generic "Search Library…"
-        otherwise -- it should not claim "conversations" while the user is
-        browsing Media or another source. Making it actually search the
-        active source is a tracked follow-up.
+        The rail box always feeds the Search canvas now (see
+        ``handle_library_search_submitted``), never a source-specific
+        filter, so the placeholder is unconditional regardless of which
+        rail row is active.
 
         Returns:
-            The context-appropriate search placeholder text.
+            The rail search placeholder text.
         """
-        if self._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
-            return "Search conversations…"
         return "Search Library…"
+
+    @on(Input.Submitted, "#library-conversations-filter")
+    def handle_library_conversations_filter_submitted(self, event: Input.Submitted) -> None:
+        """Filter the conversations canvas from its in-canvas filter box.
+
+        This is client-side substring filtering over the already-loaded
+        conversations snapshot (up to ``LIBRARY_SOURCE_PAGE_SIZES["conversations"]``
+        records) -- the same behavior the rail-top search box used to
+        provide before it was rewired to feed the Search canvas. A
+        service-backed FTS filter over the full conversation set (not just
+        the loaded snapshot) is a tracked follow-up.
+
+        Args:
+            event: Input submit event emitted by the conversations canvas's
+                filter box.
+        """
+        event.stop()
+        self._library_conversation_query = self._safe_text(event.value, max_length=200)
+        self.refresh(recompose=True)
+        self.call_after_refresh(self._focus_library_conversations_filter)
+
+    def _focus_library_conversations_filter(self) -> None:
+        """Re-focus the conversations filter box after a submit-triggered recompose.
+
+        Mirrors ``_focus_library_search_input``: the Submitted-driven
+        recompose remounts a brand-new ``#library-conversations-filter``;
+        without this, focus silently falls back to the screen after every
+        filter submit.
+        """
+        try:
+            self.query_one("#library-conversations-filter", Input).focus()
+        except (NoMatches, QueryError):
+            pass
 
     @on(Button.Pressed, ".library-mode-chip")
     async def switch_library_mode(self, event: Button.Pressed) -> None:
@@ -6902,6 +7206,95 @@ class LibraryScreen(BaseAppScreen):
         # Import/Export mode; flipping _active_mode alone reverts on recompose.
         await self._select_library_rail_row("ingest-import-export", "import-export")
 
+    @on(Button.Pressed, "#library-rag-mode-toggle")
+    def cycle_library_rag_mode(self, event: Button.Pressed) -> None:
+        """Cycle Library Search/RAG mode between keyword search and RAG answer."""
+        event.stop()
+        self._library_rag_mode = "rag" if self._library_rag_mode == "search" else "search"
+        self._reset_library_rag_retrieval_state()
+        self.refresh(recompose=True)
+
+    @on(Button.Pressed, ".library-rag-scope-toggle")
+    def toggle_library_rag_scope_source(self, event: Button.Pressed) -> None:
+        """Toggle one source type in/out of the Search/RAG retrieval scope (B2).
+
+        Unlike the mode toggle, this deliberately does NOT reset in-flight
+        or already-landed retrieval state: scope only affects the NEXT run,
+        so existing results/history stay visible. Still a transition (like
+        the mode toggle), so the canvas recomposes to pick up the new
+        toggle labels, run-gate state, and (if the scope is now empty) the
+        A1 quiet line.
+        """
+        event.stop()
+        button_id = event.button.id or ""
+        source_type = button_id.removeprefix("library-rag-scope-toggle-")
+        if source_type not in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES:
+            return
+        if source_type in self._library_rag_scope_deselected:
+            self._library_rag_scope_deselected.discard(source_type)
+        else:
+            self._library_rag_scope_deselected.add(source_type)
+        self.refresh(recompose=True)
+
+    @on(Collapsible.Toggled, "#library-rag-history")
+    def sync_library_rag_history_collapsed(self, event: Collapsible.Toggled) -> None:
+        """Track manual expand/collapse so recomposes preserve the user's choice.
+
+        `Collapsible._watch_collapsed` posts this message on every change of
+        the `collapsed` reactive -- both the user clicking the title and the
+        programmatic `collapsible.collapsed = force_collapsed` assignment in
+        `_refresh_library_rag_history_widget` (the results-arrival
+        force-collapse path). The latter is harmless to mirror here: that
+        assignment always uses `panel_state.history_collapsed`, which is
+        itself derived from `_library_rag_history_collapsed` moments after
+        that field was just set at the results-arrival transition, so this
+        handler only ever re-writes the field to the value it already holds.
+        """
+        event.stop()
+        self._library_rag_history_collapsed = event.collapsible.collapsed
+
+    @on(Button.Pressed, "#library-rag-history-clear")
+    async def clear_library_search_history(self, event: Button.Pressed) -> None:
+        """Clear all Library Search/RAG query history, in memory and on disk (D1)."""
+        event.stop()
+        self._library_search_history = ()
+        self._persist_library_search_history([])
+        await self._refresh_library_rag_history_widget(self._library_rag_panel_state())
+
+    @on(Button.Pressed, ".library-rag-history-row")
+    async def rerun_library_search_from_history(self, event: Button.Pressed) -> None:
+        """Re-run a prior Library Search/RAG query selected from history."""
+        event.stop()
+        index = self._trailing_index(event.button.id)
+        if index is None or index >= len(self._library_search_history):
+            return
+        query = self._library_search_history[index]
+        self._library_rag_query = query
+        # Repopulate the visible query input too -- otherwise it keeps
+        # whatever text (or blank) it held before the history row was
+        # clicked, even though the run underneath used the history entry.
+        # Set this before starting the run: `update_library_rag_query`'s
+        # `Input.Changed` handler is a no-op once its value already equals
+        # `_library_rag_query` (true here), so it can't clobber the new
+        # run's "searching" status either way, but setting it first keeps
+        # the widget and state in lockstep from the start of the run.
+        try:
+            self.query_one("#library-rag-query-input", Input).value = query
+        except (NoMatches, QueryError):
+            pass
+        await self._start_library_rag_query()
+
+    @staticmethod
+    def _trailing_index(button_id: str | None) -> int | None:
+        """Parse the trailing `-{index}` integer from a button id, or None."""
+        if not button_id:
+            return None
+        try:
+            index = int(button_id.rsplit("-", 1)[-1])
+        except ValueError:
+            return None
+        return index if index >= 0 else None
+
     async def _start_library_rag_query(self) -> None:
         panel_state = self._library_rag_panel_state()
         run_action = panel_state.query_state.run_action
@@ -6918,11 +7311,25 @@ class LibraryScreen(BaseAppScreen):
             top_k=panel_state.query_state.top_k,
             include_citations=panel_state.query_state.include_citations,
         )
+        self._record_library_search_history(request.query)
         self._library_rag_results = ()
         self._library_rag_recovery_state = None
         self._library_rag_selected_result_id = ""
         self._library_rag_retrieval_status = "searching"
-        await self._refresh_search_rag_panel_state_widgets()
+        # The rail-top search box can invoke this mid-recompose -- it selects
+        # the Search canvas via ``_select_library_rail_row`` and then runs the
+        # query immediately after, before the scheduled recompose has mounted
+        # ``#library-search-rag-panel``. The widget refresh is only attempted
+        # when the panel is actually mounted; when it isn't, skipping is
+        # non-fatal because the subsequent recompose renders the same state
+        # (the status fields set above already carry it). This is an
+        # explicit presence check, not a broad NoMatches/QueryError catch --
+        # a prior version wrapped the whole refresh (results rows included)
+        # in a blanket ``except (NoMatches, QueryError): pass``, which also
+        # silently swallowed unrelated mid-rebuild query failures instead of
+        # only tolerating the "panel not mounted yet" case it was meant for.
+        if self.query("#library-search-rag-panel"):
+            await self._refresh_search_rag_panel_state_widgets()
         self._execute_library_rag_search(request)
 
     @on(Button.Pressed, "#library-create-collection")
@@ -7027,15 +7434,160 @@ class LibraryScreen(BaseAppScreen):
     async def select_library_rag_result(self, event: Button.Pressed) -> None:
         """Select an evidence row for inspector review and Console handoff."""
         event.stop()
-        button_id = event.button.id or ""
-        try:
-            result_index = int(button_id.rsplit("-", 1)[-1])
-        except ValueError:
-            return
-        if result_index < 0 or result_index >= len(self._library_rag_results):
+        result_index = self._trailing_index(event.button.id)
+        if result_index is None or result_index >= len(self._library_rag_results):
             return
         self._library_rag_selected_result_id = self._library_rag_results[result_index].result_id
         await self._refresh_search_rag_panel_state_widgets()
+
+    @on(Button.Pressed, ".library-rag-result-open")
+    async def open_library_rag_result(self, event: Button.Pressed) -> None:
+        """Open a Search/RAG evidence result straight to its Library detail surface."""
+        event.stop()
+        index = self._trailing_index(event.button.id)
+        rows = self._library_rag_results
+        if index is None or not (0 <= index < len(rows)):
+            return
+        row = rows[index]
+        await self._open_library_item_by_id(row.open_source_type, row.source_id)
+
+    async def _open_library_item_by_id(self, source_type: str, record_id: str) -> None:
+        """Open a Library item straight to its detail surface by id.
+
+        Shared route for per-result Search/RAG "Open" actions -- unlike
+        rail-row navigation (``_select_library_rail_row``), which always
+        lands on the list/browse view for a content type, this jumps
+        straight to the media viewer, the notes editor, or a specific
+        conversation. Also the route the future ingest-queue "open result"
+        actions reuse.
+
+        Args:
+            source_type: ``"media"``, ``"notes"``, or ``"conversations"``.
+                Any other value (including empty) is a no-op -- defensive
+                only, since the Open action is only rendered for rows with
+                resolvable provenance (``LibraryRagResultRow.can_open``).
+            record_id: The item's id within its source type.
+        """
+        if not record_id or source_type not in ("media", "notes", "conversations"):
+            return
+
+        if source_type == "media":
+            await self._flush_library_note_save()
+            if self._library_note_autosave_state == "conflict":
+                return
+            # Mirrors handle_library_media_row's full state-set EXACTLY so
+            # the recomposed canvas lands on a clean viewer, never a stale
+            # one carried over from a previously opened item.
+            self._selected_media_id = record_id
+            self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+            self._active_mode = "media"
+            self._library_media_view = "viewer"
+            self._library_media_detail = None
+            self._library_media_editing = False
+            self._library_media_confirming_delete = False
+            self._library_media_highlights = []
+            self._library_media_editing_analysis = False
+            self._library_media_content_query = ""
+            self._library_media_content_match_index = 0
+            self.run_worker(
+                self._refresh_library_media_detail(record_id),
+                exclusive=True,
+                group="library_media_detail",
+            )
+            self.refresh(recompose=True)
+            return
+
+        if source_type == "notes":
+            await self._flush_library_note_save()
+            if self._library_note_autosave_state == "conflict":
+                return
+            # Reset first for a clean slate (also stops any autosave timer,
+            # clears dirty/conflict/preview state), then apply the actual
+            # open-target fields -- equivalent final state to the note_id
+            # navigation-context branch's inline field-by-field reset.
+            self._reset_library_note_editor_state()
+            self._active_mode = "notes"
+            self._library_notes_view = "editor"
+            self._selected_note_id = record_id
+            self._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+            self.run_worker(
+                self._refresh_library_note_detail(record_id),
+                exclusive=True,
+                group="library_note_detail",
+            )
+            self.refresh(recompose=True)
+            return
+
+        # conversations: jump straight to a specific conversation, fetching
+        # it by id when it isn't already in the loaded snapshot. Closes the
+        # known deep-link caveat where an out-of-snapshot id silently fell
+        # back to the first row (_ensure_selected_conversation_id).
+        record_ids = {
+            self._conversation_record_id(record, index)
+            for index, record in enumerate(self._conversation_records())
+        }
+        if record_id not in record_ids:
+            fetched = await self._fetch_library_conversation_by_id(record_id)
+            if fetched is None:
+                notify = getattr(self.app_instance, "notify", None)
+                if callable(notify):
+                    notify("Conversation is unavailable.", severity="warning")
+                return
+            self._local_source_records["conversations"] = (
+                fetched,
+                *self._local_source_records.get("conversations", ()),
+            )
+        self._selected_conversation_id = record_id
+        # Opening a specific conversation must show it even if an in-canvas
+        # filter would otherwise hide it -- handle_library_rail_row's own
+        # canvas branch resets this same field for the same reason when
+        # entering Conversations via the rail; _select_library_rail_row
+        # itself does not touch it.
+        self._library_conversation_query = ""
+        await self._select_library_rail_row(LIBRARY_ROW_BROWSE_CONVERSATIONS, "conversations")
+
+    async def _fetch_library_conversation_by_id(
+        self, conversation_id: str
+    ) -> Mapping[str, Any] | None:
+        """Fetch a single conversation record directly from ChaChaNotes by id.
+
+        Used by ``_open_library_item_by_id`` when a conversation Open target
+        is outside the loaded ``_local_source_records["conversations"]``
+        snapshot -- ``chat_conversation_scope_service.list_conversations``
+        only returns the loaded page, so a direct point lookup against the
+        DB is needed instead.
+
+        Args:
+            conversation_id: The conversation id to fetch.
+
+        Returns:
+            The raw ``conversations`` table row as a mapping, or ``None``
+            when the DB is unavailable, the lookup fails, or no matching
+            (non-deleted) conversation exists.
+        """
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        get_conversation_by_id = getattr(db, "get_conversation_by_id", None)
+        if not callable(get_conversation_by_id):
+            return None
+        try:
+            if getattr(db, "is_memory_db", False):
+                # In-memory SQLite connections are thread-local -- only the
+                # thread that created the DB has the migrated schema, so
+                # offloading to a worker thread would hit a blank connection.
+                # Same guard as
+                # LibraryLocalRagSearchService._search_conversations.
+                record = get_conversation_by_id(conversation_id, include_deleted=False)
+            else:
+                record = await asyncio.to_thread(
+                    get_conversation_by_id, conversation_id, include_deleted=False
+                )
+        except Exception:
+            logger.warning(
+                f"Failed to fetch Library conversation {conversation_id!r} by id.",
+                exc_info=True,
+            )
+            return None
+        return record if isinstance(record, Mapping) else None
 
     @on(Button.Pressed, "#library-rag-use-in-console")
     def use_library_rag_result_in_console(self, event: Button.Pressed) -> None:
@@ -7090,7 +7642,7 @@ class LibraryScreen(BaseAppScreen):
             action_label="Review evidence in Console",
         )
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="library_rag_search")
     async def _execute_library_rag_search(self, request: LibraryRagSearchRequest) -> None:
         outcome = await run_library_rag_search(self.app_instance, request)
         await self._apply_library_rag_search_outcome(request, outcome)
@@ -7100,20 +7652,46 @@ class LibraryScreen(BaseAppScreen):
         request: LibraryRagSearchRequest,
         outcome: LibraryRagSearchOutcome,
     ) -> None:
+        """Resolve a completed Library Search/RAG worker's outcome into state.
+
+        The state fields (results/status/recovery) always apply once the
+        stale-query and stale-mode guards pass -- even if the user has since
+        left the Search canvas (a different rail row, e.g. Media) -- so a
+        dangling "searching" status can never survive: an outcome that lands
+        while the user is elsewhere still resolves it, and re-entering the
+        Search canvas composes from settled state instead of a stale
+        in-flight line. Only the live widget refresh is skipped when the
+        panel isn't mounted; there is nothing on screen to update.
+        """
         if not self.is_mounted:
-            return
-        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
             return
         current_query = self._library_rag_panel_state().query_state.query
         if request.query != current_query:
+            # Stale: a newer query has since replaced this one.
+            return
+        if request.mode != self._library_rag_mode:
+            # Stale: the mode toggled mid-flight; this result belongs to
+            # the mode the user has since left.
             return
         self._library_rag_results = outcome.results
         self._library_rag_retrieval_status = outcome.status
         self._library_rag_recovery_state = outcome.recovery_state
         self._library_rag_selected_result_id = ""
-        await self._refresh_search_rag_panel_state_widgets()
+        # D1: the results-arrival transition is the ONLY place allowed to
+        # force the `Recent searches` collapsible open/closed -- collapse it
+        # once evidence lands (results take visual priority), expand it
+        # when a search settles with nothing to show. Every other refresh
+        # path leaves the user's manual expand/collapse alone.
+        self._library_rag_history_collapsed = bool(self._library_rag_results)
+        if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
+            return
+        await self._refresh_search_rag_panel_state_widgets(force_history_collapse=True)
 
-    async def _refresh_search_rag_panel_state_widgets(self) -> None:
+    async def _refresh_search_rag_panel_state_widgets(
+        self,
+        *,
+        force_history_collapse: bool = False,
+    ) -> None:
         if self._active_mode != "search" or not self.query("#library-search-rag-panel"):
             return
 
@@ -7121,87 +7699,118 @@ class LibraryScreen(BaseAppScreen):
         status_rows = list(self.query("#library-status-row"))
         if status_rows:
             status_rows[0].update(self._status_row_copy())
-        self.query_one("#library-rag-query-status", Static).update(
-            f"Mode: {panel_state.query_state.mode_label} | Top {panel_state.query_state.top_k}"
-        )
-        self.query_one("#library-rag-query-blocked", Static).update(
-            self._library_rag_query_blocked_summary(panel_state)
-        )
-        run_action = panel_state.query_state.run_action
-        self.query_one("#library-rag-query-blocked-callout", Static).update(
-            self._library_rag_query_blocked_callout(panel_state)
-        )
-        self.query_one("#library-rag-query-blocked-callout", Static).set_class(
-            not run_action.enabled,
-            "is-blocked",
-        )
-        self.query_one("#library-rag-query-blocked-callout", Static).set_class(
-            run_action.enabled,
-            "is-ready",
-        )
-        run_button = self.query_one("#library-rag-run-query", Button)
-        run_button.disabled = not run_action.enabled
-        run_button.tooltip = run_action.tooltip
-        self.query_one("#library-rag-run-disabled-reason", Static).update(
-            self._library_rag_run_disabled_reason(panel_state)
-        )
 
-        query_controls = self.query_one("#library-rag-query-controls", Vertical)
-        recovery_widgets = list(self.query("#library-rag-query-recovery"))
-        show_query_recovery = (
-            bool(panel_state.query_state.recovery_copy)
-            and panel_state.scope.status != "blocked"
-        )
-        query_controls.set_class(show_query_recovery, "has-recovery")
-        if show_query_recovery:
-            if recovery_widgets:
-                recovery_widgets[0].update(panel_state.query_state.recovery_copy)
-            else:
-                await query_controls.mount(
-                    Static(
-                        panel_state.query_state.recovery_copy,
-                        id="library-rag-query-recovery",
-                    ),
-                    after="#library-rag-query-shortcuts",
-                )
-        else:
-            for widget in recovery_widgets:
-                await widget.remove()
+        await self._refresh_library_rag_query_status_widgets(panel_state)
 
         scope_container = self.query_one("#library-rag-source-scope", Vertical)
-        scope_container.set_class(bool(panel_state.scope.recovery_copy), "has-recovery")
+        scope_container.set_class(
+            library_rag_scope_shows_recovery(panel_state.scope), "has-recovery"
+        )
         self.query_one("#library-rag-scope-summary", Static).update(
             self._library_rag_scope_summary(panel_state)
         )
-        for widget_id, copy in self._library_rag_scope_rows(panel_state).items():
-            self.query_one(f"#{widget_id}", Static).update(copy)
         scope_recovery_widgets = list(self.query("#library-rag-scope-recovery"))
         import_buttons = list(self.query("#library-rag-open-import-export"))
-        if panel_state.scope.recovery_copy:
-            if scope_recovery_widgets:
-                scope_recovery_widgets[0].update(panel_state.scope.recovery_copy)
-            else:
-                await scope_container.mount(
-                    Static(
-                        panel_state.scope.recovery_copy,
-                        id="library-rag-scope-recovery",
-                    )
-                )
-            if not import_buttons:
-                await scope_container.mount(
-                    Button(
-                        "Open Import/Export",
-                        id="library-rag-open-import-export",
-                        classes="library-rag-recovery-action",
-                        tooltip="Open Library Import/Export to add sources.",
-                    )
-                )
-        else:
-            for widget in (*scope_recovery_widgets, *import_buttons):
-                await widget.remove()
+        for widget in (*scope_recovery_widgets, *import_buttons):
+            await widget.remove()
+        for child in library_rag_scope_recovery_children(panel_state):
+            await scope_container.mount(child)
 
         self._refresh_library_rag_inspector(panel_state)
         await self._refresh_library_rag_results_widgets(panel_state)
+        await self._refresh_library_rag_history_widget(
+            panel_state,
+            force_collapsed=panel_state.history_collapsed if force_history_collapse else None,
+        )
+
+    async def _refresh_library_rag_query_status_widgets(
+        self,
+        panel_state: LibraryRagPanelState,
+    ) -> None:
+        """Sync the Run button and the query region's conditional status block.
+
+        The quiet line / callout+recovery block is torn down and rebuilt
+        from `library_rag_query_status_children` on every call -- it is at
+        most two `Static` widgets, so a full rebuild is cheap and (unlike
+        hand-written incremental mount/update/remove logic) can never drift
+        from what `compose()` renders on a fresh mount.
+        """
+        query_controls = self.query_one("#library-rag-query-controls", Vertical)
+        query_controls.set_class(
+            library_rag_query_shows_full_recovery(panel_state.query_state), "has-recovery"
+        )
+
+        run_action = panel_state.query_state.run_action
+        run_button = self.query_one("#library-rag-run-query", Button)
+        run_button.label = run_action.label
+        run_button.disabled = not run_action.enabled
+        run_button.tooltip = run_action.tooltip
+
+        for widget_id in (
+            "library-rag-query-quiet-line",
+            "library-rag-query-blocked-callout",
+            "library-rag-query-recovery",
+        ):
+            for widget in list(self.query(f"#{widget_id}")):
+                await widget.remove()
+        anchor = "#library-rag-query-input"
+        for child in library_rag_query_status_children(panel_state):
+            await query_controls.mount(child, after=anchor)
+            anchor = f"#{child.id}"
+
+    async def _refresh_library_rag_history_widget(
+        self,
+        panel_state: LibraryRagPanelState,
+        *,
+        force_collapsed: bool | None = None,
+    ) -> None:
+        """Rebuild the `Recent searches` collapsible content from state.
+
+        Mutates the compose-time `Collapsible` in place (its `collapsed`
+        reactive, then its `Contents` children) rather than replacing the
+        whole widget -- two refreshes can be triggered back to back (the
+        synchronous "searching" status refresh, then the search worker's
+        own "outcome" refresh), and remove-then-mount of the same fixed ID
+        from overlapping calls raises `DuplicateIds`. The lock serializes
+        those calls so one full rebuild always finishes before the next
+        starts.
+
+        `force_collapsed` (D1) is `None` for every caller except the
+        results-arrival transition in `_apply_library_rag_search_outcome`:
+        `None` leaves the live widget's `collapsed` reactive exactly as the
+        user left it; a `bool` overwrites it. This is safe for full
+        recomposes too (scope toggles, the mode toggle) -- not just in-place
+        refreshes (query edits, evidence selection) -- because
+        `sync_library_rag_history_collapsed` mirrors every live `collapsed`
+        change (manual or programmatic) back into
+        `_library_rag_history_collapsed`, so `compose()` always rebuilds the
+        `Collapsible` from the user's last choice instead of a stale field.
+        """
+        async with self._library_rag_history_refresh_lock:
+            history_widgets = list(self.query("#library-rag-history"))
+            if not history_widgets:
+                return
+            collapsible = history_widgets[0]
+            if not isinstance(collapsible, Collapsible):
+                return
+            if force_collapsed is not None:
+                collapsible.collapsed = force_collapsed
+            try:
+                contents = collapsible.query_one(Collapsible.Contents)
+            except (NoMatches, QueryError):
+                # Defensive, mirroring the two guards above: an "exclusive"
+                # search worker can be cancelled mid-refresh by a newer one
+                # (e.g. re-running a history entry while a prior query is
+                # still settling), which can catch this specific
+                # `Collapsible` instance between un/remounting its own
+                # `Contents` child. The next refresh (there is always one --
+                # every query/scope/selection change triggers one) picks up
+                # the settled state; there is nothing to safely rebuild here.
+                return
+            for child in list(contents.children):
+                await child.remove()
+            for row in library_rag_history_children(panel_state):
+                await contents.mount(row)
 
     def _refresh_library_rag_inspector(
         self,
@@ -7218,96 +7827,23 @@ class LibraryScreen(BaseAppScreen):
         self,
         panel_state: LibraryRagPanelState,
     ) -> None:
+        """Rebuild the Evidence region body from `library_rag_results_body_children`.
+
+        Shared with `LibrarySearchRagPanel.compose()` (C1): both build rows,
+        the searching line, recovery copy, and the empty state from the
+        same function, closing the compose-vs-refresh duplication that
+        previously let the two paths drift apart.
+        """
         results_container = self.query_one("#library-rag-results", Vertical)
-        self.query_one("#library-rag-attribution-placeholder", Static).update(
-            self._library_rag_attribution_placeholder(panel_state)
+        self.query_one("#library-rag-results-heading", Static).update(
+            f"Evidence · top {panel_state.query_state.top_k} per source"
         )
         for child in list(results_container.children):
             if child.id in LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS:
                 continue
             await child.remove()
-
-        if panel_state.results:
-            for index, result in enumerate(panel_state.results):
-                score = "" if result.score is None else f" | score {result.score:.3f}"
-                selected = result.result_id == panel_state.selected_result_id
-                await results_container.mount(
-                    Static(
-                        f"{index + 1}. {result.title}{score}",
-                        id=f"library-rag-result-{index}",
-                        classes=(
-                            "library-rag-result-row is-selected"
-                            if selected
-                            else "library-rag-result-row"
-                        ),
-                    )
-                )
-                await results_container.mount(
-                    Button(
-                        "Selected evidence" if selected else "Select evidence",
-                        id=f"library-rag-select-result-{index}",
-                        classes="library-rag-result-action",
-                        tooltip="Select this evidence result for Console handoff.",
-                    )
-                )
-                await results_container.mount(
-                    Static(
-                        result.row_badge_label,
-                        id=f"library-rag-result-badges-{index}",
-                        classes="library-rag-result-badges",
-                    )
-                )
-                await results_container.mount(
-                    Static(
-                        result.snippet,
-                        id=f"library-rag-result-snippet-{index}",
-                    )
-                )
-                if result.citation_labels:
-                    await results_container.mount(
-                        Static(
-                            f"Citations: {', '.join(result.citation_labels)}",
-                            id=f"library-rag-result-citations-{index}",
-                        )
-                    )
-                if selected:
-                    await results_container.mount(
-                        Button(
-                            panel_state.use_in_console_action.label,
-                            id="library-rag-use-selected-in-console",
-                            classes=(
-                                "library-rag-console-action "
-                                "library-rag-center-console-action"
-                            ),
-                            disabled=not panel_state.use_in_console_action.enabled,
-                            tooltip=panel_state.use_in_console_action.tooltip,
-                        )
-                    )
-        elif panel_state.retrieval_status == "searching":
-            await results_container.mount(
-                Static("Searching Library sources...", id="library-rag-searching")
-            )
-        elif panel_state.recovery_copy and panel_state.recovery_selector:
-            await results_container.mount(
-                Static(
-                    panel_state.recovery_copy,
-                    id=panel_state.recovery_selector,
-                )
-            )
-        else:
-            await results_container.mount(
-                Static(
-                    "No evidence yet. Run Search/RAG to populate results.",
-                    id="library-rag-results-empty",
-                )
-            )
-            await results_container.mount(
-                Static(
-                    "Add or import sources, run a query, then select evidence for Console.",
-                    id="library-rag-evidence-empty-guidance",
-                    classes="library-rag-empty-guidance",
-                )
-            )
+        for child in library_rag_results_body_children(panel_state):
+            await results_container.mount(child)
 
     @staticmethod
     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
@@ -7317,71 +7853,6 @@ class LibraryScreen(BaseAppScreen):
             f" | Notes {counts.get('notes', 0)}"
             f" | Media {counts.get('media', 0)}"
             f" | Conversations {counts.get('conversations', 0)}"
-        )
-
-    @staticmethod
-    def _library_rag_scope_rows(panel_state: LibraryRagPanelState) -> dict[str, str]:
-        counts = {option.source_type: option.count for option in panel_state.scope.options}
-        total = panel_state.scope.total_count
-        selected = len(panel_state.scope.selected_source_types)
-        return {
-            "library-rag-scope-row-all": (
-                f"All Library          | {total} sources    | Browse/search     | Add source"
-            ),
-            "library-rag-scope-row-workspace": (
-                f"Workspace eligible   | {selected} scopes     | Stage after pick  | Select evidence"
-            ),
-            "library-rag-scope-row-notes": (
-                f"Notes                | {counts.get('notes', 0)} sources    | Retrieval-ready   | Run query"
-            ),
-            "library-rag-scope-row-media": (
-                f"Media                | {counts.get('media', 0)} sources    | Retrieval-ready   | Run query"
-            ),
-            "library-rag-scope-row-conversations": (
-                "Conversations        | "
-                f"{counts.get('conversations', 0)} sources    | Retrieval-ready   | Run query"
-            ),
-            "library-rag-scope-row-collections": (
-                "Collections          | "
-                f"{counts.get('collections', 0)} records    | Read/review WIP   | Open collection"
-            ),
-            "library-rag-scope-row-import-export": (
-                "Import/Export recovery | add sources | Source intake      | Import source"
-            ),
-        }
-
-    @staticmethod
-    def _library_rag_query_blocked_summary(panel_state: LibraryRagPanelState) -> str:
-        reason = panel_state.query_state.run_action.disabled_reason
-        if not reason:
-            return "Ready: run Search/RAG over selected Library sources."
-        return f"Blocked: {reason[:1].lower()}{reason[1:]}"
-
-    @staticmethod
-    def _library_rag_query_blocked_callout(panel_state: LibraryRagPanelState) -> str:
-        reason = panel_state.query_state.run_action.disabled_reason
-        if not reason:
-            return "Ready | Run retrieval over selected Library sources."
-        if reason == "Enter a question or search query.":
-            reason = "Enter a question before running retrieval."
-        elif reason == "Select at least one Library source.":
-            reason = "Select at least one Library source before running retrieval."
-        return f"Blocked | {reason}"
-
-    @staticmethod
-    def _library_rag_run_disabled_reason(panel_state: LibraryRagPanelState) -> str:
-        reason = panel_state.query_state.run_action.disabled_reason
-        if not reason:
-            return "Run ready: selected Library sources are queryable."
-        return f"Run disabled: {reason[:1].lower()}{reason[1:]}"
-
-    @staticmethod
-    def _library_rag_attribution_placeholder(panel_state: LibraryRagPanelState) -> str:
-        if panel_state.selected_result is None:
-            return "Citation/snippet carry-through: reserved for selected evidence."
-        return (
-            "Citation/snippet carry-through placeholder: selected evidence preserves "
-            "source, chunk, snippet, and citations."
         )
 
     @on(Button.Pressed, "#library-open-notes")

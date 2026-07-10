@@ -8,7 +8,7 @@ from enum import StrEnum
 from html import escape as html_escape
 from pathlib import Path
 from threading import RLock
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
 from loguru import logger
 from rich.markup import escape
@@ -188,14 +188,40 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         chatbook_service: Any | None = None,
         server_event_service: Any | None = None,
         runtime_policy: Any | None = None,
+        flashcards_due_provider: Callable[[], int | None] | None = None,
     ) -> None:
         super().__init__(runtime_policy=runtime_policy)
         self.notification_service = notification_service
         self.watchlist_service = watchlist_service
         self.chatbook_service = chatbook_service
         self.server_event_service = server_event_service
+        self.flashcards_due_provider = flashcards_due_provider
         self._chatbook_artifact_snapshot: tuple[Mapping[str, Any], ...] = ()
         self._chatbook_artifact_snapshot_lock = RLock()
+        self._flashcards_due_count: int = 0
+
+    def refresh_flashcards_due_snapshot(self) -> None:
+        """Refresh the cached due-flashcards count off the Home compose path.
+
+        Mirrors ``refresh_chatbook_artifact_snapshot``'s cache pattern: the
+        provider is called on a background worker and the result is cached
+        so ``build_dashboard_input`` stays synchronous. A missing provider,
+        a ``None`` result, or any exception all degrade to a count of 0 so
+        the Home rail simply omits the flashcards-due row rather than
+        raising.
+        """
+        if not callable(self.flashcards_due_provider):
+            self._flashcards_due_count = 0
+            return
+        try:
+            count = self.flashcards_due_provider()
+            if count is None:
+                self._flashcards_due_count = 0
+                return
+            self._flashcards_due_count = max(0, int(count))
+        except Exception as e:
+            logger.debug(f"Failed to fetch due-flashcards count for Home: {e}")
+            self._flashcards_due_count = 0
 
     def refresh_chatbook_artifact_snapshot(self, *, limit: int = 20) -> None:
         """Refresh cached local Chatbook artifacts off the Home compose path."""
@@ -242,6 +268,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 ]
             ),
             recent_work_items=self._local_recent_work_items(runs),
+            flashcards_due_count=self._flashcards_due_count,
         )
 
     def handle_control(

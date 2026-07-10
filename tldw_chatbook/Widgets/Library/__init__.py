@@ -9,6 +9,14 @@ from .library_rail import LIBRARY_RAIL_ROW_PREFIX, LibraryRail, library_dim_labe
 from .library_search_rag_panel import (
     LibrarySearchRagInspectorPanel,
     LibrarySearchRagPanel,
+    library_rag_history_children,
+    library_rag_query_shows_full_recovery,
+    library_rag_query_status_children,
+    library_rag_result_row_children,
+    library_rag_results_body_children,
+    library_rag_scope_recovery_children,
+    library_rag_scope_shows_recovery,
+    library_rag_scope_toggle_children,
 )
 
 __all__ = [
@@ -22,4 +30,12 @@ __all__ = [
     "LibrarySearchRagInspectorPanel",
     "LibrarySearchRagPanel",
     "library_dim_label_text",
+    "library_rag_history_children",
+    "library_rag_query_shows_full_recovery",
+    "library_rag_query_status_children",
+    "library_rag_result_row_children",
+    "library_rag_results_body_children",
+    "library_rag_scope_recovery_children",
+    "library_rag_scope_shows_recovery",
+    "library_rag_scope_toggle_children",
 ]

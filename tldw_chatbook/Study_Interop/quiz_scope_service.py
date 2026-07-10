@@ -197,6 +197,36 @@ class QuizScopeService:
             records = records[:limit]
         return records
 
+    async def count_quizzes(
+        self,
+        *,
+        mode: Optional[str] = None,
+    ) -> int:
+        """Count non-deleted quizzes in the given mode.
+
+        Args:
+            mode: The quiz backend to count in; only the local backend is
+                supported (see Raises).
+
+        Returns:
+            The exact number of non-deleted local quizzes.
+
+        Raises:
+            ValueError: For server mode (no count-only backend seam exists;
+                see the inline comment).
+        """
+        backend = self._resolve_backend(mode)
+        self._enforce_policy(self._quiz_action_id(backend, "list"))
+        if backend is QuizBackend.LOCAL:
+            return int(await self._maybe_await(self._service_for(backend).count_quizzes()))
+        # The server quiz backend does not expose a dedicated count-only
+        # seam today (``list_quizzes``'s server branch pages through the
+        # full quiz collection to build normalized records). Rather than
+        # issuing a full paginated fetch just to read a number, mirror the
+        # unsupported-count contract established by
+        # ``NotesScopeService.count_notes``.
+        raise ValueError("Server quiz counts are not supported; use list_quizzes for a scoped total.")
+
     async def create_quiz(
         self,
         *,

@@ -5,13 +5,18 @@ import pytest
 from textual.app import App
 
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Home.active_work_adapter import (
     HomeConsoleLaunch,
     HomeControlAction,
     HomeControlResult,
     HomeControlResultStatus,
 )
-from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, HomeDashboardInput
+from tldw_chatbook.Home.dashboard_state import (
+    HOME_FLASHCARDS_DUE_ROW_ID,
+    HomeActiveWorkItem,
+    HomeDashboardInput,
+)
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
@@ -928,6 +933,108 @@ async def test_pending_chat_handoff_does_not_create_live_work_controls():
         assert len(home.query("#home-resume")) == 0
         assert len(home.query("#home-retry")) == 0
         assert len(home.query("#home-open-in-console")) == 0
+
+
+@pytest.mark.asyncio
+async def test_home_flashcards_due_row_and_control_route_one_hop_to_study():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        flashcards_due_count=12,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == HOME_FLASHCARDS_DUE_ROW_ID
+        )
+        assert "Flashcards due: 12" in str(row_button.label)
+
+        await pilot.click(f"#{row_button.id}")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+        canvas_title = str(home.query_one("#home-canvas-title").renderable)
+        assert canvas_title == "Flashcards due: 12"
+
+        await pilot.click("#home-review-flashcards")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    # open_home_flashcards_review() calls app.open_study_screen(initial_section=...),
+    # which is verified directly (app_instance is not the running harness App, so
+    # its own post_message() does not bubble into host.on_navigate_to_screen here).
+    assert app.pending_study_initial_section == "flashcards"
+
+
+@pytest.mark.asyncio
+async def test_home_flashcards_due_row_absent_when_count_zero():
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        flashcards_due_count=0,
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        assert not any(
+            str(getattr(btn, "row_id", "")) == HOME_FLASHCARDS_DUE_ROW_ID
+            for btn in home.query("Button")
+        )
+        assert len(home.query("#home-review-flashcards")) == 0
+
+
+@pytest.mark.asyncio
+async def test_home_flashcards_due_snapshot_reads_in_memory_db_via_real_worker():
+    """F4b (PR #590 review, Qodo): ``_refresh_home_chatbook_artifact_snapshot``
+    (``@work(thread=True)``) must not call the flashcards-due provider
+    directly on its own worker thread when ChaChaNotes is an in-memory
+    SQLite DB -- the connection is thread-local (``threading.local``), so
+    the worker thread would open a brand-new, unmigrated ``:memory:``
+    connection and ``count_due_flashcards`` would fail, degrading the
+    dashboard count to 0 even though a due card exists. Exercises the real
+    mount-time worker (not the ``_home_dashboard_test_input`` override) with
+    a real in-memory ``CharactersRAGDB`` seeded via the real
+    ``TldwCli._local_flashcards_due_count`` provider wiring.
+    """
+    app = _build_test_app()
+    db = CharactersRAGDB(":memory:", client_id="test-client")
+    try:
+        deck_id = db.create_deck("Biology")
+        db.create_flashcard(
+            {"deck_id": deck_id, "front": "ATP", "back": "Energy", "tags": "", "type": "basic"}
+        )
+        app.chachanotes_db = db
+        host = HomeHarness(app)
+
+        async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+            home = _active_home_screen(host)
+
+            row_button = None
+            for _ in range(150):
+                row_button = next(
+                    (
+                        btn
+                        for btn in home.query("Button")
+                        if str(getattr(btn, "row_id", "")) == HOME_FLASHCARDS_DUE_ROW_ID
+                    ),
+                    None,
+                )
+                if row_button is not None:
+                    break
+                await pilot.pause(0.02)
+
+            assert row_button is not None, "Flashcards-due row never appeared."
+            assert "Flashcards due: 1" in str(row_button.label)
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio
