@@ -3310,6 +3310,48 @@ async def test_library_shell_ingest_nav_context_deeplink_lands_on_ingest_canvas(
 
 
 @pytest.mark.asyncio
+async def test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_form():
+    """(Minor, L3b Task 6 fix wave) A cached ``LibraryScreen`` re-entered via
+    Home's ingest-jobs ``Open details`` deep link must never show a stale
+    half-filled Import media form left over from a previous Ingest visit --
+    ``_select_library_rail_row`` (the rail-row entry path) already resets
+    the form on every switch via ``_reset_library_ingest_transient_state``,
+    but the ``LIBRARY_NAV_CONTEXT_INGEST`` deep-link branch in
+    ``_apply_navigation_context_state`` skipped that call, so a post-mount
+    re-entry through the deep link (unlike the pre-mount case covered by
+    ``test_library_shell_ingest_nav_context_deeplink_lands_on_ingest_canvas``)
+    kept whatever the user had typed on their prior visit.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        # Pre-fill the ingest form programmatically, as if the user had
+        # already typed into it on a previous Ingest visit.
+        screen._library_ingest_form = LibraryIngestFormState(
+            path="/tmp/stale-upload.txt",
+            title="Stale title",
+            author="Stale author",
+            keywords="stale, keywords",
+        )
+
+        # Home's "Open details" control re-enters via this same navigation
+        # context on an already-mounted (cached) screen.
+        screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
+        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#library-ingest-path")
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
+        assert screen._library_ingest_form == LibraryIngestFormState()
+        path_input = screen.query_one("#library-ingest-path", Input)
+        assert path_input.value == ""
+
+
+@pytest.mark.asyncio
 async def test_library_shell_unknown_nav_context_mode_degrades_quietly():
     """A retired/unknown navigation-context ``mode`` (e.g. the removed
     Import/Export placeholder row's old mode value) must not raise and must

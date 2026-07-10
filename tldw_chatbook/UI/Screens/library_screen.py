@@ -819,6 +819,11 @@ class LibraryScreen(BaseAppScreen):
             # therefore no on_mount deferral) is needed even pre-mount.
             self._active_mode = "ingest-media"
             self._library_selected_row_id = LIBRARY_ROW_INGEST_MEDIA
+            # Mirrors _select_library_rail_row's reset: a cached LibraryScreen
+            # re-entered via this deep link (e.g. from Home's ingest-jobs
+            # "Open details" control) must never show a stale half-filled
+            # form left over from a previous Ingest visit.
+            self._reset_library_ingest_transient_state()
         if note_id:
             # Forward-compat entry point: the retired Notes tab's chat-sidebar
             # deep link carried a note id, and this rebuilds the editor for it.

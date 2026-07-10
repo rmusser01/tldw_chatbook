@@ -1,5 +1,8 @@
+from pathlib import Path
 from typing import get_type_hints
 from types import SimpleNamespace
+
+from rich.markup import escape
 
 from tldw_chatbook.Home.active_work_adapter import (
     HomeConsoleLaunch,
@@ -1181,6 +1184,47 @@ def test_local_notification_adapter_maps_ingest_jobs_to_active_work():
     failed = items["local:ingest:ingest-job-3"]
     assert failed.title == "broken.pdf"
     assert failed.status == "failed"
+
+
+def test_local_notification_adapter_escapes_markup_hostile_ingest_job_title():
+    """(Critical, L3b Task 6 fix wave) A source filename containing
+    Rich-markup-like bracket syntax must reach ``HomeActiveWorkItem.title``
+    already escaped -- the raw basename flows straight into a Textual
+    ``Button`` label in ``HomeRail.compose()`` (Button labels parse Rich
+    markup), so an unescaped title crashes Home's mount with
+    ``MarkupError`` for as long as the job stays queued/running/failed.
+
+    Note: ``title`` is derived via ``Path(job.source_path).name``, and a
+    literal ``/`` cannot appear inside a real file's basename (POSIX
+    reserves it as the path separator, and ``Path.name`` would just strip
+    everything before it) -- so this uses a bracket sequence containing an
+    unterminated quoted value (``[b="c]``) rather than a ``[/tag]``-shaped
+    one. It is a different concrete string than the reviewer's
+    illustrative ``weird [/bracket].txt``, but the same hazard class and
+    same ``MarkupError`` failure mode, confirmed to still raise pre-fix
+    via Textual's own ``textual.markup.to_content``.
+    """
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-hostile",
+            source_path='/tmp/a [b="c].txt',
+            state=IngestJobState.RUNNING,
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = dashboard_input.active_work_items[0]
+    # Escaped form: rich.markup.escape backslash-prefixes the opening
+    # bracket (the character the markup parser actually keys off of) so
+    # Textual renders it as a literal character instead of trying to parse
+    # a tag.
+    assert item.title == 'a \\[b="c].txt'
+    assert item.title == escape(Path('/tmp/a [b="c].txt').name)
 
 
 def test_local_notification_adapter_ingest_items_absent_without_provider():

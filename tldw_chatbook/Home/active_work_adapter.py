@@ -470,10 +470,18 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             item_id = self._local_watchlist_run_item_id(run)
             if not item_id:
                 continue
-            title = str(
-                _mapping_value(run, "title")
-                or _mapping_value(run, "source_title")
-                or (f"Watchlist run {run_id}" if run_id is not None else "Watchlist run")
+            # Same Button-label markup hazard as _local_ingest_job_items
+            # above: "title"/"source_title" are user-typed subscription
+            # names (local_watchlists_service stores them verbatim from
+            # subscriptions.name), not system-generated text, so they can
+            # contain Rich markup syntax and must be escaped before
+            # reaching HomeRail's Button label.
+            title = escape(
+                str(
+                    _mapping_value(run, "title")
+                    or _mapping_value(run, "source_title")
+                    or (f"Watchlist run {run_id}" if run_id is not None else "Watchlist run")
+                )
             )
             items.append(
                 HomeActiveWorkItem(
@@ -583,7 +591,16 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 continue
             if job.state not in _HOME_INGEST_JOB_ACTIVE_STATES:
                 continue
-            title = Path(str(job.source_path)).name or str(job.source_path)
+            # The basename is a user-controlled filename (arbitrary source
+            # path picked in the Library ingest form) and flows straight
+            # into a Textual Button label in HomeRail.compose() -- Button
+            # labels parse Rich markup, so an unescaped title containing
+            # bracket syntax (e.g. "weird [/bracket].txt") raises
+            # MarkupError and breaks Home's mount entirely for as long as
+            # the job stays queued/running/failed. Escape defensively, the
+            # same way _chatbook_title/_safe_payload_text already does for
+            # Chatbook artifact titles below.
+            title = escape(Path(str(job.source_path)).name or str(job.source_path))
             items.append(
                 HomeActiveWorkItem(
                     item_id=f"local:ingest:{job.job_id}",
@@ -643,11 +660,17 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
 
     @staticmethod
     def _watchlist_run_title(run: Any) -> str:
-        return str(
-            _mapping_value(run, "title")
-            or _mapping_value(run, "source_title")
-            or f"Watchlist run {_mapping_value(run, 'run_id') or ''}".strip()
-            or "Watchlist run"
+        # Escaped for the same reason as _local_watchlist_run_items above:
+        # this feeds both a HomeRail Button label (recent_work_items) and
+        # app.notify()/HomeConsoleLaunch text in handle_control(), and
+        # notify() also parses Rich markup by default.
+        return escape(
+            str(
+                _mapping_value(run, "title")
+                or _mapping_value(run, "source_title")
+                or f"Watchlist run {_mapping_value(run, 'run_id') or ''}".strip()
+                or "Watchlist run"
+            )
         )
 
     @staticmethod

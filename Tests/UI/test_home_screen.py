@@ -1130,6 +1130,60 @@ async def test_home_needs_attention_section_shows_failed_library_ingest_job():
         assert "broken.pdf" in str(row_button.label)
 
 
+@pytest.mark.asyncio
+async def test_home_running_section_survives_markup_hostile_ingest_job_title():
+    """(Critical, L3b Task 6 fix wave) A running ingest job whose source
+    filename contains Rich-markup-like bracket syntax (e.g. dropped into
+    the Library ingest form) must not crash Home's mount. The raw
+    basename flows from ``LibraryIngestJob.source_path`` through the
+    real ``LocalNotificationHomeActiveWorkAdapter`` into a Textual
+    ``Button`` label in ``HomeRail.compose()`` -- Button labels parse
+    Rich markup, so an unescaped hostile title previously raised
+    ``MarkupError`` during compose, breaking Home's mount entirely for
+    as long as the job stayed queued/running/failed.
+
+    Uses ``a [b="c].txt`` rather than the reviewer's illustrative
+    ``weird [/bracket].txt``: title is derived via
+    ``Path(source_path).name``, and a literal ``/`` can never survive
+    inside a real basename (POSIX reserves it as the separator, so
+    ``Path.name`` strips everything before it) -- confirmed empirically
+    that ``[/bracket].txt`` alone does not reproduce a crash through this
+    exact code path, while an unterminated-quoted-value bracket sequence
+    does (same hazard class, same ``MarkupError`` failure mode, verified
+    against ``textual.markup.to_content`` directly). Kept short so the
+    escaped form survives HomeRail's 20-char row-title truncation intact.
+
+    Deliberately drives the REAL adapter (submitting to
+    ``app.library_ingest_jobs``, exactly like the Library ingest canvas
+    does) rather than ``_home_dashboard_test_input``, so this exercises
+    the actual fix in ``_local_ingest_job_items`` -- not just HomeRail's
+    own row-title truncation.
+    """
+    app = _build_test_app()
+    job = app.library_ingest_jobs.submit(source_path='/tmp/a [b="c].txt')
+    app.library_ingest_jobs.mark_running(job.job_id)
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        # Reaching this line at all is the core assertion: a MarkupError
+        # during compose/mount would have raised before ``run_test``'s
+        # context manager ever returned control here.
+        home = _active_home_screen(host)
+
+        running_body = home.query_one("#home-rail-section-body-running")
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")).startswith("local:ingest:")
+        )
+        assert row_button in running_body.children
+        # The rendered (parsed) label shows the literal filename text --
+        # rich.markup.escape's backslash is consumed by the markup parser
+        # itself, leaving the bracket as a plain character rather than the
+        # start of a (would-be-crashing) tag.
+        assert 'a [b="c].txt' in str(row_button.label)
+
+
 def test_app_detail_hook_navigates_library_with_ingest_context_for_handled_ingest_detail():
     """Home's ``Open details`` control on a Library ingest job routes to the
     Library screen carrying the ingest nav-context flag -- the one-hop route
