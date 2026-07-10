@@ -180,10 +180,20 @@ class LibraryIngestCanvas(VerticalScroll):
                 id=f"library-ingest-row-{index}",
                 classes=row_classes,
             )
+            # Row-action buttons are keyed by the job's registry-assigned
+            # ``job_id`` (e.g. ``"library-ingest-open-ingest-job-3"``), NOT
+            # by ``index`` -- unlike the row Static above, these ARE click
+            # targets, and the registry mutates asynchronously (runner
+            # completions, retry-supersede, new submissions) between a
+            # render and a click. An index-keyed id can silently point at a
+            # different job by the time it's pressed; a job_id-keyed one
+            # can't, because the screen's handlers resolve the job by id
+            # from the live registry rather than by re-indexing a rebuilt
+            # snapshot (see the PR #591 review's F1 finding).
             if row.can_open:
                 yield Button(
                     "Open in Library",
-                    id=f"library-ingest-open-{index}",
+                    id=f"library-ingest-open-{row.job_id}",
                     classes=(
                         "library-canvas-action library-ingest-open "
                         "library-ingest-row-action"
@@ -193,7 +203,7 @@ class LibraryIngestCanvas(VerticalScroll):
             if row.can_retry:
                 yield Button(
                     "Retry",
-                    id=f"library-ingest-retry-{index}",
+                    id=f"library-ingest-retry-{row.job_id}",
                     classes=(
                         "library-canvas-action library-ingest-retry "
                         "library-ingest-row-action"
@@ -203,7 +213,7 @@ class LibraryIngestCanvas(VerticalScroll):
             if row.can_dismiss:
                 yield Button(
                     "Dismiss",
-                    id=f"library-ingest-dismiss-{index}",
+                    id=f"library-ingest-dismiss-{row.job_id}",
                     classes=(
                         "library-canvas-action library-ingest-dismiss "
                         "library-ingest-row-action"

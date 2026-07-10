@@ -54,6 +54,12 @@ from typing import Callable
 
 from loguru import logger
 
+# The default chunk size (in words) used whenever a caller doesn't supply
+# one -- the lowest-level pure module in the Library ingest stack, so
+# ``library_ingest_state.py`` and ``app.py``'s ``submit_library_ingest_job``
+# both import this rather than each hardcoding their own copy of ``500``.
+DEFAULT_CHUNK_SIZE: int = 500
+
 
 class IngestJobState(str, Enum):
     """Lifecycle states for a single-file Library ingest job."""
@@ -112,7 +118,7 @@ class LibraryIngestJob:
     keywords: tuple[str, ...] = ()
     perform_analysis: bool = False
     chunk_enabled: bool = False
-    chunk_size: int = 500
+    chunk_size: int = DEFAULT_CHUNK_SIZE
     state: IngestJobState = IngestJobState.QUEUED
     detected_type: str = ""
     media_id: int | None = None
@@ -195,8 +201,12 @@ class LibraryIngestJobRegistry:
                 callback()
             except Exception:
                 # A broken listener must never corrupt registry state or
-                # block the other listeners from running.
-                logger.debug("LibraryIngestJobRegistry listener raised", exc_info=True)
+                # block the other listeners from running. loguru's
+                # traceback capture is `.opt(exception=True)`, NOT the
+                # stdlib `exc_info=True` kwarg -- the latter is a silent
+                # no-op under loguru and would otherwise drop the traceback
+                # entirely.
+                logger.opt(exception=True).debug("LibraryIngestJobRegistry listener raised")
 
     # -- mutations -----------------------------------------------------
 
@@ -209,7 +219,7 @@ class LibraryIngestJobRegistry:
         keywords: tuple[str, ...] = (),
         perform_analysis: bool = False,
         chunk_enabled: bool = False,
-        chunk_size: int = 500,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
     ) -> LibraryIngestJob:
         """Append a new ``QUEUED`` job.
 

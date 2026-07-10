@@ -107,7 +107,11 @@ from tldw_chatbook.Chat import (
 )
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
-from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJob, LibraryIngestJobRegistry
+from tldw_chatbook.Library.library_ingest_jobs import (
+    DEFAULT_CHUNK_SIZE,
+    LibraryIngestJob,
+    LibraryIngestJobRegistry,
+)
 from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
 from tldw_chatbook.Local_Ingestion import detect_file_type, ingest_local_file
 from tldw_chatbook.Home.active_work_adapter import (
@@ -1181,10 +1185,10 @@ class LibraryIngestQueueMixin:
         source_path: str,
         title: str = "",
         author: str = "",
-        keywords: tuple = (),
+        keywords: tuple[str, ...] = (),
         perform_analysis: bool = False,
         chunk_enabled: bool = False,
-        chunk_size: int = 500,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
     ) -> LibraryIngestJob:
         """Submit a new Library ingest job and start the runner if idle.
 
@@ -1399,11 +1403,15 @@ class LibraryIngestQueueMixin:
                         ),
                     )
                     media_id = result["media_id"]
-                    if media_id is None:
+                    if media_id is None and self.media_db is not None:
                         # Re-ingesting an unchanged file takes the DB's
                         # update path, whose return carries no media id.
                         # Resolve it by canonical URL so the done row keeps
-                        # its "Open in Library" action.
+                        # its "Open in Library" action. ``self.media_db`` is
+                        # unreachable-``None`` here in practice (submit
+                        # already fails the job before this point when it's
+                        # absent), but this guard is cheap insurance against
+                        # an ``AttributeError`` on a stale/racy reference.
                         existing = self.media_db.get_media_by_url(
                             f"file://{Path(job.source_path).absolute()}"
                         )
@@ -1415,6 +1423,15 @@ class LibraryIngestQueueMixin:
                         media_id=media_id,
                     )
                 except Exception as exc:
+                    # loguru's traceback capture is `.opt(exception=True)`,
+                    # NOT the stdlib `exc_info=True` kwarg (a silent no-op
+                    # under loguru) -- log the full traceback here before
+                    # mark_failed so a debugging session isn't left with only
+                    # the registry's sanitized, single-line error string.
+                    logger.opt(exception=True).error(
+                        f"Library ingest job failed (job_id={job.job_id}, "
+                        f"source={job.source_path})."
+                    )
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_failed,
                         job.job_id,

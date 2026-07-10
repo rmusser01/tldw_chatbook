@@ -13,7 +13,11 @@ from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Sequence
 
-from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
+from tldw_chatbook.Library.library_ingest_jobs import (
+    DEFAULT_CHUNK_SIZE,
+    IngestJobState,
+    LibraryIngestJob,
+)
 
 # Exact copy values (binding -- see the L3b plan's Global Constraints).
 INGEST_HEADER_COPY = "Import media"
@@ -24,7 +28,11 @@ QUEUE_HEADING_COPY = "Queue"
 QUEUE_EMPTY_COPY = "No ingest jobs yet."
 START_QUIET_LINE_COPY = "Enter a file path to start."
 
-DEFAULT_CHUNK_SIZE = 500
+# Re-exported from library_ingest_jobs.py (the lowest-level pure module in
+# the Library ingest stack) rather than redefined here -- kept as a module
+# attribute of this file too (not just imported-and-discarded) since
+# existing consumers/tests import ``DEFAULT_CHUNK_SIZE`` from
+# ``library_ingest_state``.
 MIN_CHUNK_SIZE = 100
 MAX_CHUNK_SIZE = 5000
 

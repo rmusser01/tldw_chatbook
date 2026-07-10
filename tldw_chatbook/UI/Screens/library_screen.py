@@ -34,6 +34,7 @@ from ...DB.ChaChaNotes_DB import ConflictError
 from ...Library.library_collections_service import LibraryCollectionsServiceError
 from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_conversations_state import build_library_conversations_state
+from ...Library.library_ingest_jobs import LibraryIngestJob
 from ...Library.library_ingest_state import (
     INGEST_UNAVAILABLE_COPY,
     LibraryIngestCanvasState,
@@ -2764,9 +2765,14 @@ class LibraryScreen(BaseAppScreen):
         Reads directly from ``self.app_instance.library_ingest_jobs`` via
         quiet-degrade ``getattr`` (never assuming the seam exists) rather
         than caching a screen-owned copy, so every render -- the canvas
-        compose, and the Open in Library/Retry handlers' row index
-        resolution -- sees the registry's current truth, including
-        transitions a live-update listener applies between renders.
+        compose -- sees the registry's current truth, including
+        transitions a live-update listener applies between renders. The
+        Open in Library/Retry/Dismiss row-action handlers do NOT go
+        through this method -- they resolve their target job directly by
+        ``job_id`` from ``registry.jobs()`` (see
+        ``_library_ingest_job_by_id``), never by re-deriving and indexing
+        into a row snapshot, so an async queue mutation between render and
+        click can never mis-target a different job (PR #591 review, F1).
         """
         registry = self._library_ingest_registry()
         jobs_fn = getattr(registry, "jobs", None)
@@ -4703,6 +4709,48 @@ class LibraryScreen(BaseAppScreen):
         form.title = ""
         self.refresh(recompose=True)
 
+    @staticmethod
+    def _ingest_job_id_from_button(button_id: str | None, prefix: str) -> str | None:
+        """Parse a job id from a Library-ingest row-action button id.
+
+        Row-action buttons (``library-ingest-open-{job_id}``/``-retry-``/
+        ``-dismiss-``) are keyed by the registry-assigned ``job_id``, NOT
+        by row index (PR #591 review, F1): the queue mutates
+        asynchronously between a render and a click (runner completions,
+        retry-supersede, new submissions), so re-deriving a fresh row
+        snapshot and indexing into it at click time can silently resolve
+        to a DIFFERENT job than the one the user actually pressed. A
+        prefix-strip is exact regardless of how the queue has shifted
+        since the button was rendered.
+
+        Args:
+            button_id: The pressed button's ``id``.
+            prefix: The button-id prefix to strip (e.g.
+                ``"library-ingest-open-"``).
+
+        Returns:
+            The job id, or ``None`` when ``button_id`` is missing or
+            doesn't carry the expected prefix (defensive only -- every
+            real row-action button always does).
+        """
+        if not button_id or not button_id.startswith(prefix):
+            return None
+        job_id = button_id[len(prefix):]
+        return job_id or None
+
+    def _library_ingest_job_by_id(self, job_id: str) -> LibraryIngestJob | None:
+        """Resolve a job by id from the live registry snapshot, or ``None``.
+
+        Reads ``registry.jobs()`` fresh on every call (never a cached row
+        list) so a click always resolves against the queue's current
+        truth, including any transition that landed between render and
+        click.
+        """
+        registry = self._library_ingest_registry()
+        jobs_fn = getattr(registry, "jobs", None)
+        jobs = jobs_fn() if callable(jobs_fn) else ()
+        return next((job for job in jobs if job.job_id == job_id), None)
+
     @on(Button.Pressed, ".library-ingest-open")
     async def handle_library_ingest_open(self, event: Button.Pressed) -> None:
         """Open a done ingest job's resulting media item in the Library viewer.
@@ -4711,14 +4759,13 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by an "Open in Library" row action.
         """
         event.stop()
-        index = self._trailing_index(event.button.id)
-        rows = self._build_library_ingest_state().queue_rows
-        if index is None or not (0 <= index < len(rows)):
+        job_id = self._ingest_job_id_from_button(event.button.id, "library-ingest-open-")
+        if job_id is None:
             return
-        row = rows[index]
-        if not row.can_open or row.media_id is None:
+        job = self._library_ingest_job_by_id(job_id)
+        if job is None or job.media_id is None:
             return
-        await self._open_library_item_by_id("media", str(row.media_id))
+        await self._open_library_item_by_id("media", str(job.media_id))
 
     @on(Button.Pressed, ".library-ingest-retry")
     def handle_library_ingest_retry(self, event: Button.Pressed) -> None:
@@ -4728,16 +4775,16 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by a "Retry" row action.
         """
         event.stop()
-        index = self._trailing_index(event.button.id)
-        rows = self._build_library_ingest_state().queue_rows
-        if index is None or not (0 <= index < len(rows)):
-            return
-        row = rows[index]
-        if not row.can_retry:
+        job_id = self._ingest_job_id_from_button(event.button.id, "library-ingest-retry-")
+        if job_id is None:
             return
         retry = getattr(self.app_instance, "retry_library_ingest_job", None)
         if callable(retry):
-            retry(row.job_id)
+            # ``retry_library_ingest_job``/``LibraryIngestJobRegistry.requeue``
+            # are already id-based and validate state themselves (FAILED,
+            # not already superseded/dismissed) -- a stale or now-wrong-state
+            # job id is a safe no-op, not a mis-targeted retry.
+            retry(job_id)
         self.refresh(recompose=True)
 
     @on(Button.Pressed, ".library-ingest-dismiss")
@@ -4757,17 +4804,15 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by a "Dismiss" row action.
         """
         event.stop()
-        index = self._trailing_index(event.button.id)
-        rows = self._build_library_ingest_state().queue_rows
-        if index is None or not (0 <= index < len(rows)):
-            return
-        row = rows[index]
-        if not row.can_dismiss:
+        job_id = self._ingest_job_id_from_button(event.button.id, "library-ingest-dismiss-")
+        if job_id is None:
             return
         registry = self._library_ingest_registry()
         dismiss = getattr(registry, "dismiss", None)
         if callable(dismiss):
-            dismiss(row.job_id)
+            # Same id-based no-op safety as retry above -- ``dismiss`` only
+            # ever acts on a currently-FAILED, not-yet-hidden job_id.
+            dismiss(job_id)
         self.refresh(recompose=True)
 
     @on(Button.Pressed, "#library-ingest-clear-finished")

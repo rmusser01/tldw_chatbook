@@ -195,7 +195,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         server_event_service: Any | None = None,
         runtime_policy: Any | None = None,
         flashcards_due_provider: Callable[[], int | None] | None = None,
-        ingest_jobs_provider: Callable[[], tuple] | None = None,
+        ingest_jobs_provider: Callable[[], tuple[LibraryIngestJob, ...]] | None = None,
     ) -> None:
         super().__init__(runtime_policy=runtime_policy)
         self.notification_service = notification_service

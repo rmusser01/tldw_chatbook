@@ -7080,9 +7080,12 @@ async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
 
         row_text = str(screen.query_one("#library-ingest-row-0").renderable)
         assert row_text.startswith("✓ done · tides.txt")
-        assert screen.query_one("#library-ingest-open-0")
+        # Row-action buttons are keyed by job_id, not row index (PR #591
+        # review, F1) -- this is the first (only) job submitted against a
+        # fresh registry, so its id is deterministically "ingest-job-1".
+        assert screen.query_one("#library-ingest-open-ingest-job-1")
 
-        screen.query_one("#library-ingest-open-0").press()
+        screen.query_one("#library-ingest-open-ingest-job-1").press()
         for _ in range(_INGEST_POLL_ATTEMPTS):
             if screen._library_media_detail is not None:
                 break
@@ -7149,12 +7152,15 @@ async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues
             raise AssertionError("Job never reached FAILED.")
 
         await _open_library_ingest_canvas(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#library-ingest-retry-0")
+        # Row-action buttons are keyed by job_id, not row index (PR #591
+        # review, F1) -- this is the only job in a fresh registry, so its
+        # id is deterministically "ingest-job-1".
+        await _wait_for_selector(screen, pilot, "#library-ingest-retry-ingest-job-1")
         row_text = str(screen.query_one("#library-ingest-row-0").renderable)
         assert row_text.startswith("✗ failed · does-not-exist.txt")
 
         jobs_before = len(harness.library_ingest_jobs.jobs())
-        screen.query_one("#library-ingest-retry-0", Button).press()
+        screen.query_one("#library-ingest-retry-ingest-job-1", Button).press()
         await pilot.pause()
 
         jobs_after = harness.library_ingest_jobs.jobs()
@@ -7230,14 +7236,102 @@ async def test_library_shell_ingest_canvas_dismiss_button_removes_failed_row(tmp
             raise AssertionError("Job never reached FAILED.")
 
         await _open_library_ingest_canvas(screen, pilot)
-        await _wait_for_selector(screen, pilot, "#library-ingest-dismiss-0")
+        # Row-action buttons are keyed by job_id, not row index (PR #591
+        # review, F1) -- this is the only job in a fresh registry, so its
+        # id is deterministically "ingest-job-1".
+        await _wait_for_selector(screen, pilot, "#library-ingest-dismiss-ingest-job-1")
 
-        screen.query_one("#library-ingest-dismiss-0", Button).press()
+        screen.query_one("#library-ingest-dismiss-ingest-job-1", Button).press()
         await pilot.pause()
 
         assert harness.library_ingest_jobs.jobs() == ()
         assert not list(screen.query(".library-ingest-row"))
         assert screen.query_one("#library-ingest-queue-empty")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_dismiss_targets_correct_job_across_stale_render(
+    tmp_path,
+):
+    """(F1 regression, PR #591 review) A Dismiss button pressed AFTER the
+    queue has reordered underneath it -- but BEFORE the canvas has
+    re-rendered to reflect that reorder -- must still act on the job it
+    was rendered for, never on whatever job happens to now sit at the
+    same row index.
+
+    Sequence: render the queue with exactly one FAILED job ("the
+    target"), capture a direct reference to ITS Dismiss button, then
+    freeze the canvas's own ``refresh(recompose=True)`` (a no-op stand-in)
+    to hold the DOM in that exact "just rendered, not yet caught up"
+    state -- reproducing the real production window between a registry
+    mutation and Textual actually applying the scheduled recompose on a
+    later event-loop turn (see
+    ``LibraryScreen._handle_library_ingest_registry_changed``'s
+    docstring). Only then is a second, newer job appended straight to the
+    registry -- it sorts first in the newest-first ``jobs()`` snapshot,
+    so "row index 0" now means something different than it did when the
+    captured button was built -- and only then is the captured (frozen,
+    still-mounted) button actually pressed.
+
+    Job_id-keyed button ids resolve the ORIGINAL target job regardless of
+    that index shift (dismissed; the new job is untouched and still
+    queued). The index-keyed scheme this replaces instead re-derives row
+    0 fresh at press time -- landing on the new QUEUED job, whose
+    ``can_dismiss`` is False -- and silently no-ops, leaving the failed
+    row the user was looking at un-dismissed (confirmed by running this
+    exact test against the pre-fix handlers: it fails with the target job
+    still present/un-dismissed).
+    """
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    missing = tmp_path / "does-not-exist.txt"
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        target_job = harness.submit_library_ingest_job(source_path=str(missing))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
+            if jobs[target_job.job_id].state == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Job never reached FAILED.")
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, f"#library-ingest-dismiss-{target_job.job_id}")
+        stale_dismiss_button = screen.query_one(
+            f"#library-ingest-dismiss-{target_job.job_id}", Button
+        )
+
+        # Freeze the canvas mid-render: block the registry-listener-driven
+        # recompose so the DOM stays exactly as it was when the button
+        # above was captured, rather than racing Textual's own recompose
+        # scheduling (unreliable to depend on from a test).
+        screen.refresh = lambda *args, **kwargs: None
+
+        # Append a newer job DIRECTLY on the registry (not through
+        # ``submit_library_ingest_job``) so it stays QUEUED forever --
+        # nothing ever claims it, so no background-thread timing is
+        # involved.
+        newer_job = harness.library_ingest_jobs.submit(source_path=str(tmp_path / "newer.txt"))
+        assert newer_job.job_id != target_job.job_id
+        # Confirm the reorder actually happened underneath the frozen DOM.
+        assert harness.library_ingest_jobs.jobs()[0].job_id == newer_job.job_id
+
+        # Press the button captured BEFORE the mutation above -- this is
+        # the "stale render, but the click still lands" race from F1.
+        stale_dismiss_button.press()
+        await pilot.pause()
+
+        jobs_by_id = {j.job_id: j for j in harness.library_ingest_jobs.jobs()}
+        assert target_job.job_id not in jobs_by_id, (
+            "Dismiss must remove the job the button was rendered for, "
+            "even after the queue reordered underneath it."
+        )
+        assert newer_job.job_id in jobs_by_id
+        assert jobs_by_id[newer_job.job_id].state == IngestJobState.QUEUED
 
 
 @pytest.mark.asyncio
@@ -7437,7 +7531,9 @@ async def test_library_ingest_canvas_renders_markup_hostile_filename_without_cra
         # context manager ever returned control here.
         assert "bracket" in str(row.renderable)
         assert "tag" in str(row.renderable)
-        assert host.query_one("#library-ingest-retry-0")
+        # Row-action buttons are keyed by job_id, not row index (PR #591
+        # review, F1).
+        assert host.query_one("#library-ingest-retry-ingest-job-1")
 
 
 # --- L3b AB wave: widget-level (A4/A5/A6/B2) --------------------------------
@@ -7558,8 +7654,10 @@ async def test_library_ingest_canvas_failed_row_renders_dismiss_next_to_retry():
 
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         await pilot.pause()
-        assert host.query_one("#library-ingest-retry-0", Button)
-        dismiss_button = host.query_one("#library-ingest-dismiss-0", Button)
+        # Row-action buttons are keyed by job_id, not row index (PR #591
+        # review, F1).
+        assert host.query_one("#library-ingest-retry-ingest-job-1", Button)
+        dismiss_button = host.query_one("#library-ingest-dismiss-ingest-job-1", Button)
         assert "library-ingest-row-action" in dismiss_button.classes
 
 
