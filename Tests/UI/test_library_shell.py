@@ -8,7 +8,8 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from textual.app import App
+from textual.app import App, ComposeResult
+from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
 
 from tldw_chatbook.app import LibraryIngestQueueMixin
@@ -32,6 +33,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_INGEST_MEDIA,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
@@ -7051,3 +7053,170 @@ async def test_library_ingest_canvas_renders_markup_hostile_filename_without_cra
         assert "bracket" in str(row.renderable)
         assert "tag" in str(row.renderable)
         assert host.query_one("#library-ingest-retry-0")
+
+
+# --- Live updates: registry listener -> canvas refresh + count poke
+# (L3b Task 5) --------------------------------------------------------------
+#
+# Task 4's tests above (e.g. the "happy path" test's comment) deliberately
+# forced a manual ``screen.refresh(recompose=True)`` once a job reached
+# DONE, because no live-update listener existed yet. These pilots assert
+# the opposite: NO manual recompose anywhere in the test body -- the
+# registry listener registered in ``LibraryScreen.on_mount`` must be the
+# only thing driving the row/rail updates onto screen.
+
+
+class _DummyReplacementScreen(Screen):
+    """Minimal screen used only to replace ``LibraryScreen`` on the stack.
+
+    ``App.switch_screen`` pops the previous top screen and -- since it is
+    not installed/present in any other stack -- awaits its ``.remove()``,
+    which actually unmounts it (firing ``on_unmount``). Merely *pushing* a
+    screen on top would only suspend the one underneath, which is exactly
+    the lifecycle event ``LibraryScreen.on_unmount`` documents itself as
+    deliberately NOT keying off of.
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static("replacement", id="dummy-replacement-static")
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_live_updates_without_manual_recompose(tmp_path):
+    """(a) With the ingest canvas open, a *programmatic* submit (calling
+    the app seam directly, exactly like the queue-runner's own
+    ``call_from_thread``-marshaled transitions, and unlike a button press
+    whose handler does its own trailing recompose) must still make the
+    queue row appear, flip to done, and grow the rail ``Media (N)`` count
+    -- all without this test ever calling ``refresh(recompose=True)``
+    itself."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-live")
+    source = tmp_path / "river.txt"
+    source.write_text("Rivers carve valleys over millennia.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+
+        media_button = screen.query_one("#library-row-browse-media", Button)
+        assert "Media (0)" in str(media_button.label)
+
+        harness.submit_library_ingest_job(source_path=str(source))
+
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            if screen.query("#library-ingest-row-0"):
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(
+                f"Ingest row never appeared without a manual recompose. "
+                f"Visible text: {_visible_text(screen)}"
+            )
+
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            rows = list(screen.query("#library-ingest-row-0"))
+            if rows and str(rows[0].renderable).startswith("✓ done"):
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(
+                f"Row never reached done without a manual recompose: "
+                f"{harness.library_ingest_jobs.jobs()}"
+            )
+
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            media_button = screen.query_one("#library-row-browse-media", Button)
+            if "Media (1)" in str(media_button.label):
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(
+                f"Rail Media count never incremented after completion. "
+                f"Label: {media_button.label!r}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_registry_listener_removed_on_unmount(tmp_path):
+    """(b) The registry listener registered in ``on_mount`` is removed in
+    ``on_unmount``: replacing ``LibraryScreen`` on the stack (real
+    unmount, not a suspend-only push) drops the registry's listener count
+    to zero, and a subsequent mutation neither raises nor resurrects the
+    removed screen."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-unmount")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        assert screen in harness.screen_stack
+        assert len(harness.library_ingest_jobs._listeners) == 1
+
+        await harness.switch_screen(_DummyReplacementScreen())
+        await pilot.pause()
+        await pilot.pause()
+
+        # Note: Textual's ``Widget.is_mounted`` tracks "has been mounted at
+        # least once" (flipped True on first mount, never reset), so it is
+        # NOT the right signal for "was later removed" -- stack membership
+        # is (mirrors how ``App._replace_screen`` itself decides whether
+        # to actually call ``.remove()``: not installed + not present in
+        # any screen stack).
+        assert screen not in harness.screen_stack
+        assert len(harness.library_ingest_jobs._listeners) == 0
+
+        # Must not raise, and must not resurrect/recompose the removed
+        # screen -- the queue-runner will run this (missing) file to a
+        # FAILED transition on a background thread, exercising the exact
+        # call_from_thread-marshaled notify path against zero listeners.
+        harness.submit_library_ingest_job(source_path=str(tmp_path / "ghost.txt"))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = harness.library_ingest_jobs.jobs()
+            if jobs and jobs[0].state == IngestJobState.FAILED:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Ghost job never reached FAILED.")
+
+        assert screen not in harness.screen_stack
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_different_canvas_isolation(tmp_path):
+    """(c) Completing a job while a DIFFERENT canvas (Notes) is selected
+    must not yank the user onto the ingest canvas -- the selected row and
+    composed widgets stay on Notes -- but the rail ``Media (N)`` count
+    still updates once the job completes."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-isolation")
+    source = tmp_path / "delta.txt"
+    source.write_text("Deltas form where rivers meet the sea.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-notes").press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+
+        harness.submit_library_ingest_job(source_path=str(source))
+
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            media_button = screen.query_one("#library-row-browse-media", Button)
+            if "Media (1)" in str(media_button.label):
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(
+                f"Rail Media count never incremented while Notes was open. "
+                f"Label: {media_button.label!r}"
+            )
+
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        assert screen._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA
+        assert not screen.query("#library-ingest-path")
+        assert not list(screen.query(".library-ingest-row"))

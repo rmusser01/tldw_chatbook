@@ -632,6 +632,13 @@ class LibraryScreen(BaseAppScreen):
         # re-entry (see ``_reset_library_ingest_transient_state``); the
         # job queue itself is registry-owned, not screen state.
         self._library_ingest_form: LibraryIngestFormState = LibraryIngestFormState()
+        # Dedupe counter for the "poke the source snapshot on transitions
+        # into done" rule (Task 5's registry listener): only re-fetch when
+        # the registry's done-job count has grown since the last time this
+        # screen checked. Seeded from the live registry in ``on_mount``
+        # (not here) so a re-mounted, cached screen instance never treats
+        # jobs that finished in a previous mount as a fresh transition.
+        self._library_ingest_last_done_count: int = 0
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -640,6 +647,16 @@ class LibraryScreen(BaseAppScreen):
             self._apply_source_snapshot_timeout,
         )
         self._refresh_local_source_snapshot()
+        registry = self._library_ingest_registry()
+        if registry is not None:
+            counts_fn = getattr(registry, "counts", None)
+            if callable(counts_fn):
+                # Seed from whatever the registry already knows so a
+                # re-mounted (cached) screen instance doesn't treat jobs
+                # that finished during a previous mount as a brand-new
+                # done-transition and fire a redundant snapshot refresh.
+                self._library_ingest_last_done_count = counts_fn().get("done", 0)
+            registry.add_listener(self._handle_library_ingest_registry_changed)
         if self._active_mode == "collections" and not self._library_collections_loaded:
             # Deep-links that preset mode=collections call apply_navigation_context
             # BEFORE the screen is mounted (see app.py handle_screen_navigation),
@@ -659,6 +676,34 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_note_detail",
             )
+
+    def on_unmount(self) -> None:
+        """Unregister the ingest registry listener registered in ``on_mount``.
+
+        ``on_unmount`` (not ``on_screen_suspend``) is the correct pairing:
+        a Library screen fetched from ``switch_screen``'s replace can come
+        back later as the *same cached Python instance*
+        (``_get_or_create_navigation_screen``), which re-runs ``on_mount``
+        on every re-entry -- so listener add/remove must be symmetric with
+        that same mount/unmount cycle, not the temporary suspend/resume
+        pair a screen gets while merely covered by another screen on the
+        stack (suspend does not tear down and re-mount this screen, so
+        pairing removal with it would silently stop live updates while
+        still fully composed and, per the plan brief, still able to
+        resume). The registry itself is a plain in-memory object owned by
+        the app, not this screen, and can keep firing mutations long after
+        this screen is gone -- the listener body also guards on
+        ``self.is_mounted`` (belt and braces, matching this file's
+        established convention elsewhere), though note that in this
+        Textual version ``is_mounted`` tracks "has been mounted at least
+        once" rather than "currently mounted" (it is never reset back to
+        ``False`` after removal) -- so this call is what actually closes
+        the window, not the guard.
+        """
+        super().on_unmount()
+        registry = self._library_ingest_registry()
+        if registry is not None:
+            registry.remove_listener(self._handle_library_ingest_registry_changed)
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.
@@ -3447,6 +3492,77 @@ class LibraryScreen(BaseAppScreen):
     def _library_ingest_registry(self) -> Any:
         """Return the app's ingest job registry, or ``None`` when absent."""
         return getattr(self.app_instance, "library_ingest_jobs", None)
+
+    def _handle_library_ingest_registry_changed(self) -> None:
+        """Registry listener: live-recompose the ingest canvas + poke the
+        source snapshot when a job finishes (Task 5).
+
+        Registered against ``self.app_instance.library_ingest_jobs`` in
+        ``on_mount``, removed in ``on_unmount``. Per the registry's own
+        contract (``LibraryIngestJobRegistry._notify_listeners``), this
+        fires synchronously on the UI thread after every successful
+        ``submit``/``mark_running``/``mark_done``/``mark_failed``/
+        ``requeue`` -- from two different call shapes:
+
+        - **Synchronously inside a message handler.** The "Start ingest"
+          and "Retry" button handlers call ``submit_library_ingest_job``/
+          ``retry_library_ingest_job`` directly, which mutate the registry
+          (firing this listener) *before* the handler's own trailing
+          ``self.refresh(recompose=True)`` runs.
+        - **Marshaled from the queue-runner's worker thread**, via
+          ``call_from_thread`` for ``mark_running``/``mark_done``/
+          ``mark_failed`` -- these land outside any message handler,
+          as their own turn of the UI event loop.
+
+        Both shapes are safe to handle with a plain, synchronous
+        ``self.refresh(recompose=True)`` call (no ``call_after_refresh``
+        indirection needed): ``Widget.refresh(recompose=True)`` never
+        recomposes inline -- it only sets ``_recompose_required = True``
+        and schedules the actual (async) ``_check_recompose`` via
+        ``call_next``, which runs on a later turn of the event loop. That
+        makes calling it redundant, or from inside another handler that
+        will also call it, harmless: the flag is idempotent and the
+        second scheduled check becomes a no-op once the first has already
+        cleared it. (Verified by reading
+        ``textual.widget.Widget.refresh``/``_check_recompose`` -- Textual
+        8.2.7.)
+
+        Behavior:
+
+        - Recomposes the canvas ONLY when the ingest canvas is the
+          currently selected rail row -- a job transition must never yank
+          a user looking at a different canvas away from it.
+        - Independently of the canvas recompose, pokes
+          ``_refresh_local_source_snapshot()`` (which updates the rail's
+          ``Media (N)`` count) whenever the registry's done-job count has
+          grown since this screen last checked -- deduped via
+          ``_library_ingest_last_done_count`` so a running/failed
+          transition (or a second notification for the same completed
+          job) never re-triggers the snapshot fetch. This fires
+          regardless of which canvas is selected, since the rail is
+          always visible.
+        - A no-op when the screen isn't mounted -- belt-and-braces
+          alongside ``on_unmount``'s removal (see that method's
+          docstring for why removal can't simply happen earlier, e.g. on
+          suspend). Note ``self.is_mounted`` never flips back to
+          ``False`` after removal in this Textual version -- it only
+          guards a callback that somehow fires before this screen's very
+          first mount -- so ``on_unmount``'s ``remove_listener`` call is
+          what actually prevents post-teardown notifications, not this
+          guard.
+        """
+        if not self.is_mounted:
+            return
+        if self._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA:
+            self.refresh(recompose=True)
+        registry = self._library_ingest_registry()
+        counts_fn = getattr(registry, "counts", None)
+        done_count = counts_fn().get("done", 0) if callable(counts_fn) else 0
+        if done_count != self._library_ingest_last_done_count:
+            grew = done_count > self._library_ingest_last_done_count
+            self._library_ingest_last_done_count = done_count
+            if grew:
+                self._refresh_local_source_snapshot()
 
     def _build_library_ingest_state(self) -> LibraryIngestCanvasState:
         """Build the ingest canvas's full display state from the live registry + form.
