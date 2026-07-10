@@ -373,19 +373,22 @@ async def test_library_shell_rag_open_import_export_switches_canvas_and_selectio
 
         screen.query_one("#library-rag-open-import-export").press()
         await _wait_for_selector(
-            screen, pilot, "#library-import-export-workflow-title"
+            screen, pilot, "#library-ingest-canvas-placeholder"
         )
 
-        # The canvas now renders the Import/Export mode body, driven by the
-        # shell selection rather than a bare _active_mode flip.
+        # The canvas now renders the Ingest canvas stub, driven by the shell
+        # selection rather than a bare _active_mode flip. The Import/Export
+        # mode this recovery button used to drive is retired -- the removed
+        # row/mode's only surviving successor is the Ingest ▸ Import media
+        # canvas row.
         canvas = screen.query_one("#library-canvas")
-        title = screen.query_one("#library-import-export-workflow-title")
-        assert canvas in title.ancestors
+        placeholder = screen.query_one("#library-ingest-canvas-placeholder")
+        assert canvas in placeholder.ancestors
         assert not screen.query("#library-search-rag-panel")
 
-        # ...and the rail selection marker moved to the Import/Export row.
-        assert screen._library_selected_row_id == "ingest-import-export"
-        row = screen.query_one("#library-row-ingest-import-export")
+        # ...and the rail selection marker moved to the Import media row.
+        assert screen._library_selected_row_id == "ingest-import-media"
+        row = screen.query_one("#library-row-ingest-import-media")
         assert row.has_class("library-rail-row-selected")
 
 

@@ -83,31 +83,27 @@ async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -
             )
             await _wait_until(
                 pilot,
-                lambda: bool(app.screen.query("#library-row-ingest-import-export")),
+                lambda: bool(app.screen.query("#library-row-ingest-import-media")),
             )
             # The retired hub's "Import/Export Sources" / "Search/RAG"
             # action-region copy is gone; the rail row titles are the
             # surviving discoverable surface for the same two capabilities.
+            # The placeholder Import/Export row itself is retired outright
+            # (see the inventory verdict); Import media absorbed its slot.
             library_text = _screen_text(app)
-            assert "Import / Export" in library_text
+            assert "Import media" in library_text
             assert "Search / RAG" in library_text
+            assert not app.screen.query("#library-row-ingest-import-export")
 
-            # Import/Export is reached via its own rail row (proving the
-            # native mode renders in place); the in-canvas "Open Ingest"
-            # button lived only in the never-mounted #library-action-region
-            # and is dead (see test_destination_shells.py), so the Ingest
-            # screen is now reached via the always-visible Ingest > Import
-            # media rail row instead of a button inside Import/Export mode.
-            app.screen.query_one("#library-row-ingest-import-export", Button).press()
-            await _wait_until(
-                pilot,
-                lambda: app.current_tab == "library" and "Import/Export mode" in _screen_text(app),
-            )
+            # Import media is now a first-class canvas row (not a deep-link
+            # to the standalone Ingest screen): pressing it mounts the
+            # ingest canvas stub in place rather than navigating away from
+            # Library (Task 4 replaces the stub with the real canvas).
             app.screen.query_one("#library-row-ingest-import-media", Button).press()
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == "ingest"
-                and app.screen.__class__.__name__ == "MediaIngestScreen",
+                lambda: app.current_tab == "library"
+                and bool(app.screen.query("#library-ingest-canvas-placeholder")),
             )
 
             app.screen.query_one("#nav-console", Button).press()

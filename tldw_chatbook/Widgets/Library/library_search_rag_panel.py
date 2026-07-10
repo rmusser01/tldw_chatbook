@@ -161,19 +161,19 @@ def library_rag_scope_toggle_children(state: LibraryRagPanelState) -> list[Widge
 
 
 def library_rag_scope_shows_recovery(scope: LibraryRagScopeState) -> bool:
-    """True when the scope region should render its recovery dump + Import/Export.
+    """True when the scope region should render its recovery dump + Import media.
 
     Only the genuinely-empty-library case (no sources available at all)
     gets the full recovery presentation; a user deselecting every scope
     toggle with sources still available is covered by the query region's
-    quiet line instead (A1/B2) -- an Import/Export button would not fix
+    quiet line instead (A1/B2) -- an Import media button would not fix
     that case.
     """
     return bool(scope.recovery_copy) and not scope.has_available_sources
 
 
 def library_rag_scope_recovery_children(state: LibraryRagPanelState) -> list[Widget]:
-    """Return the scope region's recovery Static + Import/Export button, or none.
+    """Return the scope region's recovery Static + Import media button, or none.
 
     Shared by `compose()` and the screen's incremental refresh.
     """
@@ -182,10 +182,10 @@ def library_rag_scope_recovery_children(state: LibraryRagPanelState) -> list[Wid
     return [
         Static(state.scope.recovery_copy, id="library-rag-scope-recovery"),
         Button(
-            "Open Import/Export",
+            "Open Import media",
             id="library-rag-open-import-export",
             classes="library-rag-recovery-action",
-            tooltip="Open Library Import/Export to add sources.",
+            tooltip="Open Library Import media to add sources.",
         ),
     ]
 

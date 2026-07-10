@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tldw_chatbook.Constants import TAB_INGEST
-
 LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something new."
 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
@@ -14,6 +12,7 @@ LIBRARY_ROW_BROWSE_NOTES = "browse-notes"
 LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
 LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
+LIBRARY_ROW_INGEST_MEDIA = "ingest-import-media"
 
 
 @dataclass(frozen=True)
@@ -191,20 +190,11 @@ def build_library_shell_state(
 
     ingest_rows = (
         LibraryRailRow(
-            row_id="ingest-import-media",
+            row_id=LIBRARY_ROW_INGEST_MEDIA,
             section_id="ingest",
             title="Import media",
-            target_kind="screen",
-            target_id=TAB_INGEST,
-            count=None,
-            count_known=True,
-        ),
-        LibraryRailRow(
-            row_id="ingest-import-export",
-            section_id="ingest",
-            title="Import / Export",
-            target_kind="mode",
-            target_id="import-export",
+            target_kind="canvas",
+            target_id="ingest-media",
             count=None,
             count_known=True,
         ),

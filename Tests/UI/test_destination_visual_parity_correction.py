@@ -1511,7 +1511,7 @@ COMPACT_DESTINATION_CONTRACTS = {
         "actions": (
             "#library-row-browse-search",
             "#library-row-browse-media",
-            "#library-row-ingest-import-export",
+            "#library-row-ingest-import-media",
         ),
     },
     "artifacts": {
@@ -1640,7 +1640,7 @@ VISIBLE_FOCUS_TARGETS = {
     "library": {
         "library-row-browse-search",
         "library-row-browse-media",
-        "library-row-ingest-import-export",
+        "library-row-ingest-import-media",
     },
     "artifacts": {
         "artifacts-open-chatbooks",

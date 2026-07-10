@@ -380,42 +380,6 @@ async def test_library_conversations_empty_state_is_honest_and_blocks_actions() 
 
 
 @pytest.mark.asyncio
-async def test_library_import_export_opens_native_workflow_with_clear_boundaries() -> None:
-    """The Import/Export mode canvas (``_import_export_workflow_rows``) still
-    explains ownership boundaries. The dedicated "Open Ingest"/"Open Media"/
-    "Export Library sources" action buttons lived only in the retired
-    ``#library-action-region`` (3-pane) and have no rail successor yet; the
-    generic Ingest rail row (``#library-row-ingest-import-media``) already
-    covers screen-level Ingest navigation."""
-    app = _build_test_app()
-    _seed_library_content(app)
-    seen_routes: list[str] = []
-    host = DestinationHarness(app, "library", seen_routes)
-
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_library_shell_ready(screen, pilot)
-        screen.query_one("#library-row-ingest-import-export", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-import-export-workflow-title")
-
-        visible = _visible_text(screen)
-        assert getattr(screen, "_active_mode") == "import-export"
-        assert seen_routes == []
-        assert "Library Import/Export Workflow" in visible
-        assert "Library owns source acquisition framing; Ingest and Media own deeper file handling." in visible
-        assert "Import source material" in visible
-        assert "Imported material returns here as notes, media, conversations, or indexed sources." in visible
-        assert "Full Media ingestion and review stays in Media." in visible
-        assert "Artifact export stays in Artifacts." in visible
-        assert "Generic file management stays outside Library." in visible
-        assert "Export is not wired here yet." in visible
-        assert "Return path: come back to Library after import to see new hub inventory." in visible
-        assert screen.query_one("#library-row-ingest-import-export", Button).has_class(
-            "library-rail-row-selected"
-        )
-
-
-@pytest.mark.asyncio
 async def test_library_collections_selection_explains_membership_workspace_and_actions() -> None:
     """``LibraryCollectionsPanel`` (mounted verbatim in the canvas) still
     explains membership, workspace rule, and action status for a selected

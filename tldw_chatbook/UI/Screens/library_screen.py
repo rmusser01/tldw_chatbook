@@ -89,6 +89,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_INGEST_MEDIA,
     LibraryShellInput,
     build_library_shell_state,
 )
@@ -150,7 +151,7 @@ LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 LIBRARY_COLLECTION_SYNC_CONFLICT_LIMIT = 200
 LIBRARY_HANDOFF_LABEL_PREFIX = "Console/RAG handoff: "
-LIBRARY_LOCAL_SNAPSHOT_MODES = frozenset({"sources", "conversations", "import-export"})
+LIBRARY_LOCAL_SNAPSHOT_MODES = frozenset({"sources", "conversations"})
 LIBRARY_WORKSPACE_SOURCE_COLUMN_WIDTH = 30
 LIBRARY_WORKSPACE_SCOPE_COLUMN_WIDTH = 18
 LIBRARY_WORKSPACE_VISIBLE_COLUMN_WIDTH = 7
@@ -200,15 +201,6 @@ LIBRARY_MODES = {
             "Ask Library sources, inspect evidence, then send selected snippets to Console."
         ),
         "next_action": "Query first; scope, evidence, and Console handoff stay visible below.",
-    },
-    "import-export": {
-        "label": "Import/Export",
-        "button_id": "library-mode-import-export",
-        "description": (
-            "Import/Export mode: Library owns source acquisition framing; "
-            "Ingest and Media own deeper file handling."
-        ),
-        "next_action": "Choose a handoff action below; imported material returns as Library inventory.",
     },
     "workspaces": {
         "label": "Workspaces",
@@ -300,7 +292,6 @@ LIBRARY_MODE_TO_ROW_ID = {
     "study": "create-study",
     "flashcards": "create-flashcards",
     "quizzes": "create-quizzes",
-    "import-export": "ingest-import-export",
 }
 
 
@@ -1748,93 +1739,6 @@ class LibraryScreen(BaseAppScreen):
     def _hub_spacer(self, widget_id: str) -> Static:
         return Static("", id=widget_id, classes="library-hub-spacer")
 
-    def _import_export_workflow_rows(self) -> tuple[Static, ...]:
-        return (
-            Static(
-                "Library Import/Export Workflow",
-                id="library-import-export-workflow-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Library owns source acquisition framing; Ingest and Media own deeper file handling.",
-                id="library-import-export-owner-boundary",
-            ),
-            Static(
-                "Import source material",
-                id="library-import-export-import-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Open Ingest to add files, URLs, transcripts, source packages, or external material.",
-                id="library-import-export-ingest-copy",
-            ),
-            Static(
-                "Imported material returns here as notes, media, conversations, or indexed sources.",
-                id="library-import-export-return-copy",
-            ),
-            Static(
-                "Media review",
-                id="library-import-export-media-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Full Media ingestion and review stays in Media.",
-                id="library-import-export-media-boundary",
-            ),
-            Static(
-                "Ownership boundaries",
-                id="library-import-export-boundaries-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Artifact export stays in Artifacts.",
-                id="library-import-export-artifact-boundary",
-            ),
-            Static(
-                "Generic file management stays outside Library.",
-                id="library-import-export-file-boundary",
-            ),
-            Static(
-                "Export is not wired here yet.",
-                id="library-import-export-export-blocked",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static(
-                "Return path: come back to Library after import to see new hub inventory.",
-                id="library-import-export-return-path",
-            ),
-        )
-
-    def _import_export_inspector_rows(self) -> tuple[Static, ...]:
-        return (
-            Static(
-                "Import/Export inspector",
-                id="library-inspector-title",
-                classes="destination-section",
-            ),
-            Static(
-                "Current scope: source-level Library acquisition.",
-                id="library-import-export-inspector-scope",
-            ),
-            Static(
-                "Handoff target: Ingest for new source material; Media for media review.",
-                id="library-import-export-inspector-targets",
-            ),
-            Static(
-                "Prerequisite: choose the owner workflow before leaving Library.",
-                id="library-import-export-inspector-prerequisite",
-            ),
-            Static(
-                "Blocked: Library source export is planned but not implemented here.",
-                id="library-import-export-inspector-blocked",
-                classes="ds-recovery-callout is-blocked",
-            ),
-            Static(
-                "Recovery: use owner screens for existing export paths until Library export is wired.",
-                id="library-import-export-inspector-recovery",
-            ),
-        )
-
     def _source_action_meta(self, widget_id: str) -> str:
         if widget_id == "library-open-notes":
             return (
@@ -2756,45 +2660,6 @@ class LibraryScreen(BaseAppScreen):
                     classes="ds-recovery-callout" if handoff_ready else "ds-recovery-callout is-blocked",
                 ),
             )
-        if self._active_mode == "import-export":
-            return (
-                Static("Import/Export actions", classes="destination-section"),
-                Button(
-                    "Open Ingest",
-                    id="library-import-export-open-ingest",
-                    classes="library-source-action",
-                    tooltip=(
-                        "Open Ingest for files, URLs, transcripts, and source packages. "
-                        "Return to Library to see imported content."
-                    ),
-                ),
-                Static(
-                    "Route: Ingest. Return path: imported material appears in Library inventory.",
-                    id="library-import-export-ingest-route-copy",
-                ),
-                Button(
-                    "Open Media",
-                    id="library-import-export-open-media",
-                    classes="library-source-action",
-                    tooltip="Open Media for full media ingestion, review, and analysis.",
-                ),
-                Static(
-                    "Route: Media. Use when the task is media review, not generic source movement.",
-                    id="library-import-export-media-route-copy",
-                ),
-                Button(
-                    "Export Library sources",
-                    id="library-import-export-export-sources",
-                    classes="library-source-action",
-                    disabled=True,
-                    tooltip="Source-level Library export is not wired yet.",
-                ),
-                Static(
-                    "Blocked: export from this Library panel is not wired yet. Use owner screens where available.",
-                    id="library-import-export-action-blocked",
-                    classes="ds-recovery-callout is-blocked",
-                ),
-            )
         if self._active_mode == "collections":
             return (
                 Static("Collection item actions", classes="destination-section"),
@@ -3180,6 +3045,13 @@ class LibraryScreen(BaseAppScreen):
                         description_value=self._library_collection_description_input,
                         delete_pending=bool(self._library_collection_pending_delete_id),
                         id="library-collections-panel",
+                    )
+                elif shell.canvas_kind == "ingest-media":
+                    yield Static(
+                        "Ingest canvas arrives in the next task.",
+                        id="library-ingest-canvas-placeholder",
+                        classes="destination-purpose",
+                        markup=False,
                     )
                 elif shell.canvas_kind == "mode":
                     yield from self._compose_mode_canvas(shell.canvas_target)
@@ -4472,9 +4344,6 @@ class LibraryScreen(BaseAppScreen):
             )
         if mode in LIBRARY_STUDY_HANDOFF_MODES:
             yield self._study_handoff_detail_widget()
-        elif mode == "import-export":
-            for row in self._import_export_workflow_rows():
-                yield row
 
     def _library_rail_preferences(self):
         """Read persisted Library rail section preferences."""
@@ -6817,10 +6686,6 @@ class LibraryScreen(BaseAppScreen):
             ):
                 await region.mount(row)
             return
-        if self._active_mode == "import-export":
-            for row in self._import_export_inspector_rows():
-                await region.mount(row)
-            return
         state = workspace_depth_state or self._library_workspace_depth_state()
         for row in self._hub_inspector_rows(state):
             await region.mount(row)
@@ -6860,10 +6725,6 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._active_mode == "conversations":
             for row in self._conversation_browser_rows(workspace_depth_state):
-                await region.mount(row)
-            return
-        if self._active_mode == "import-export":
-            for row in self._import_export_workflow_rows():
                 await region.mount(row)
             return
         if not self._has_local_sources():
@@ -7203,8 +7064,10 @@ class LibraryScreen(BaseAppScreen):
     async def open_import_export_from_library_rag(self, event: Button.Pressed) -> None:
         event.stop()
         # Drive the shell selection so the recomposed canvas resolves to the
-        # Import/Export mode; flipping _active_mode alone reverts on recompose.
-        await self._select_library_rail_row("ingest-import-export", "import-export")
+        # Ingest canvas; flipping _active_mode alone reverts on recompose.
+        # The Import/Export row/mode this used to target is retired -- the
+        # Ingest ▸ Import media canvas row is its only surviving successor.
+        await self._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA, "ingest-media")
 
     @on(Button.Pressed, "#library-rag-mode-toggle")
     def cycle_library_rag_mode(self, event: Button.Pressed) -> None:
@@ -7972,21 +7835,6 @@ class LibraryScreen(BaseAppScreen):
         """
         event.stop()
         self._open_selected_media_handoff()
-
-    @on(Button.Pressed, "#library-open-import-export")
-    async def open_import_export(self, event: Button.Pressed) -> None:
-        event.stop()
-        await self._set_active_mode("import-export")
-
-    @on(Button.Pressed, "#library-import-export-open-ingest")
-    def open_import_export_ingest(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(NavigateToScreen("ingest"))
-
-    @on(Button.Pressed, "#library-import-export-open-media")
-    def open_import_export_media(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(NavigateToScreen("media"))
 
     @on(Button.Pressed, "#library-workspace-import-sources")
     def open_workspace_import_sources(self) -> None:

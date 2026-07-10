@@ -200,7 +200,7 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(
         for label in (
             "Collections",
             "Search / RAG",
-            "Import / Export",
+            "Import media",
             "Study decks",
             "Flashcards",
             "Quizzes",
@@ -218,9 +218,11 @@ async def test_library_contract_layout_regions_survive_terminal_sizes(
             "create-flashcards",
             "create-quizzes",
             "ingest-import-media",
-            "ingest-import-export",
         ):
             assert screen.query_one(f"#library-row-{row_id}", Button)
+        # The placeholder Import/Export row is retired outright (see the
+        # inventory verdict); Import media absorbed its rail slot.
+        assert not screen.query("#library-row-ingest-import-export")
 
 
 @pytest.mark.asyncio

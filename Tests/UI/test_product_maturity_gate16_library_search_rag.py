@@ -309,11 +309,12 @@ async def test_library_search_rag_empty_sources_has_mode_local_blocked_status() 
         assert "3. Select evidence, then Use in Console." in visible_text
         assert "Why: Enter a question or search query." not in visible_text
         recovery_button = screen.query_one("#library-rag-open-import-export", Button)
-        assert str(recovery_button.label) == "Open Import/Export"
-        assert recovery_button.tooltip == "Open Library Import/Export to add sources."
-        # Pressing this button drives the shell selection to the Import/Export
-        # row so the recomposed canvas renders that mode; the canvas-switch
-        # behavior itself is covered by test_library_shell.py.
+        assert str(recovery_button.label) == "Open Import media"
+        assert recovery_button.tooltip == "Open Library Import media to add sources."
+        # Pressing this button drives the shell selection to the Ingest ▸
+        # Import media canvas row (the Import/Export row/mode it used to
+        # target is retired); the canvas-switch behavior itself is covered
+        # by test_library_shell.py.
 
 
 @pytest.mark.asyncio
