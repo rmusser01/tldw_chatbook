@@ -207,19 +207,31 @@ class HomeScreen(BaseAppScreen):
             canvas.styles.height = "100%"
             yield canvas
 
-    def _home_action_button(self, label: str, control_id: str) -> HomeActionButton:
-        """Build a canvas action button with the fallback-press wiring."""
+    def _home_action_button(
+        self, label: str, control_id: str, primary: bool = False
+    ) -> HomeActionButton:
+        """Build a canvas action button with the fallback-press wiring.
+
+        Args:
+            label: Visible button label.
+            control_id: Button id (also the dispatch key for non-primary
+                controls; see ``HOME_CONTROL_METHODS``).
+            primary: Whether this control carries primary emphasis for the
+                currently selected row (see ``HomeCanvasState.
+                primary_control_id`` / ``_canvas_primary_control_id``).
+        """
+        classes = "home-canvas-action console-action-primary" if primary else "home-canvas-action"
         if control_id == "home-primary-action":
             return HomeActionButton(
                 label,
                 id="home-primary-action",
-                classes="home-canvas-action",
+                classes=classes,
                 fallback_press=self._activate_home_primary_action,
             )
         return HomeActionButton(
             label,
             id=control_id,
-            classes="home-canvas-action",
+            classes=classes,
             fallback_press=lambda control_id=control_id: (
                 self._activate_home_control(control_id)
             ),

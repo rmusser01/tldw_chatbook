@@ -176,28 +176,57 @@ LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS = frozenset({"library-rag-results-heading"
 
 LIBRARY_STUDY_HANDOFF_MODES = {
     "study": {
-        "label": "Study",
+        # "header" mirrors the rail row title that opens this canvas
+        # (LibraryRailRow "Study decks", library_shell_state.py) so the
+        # canvas doesn't restate the mode name a second, differently-worded
+        # way (L3b Task 8/9 follow-up: UX wave C/D, handoff copy
+        # consolidation).
+        "header": "Study decks",
         "action_label": "Study Dashboard",
-        # Copied from the retired LIBRARY_MODES["study"] entry by L3b Task 8
-        # so the live "handoff" canvas (compose_content's canvas_kind ==
-        # "handoff" branch) has no dependency on the mode-strip machinery;
-        # LIBRARY_MODES itself was deleted wholesale in Task 9.
-        "description": "Study mode: turn Library material into study sessions.",
-        "next_action": "Open Study Dashboard to continue due cards, decks, and quizzes.",
+        "purpose": "Plan study decks from Library sources.",
     },
     "flashcards": {
-        "label": "Flashcards",
+        "header": "Flashcards",
         "action_label": "Flashcards",
-        "description": "Flashcards mode: generate or review cards from Library sources.",
-        "next_action": "Open Flashcards to work with the current source snapshot.",
+        "purpose": "Generate or review cards from Library sources.",
     },
     "quizzes": {
-        "label": "Quizzes",
+        "header": "Quizzes",
         "action_label": "Quizzes",
-        "description": "Quizzes mode: generate or resume quizzes from Library sources.",
-        "next_action": "Open Quizzes to test recall against the current source snapshot.",
+        "purpose": "Generate or resume quizzes from Library sources.",
     },
 }
+
+# Single shared ownership line for all three handoff canvases: Library only
+# prepares source context, Study owns everything downstream of "open".
+LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY = "Generation and review run in Study."
+
+# How many carried-forward source titles the handoff canvas names before
+# collapsing the rest into an "and N more" count.
+LIBRARY_STUDY_HANDOFF_TITLES_CAP = 3
+
+
+def _library_carries_forward_line(titles: Sequence[str]) -> str:
+    """Build the handoff canvas's capped, markup-escaped carries-forward line.
+
+    Args:
+        titles: Sampled source titles (notes/media/conversations) that will
+            carry forward into Study. Must be non-empty -- callers render no
+            line at all when there is no source context (see
+            ``_study_handoff_copy``).
+
+    Returns:
+        ``"Carries forward: a, b, c"`` when there are at most
+        ``LIBRARY_STUDY_HANDOFF_TITLES_CAP`` titles, else ``"Carries
+        forward: a, b, c and N more."`` with the remaining count appended.
+    """
+    escaped_titles = [escape_markup(title) for title in titles]
+    capped = escaped_titles[:LIBRARY_STUDY_HANDOFF_TITLES_CAP]
+    joined = ", ".join(capped)
+    remaining = len(escaped_titles) - len(capped)
+    if remaining > 0:
+        return f"Carries forward: {joined} and {remaining} more."
+    return f"Carries forward: {joined}"
 
 
 def _active_library_sync_scope(app_instance: Any) -> dict[str, str | None]:
@@ -1756,26 +1785,22 @@ class LibraryScreen(BaseAppScreen):
         has_context = self._has_source_study_context()
         action_label = mode["action_label"]
         if has_context and titles:
-            context_copy = f"Carries forward: {', '.join(titles)}"
+            context_copy = _library_carries_forward_line(titles)
         elif has_context:
             context_copy = "Carries forward: Library source snapshot (titles unavailable)"
         else:
-            context_copy = "No Library source snapshot will be carried forward."
+            # No Library sources at all: the carries-forward line is omitted
+            # entirely rather than stating the negative (the blocked
+            # "recovery" line below already carries that signal).
+            context_copy = ""
         return {
-            "label": mode["label"],
+            "header": mode["header"],
             "action_label": action_label,
+            "purpose": mode["purpose"],
             "context": context_copy,
-            "owner": (
-                "Library prepares source context only; Study owns sessions, "
-                "generation, review, and attempts."
-            ),
-            "wip": (
-                "WIP: provider-backed generation and collection-scoped study "
-                "remain owned by later Study slices."
-            ),
+            "owner": LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
             "recovery": (
-                "Source snapshot is ready; open "
-                f"{action_label} to continue with this Library context."
+                "Source snapshot is ready."
                 if has_context
                 else (
                     "Import sources or create notes first, or open "
@@ -1896,11 +1921,16 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _study_handoff_detail_widget(self, kind: str) -> Vertical:
+        """Build the handoff canvas body: purpose, carried-forward sources,
+        ownership, snapshot readiness, and the Open action -- five elements,
+        down from the seven-line original (UX wave D1: no duplicated mode/
+        purpose lines, no "Primary action:" line, no WIP roadmap callout).
+        """
         copy = self._study_handoff_copy(kind)
-        recovery_classes = (
-            "ds-recovery-callout"
-            if self._has_local_sources()
-            else "ds-recovery-callout is-blocked"
+        # D2: the ds-recovery-callout warning treatment is for the blocked
+        # (no local sources) state only; ready renders as a plain Static.
+        recovery_kwargs: dict[str, str] = (
+            {} if self._has_local_sources() else {"classes": "ds-recovery-callout is-blocked"}
         )
         action_button_id = {
             "study": "library-open-study",
@@ -1911,7 +1941,8 @@ class LibraryScreen(BaseAppScreen):
             Button(
                 copy["action_label"],
                 id=action_button_id,
-                classes="library-canvas-action",
+                # D3: the Open action is the canvas's primary control.
+                classes="library-canvas-action console-action-primary",
                 compact=True,
                 tooltip=(
                     f"Open {copy['action_label']} with the current Library "
@@ -1922,35 +1953,37 @@ class LibraryScreen(BaseAppScreen):
             classes="ds-toolbar",
         )
         handoff_toolbar.styles.height = "auto"
-        return Vertical(
+        children: list[Static | Horizontal] = [
             Static(
-                f"{copy['label']} handoff",
+                copy["purpose"],
                 id="library-study-handoff-purpose",
-                classes="destination-section",
             ),
-            Static(
-                f"Primary action: {copy['action_label']}",
-                id="library-study-handoff-primary-action",
-            ),
-            Static(
-                copy["context"],
-                id="library-study-handoff-context",
-            ),
+        ]
+        if copy["context"]:
+            # D1: omitted entirely (not "No ... will be carried forward.")
+            # when there is no Library source snapshot at all.
+            children.append(
+                Static(
+                    copy["context"],
+                    id="library-study-handoff-context",
+                )
+            )
+        children.append(
             Static(
                 copy["owner"],
                 id="library-study-handoff-owner",
-            ),
-            Static(
-                copy["wip"],
-                id="library-study-handoff-wip",
-                classes="ds-recovery-callout",
-            ),
+            )
+        )
+        children.append(
             Static(
                 copy["recovery"],
                 id="library-study-handoff-recovery",
-                classes=recovery_classes,
-            ),
-            handoff_toolbar,
+                **recovery_kwargs,
+            )
+        )
+        children.append(handoff_toolbar)
+        return Vertical(
+            *children,
             id="library-study-handoff-detail",
             classes="library-rag-region",
         )
@@ -2256,25 +2289,21 @@ class LibraryScreen(BaseAppScreen):
                     )
                 elif shell.canvas_kind == "handoff":
                     # Study/Flashcards/Quizzes rows (L3b Task 8): a first-class
-                    # canvas kind of their own, rendering the same trio widget
-                    # ids/classes the retired mode-strip canvas used to render
-                    # for these three modes, sourced entirely from
-                    # LIBRARY_STUDY_HANDOFF_MODES.
+                    # canvas kind of their own, sourced entirely from
+                    # LIBRARY_STUDY_HANDOFF_MODES. UX wave D1 collapsed this
+                    # to a single header (the row's own title -- "Flashcards"
+                    # / "Study decks" / "Quizzes") plus the consolidated
+                    # handoff detail widget below; the header no longer
+                    # restates the mode name a second, differently-worded way
+                    # (formerly "Flashcards mode" + a duplicated description
+                    # + next-action line).
                     handoff_copy = LIBRARY_STUDY_HANDOFF_MODES.get(
                         shell.canvas_target, LIBRARY_STUDY_HANDOFF_MODES["study"]
                     )
                     yield Static(
-                        f"{handoff_copy['label']} mode",
+                        handoff_copy["header"],
                         id="library-active-mode-title",
                         classes="destination-section",
-                    )
-                    yield Static(
-                        handoff_copy["description"],
-                        id="library-active-mode-description",
-                    )
-                    yield Static(
-                        handoff_copy["next_action"],
-                        id="library-active-mode-next-action",
                     )
                     yield self._study_handoff_detail_widget(shell.canvas_target)
                 else:

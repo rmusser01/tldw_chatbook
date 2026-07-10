@@ -58,6 +58,32 @@ from Tests.UI.test_screen_navigation import _build_test_app
 
 LIBRARY_TEST_SIZE = (170, 48)
 
+
+# --- D1: capped, markup-escaped carries-forward line (pure logic) ----------
+
+
+def test_library_carries_forward_line_lists_up_to_three_titles_with_no_cap_suffix():
+    line = library_screen_module._library_carries_forward_line(
+        ["Research Note", "Transcript A", "Planning Chat"]
+    )
+
+    assert line == "Carries forward: Research Note, Transcript A, Planning Chat"
+
+
+def test_library_carries_forward_line_caps_at_three_and_counts_the_rest():
+    line = library_screen_module._library_carries_forward_line(
+        ["Research Note", "Transcript A", "Planning Chat", "Design Doc", "Roadmap"]
+    )
+
+    assert line == "Carries forward: Research Note, Transcript A, Planning Chat and 2 more."
+
+
+def test_library_carries_forward_line_escapes_markup_in_titles():
+    line = library_screen_module._library_carries_forward_line(["[bold]Unsafe[/bold] title"])
+
+    assert line == r"Carries forward: \[bold]Unsafe\[/bold] title"
+
+
 # Gated fakes block a real executor thread on a threading.Event until a test
 # releases it. A test that fails (or forgets to release) before that point
 # would leave the thread parked on an unbounded ``Event.wait()`` -- and the
@@ -334,11 +360,13 @@ async def test_library_shell_open_in_console_triggers_handoff():
 @pytest.mark.asyncio
 async def test_library_shell_flashcards_row_renders_handoff_canvas():
     """Create > Flashcards is a "handoff" rail row (L3b Task 8, not the
-    retired "mode" kind): pressing it renders the same title/description/
-    next-action trio ``_compose_mode_canvas`` used to render for mode rows,
-    now sourced from ``LIBRARY_STUDY_HANDOFF_MODES`` via the dedicated
-    ``canvas_kind == "handoff"`` branch, plus the Study handoff detail
-    widget and its "Open Flashcards" action button.
+    retired "mode" kind): pressing it renders the consolidated handoff
+    canvas (UX wave D1) -- one header (the row's own title), one purpose
+    line, the capped carries-forward line, one ownership line, the ready
+    snapshot line (plain, D2), and the primary "Open Flashcards" action
+    button (D3). The duplicated mode/purpose lines, the "Primary action:"
+    line, the "Flashcards handoff" sub-header, and the WIP roadmap callout
+    from the pre-D1 layout are gone.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
@@ -355,20 +383,43 @@ async def test_library_shell_flashcards_row_renders_handoff_canvas():
         detail = screen.query_one("#library-study-handoff-detail")
         assert canvas in detail.ancestors
 
+        # Header: the row's own title, not a second "X mode" restatement.
         title = screen.query_one("#library-active-mode-title", Static)
-        assert str(title.renderable) == "Flashcards mode"
-        description = screen.query_one("#library-active-mode-description", Static)
-        assert (
-            str(description.renderable)
-            == "Flashcards mode: generate or review cards from Library sources."
+        assert str(title.renderable) == "Flashcards"
+        assert title.has_class("destination-section")
+
+        # Removed duplicated mode/purpose lines and the WIP/primary-action
+        # lines: they no longer render at all.
+        assert not screen.query("#library-active-mode-description")
+        assert not screen.query("#library-active-mode-next-action")
+        assert not screen.query("#library-study-handoff-primary-action")
+        assert not screen.query("#library-study-handoff-wip")
+
+        purpose = screen.query_one("#library-study-handoff-purpose", Static)
+        assert str(purpose.renderable) == "Generate or review cards from Library sources."
+        visible = _visible_text(screen)
+        assert "Flashcards handoff" not in visible
+        assert "Primary action:" not in visible
+        assert "WIP:" not in visible
+
+        context = screen.query_one("#library-study-handoff-context", Static)
+        assert str(context.renderable) == (
+            "Carries forward: Quarterly planning sync, Design review notes"
         )
-        next_action = screen.query_one("#library-active-mode-next-action", Static)
-        assert (
-            str(next_action.renderable)
-            == "Open Flashcards to work with the current source snapshot."
-        )
+
+        owner = screen.query_one("#library-study-handoff-owner", Static)
+        assert str(owner.renderable) == "Generation and review run in Study."
+
+        # D2: ready state is a plain line, no warning-callout classes.
+        recovery = screen.query_one("#library-study-handoff-recovery", Static)
+        assert str(recovery.renderable) == "Source snapshot is ready."
+        assert not recovery.has_class("ds-recovery-callout")
+        assert not recovery.has_class("is-blocked")
+
+        # D3: the Open action carries primary emphasis.
         open_button = screen.query_one("#library-open-flashcards", Button)
         assert canvas in open_button.ancestors
+        assert open_button.has_class("console-action-primary")
 
 
 @pytest.mark.asyncio

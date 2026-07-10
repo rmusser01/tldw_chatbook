@@ -993,6 +993,53 @@ async def test_home_flashcards_due_row_absent_when_count_zero():
 
 
 @pytest.mark.asyncio
+async def test_home_canvas_primary_control_follows_selection_between_failed_item_and_flashcards():
+    """C1: primary emphasis follows the selected row rather than sticking
+    to one permanently-accented button. Failed ingest item selected (the
+    default selection here, since it is the only attention-worthy item) ->
+    Retry is primary and Review flashcards is not; selecting the
+    flashcards-due row flips it."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        flashcards_due_count=12,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:1",
+                title="report.xyz",
+                source="Library",
+                status="failed",
+                detail_route="library",
+            ),
+        ),
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        retry_button = home.query_one("#home-retry")
+        review_flashcards_button = home.query_one("#home-review-flashcards")
+        assert retry_button.has_class("console-action-primary")
+        assert not review_flashcards_button.has_class("console-action-primary")
+
+        row_button = next(
+            btn for btn in home.query("Button")
+            if str(getattr(btn, "row_id", "")) == HOME_FLASHCARDS_DUE_ROW_ID
+        )
+        await pilot.click(f"#{row_button.id}")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+        review_flashcards_button = home.query_one("#home-review-flashcards")
+        assert review_flashcards_button.has_class("console-action-primary")
+        # The Retry control itself stays available (the failed item is
+        # still active work), it just no longer carries primary emphasis.
+        assert not home.query_one("#home-retry").has_class("console-action-primary")
+
+
+@pytest.mark.asyncio
 async def test_home_flashcards_due_snapshot_reads_in_memory_db_via_real_worker():
     """F4b (PR #590 review, Qodo): ``_refresh_home_chatbook_artifact_snapshot``
     (``@work(thread=True)``) must not call the flashcards-due provider
