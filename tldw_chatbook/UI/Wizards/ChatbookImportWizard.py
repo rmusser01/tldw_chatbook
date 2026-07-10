@@ -108,7 +108,7 @@ class FileSelectionStep(WizardStep):
                 logger.info("FileSelectionStep._browse_for_file: No file selected")
                 
         except Exception as e:
-            logger.error(f"FileSelectionStep._browse_for_file: Error selecting file: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"FileSelectionStep._browse_for_file: Error selecting file: {e}")
             self.wizard.app_instance.notify(f"Error selecting file: {str(e)}", severity="error")
     
     def _update_file_display(self) -> None:

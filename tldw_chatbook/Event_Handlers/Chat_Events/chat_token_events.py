@@ -107,7 +107,7 @@ async def update_chat_token_counter(app: 'TldwCli') -> None:
             logger.debug(f"Footer widget not found (may be in screen mode): {e}")
                 
     except Exception as e:
-        logger.error(f"Error updating chat token counter: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error updating chat token counter: {e}")
 
 
 async def handle_chat_input_changed(app: 'TldwCli', event) -> None:

@@ -118,7 +118,7 @@ def create_conversation(
                         logger.warning(f"Could not get/create keyword_id for '{kw_text}'")
         return new_conv_id
     except Exception as e:
-        logger.error(f"Error in create_conversation: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error in create_conversation: {e}")
         return None
 
 
@@ -185,7 +185,7 @@ def add_message_to_conversation(
             logger.info(f"Added message ID {message_id} to conversation {conversation_id}.")
         return message_id
     except Exception as e:
-        logger.error(f"Error in add_message_to_conversation: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error in add_message_to_conversation: {e}")
         return None
 
 
@@ -439,7 +439,7 @@ def get_character_list_for_ui(db: CharactersRAGDB, limit: int = 1000) -> List[Di
         logger.error(f"Database error fetching character list for UI: {e}")
         return []
     except Exception as e:
-        logger.error(f"Unexpected error fetching character list for UI: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error fetching character list for UI: {e}")
         return []
 
 
@@ -450,7 +450,7 @@ def _get_default_chachanotes_db() -> Optional[CharactersRAGDB]:
 
         return get_chachanotes_db_lazy()
     except Exception as exc:
-        logger.error(f"Unable to resolve default character database: {exc}", exc_info=True)
+        logger.opt(exception=True).error(f"Unable to resolve default character database: {exc}")
         return None
 
 
@@ -478,7 +478,7 @@ def fetch_all_dictionaries(db: Optional[CharactersRAGDB] = None, limit: int = 10
 
         return list_chat_dictionaries(target_db, limit=limit)
     except Exception as exc:
-        logger.error(f"Unable to fetch chat dictionaries: {exc}", exc_info=True)
+        logger.opt(exception=True).error(f"Unable to fetch chat dictionaries: {exc}")
         return []
 
 
@@ -603,7 +603,7 @@ def load_character_and_image(
         logger.error(f"Database error in load_character_and_image for ID {character_id}: {e}")
         return None, [], None
     except Exception as e:
-        logger.error(f"Unexpected error in load_character_and_image for ID {character_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in load_character_and_image for ID {character_id}: {e}")
         return None, [], None
 
 
@@ -767,8 +767,7 @@ def load_chat_and_character(
         logger.error(f"Database error in load_chat_and_character for conversation ID {conversation_id_str}: {e}")
         return None, [], None
     except Exception as e:
-        logger.error(f"Unexpected error in load_chat_and_character for conv ID {conversation_id_str}: {e}",
-                     exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in load_chat_and_character for conv ID {conversation_id_str}: {e}")
         return None, [], None
 
 
@@ -814,8 +813,7 @@ def load_character_wrapper(
         logger.error(f"Error in load_character_wrapper with input '{character_id_or_ui_choice}': {e}")
         raise  # Re-raise for the caller to handle
     except Exception as e:  # Catch any other unexpected errors
-        logger.error(f"Unexpected error in load_character_wrapper for '{character_id_or_ui_choice}': {e}",
-                     exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in load_character_wrapper for '{character_id_or_ui_choice}': {e}")
         raise
 
 
@@ -964,8 +962,7 @@ def extract_json_from_image_file(image_file_input: Union[str, bytes, io.BytesIO]
                     f"Error decoding 'chara' metadata from '{file_name_for_log}': {decode_err}. Content (start): {str(chara_base64_str)[:100]}...")
                 return None  # Explicitly return None on decode error
             except Exception as e:  # Catch any other unexpected error during decode/load
-                logger.error(f"Unexpected error during 'chara' processing from '{file_name_for_log}': {e}",
-                             exc_info=True)
+                logger.opt(exception=True).error(f"Unexpected error during 'chara' processing from '{file_name_for_log}': {e}")
                 return None
         else:
             logger.debug(
@@ -975,10 +972,9 @@ def extract_json_from_image_file(image_file_input: Union[str, bytes, io.BytesIO]
     except FileNotFoundError:
         logger.error(f"Image file not found for JSON extraction: {file_name_for_log}")
     except IOError as e:  # Catches PIL.UnidentifiedImageError and other file I/O issues
-        logger.error(f"Cannot open or read image file (or not a valid image): {file_name_for_log}. Error: {e}",
-                     exc_info=True)
+        logger.opt(exception=True).error(f"Cannot open or read image file (or not a valid image): {file_name_for_log}. Error: {e}")
     except Exception as e:
-        logger.error(f"Unexpected error extracting JSON from image '{file_name_for_log}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error extracting JSON from image '{file_name_for_log}': {e}")
     finally:
         if img_obj:
             img_obj.close()
@@ -1059,7 +1055,7 @@ def parse_v2_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except KeyError as e:
         logger.error(f"Missing key during V2 card parsing: {e}")
     except Exception as e:
-        logger.error(f"Error parsing V2 card data: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error parsing V2 card data: {e}")
     return None
 
 
@@ -1136,7 +1132,7 @@ def parse_v1_card(card_data_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except ValueError:  # Re-raise from missing required fields check
         raise
     except Exception as e:
-        logger.error(f"Unexpected error parsing V1 card: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error parsing V1 card: {e}")
     return None
 
 
@@ -1526,7 +1522,7 @@ def import_character_card_from_json_string(json_content_str: str) -> Optional[Di
     except json.JSONDecodeError as e:
         logger.error(f"JSON decode error from string: {e}. Content (start): {json_content_str[:150]}...")
     except Exception as e:  # Catch any other unexpected errors during the process
-        logger.error(f"Unexpected error parsing card from JSON string: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error parsing card from JSON string: {e}")
     return None
 
 
@@ -1613,9 +1609,8 @@ def load_character_card_from_string_content(content_str: str) -> Optional[Dict[s
     except ImportError:  # Specifically for PyYAML
         raise  # Let it propagate so user knows dependency is missing
     except Exception as e:
-        logger.error(
-            f"Unexpected error in load_character_card_from_string_content: {e}. Content (start): {content_str[:100]}",
-            exc_info=True)
+        logger.opt(exception=True).error(
+            f"Unexpected error in load_character_card_from_string_content: {e}. Content (start): {content_str[:100]}")
     return None
 
 
@@ -1814,7 +1809,7 @@ def import_and_save_character_from_file(
         logger.error(f"Import error during character import: {imp_err}. A required library might be missing.")
         raise
     except Exception as e:
-        logger.error(f"Unexpected error importing character from {filename_for_log}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error importing character from {filename_for_log}: {e}")
     return None
 
 
@@ -2006,7 +2001,7 @@ def load_chat_history_from_file_and_save_to_db(
     except CharactersRAGDBError as dbe:
         logger.error(f"Database error during chat history import from '{filename_for_log}': {dbe}")
     except Exception as e:
-        logger.error(f"Unexpected error importing chat history from '{filename_for_log}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error importing chat history from '{filename_for_log}': {e}")
 
     return None, None
 
@@ -2137,7 +2132,7 @@ def start_new_chat_session(
         logger.error(f"Error during new chat session creation for char {char_name}: {e}")
         return conversation_id_val, char_data, initial_ui_history, img
     except Exception as e:
-        logger.error(f"Unexpected error in start_new_chat_session: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in start_new_chat_session: {e}")
         return conversation_id_val, char_data, initial_ui_history, img
 
 
@@ -2167,7 +2162,7 @@ def list_character_conversations(db: CharactersRAGDB, character_id: int, limit: 
         logger.error(f"Failed to list conversations for character ID {character_id}: {e}")
         return []
     except Exception as e:
-        logger.error(f"Unexpected error listing conversations for char ID {character_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error listing conversations for char ID {character_id}: {e}")
         return []
 
 
@@ -2192,7 +2187,7 @@ def get_conversation_metadata(db: CharactersRAGDB, conversation_id: str) -> Opti
         logger.error(f"Failed to get metadata for conversation ID {conversation_id}: {e}")
         return None
     except Exception as e:
-        logger.error(f"Unexpected error getting conversation metadata for ID {conversation_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error getting conversation metadata for ID {conversation_id}: {e}")
         return None
 
 
@@ -2234,7 +2229,7 @@ def update_conversation_metadata(db: CharactersRAGDB, conversation_id: str, upda
         logger.error(f"Failed to update metadata for conversation ID {conversation_id}: {e}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error updating conversation metadata for ID {conversation_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error updating conversation metadata for ID {conversation_id}: {e}")
         return False
 
 
@@ -2261,7 +2256,7 @@ def delete_conversation_by_id(db: CharactersRAGDB, conversation_id: str, expecte
         logger.error(f"Failed to delete conversation ID {conversation_id}: {e}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error deleting conversation ID {conversation_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error deleting conversation ID {conversation_id}: {e}")
         return False
 
 
@@ -2291,7 +2286,7 @@ def search_conversations_by_title_query(db: CharactersRAGDB, title_query: str, c
         logger.error(f"Failed to search conversations with query '{title_query}': {e}")
         return []
     except Exception as e:
-        logger.error(f"Unexpected error searching conversations: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error searching conversations: {e}")
         return []
 
 # --- Message Management ---
@@ -2381,7 +2376,7 @@ def post_message_to_conversation(
         logger.error(f"Error posting message from '{sender_name}' to conversation {conversation_id}: {e}")
         raise # Re-raise client-correctable or conflict errors
     except Exception as e:
-        logger.error(f"Unexpected error posting message to conv {conversation_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error posting message to conv {conversation_id}: {e}")
         # For unexpected errors, convert to a library-specific error or return None
         # depending on desired API contract for unhandled exceptions.
         # For now, re-raising as a generic error or letting it propagate if not caught by CharactersRAGDBError.
@@ -2433,7 +2428,7 @@ def retrieve_message_details(
         logger.error(f"Failed to retrieve message ID {message_id}: {e}")
         return None
     except Exception as e:
-        logger.error(f"Unexpected error retrieving message ID {message_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error retrieving message ID {message_id}: {e}")
         return None
 
 
@@ -2500,7 +2495,7 @@ def retrieve_conversation_messages_for_ui(
         logger.error(f"Failed to retrieve and process messages for conversation ID {conversation_id}: {e}")
         return []
     except Exception as e:
-        logger.error(f"Unexpected error retrieving UI messages for conversation {conversation_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error retrieving UI messages for conversation {conversation_id}: {e}")
         return []
 
 
@@ -2535,7 +2530,7 @@ def edit_message_content(
         logger.error(f"Failed to edit content for message ID {message_id}: {e}")
         return False # Or re-raise depending on API contract for these errors
     except Exception as e:
-        logger.error(f"Unexpected error editing message content for ID {message_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error editing message content for ID {message_id}: {e}")
         return False
 
 
@@ -2570,7 +2565,7 @@ def set_message_ranking(
         logger.error(f"Failed to set ranking for message ID {message_id}: {e}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error setting message ranking for ID {message_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error setting message ranking for ID {message_id}: {e}")
         return False
 
 def remove_message_from_conversation(
@@ -2600,7 +2595,7 @@ def remove_message_from_conversation(
         logger.error(f"Failed to remove message ID {message_id}: {e}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error removing message ID {message_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error removing message ID {message_id}: {e}")
         return False
 
 
@@ -2657,7 +2652,7 @@ def find_messages_in_conversation(
         logger.error(f"Failed to search messages in conversation ID {conversation_id} for '{search_query}': {e}")
         return []
     except Exception as e:
-        logger.error(f"Unexpected error searching messages in conversation {conversation_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error searching messages in conversation {conversation_id}: {e}")
         return []
 
 # End of Conversation and Message Management Functions
@@ -2741,7 +2736,7 @@ def export_character_card_to_json(
         return json.dumps(v2_card, indent=2, ensure_ascii=False)
         
     except Exception as e:
-        logger.error(f"Failed to export character card {character_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to export character card {character_id}: {e}")
         return None
 
 
@@ -2804,7 +2799,7 @@ def export_character_card_to_png(
         return True
         
     except Exception as e:
-        logger.error(f"Failed to export character card {character_id} to PNG: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to export character card {character_id} to PNG: {e}")
         return False
 
 
@@ -2885,7 +2880,7 @@ def export_conversation_to_json(
         return json.dumps(export_data, indent=2, ensure_ascii=False)
         
     except Exception as e:
-        logger.error(f"Failed to export conversation {conversation_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to export conversation {conversation_id}: {e}")
         return None
 
 
@@ -2952,7 +2947,7 @@ def export_conversation_to_text(
         return "\n".join(lines)
         
     except Exception as e:
-        logger.error(f"Failed to export conversation {conversation_id} to text: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to export conversation {conversation_id} to text: {e}")
         return None
 
 

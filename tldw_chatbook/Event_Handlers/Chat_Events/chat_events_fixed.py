@@ -175,7 +175,7 @@ async def process_chat_message(
         await stream_llm_response(app, message, history, config, worker)
         
     except Exception as e:
-        loguru_logger.error(f"Error processing message: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error processing message: {e}")
         app.call_from_thread(
             app.post_message,
             LLMResponseError(str(e))

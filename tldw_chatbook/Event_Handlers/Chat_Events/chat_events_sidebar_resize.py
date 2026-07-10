@@ -40,7 +40,7 @@ async def handle_sidebar_shrink(app: 'TldwCli', event: Button.Pressed) -> None:
         
         logger.debug(f"Sidebar width decreased to {new_width}%")
     except Exception as e:
-        logger.error(f"Error shrinking sidebar: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error shrinking sidebar: {e}")
 
 
 async def handle_sidebar_expand(app: 'TldwCli', event: Button.Pressed) -> None:
@@ -69,7 +69,7 @@ async def handle_sidebar_expand(app: 'TldwCli', event: Button.Pressed) -> None:
         
         logger.debug(f"Sidebar width increased to {new_width}%")
     except Exception as e:
-        logger.error(f"Error expanding sidebar: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error expanding sidebar: {e}")
         logger.error(f"Exception type: {type(e)}")
         logger.error(f"Exception occurred in file: {__file__}")
 

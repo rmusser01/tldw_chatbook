@@ -231,7 +231,7 @@ def process_document(
         return result
         
     except Exception as e:
-        logger.error(f"Error processing document {file_path}: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing document {file_path}: {str(e)}")
         log_counter("document_processing_error", labels={"error": str(e), "format": file_ext})
         return {
             'content': '',
@@ -331,7 +331,7 @@ def process_with_docling(
         }
         
     except Exception as e:
-        logger.error(f"Error processing with Docling: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing with Docling: {str(e)}")
         raise
 
 
@@ -391,7 +391,7 @@ def process_docx(
         }
         
     except Exception as e:
-        logger.error(f"Error processing DOCX: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing DOCX: {str(e)}")
         raise
 
 
@@ -433,7 +433,7 @@ def process_odt(
         }
         
     except Exception as e:
-        logger.error(f"Error processing ODT: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing ODT: {str(e)}")
         raise
 
 
@@ -463,7 +463,7 @@ def process_rtf(
         }
         
     except Exception as e:
-        logger.error(f"Error processing RTF: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing RTF: {str(e)}")
         raise
 
 
@@ -529,7 +529,7 @@ def process_pptx(
         }
         
     except Exception as e:
-        logger.error(f"Error processing PPTX: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing PPTX: {str(e)}")
         raise
 
 
@@ -592,7 +592,7 @@ def process_xlsx(
         }
         
     except Exception as e:
-        logger.error(f"Error processing XLSX: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing XLSX: {str(e)}")
         raise
 
 

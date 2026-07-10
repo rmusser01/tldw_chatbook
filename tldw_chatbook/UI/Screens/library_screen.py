@@ -1079,7 +1079,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             result = await self._run_library_service_call(count_notes, isolate_in_worker=True, **kwargs)
         except Exception:
-            logger.warning("Failed to fetch exact local notes count; using sample count.", exc_info=True)
+            logger.opt(exception=True).warning("Failed to fetch exact local notes count; using sample count.")
             return None
         return result if isinstance(result, int) else None
 
@@ -1120,7 +1120,7 @@ class LibraryScreen(BaseAppScreen):
                 count_callable, isolate_in_worker=isolate_in_worker, **kwargs
             )
         except Exception:
-            logger.debug(f"Failed to fetch {label} count for Library create rail.", exc_info=True)
+            logger.opt(exception=True).debug(f"Failed to fetch {label} count for Library create rail.")
             return None
         return result if isinstance(result, int) else None
 
@@ -1242,9 +1242,8 @@ class LibraryScreen(BaseAppScreen):
                 empty_study_counts,
             )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Failed to load local Library source snapshot.",
-                exc_info=True,
             )
             return (
                 empty_records,
@@ -2450,7 +2449,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(f"Failed to load Library media detail for {media_id!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Failed to load Library media detail for {media_id!r}.")
             detail = None
         # Discard out-of-order results: if the user has since selected a
         # different media row (or left the viewer), a slower in-flight fetch
@@ -2509,9 +2508,8 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(
-                f"Failed to load Library media highlights for {media_id!r}.", exc_info=True
-            )
+            logger.opt(exception=True).warning(
+                f"Failed to load Library media highlights for {media_id!r}.")
             return []
         return list(highlights) if isinstance(highlights, list) else []
 
@@ -2557,7 +2555,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(f"Failed to load Library note detail for {note_id!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Failed to load Library note detail for {note_id!r}.")
             detail = None
         # Discard out-of-order results: if the user has since selected a
         # different note (or left the editor), a slower in-flight fetch for
@@ -2641,9 +2639,8 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(
-                f"Failed to load keywords for Library note {note_id!r}.", exc_info=True
-            )
+            logger.opt(exception=True).warning(
+                f"Failed to load keywords for Library note {note_id!r}.")
             return None
         return list(keywords) if isinstance(keywords, list) else None
 
@@ -3090,7 +3087,7 @@ class LibraryScreen(BaseAppScreen):
         except ConflictError:
             result = False
         except Exception:
-            logger.warning(f"Library note save failed for {note_id!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Library note save failed for {note_id!r}.")
             if note_id != self._selected_note_id or self._library_notes_view != "editor":
                 return
             self._library_note_autosave_state = "error"
@@ -3191,9 +3188,8 @@ class LibraryScreen(BaseAppScreen):
                 try:
                     await worker.wait()
                 except Exception:
-                    logger.debug(
+                    logger.opt(exception=True).debug(
                         "In-flight note-save worker errored while flushing; continuing.",
-                        exc_info=True,
                     )
         if not self._library_note_dirty:
             return
@@ -3242,9 +3238,8 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"Failed to reload Library note {note_id!r} after a save conflict.",
-                exc_info=True,
             )
             return
         if note_id != self._selected_note_id:
@@ -3313,9 +3308,8 @@ class LibraryScreen(BaseAppScreen):
         except ConflictError:
             result = False
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"Failed to overwrite Library note {note_id!r} after a save conflict.",
-                exc_info=True,
             )
             return
         if note_id != self._selected_note_id:
@@ -3565,9 +3559,8 @@ class LibraryScreen(BaseAppScreen):
                 encoding="utf-8",
             )
         except Exception as exc:
-            logger.warning(
-                f"Error exporting Library note {note_id!r} to '{validated_path}'.", exc_info=True
-            )
+            logger.opt(exception=True).warning(
+                f"Error exporting Library note {note_id!r} to '{validated_path}'.")
             if callable(notify):
                 notify(f"Error exporting note: {type(exc).__name__}", severity="error")
             return
@@ -3627,7 +3620,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             copy_to_clipboard(export_content)
         except Exception as exc:
-            logger.warning(f"Failed to copy Library note {note_id!r} to clipboard.", exc_info=True)
+            logger.opt(exception=True).warning(f"Failed to copy Library note {note_id!r} to clipboard.")
             if callable(notify):
                 notify(f"Error copying note: {type(exc).__name__}", severity="error")
             return
@@ -4089,7 +4082,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning("Library notes filter failed.", exc_info=True)
+            logger.opt(exception=True).warning("Library notes filter failed.")
             return
         if query != self._library_notes_filter:
             return
@@ -4162,14 +4155,14 @@ class LibraryScreen(BaseAppScreen):
         try:
             note_path = validate_path_simple(str(selected_path), require_exists=True)
         except ValueError:
-            logger.warning(f"Rejected Library note import path {selected_path!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Rejected Library note import path {selected_path!r}.")
             self._notify_library_note_create_warning("Could not import that file.")
             return
 
         try:
             file_size = note_path.stat().st_size
         except OSError:
-            logger.warning(f"Could not stat Library note import file '{note_path}'.", exc_info=True)
+            logger.opt(exception=True).warning(f"Could not stat Library note import file '{note_path}'.")
             self._notify_library_note_create_warning("Could not import that file.")
             return
         if file_size > LIBRARY_NOTE_CONTENT_MAX_CHARS * 4:
@@ -4185,7 +4178,7 @@ class LibraryScreen(BaseAppScreen):
                 note_path.read_text, encoding="utf-8", errors="strict"
             )
         except (OSError, UnicodeDecodeError):
-            logger.warning(f"Could not read Library note import file '{note_path}'.", exc_info=True)
+            logger.opt(exception=True).warning(f"Could not read Library note import file '{note_path}'.")
             self._notify_library_note_create_warning("Could not import that file.")
             return
 
@@ -4516,7 +4509,7 @@ class LibraryScreen(BaseAppScreen):
                     f"{count_noun(len(results.errors), 'error')} during sync",
                 )
         except Exception as exc:
-            logger.error(f"Library notes sync failed (folder={folder}): {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Library notes sync failed (folder={folder}): {exc}")
             self._library_notes_sync_status = sync_status_line("failed", error=str(exc))
             self._library_notes_sync_activity = append_activity(
                 self._library_notes_sync_activity, f"Sync failed: {exc}"
@@ -4711,7 +4704,7 @@ class LibraryScreen(BaseAppScreen):
                 Path(raw_path).expanduser(), require_exists=True
             )
         except ValueError:
-            logger.warning(f"Rejected Library ingest path {raw_path!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Rejected Library ingest path {raw_path!r}.")
             self._notify_library_ingest_warning("Could not find that file.")
             return
         submit = getattr(self.app_instance, "submit_library_ingest_job", None)
@@ -5039,9 +5032,8 @@ class LibraryScreen(BaseAppScreen):
         except ConflictError:
             deleted = False
         except Exception:
-            logger.warning(
-                f"Failed to delete Library note {note_id!r}.", exc_info=True
-            )
+            logger.opt(exception=True).warning(
+                f"Failed to delete Library note {note_id!r}.")
             if note_id != self._selected_note_id or self._library_notes_view != "editor":
                 return
             self._library_note_confirming_delete = False
@@ -5252,7 +5244,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning("Library note create failed.", exc_info=True)
+            logger.opt(exception=True).warning("Library note create failed.")
             self._notify_library_note_create_warning("Could not create the note.")
             return
 
@@ -5438,9 +5430,8 @@ class LibraryScreen(BaseAppScreen):
                     media_id, title=title, author=author, url=url, keywords=keywords
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to save Library media edit for {media_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to save Library media edit for {media_id!r}.")
                 self._notify_library_media_edit_warning(
                     "Could not save media changes; showing the latest saved version."
                 )
@@ -5572,9 +5563,8 @@ class LibraryScreen(BaseAppScreen):
                 )
                 deleted = True
             except Exception:
-                logger.warning(
-                    f"Failed to delete Library media item {media_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to delete Library media item {media_id!r}.")
                 self._notify_library_media_delete_warning(
                     "Could not delete this media item."
                 )
@@ -5687,9 +5677,8 @@ class LibraryScreen(BaseAppScreen):
                     isolate_in_worker=True,
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to add Library media highlight for {media_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to add Library media highlight for {media_id!r}.")
                 self._notify_library_media_highlight_warning("Could not add this highlight.")
         else:
             self._notify_library_media_highlight_warning("Highlights are unavailable.")
@@ -5733,9 +5722,8 @@ class LibraryScreen(BaseAppScreen):
                     isolate_in_worker=True,
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to delete Library media highlight {highlight_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to delete Library media highlight {highlight_id!r}.")
                 self._notify_library_media_highlight_warning("Could not delete this highlight.")
         else:
             self._notify_library_media_highlight_warning("Highlights are unavailable.")
@@ -5914,9 +5902,8 @@ class LibraryScreen(BaseAppScreen):
                     isolate_in_worker=True,
                 )
             except Exception:
-                logger.warning(
+                logger.opt(exception=True).warning(
                     f"Failed to toggle Library media read-it-later state for {media_id!r}.",
-                    exc_info=True,
                 )
                 self._notify_library_media_read_later_warning(
                     "Could not update read-it-later status."
@@ -6038,9 +6025,8 @@ class LibraryScreen(BaseAppScreen):
                     isolate_in_worker=True,
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to save Library media analysis for {media_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to save Library media analysis for {media_id!r}.")
                 self._notify_library_media_analysis_warning(
                     "Could not save analysis changes; showing the latest saved version."
                 )
@@ -6212,7 +6198,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             records = await self._run_library_service_call(list_collections)
         except Exception:
-            logger.warning("Failed to load Library Collections.", exc_info=True)
+            logger.opt(exception=True).warning("Failed to load Library Collections.")
             self._library_collections_records = ()
             self._library_sync_profile_summary = None
             self._library_collections_loaded = True
@@ -6274,7 +6260,7 @@ class LibraryScreen(BaseAppScreen):
                 ),
             )
         except Exception:
-            logger.warning("Failed to load Library Collections sync dry-run state.", exc_info=True)
+            logger.opt(exception=True).warning("Failed to load Library Collections sync dry-run state.")
             return tuple(records)
 
         latest_report = latest_mirror_record["report"] if latest_mirror_record else None
@@ -6372,7 +6358,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning("Failed to load Sync v2 profile summary.", exc_info=True)
+            logger.opt(exception=True).warning("Failed to load Sync v2 profile summary.")
             return None
         return summary if isinstance(summary, Mapping) else None
 
@@ -6799,9 +6785,8 @@ class LibraryScreen(BaseAppScreen):
                     get_conversation_by_id, conversation_id, include_deleted=False
                 )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"Failed to fetch Library conversation {conversation_id!r} by id.",
-                exc_info=True,
             )
             return None
         return record if isinstance(record, Mapping) else None
@@ -7173,7 +7158,7 @@ class LibraryScreen(BaseAppScreen):
             )
             registry_service.set_active_workspace(workspace_id)
         except Exception:
-            logger.warning("Failed to create local Library workspace", exc_info=True)
+            logger.opt(exception=True).warning("Failed to create local Library workspace")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Local workspace could not be created.", severity="error")

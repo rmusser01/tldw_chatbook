@@ -526,7 +526,7 @@ class PersonasScreen(BaseAppScreen):
             await self._render_library_rows()
         except Exception:
             # Tolerate refreshes that race screen teardown.
-            logger.warning("Could not render the character library rows.", exc_info=True)
+            logger.opt(exception=True).warning("Could not render the character library rows.")
 
     @staticmethod
     def _build_library_rows(records: list[dict], kind: str) -> tuple[LibraryRow, ...]:
@@ -651,7 +651,7 @@ class PersonasScreen(BaseAppScreen):
                 raise_on_unavailable=True
             )
         except Exception as exc:
-            logger.warning("Could not refresh the persona profile list.", exc_info=True)
+            logger.opt(exception=True).warning("Could not refresh the persona profile list.")
             self._profile_lookup_recovery_state = self._profile_list_recovery_state(exc)
             profiles = []
         else:
@@ -665,7 +665,7 @@ class PersonasScreen(BaseAppScreen):
             await self._render_profile_rows()
         except Exception:
             # Tolerate refreshes that race screen teardown.
-            logger.warning("Could not render the persona profile rows.", exc_info=True)
+            logger.opt(exception=True).warning("Could not render the persona profile rows.")
 
     async def _render_profile_rows(
         self,
@@ -759,7 +759,7 @@ class PersonasScreen(BaseAppScreen):
                     expected_mode=mode,
                 )
             except Exception:
-                logger.warning("Could not re-render character rows after search.", exc_info=True)
+                logger.opt(exception=True).warning("Could not re-render character rows after search.")
         elif mode == "personas":
             try:
                 await self._render_profile_rows(
@@ -767,7 +767,7 @@ class PersonasScreen(BaseAppScreen):
                     expected_mode=mode,
                 )
             except Exception:
-                logger.warning("Could not re-render profile rows after search.", exc_info=True)
+                logger.opt(exception=True).warning("Could not re-render profile rows after search.")
 
     def _profile_record(self, item_id: str | None) -> dict | None:
         if item_id is None:
@@ -800,9 +800,8 @@ class PersonasScreen(BaseAppScreen):
                 persona_id, mode=self.persona_handler.current_mode()
             )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"Could not fetch persona profile {persona_id}; using the list row.",
-                exc_info=True,
             )
             return fallback, False
         if hasattr(record, "model_dump"):
@@ -900,7 +899,7 @@ class PersonasScreen(BaseAppScreen):
         try:
             self.query_one("#personas-title", Static).update(self._title_text())
         except Exception:
-            logger.debug("Could not update the personas title.", exc_info=True)
+            logger.opt(exception=True).debug("Could not update the personas title.")
 
     def _status_row_text(self) -> str:
         mode = self.state.active_mode
@@ -915,7 +914,7 @@ class PersonasScreen(BaseAppScreen):
         try:
             self.query_one("#personas-status-row", Static).update(self._status_row_text())
         except Exception:
-            logger.debug("Could not update the personas status row.", exc_info=True)
+            logger.opt(exception=True).debug("Could not update the personas status row.")
 
     # ===== Selection =====
 
@@ -1408,7 +1407,7 @@ class PersonasScreen(BaseAppScreen):
             self._notify(str(exc), "error")
             return
         except OSError as exc:
-            logger.error(f"Error reading avatar image from {path}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error reading avatar image from {path}: {exc}")
             self._notify(f"Avatar upload failed: {exc}", "error")
             return
         if self._character_editor_session_token() != session_token:
@@ -1421,14 +1420,13 @@ class PersonasScreen(BaseAppScreen):
         try:
             self.query_one(PersonasCharacterEditorWidget).set_avatar_image(image_data)
         except Exception as exc:
-            logger.error(
+            logger.opt(exception=True).error(
                 "Could not stage avatar image in editor. "
                 f"path={path!r}, edit_mode={self._edit_mode!r}, "
                 f"active_mode={self.state.active_mode!r}, "
                 f"selected_kind={self.state.selected_entity_kind!r}, "
                 f"selected_id={self.state.selected_entity_id!r}, "
                 f"image_size_bytes={len(image_data)}: {exc}",
-                exc_info=True,
             )
             self._notify(f"Avatar upload failed: {exc}", "error")
             return
@@ -1477,7 +1475,7 @@ class PersonasScreen(BaseAppScreen):
             try:
                 file_path = await self.app.push_screen_wait(picker)
             except Exception:
-                logger.warning("Could not show the avatar upload file dialog.", exc_info=True)
+                logger.opt(exception=True).warning("Could not show the avatar upload file dialog.")
                 return
             if file_path:
                 await self._stage_character_avatar_from_path(str(file_path))
@@ -1519,7 +1517,7 @@ class PersonasScreen(BaseAppScreen):
             try:
                 file_path = await self.app.push_screen_wait(picker)
             except Exception:
-                logger.warning("Could not show the import file dialog.", exc_info=True)
+                logger.opt(exception=True).warning("Could not show the import file dialog.")
                 return
             if file_path:
                 await self._import_character_from_path(str(file_path))
@@ -1537,7 +1535,7 @@ class PersonasScreen(BaseAppScreen):
                 ccp_character_handler.import_character_card, path
             )
         except Exception as exc:
-            logger.error(f"Error importing character card from {path}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error importing character card from {path}: {exc}")
             self._notify(f"Import failed: {exc}", "error")
             return
         if imported_id is None:
@@ -1625,7 +1623,7 @@ class PersonasScreen(BaseAppScreen):
             try:
                 target_path = await self.app.push_screen_wait(picker)
             except Exception:
-                logger.warning("Could not show the export file dialog.", exc_info=True)
+                logger.opt(exception=True).warning("Could not show the export file dialog.")
                 return
             if target_path:
                 await self._export_selected_character(str(target_path), fmt=fmt)
@@ -1661,7 +1659,7 @@ class PersonasScreen(BaseAppScreen):
                 self._notify("Export is not available for this selection.", "warning")
                 return
         except Exception as exc:
-            logger.error(f"Error exporting to {target_path}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error exporting to {target_path}: {exc}")
             self._notify(f"Export failed: {exc}", "error")
             return
         self._notify(f"Exported to {target_path}", "information")
@@ -1773,9 +1771,8 @@ class PersonasScreen(BaseAppScreen):
         try:
             return bool(await self.app.push_screen_wait(dialog))
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Could not show the delete confirmation dialog; keeping the item.",
-                exc_info=True,
             )
             return False
 
@@ -1796,7 +1793,7 @@ class PersonasScreen(BaseAppScreen):
                 self._notify(conflict_copy.format(noun="character"), "error")
                 return
             except Exception as exc:
-                logger.error(f"Error deleting character {entity_id}: {exc}", exc_info=True)
+                logger.opt(exception=True).error(f"Error deleting character {entity_id}: {exc}")
                 self._notify(f"Delete failed: {exc}", "error")
                 return
             if not ok:
@@ -1816,9 +1813,8 @@ class PersonasScreen(BaseAppScreen):
                     mode=self.persona_handler.current_mode(),
                 )
             except Exception as exc:
-                logger.error(
-                    f"Error deleting persona profile {entity_id}: {exc}", exc_info=True
-                )
+                logger.opt(exception=True).error(
+                    f"Error deleting persona profile {entity_id}: {exc}")
                 # The local backend signals optimistic-lock loss with a
                 # `..._version_conflict:` ValueError marker; map it onto the
                 # same recovery copy the character path uses.
@@ -1854,7 +1850,7 @@ class PersonasScreen(BaseAppScreen):
             try:
                 await self.character_handler.refresh_character_list()
             except Exception:
-                logger.warning("Could not refresh characters after a delete.", exc_info=True)
+                logger.opt(exception=True).warning("Could not refresh characters after a delete.")
         else:
             self._refresh_profile_rows_worker()
         if not stale:
@@ -1908,7 +1904,7 @@ class PersonasScreen(BaseAppScreen):
 
             saved_id = await asyncio.to_thread(persist_character)
         except Exception as exc:
-            logger.error(f"Error saving character: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving character: {exc}")
             self._notify(f"Save failed: {exc}", "error")
             return
         await self._after_character_save(saved_id, str(data.get("name") or ""))
@@ -1921,7 +1917,7 @@ class PersonasScreen(BaseAppScreen):
             try:
                 await self.character_handler.refresh_character_list()
             except Exception:
-                logger.warning("Could not refresh characters after a late save.", exc_info=True)
+                logger.opt(exception=True).warning("Could not refresh characters after a late save.")
             return
         self._character_editor_generation += 1
         self._edit_mode = "view"
@@ -1998,7 +1994,7 @@ class PersonasScreen(BaseAppScreen):
                         mode=mode,
                     )
             except Exception as exc:
-                logger.error(f"Error saving persona profile: {exc}", exc_info=True)
+                logger.opt(exception=True).error(f"Error saving persona profile: {exc}")
                 self._notify(f"Save failed: {exc}", "error")
                 return
             if hasattr(result, "model_dump"):
@@ -2019,7 +2015,7 @@ class PersonasScreen(BaseAppScreen):
                 raise_on_unavailable=True
             )
         except Exception as exc:
-            logger.warning("Could not refresh persona profiles after a save.", exc_info=True)
+            logger.opt(exception=True).warning("Could not refresh persona profiles after a save.")
             self._profile_lookup_recovery_state = self._profile_list_recovery_state(exc)
             profiles = []
         else:
@@ -2167,7 +2163,7 @@ class PersonasScreen(BaseAppScreen):
         try:
             return bool(await self.app.push_screen_wait(dialog))
         except Exception:
-            logger.warning("Could not show unsaved-changes dialog; keeping edits.", exc_info=True)
+            logger.opt(exception=True).warning("Could not show unsaved-changes dialog; keeping edits.")
             return False
 
     def _notify(self, message: str, severity: str = "warning") -> None:

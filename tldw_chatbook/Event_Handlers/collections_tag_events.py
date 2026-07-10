@@ -78,7 +78,7 @@ async def handle_keyword_rename(app: 'TldwCli', event: KeywordRenameEvent) -> No
         # Handle validation errors (empty name, duplicate, etc.)
         app.notify(str(e), severity="warning")
     except Exception as e:
-        logger.error(f"Error renaming keyword: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error renaming keyword: {e}")
         app.notify(f"Error renaming keyword: {str(e)[:100]}", severity="error")
 
 
@@ -135,7 +135,7 @@ async def handle_keyword_merge(app: 'TldwCli', event: KeywordMergeEvent) -> None
         # Handle validation errors
         app.notify(str(e), severity="warning")
     except Exception as e:
-        logger.error(f"Error merging keywords: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error merging keywords: {e}")
         app.notify(f"Error merging keywords: {str(e)[:100]}", severity="error")
 
 
@@ -223,7 +223,7 @@ async def handle_keyword_delete(app: 'TldwCli', event: KeywordDeleteEvent) -> No
             )
             
     except Exception as e:
-        logger.error(f"Error deleting keywords: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error deleting keywords: {e}")
         app.notify(f"Error deleting keywords: {str(e)[:100]}", severity="error")
 
 
@@ -248,5 +248,5 @@ async def load_keyword_statistics(app: 'TldwCli') -> List[Dict[str, Any]]:
         return stats
         
     except Exception as e:
-        logger.error(f"Error loading keyword statistics: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error loading keyword statistics: {e}")
         return []

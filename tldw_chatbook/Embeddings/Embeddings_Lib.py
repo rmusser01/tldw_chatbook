@@ -591,7 +591,7 @@ class EmbeddingFactory:
                 rec = CacheRecord(embed=hf.embed, close=hf.close, last=time.monotonic())
                 logger.debug(f"_build: Successfully created HuggingFace embedder for {model_id}")
             except Exception as e:
-                logger.error(f"_build: Failed to initialize HuggingFace model {model_id}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"_build: Failed to initialize HuggingFace model {model_id}: {e}")
                 raise
 
         elif spec.provider == "openai":
@@ -606,7 +606,7 @@ class EmbeddingFactory:
                 rec = CacheRecord(embed=fn, close=None, last=time.monotonic())
                 logger.debug(f"_build: Successfully created OpenAI embedder for {model_id}")
             except Exception as e:
-                logger.error(f"_build: Failed to initialize OpenAI model {model_id}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"_build: Failed to initialize OpenAI model {model_id}: {e}")
                 raise
 
         else:

@@ -1104,7 +1104,7 @@ class PlaceholderWindow(Container):
             logger.info(f"Window {self.window_id} initialized in {duration:.3f} seconds")
             
         except Exception as e:
-            logger.error(f"Failed to initialize window {self.window_id}: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to initialize window {self.window_id}: {str(e)}")
             # Clear any existing children before showing error
             for child in list(self.children):
                 child.remove()
@@ -1794,7 +1794,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     task_duration = time.perf_counter() - task_start
                     logger.info(f"Parallel init task '{task_name}' completed in {task_duration:.3f}s")
                 except Exception as e:
-                    logger.error(f"Parallel init task '{task_name}' failed: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"Parallel init task '{task_name}' failed: {e}")
         
         # Log total parallel phase time
         parallel_duration = time.perf_counter() - phase_start
@@ -2186,7 +2186,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         try:
             return int(counter())
         except Exception:
-            logger.debug("Home flashcards-due count failed.", exc_info=True)
+            logger.opt(exception=True).debug("Home flashcards-due count failed.")
             return None
 
     def open_active_home_item_details(
@@ -2320,7 +2320,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         try:
             self.local_writing_service = LocalWritingService(get_writing_db_path())
         except Exception:
-            logger.warning("Local writing service unavailable during app wiring", exc_info=True)
+            logger.opt(exception=True).warning("Local writing service unavailable during app wiring")
             self.local_writing_service = None
         try:
             self.server_writing_service = ServerWritingService.from_config(
@@ -2349,9 +2349,8 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             )
             self.library_collections_service = self.local_library_collections_service
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Local Library Collections service unavailable during app wiring",
-                exc_info=True,
             )
             self.local_library_collections_db = None
             self.local_library_collections_service = None
@@ -2368,9 +2367,8 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             )
             self.workspace_registry_service.ensure_default_workspace()
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Local workspace registry service unavailable during app wiring",
-                exc_info=True,
             )
             self.local_workspace_db = None
             self.workspace_registry_service = None
@@ -2409,7 +2407,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.evaluation_orchestrator = EvaluationOrchestrator(client_id="tldw_cli_app")
             self.local_evaluation_service = LocalEvaluationsService(self.evaluation_orchestrator.db)
         except Exception:
-            logger.warning("Local evaluation service unavailable during app wiring", exc_info=True)
+            logger.opt(exception=True).warning("Local evaluation service unavailable during app wiring")
             self.evaluation_orchestrator = None
 
         try:
@@ -2502,7 +2500,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 notification_app=self,
             )
         except Exception:
-            logger.warning("Local research service unavailable during app wiring", exc_info=True)
+            logger.opt(exception=True).warning("Local research service unavailable during app wiring")
             self.local_research_service = None
         try:
             self.server_research_service = ServerResearchService.from_config(
@@ -2570,10 +2568,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 CLI_APP_CLIENT_ID,
             )
         except Exception as exc:
-            logger.error(
+            logger.opt(exception=True).error(
                 "Failed to initialize client notifications DB; using in-memory store: {}",
                 exc,
-                exc_info=True,
             )
             self.client_notifications_db = ClientNotificationsDB(
                 ":memory:",
@@ -2742,7 +2739,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 notification_app=self,
             )
         except Exception:
-            logger.warning("Local research service unavailable during app wiring", exc_info=True)
+            logger.opt(exception=True).warning("Local research service unavailable during app wiring")
             self.local_research_service = None
         try:
             self.server_research_service = ServerResearchService.from_config(
@@ -3136,10 +3133,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 local_notifications_db=self.client_notifications_db,
             )
         except Exception as exc:
-            logger.error(
+            logger.opt(exception=True).error(
                 "Failed to initialize server parity state repositories; using in-memory stores: {}",
                 exc,
-                exc_info=True,
             )
             self.server_parity_state = ServerParityStateRepositories(
                 local_notifications_db=self.client_notifications_db,
@@ -3281,7 +3277,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             )
             logger.info(f"NotesInteropService successfully initialized for user '{user_name_for_notes}'.")
         except Exception as e:
-            logger.error(f"Failed to initialize NotesInteropService: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to initialize NotesInteropService: {e}")
             self.notes_service = None
     
     def _init_providers_models(self) -> None:
@@ -3290,7 +3286,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.providers_models = get_cli_providers_and_models()
             logger.info(f"Successfully retrieved providers_models. Count: {len(self.providers_models)}. Keys: {list(self.providers_models.keys())}")
         except Exception as e:
-            logger.error(f"Failed to get providers and models: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to get providers and models: {e}")
             self.providers_models = {}
     
     def _init_prompts_service(self) -> None:
@@ -3304,7 +3300,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             logger.info(f"Prompts Interop Service initialized with DB: {prompts_db_path}")
         except Exception as e:
             self.prompts_service_initialized = False
-            logger.error(f"Failed to initialize Prompts Interop Service: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to initialize Prompts Interop Service: {e}")
     
     def _init_media_db(self) -> None:
         """Initialize media database - for parallel execution."""
@@ -3327,7 +3323,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             else:
                 self._media_types_for_ui = ["Error: Media DB not loaded"]
         except Exception as e:
-            logger.error(f"Failed to initialize media DB: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to initialize media DB: {e}")
             self.media_db = None
             self._media_types_for_ui = ["Error: Exception fetching media types"]
     
@@ -4176,7 +4172,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                             self.current_ccp_character_image = None
                         loguru_logger.debug("Character card widgets populated.")
                     except QueryError as qe:
-                        loguru_logger.error(f"QueryError populating character card: {qe}", exc_info=True)
+                        loguru_logger.opt(exception=True).error(f"QueryError populating character card: {qe}")
                 else:
                     loguru_logger.info("No character details available to populate card view.")
                     try:
@@ -4200,7 +4196,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                         self.current_ccp_character_image = None
                         loguru_logger.debug("Character card widgets cleared.")
                     except QueryError as qe:
-                        loguru_logger.error(f"QueryError clearing character card: {qe}", exc_info=True)
+                        loguru_logger.opt(exception=True).error(f"QueryError clearing character card: {qe}")
 
             elif new_view == "dictionary_view":
                 # Center Pane: Show Dictionary Display
@@ -4265,7 +4261,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         except QueryError:
             loguru_logger.error("CCP right pane (#conv-char-right-pane) not found for collapse toggle.")
         except Exception as e:
-            loguru_logger.error(f"Error toggling CCP right pane: {e}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error toggling CCP right pane: {e}")
 
     # ###################################################################
     # --- Helper methods for Local LLM Inference logging ---
@@ -4392,7 +4388,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 self._clear_prompt_fields()  # Clear editor if load fails
                 self.current_prompt_id = None  # Reset reactives
         except Exception as e:
-            loguru_logger.error(f"Error loading prompt for editing: {e}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error loading prompt for editing: {e}")
             self.notify(f"Error loading prompt: {type(e).__name__}", severity="error")
             self._clear_prompt_fields()
             self.current_prompt_id = None  # Reset reactives
@@ -4442,9 +4438,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.loguru_logger.info(f"Switched search sub-tab view to: {new_sub_tab}")
 
         except QueryError as e:
-            self.loguru_logger.error(f"UI component not found during Search sub-tab switch: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"UI component not found during Search sub-tab switch: {e}")
         except Exception as e_watch:
-            self.loguru_logger.error(f"Unexpected error in watch_search_active_sub_tab: {e_watch}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error in watch_search_active_sub_tab: {e_watch}")
 
         # ############################################
         # --- Media Loaded Item Watcher ---
@@ -4489,7 +4485,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     f"watch_current_loaded_media_item: Could not find Markdown details display '#{details_display_widget_id}' for slug '{type_slug}' to update."
                 )
             except Exception as e:
-                self.loguru_logger.error(f"Error in watch_current_loaded_media_item: {e}", exc_info=True)
+                self.loguru_logger.opt(exception=True).error(f"Error in watch_current_loaded_media_item: {e}")
 
     # ############################################
     # --- Ingest Tab Watcher ---
@@ -4581,9 +4577,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
 
 
         except QueryError as e:
-            self.loguru_logger.error(f"UI component not found during Tools & Settings view switch: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"UI component not found during Tools & Settings view switch: {e}")
         except Exception as e_watch:
-            self.loguru_logger.error(f"Unexpected error in watch_tools_settings_active_view: {e_watch}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error in watch_tools_settings_active_view: {e_watch}")
 
     # --- LLM Tab Watcher ---
     def watch_llm_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
@@ -4626,7 +4622,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     except QueryError:
                         self.loguru_logger.debug(f"Help display widget #llamacpp-args-help-display not found in {new_view} during view switch - may not be mounted yet.")
                     except Exception as e_help_populate:
-                        self.loguru_logger.error(f"Error ensuring Llama.cpp help text in {new_view}: {e_help_populate}", exc_info=True)
+                        self.loguru_logger.opt(exception=True).error(f"Error ensuring Llama.cpp help text in {new_view}: {e_help_populate}")
                 elif new_view == "llm-view-llamafile":
                     try:
                         help_widget = view_to_show.query_one("#llamafile-args-help-display", RichLog)
@@ -4644,8 +4640,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 #             help_widget.write(LLAMAFILE_ARGS_HELP_TEXT)
                 #     except QueryError: pass
             except QueryError as e:
-                self.loguru_logger.error(f"UI component '{new_view}' not found in #llm-content-pane: {e}",
-                                         exc_info=True)
+                self.loguru_logger.opt(exception=True).error(f"UI component '{new_view}' not found in #llm-content-pane: {e}")
     
     def watch_current_chat_is_ephemeral(self, is_ephemeral: bool) -> None:
         self.loguru_logger.debug(f"Chat ephemeral state changed to: {is_ephemeral}")
@@ -4687,7 +4682,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         except QueryError as e:
             self.loguru_logger.warning(f"UI component not found while watching ephemeral state: {e}. Tab might not be fully composed or active.")
         except Exception as e_watch:
-            self.loguru_logger.error(f"Unexpected error in watch_current_chat_is_ephemeral: {e_watch}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error in watch_current_chat_is_ephemeral: {e_watch}")
 
     # --- Add explicit methods to update reactives from Select changes ---
     def update_chat_provider_reactive(self, new_value: Optional[str]) -> None:
@@ -4914,7 +4909,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             await self._post_mount_setup()
             self.hide_inactive_windows()
         except Exception as e:
-            logger.error(f"No-splash post-mount setup failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"No-splash post-mount setup failed: {e}")
 
     async def _post_mount_setup(self) -> None:
         """Operations to perform after the main UI is expected to be fully mounted."""
@@ -4945,7 +4940,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.loguru_logger.error(
                 f"_post_mount_setup: Failed to find chat provider select: #{TAB_CHAT}-api-provider")
         except Exception as e:
-            self.loguru_logger.error(f"_post_mount_setup: Error binding chat provider select: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"_post_mount_setup: Error binding chat provider select: {e}")
 
         # try:
         #     ccp_select = self.query_one(f"#{TAB_CCP}-api-provider", Select)
@@ -5103,9 +5098,8 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             try:
                 completed.result()
             except Exception as exc:
-                self.loguru_logger.error(
+                self.loguru_logger.opt(exception=True).error(
                     f"Deferred startup task failed: {name}: {exc}",
-                    exc_info=True,
                 )
 
         task.add_done_callback(on_done)
@@ -5161,9 +5155,8 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         except QueryError:
             self.loguru_logger.error("Failed to find AppFooterStatus widget for DB size display.")
         except Exception as e_db_size:
-            self.loguru_logger.error(
+            self.loguru_logger.opt(exception=True).error(
                 f"Error setting up DB size indicator with AppFooterStatus: {e_db_size}",
-                exc_info=True,
             )
 
     def _start_deferred_audio_service_initialization(self) -> None:
@@ -6036,10 +6029,10 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 self.loguru_logger.error("notes_service.add_note did not return a new_note_id.")
 
         except CharactersRAGDBError as e: # Specific DB error
-            self.loguru_logger.error(f"Database error creating new note: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Database error creating new note: {e}")
             self.notify(f"DB error creating note: {e}", severity="error")
         except Exception as e: # Catch-all for other unexpected errors
-            self.loguru_logger.error(f"Unexpected error creating new note: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error creating new note: {e}")
             self.notify(f"Error creating note: {type(e).__name__}", severity="error")
 
     @on(Button.Pressed, "#chat-notes-search-button")
@@ -6092,13 +6085,13 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 self.loguru_logger.info(msg)
 
         except CharactersRAGDBError as e:
-            self.loguru_logger.error(f"Database error searching notes: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Database error searching notes: {e}")
             self.notify(f"DB error searching notes: {e}", severity="error")
         except QueryError as e_query:
-            self.loguru_logger.error(f"UI element not found during notes search: {e_query}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"UI element not found during notes search: {e_query}")
             self.notify("UI error during notes search.", severity="error")
         except Exception as e:
-            self.loguru_logger.error(f"Unexpected error searching notes: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error searching notes: {e}")
             self.notify(f"Error searching notes: {type(e).__name__}", severity="error")
 
     @on(Button.Pressed, "#chat-notes-load-button")
@@ -6158,13 +6151,13 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 self.current_chat_note_version = None
 
         except CharactersRAGDBError as e_db:
-            self.loguru_logger.error(f"Database error loading note: {e_db}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Database error loading note: {e_db}")
             self.notify(f"DB error loading note: {e_db}", severity="error")
         except QueryError as e_query:
-            self.loguru_logger.error(f"UI element not found during note load: {e_query}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"UI element not found during note load: {e_query}")
             self.notify("UI error during note load.", severity="error")
         except Exception as e:
-            self.loguru_logger.error(f"Unexpected error loading note: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error loading note: {e}")
             self.notify(f"Error loading note: {type(e).__name__}", severity="error")
 
     @on(Button.Pressed, "#chat-notes-save-button")
@@ -6223,7 +6216,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 except QueryError as e_lv_update:
                     self.loguru_logger.error(f"Error querying Label within ListView item to update title: {e_lv_update}")
                 except Exception as e_item_update: # Catch other errors during list item update
-                    self.loguru_logger.error(f"Unexpected error updating list item title: {e_item_update}", exc_info=True)
+                    self.loguru_logger.opt(exception=True).error(f"Unexpected error updating list item title: {e_item_update}")
             else:
                 # This case might not be hit if service raises exceptions for all failures
                 self.notify("Failed to save note. Reason unknown.", severity="error")
@@ -6233,13 +6226,13 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.loguru_logger.warning(f"Save conflict for note {self.current_chat_note_id}. Expected version: {self.current_chat_note_version}")
             self.notify("Save conflict: Note was modified elsewhere. Please reload and reapply changes.", severity="error", timeout=10)
         except CharactersRAGDBError as e_db:
-            self.loguru_logger.error(f"Database error saving note {self.current_chat_note_id}: {e_db}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Database error saving note {self.current_chat_note_id}: {e_db}")
             self.notify(f"DB error saving note: {e_db}", severity="error")
         except QueryError as e_query:
-            self.loguru_logger.error(f"UI element not found during note save: {e_query}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"UI element not found during note save: {e_query}")
             self.notify("UI error during note save.", severity="error")
         except Exception as e:
-            self.loguru_logger.error(f"Unexpected error saving note {self.current_chat_note_id}: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error saving note {self.current_chat_note_id}: {e}")
             self.notify(f"Error saving note: {type(e).__name__}", severity="error")
 
     @on(Button.Pressed, "#chat-notes-copy-button")
@@ -6280,7 +6273,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.loguru_logger.error(f"UI element not found during note copy: {e}")
             self.notify("UI error during note copy.", severity="error")
         except Exception as e:
-            self.loguru_logger.error(f"Unexpected error copying note: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error copying note: {e}")
             self.notify(f"Error copying note: {type(e).__name__}", severity="error")
 
     @on(Collapsible.Toggled, "#chat-notes-collapsible")
@@ -6338,13 +6331,13 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     self.loguru_logger.info("No notes found for user after refresh.")
 
             except CharactersRAGDBError as e: # Specific DB error
-                self.loguru_logger.error(f"Database error listing notes: {e}", exc_info=True)
+                self.loguru_logger.opt(exception=True).error(f"Database error listing notes: {e}")
                 self.notify(f"DB error listing notes: {e}", severity="error")
             except QueryError as e_query: # If UI elements are not found
-                 self.loguru_logger.error(f"UI element not found in notes toggle: {e_query}", exc_info=True)
+                 self.loguru_logger.opt(exception=True).error(f"UI element not found in notes toggle: {e_query}")
                  self.notify("UI error while refreshing notes.", severity="error")
             except Exception as e: # Catch-all for other unexpected errors
-                self.loguru_logger.error(f"Unexpected error listing notes: {e}", exc_info=True)
+                self.loguru_logger.opt(exception=True).error(f"Unexpected error listing notes: {e}")
                 self.notify(f"Error listing notes: {type(e).__name__}", severity="error")
         else:
             self.loguru_logger.info("Notes collapsible closed in chat sidebar.")
@@ -6381,7 +6374,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     self._chat_character_filter_populated = True
                     self.loguru_logger.info("Character filter populated successfully.")
                 except Exception as e:
-                    self.loguru_logger.error(f"Failed to populate character filter: {e}", exc_info=True)
+                    self.loguru_logger.opt(exception=True).error(f"Failed to populate character filter: {e}")
             else:
                 self.loguru_logger.debug("Character filter already populated, skipping.")
         else:
@@ -6471,7 +6464,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         except QueryError:
             self.loguru_logger.error(f"Could not find window component for tab '{self.current_tab}'")
         except Exception as e:
-            self.loguru_logger.error(f"Error delegating button press to window component: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Error delegating button press to window component: {e}")
 
         # 3. Use the handler map for buttons not handled by window components
         current_tab_handlers = self.button_handler_map.get(self.current_tab, {})
@@ -6501,7 +6494,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                             f"Handler for button '{button_id}' did not return an awaitable object."
                         )
                 except Exception as e:
-                    self.loguru_logger.error(f"Error executing handler for button '{button_id}': {e}", exc_info=True)
+                    self.loguru_logger.opt(exception=True).error(f"Error executing handler for button '{button_id}': {e}")
                     self.notify(f"Error handling button action: {str(e)[:100]}", severity="error")
             else:
                 self.loguru_logger.error(f"Handler for button '{button_id}' is not callable: {handler}")
@@ -6849,7 +6842,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             save_setting_to_cli_config("chat_defaults", "strip_thinking_tags", new_value)
             self.notify(f"Thinking tag stripping {'enabled' if new_value else 'disabled'}.", timeout=2)
         except Exception as e:
-            self.loguru_logger.error(f"Failed to save 'strip_thinking_tags' setting: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Failed to save 'strip_thinking_tags' setting: {e}")
             self.notify("Error saving thinking tag setting.", severity="error", timeout=4)
     #####################################################################
     # --- End of Chat Event Handlers for Streaming & thinking tags ---
@@ -6879,7 +6872,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             save_setting_to_cli_config("chat_defaults", "advanced_mode", event.value)
             
         except Exception as e:
-            loguru_logger.error(f"Error toggling settings mode: {e}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error toggling settings mode: {e}")
             self.notify("Error switching modes", severity="error", timeout=4)
     
     async def handle_settings_mode_toggle(self, event: Switch.Changed) -> None:
@@ -7208,7 +7201,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.loguru_logger.info(f"Scheduled media cleanup every {cleanup_interval_hours} hours")
             
         except Exception as e:
-            self.loguru_logger.error(f"Error scheduling media cleanup: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Error scheduling media cleanup: {e}")
     
     async def perform_media_cleanup(self) -> None:
         """Perform media cleanup based on configuration settings."""
@@ -7255,7 +7248,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 )
             
         except Exception as e:
-            self.loguru_logger.error(f"Error during media cleanup: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Error during media cleanup: {e}")
             self.notify(
                 f"Error during media cleanup: {str(e)}",
                 severity="error",

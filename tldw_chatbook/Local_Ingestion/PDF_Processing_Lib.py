@@ -180,7 +180,7 @@ def docling_parse_pdf(pdf_path: str, enable_ocr: bool = False, ocr_language: str
         return markdown_text
 
     except Exception as e:
-        logger.error(f"Error extracting text ({parser_name}) from PDF {pdf_path}: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error extracting text ({parser_name}) from PDF {pdf_path}: {str(e)}")
         log_counter("pdf_text_extraction_error", labels={"file_path": pdf_path, "parser": parser_name, "error": str(e)})
         raise
 
@@ -271,7 +271,7 @@ def docext_parse_pdf(pdf_path: str, ocr_backend: str = "docext", language: str =
         return markdown_text
         
     except Exception as e:
-        logger.error(f"Error extracting text with docext from PDF {pdf_path}: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error extracting text with docext from PDF {pdf_path}: {str(e)}")
         log_counter("pdf_text_extraction_error", labels={"file_path": pdf_path, "parser": "docext", "error": str(e)})
         raise
 
@@ -467,13 +467,13 @@ def process_pdf(
              elif isinstance(parse_lib_err, pymupdf.FileDataError): log_msg = f"PDF file data error during text extraction for {filename}: {err_msg}"
              else: log_msg = f"PDF library runtime error during text extraction for {filename}: {err_msg}"
 
-             logger.error(log_msg, exc_info=True) # Log specifics
+             logger.opt(exception=True).error(log_msg) # Log specifics
              result["warnings"].append(f"Text extraction failed ({parser}): {err_msg}")
              # Don't raise here, allow metadata extraction attempt
 
         except Exception as parse_err:
              # Catch other potential errors during parsing
-             logger.error(f"Unexpected error during text extraction for {filename} using {parser}: {parse_err}", exc_info=True)
+             logger.opt(exception=True).error(f"Unexpected error during text extraction for {filename} using {parser}: {parse_err}")
              result["warnings"].append(f"Unexpected text extraction error ({parser}): {str(parse_err)}")
              # Don't raise here
 
@@ -527,7 +527,7 @@ def process_pdf(
              elif isinstance(meta_lib_err, pymupdf.FileDataError): meta_fail_reason = f"PDF Error: Corrupted or invalid file data."
              else: meta_fail_reason = f"PDF Library Error: {err_msg}" # General PDF error
 
-             logger.error(f"Metadata extraction failed for {filename}: {meta_fail_reason}", exc_info=True)
+             logger.opt(exception=True).error(f"Metadata extraction failed for {filename}: {meta_fail_reason}")
              result["warnings"].append(f"Metadata extraction failed: {meta_fail_reason}")
              result["metadata"] = { # Provide default structure on failure
                  "title": title_override or Path(filename).stem, "author": author_override or "Unknown",
@@ -535,7 +535,7 @@ def process_pdf(
              }
 
         except Exception as meta_err:
-             logger.error(f"Unexpected metadata extraction error for {filename}: {meta_err}", exc_info=True)
+             logger.opt(exception=True).error(f"Unexpected metadata extraction error for {filename}: {meta_err}")
              meta_fail_reason = f"Unexpected error: {str(meta_err)}"
              result["warnings"].append(f"Metadata extraction failed: {meta_fail_reason}")
              result["metadata"] = { # Provide default structure
@@ -571,7 +571,7 @@ def process_pdf(
                 result["chunks"] = processed_chunks # Store the list of chunks
 
             except Exception as chunk_err:
-                 logger.error(f"Chunking failed for {filename}: {chunk_err}", exc_info=True)
+                 logger.opt(exception=True).error(f"Chunking failed for {filename}: {chunk_err}")
                  result["warnings"].append(f"Chunking failed: {str(chunk_err)}")
                  processed_chunks = [{'text': content, 'metadata': {'chunk_num': 0, 'error': f"Chunking failed: {chunk_err}"}}]
                  result["chunks"] = processed_chunks # Store the single chunk with error info
@@ -629,7 +629,7 @@ def process_pdf(
 
                     except Exception as summ_err:
                         # Handle errors during the API call or summarization process
-                        logger.warning(f"Summarization failed for chunk {i+1} of {filename}: {summ_err}", exc_info=True)
+                        logger.opt(exception=True).warning(f"Summarization failed for chunk {i+1} of {filename}: {summ_err}")
                         # Store error information in the chunk's metadata
                         chunk_metadata['analysis'] = f"[Summarization Error: {str(summ_err)}]"
                         # Add a warning to the overall result
@@ -674,7 +674,7 @@ def process_pdf(
 
                     except Exception as rec_summ_err:
                         # Handle errors during the recursive summarization step
-                        logger.error(f"Recursive summarization failed for {filename}: {rec_summ_err}", exc_info=True)
+                        logger.opt(exception=True).error(f"Recursive summarization failed for {filename}: {rec_summ_err}")
                         # Fallback: Use the joined chunk summaries as the final analysis, but mark the error
                         final_summary = f"[Recursive Summarization Error: {str(rec_summ_err)}]\n\n" + combined_summaries_text
                         result["warnings"] = (result["warnings"] or []) + [f"Recursive summarization failed: {str(rec_summ_err)}"]
@@ -735,12 +735,12 @@ def process_pdf(
 
     # --- Main Exception Handler ---
     except FileNotFoundError as fnf_err:
-        logger.error(f"File not found error for {filename}: {fnf_err}", exc_info=True)
+        logger.opt(exception=True).error(f"File not found error for {filename}: {fnf_err}")
         result["status"] = "Error"
         result["error"] = str(fnf_err)
         log_counter("pdf_processing_error", labels={"file_name": filename, "parser": parser, "error": "FileNotFoundError"})
     except IOError as io_err: # Catch temp file creation errors
-        logger.error(f"IO error during temp file handling for {filename}: {io_err}", exc_info=True)
+        logger.opt(exception=True).error(f"IO error during temp file handling for {filename}: {io_err}")
         result["status"] = "Error"
         result["error"] = f"Temporary file error: {io_err}"
         log_counter("pdf_processing_error", labels={"file_name": filename, "parser": parser, "error": "IOError"})
@@ -765,10 +765,10 @@ def process_pdf(
         else:  # General RuntimeError or other caught types
             log_msg = f"PDF library runtime error for {filename}: {err_msg}"
             err_type_label = type(pdf_lib_err).__name__  # Use 'RuntimeError' usually
-            logger.error(f"PDF library error processing {filename}: {result['error']}", exc_info=True)
+            logger.opt(exception=True).error(f"PDF library error processing {filename}: {result['error']}")
 
 
-        logger.error(log_msg, exc_info=True)
+        logger.opt(exception=True).error(log_msg)
         result["status"] = "Error"
         # Use the determined err_type_label for consistent metrics
         log_counter("pdf_processing_error", labels={"file_name": filename, "parser": parser, "error": err_type_label})
@@ -776,7 +776,7 @@ def process_pdf(
 
     except Exception as e:
         # Catch any other unexpected exceptions
-        logger.error(f"Unexpected error processing PDF {filename}: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error processing PDF {filename}: {str(e)}")
         result["status"] = "Error"
         # Ensure error field is populated
         result["error"] = result["error"] or f"Unexpected error: {str(e)}"
@@ -806,7 +806,7 @@ def process_pdf(
                  logger.warning(f"OSError removing temporary file {path_for_processing}: {file_rm_err}")
                  result["warnings"].append(f"Failed to cleanup temp file: {file_rm_err}")
             except Exception as file_rm_exc:
-                 logger.error(f"Unexpected error removing temporary file {path_for_processing}: {file_rm_exc}", exc_info=True)
+                 logger.opt(exception=True).error(f"Unexpected error removing temporary file {path_for_processing}: {file_rm_exc}")
                  result["warnings"].append(f"Unexpected error cleaning up temp file: {file_rm_exc}")
 
         # --- Now attempt to remove the directory ---
@@ -824,7 +824,7 @@ def process_pdf(
                  except OSError as rm_err:
                      logger.warning(f"OSError removing temporary directory (Attempt {attempt + 1}/{max_retries}) {temp_dir_for_pdf}: {rm_err}")
                      if attempt == max_retries - 1:
-                         logger.error(f"Final attempt failed to remove {temp_dir_for_pdf}: {rm_err}", exc_info=False)
+                         logger.opt(exception=False).error(f"Final attempt failed to remove {temp_dir_for_pdf}: {rm_err}")
                          # --- Modify status handling ---
                          warning_msg = f"Failed to cleanup temp dir after {max_retries} attempts: {rm_err}"
                          result["warnings"].append(warning_msg)
@@ -840,7 +840,7 @@ def process_pdf(
                          time.sleep(retry_delay * (attempt + 1))
 
                  except Exception as rm_exc:
-                      logger.error(f"Unexpected error removing temporary directory {temp_dir_for_pdf} (Attempt {attempt + 1}): {rm_exc}", exc_info=True)
+                      logger.opt(exception=True).error(f"Unexpected error removing temporary directory {temp_dir_for_pdf} (Attempt {attempt + 1}): {rm_exc}")
                       warning_msg = f"Unexpected error cleaning up temp dir: {rm_exc}"
                       result["warnings"] = (result["warnings"] or []) + [warning_msg]
                       # Only downgrade if original status was Success
@@ -948,7 +948,7 @@ async def process_pdf_task(
         return result_dict
 
     except Exception as e:
-        logger.error(f"Error within process_pdf_task for {filename}: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error within process_pdf_task for {filename}: {str(e)}")
         # Return a standard error dictionary matching process_pdf's structure
         return {
             "status": "Error",

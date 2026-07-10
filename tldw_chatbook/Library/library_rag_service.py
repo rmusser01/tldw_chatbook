@@ -112,12 +112,11 @@ async def run_library_rag_search(
             ),
         )
     except Exception:
-        logger.warning(
+        logger.opt(exception=True).warning(
             "Library Search/RAG retrieval failed.",
             mode=request.mode,
             top_k=request.top_k,
             source_types=request.source_types,
-            exc_info=True,
         )
         return LibraryRagSearchOutcome(
             status="failed",

@@ -434,7 +434,7 @@ class LocalAudioProcessor:
                 )
                 logger.info("[AUDIO] _transcribe_audio() returned successfully")
             except Exception as e:
-                logger.error(f"[AUDIO] Transcription failed: {type(e).__name__}: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error(f"[AUDIO] Transcription failed: {type(e).__name__}: {str(e)}")
                 raise
             
             transcription_time = time.time() - transcription_start
@@ -529,7 +529,7 @@ class LocalAudioProcessor:
                     result["warnings"].append(f"Could not save audio file: {str(e)}")
             
         except Exception as e:
-            logger.error(f"Error processing audio: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Error processing audio: {str(e)}")
             result["status"] = "Error"
             result["error"] = str(e)
         

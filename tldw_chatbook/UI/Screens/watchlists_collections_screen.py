@@ -199,9 +199,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             logger.debug("Timed out loading local Watchlists snapshot.")
             return (), (), 0, 0, True, True, WC_SERVICE_ERROR_COPY, None
         except Exception:
-            logger.debug(
+            logger.opt(exception=True).debug(
                 "Failed to load local Watchlists snapshot.",
-                exc_info=True,
             )
             return (), (), 0, 0, True, True, WC_SERVICE_ERROR_COPY, None
 
@@ -257,9 +256,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
         except Exception:
             if not self._latest_console_follow_error_logged:
-                logger.warning(
+                logger.opt(exception=True).warning(
                     "Failed to load Watchlists Console follow item from Home active-work adapter.",
-                    exc_info=True,
                 )
                 self._latest_console_follow_error_logged = True
             self._latest_console_follow_item_cache = None

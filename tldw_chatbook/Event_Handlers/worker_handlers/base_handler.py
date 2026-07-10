@@ -97,7 +97,7 @@ class BaseWorkerHandler(ABC):
         if context:
             msg += f" ({context})"
         msg += f": {error}"
-        self.logger.error(msg, exc_info=True)
+        self.logger.opt(exception=True).error(msg)
     
     async def update_button_state(self, button_id: str, disabled: bool) -> None:
         """
@@ -172,10 +172,8 @@ class WorkerHandlerRegistry:
                     await handler.handle(event)
                     return True
                 except Exception as e:
-                    self.logger.error(
-                        f"Handler {handler.__class__.__name__} failed for worker '{worker_name}': {e}",
-                        exc_info=True
-                    )
+                    self.logger.opt(exception=True).error(
+                        f"Handler {handler.__class__.__name__} failed for worker '{worker_name}': {e}")
                     # Continue to next handler if one fails
         
         return False

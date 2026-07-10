@@ -154,7 +154,7 @@ class ChatEventHandler:
             )
             
         except Exception as e:
-            logger.error(f"Error processing message: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error processing message: {e}")
             self.post_message_thread_safe(
                 LLMResponseError(str(e), self.current_session_id)
             )

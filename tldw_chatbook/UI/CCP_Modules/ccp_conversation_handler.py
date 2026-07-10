@@ -151,7 +151,7 @@ class CCPConversationHandler:
             logger.info(f"Found {len(self.search_results)} conversations matching '{search_term}'")
             
         except Exception as e:
-            logger.error(f"Error searching conversations: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error searching conversations: {e}")
     
     def _search_by_title_sync(self, search_term: str) -> List[Dict[str, Any]]:
         """Search conversations by title (sync version for worker).
@@ -226,7 +226,7 @@ class CCPConversationHandler:
                 logger.warning("No conversation selected to load")
                 
         except Exception as e:
-            logger.error(f"Error loading selected conversation: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error loading selected conversation: {e}")
     
     async def load_conversation(self, conversation_id: ConversationId) -> None:
         """Load a conversation and display it.
@@ -282,7 +282,7 @@ class CCPConversationHandler:
                 logger.error(f"Failed to load conversation {conversation_id}")
                 
         except Exception as e:
-            logger.error(f"Error loading conversation {conversation_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error loading conversation {conversation_id}: {e}")
 
     def get_conversation_contract(self, conversation_id: Optional[ConversationId] = None) -> Dict[str, Any]:
         """Return the normalized conversation metadata used for chat launching."""
@@ -338,7 +338,7 @@ class CCPConversationHandler:
             logger.debug(f"Displayed {len(messages)} messages")
             
         except Exception as e:
-            logger.error(f"Error displaying conversation messages: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error displaying conversation messages: {e}")
     
     async def handle_save_details(self, title: str, keywords: str) -> None:
         """Save conversation details.
@@ -375,7 +375,7 @@ class CCPConversationHandler:
                 logger.error(f"Failed to save details for conversation {self.current_conversation_id}")
                 
         except Exception as e:
-            logger.error(f"Error saving conversation details: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving conversation details: {e}")
     
     async def handle_export(self, format: str = "json") -> None:
         """Export the current conversation.
@@ -404,7 +404,7 @@ class CCPConversationHandler:
                 logger.error(f"Failed to export conversation")
                 
         except Exception as e:
-            logger.error(f"Error exporting conversation: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error exporting conversation: {e}")
     
     async def handle_import(self, file_path: str) -> None:
         """Import a conversation from file.
@@ -421,7 +421,7 @@ class CCPConversationHandler:
             # self.window.post_message(ConversationMessage.Created(...))
             
         except Exception as e:
-            logger.error(f"Error importing conversation: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error importing conversation: {e}")
     
     def refresh_conversation_list(self) -> None:
         """Refresh the conversation search results."""

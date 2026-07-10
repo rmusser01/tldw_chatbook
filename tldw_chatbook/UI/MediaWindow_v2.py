@@ -691,7 +691,7 @@ class MediaWindow(Container):
         try:
             highlights = await self.load_reading_highlights(updated_record)
         except Exception as exc:
-            logger.error(f"Failed to refresh reading highlights for {record_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to refresh reading highlights for {record_id}: {exc}")
             highlights = []
         if not highlights and fallback_highlight:
             highlights = [dict(fallback_highlight)]
@@ -729,7 +729,7 @@ class MediaWindow(Container):
             await self._refresh_reading_highlights_for_record(record, fallback_highlight=created)
             self.app_instance.notify("Reading highlight created", severity="information")
         except Exception as exc:
-            logger.error(f"Error creating reading highlight for {record_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error creating reading highlight for {record_id}: {exc}")
             self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
 
     @on(MediaReadingHighlightUpdateEvent)
@@ -757,7 +757,7 @@ class MediaWindow(Container):
             await self._refresh_reading_highlights_for_record(record, fallback_highlight=updated)
             self.app_instance.notify("Reading highlight updated", severity="information")
         except Exception as exc:
-            logger.error(f"Error updating reading highlight for {record_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating reading highlight for {record_id}: {exc}")
             self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
 
     @on(MediaReadingHighlightDeleteEvent)
@@ -781,7 +781,7 @@ class MediaWindow(Container):
             await self._refresh_reading_highlights_for_record(record)
             self.app_instance.notify("Reading highlight deleted", severity="information")
         except Exception as exc:
-            logger.error(f"Error deleting reading highlight for {record_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error deleting reading highlight for {record_id}: {exc}")
             self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
 
     async def _load_document_versions(self, record: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1056,7 +1056,7 @@ class MediaWindow(Container):
             self.viewer_panel.load_media(updated_record)
             await self._load_document_versions(updated_record)
         except Exception as exc:
-            logger.error(f"Error updating metadata for {record_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating metadata for {record_id}: {exc}")
             self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
             return
 
@@ -1099,7 +1099,7 @@ class MediaWindow(Container):
                     media_id=self._source_media_id(record, fallback=getattr(event, "media_id", None)),
                 )
             except Exception as exc:
-                logger.error(f"Error deleting media {record_id}: {exc}", exc_info=True)
+                logger.opt(exception=True).error(f"Error deleting media {record_id}: {exc}")
                 self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
                 return
 
@@ -1136,7 +1136,7 @@ class MediaWindow(Container):
                 media_id=self._source_media_id(record, fallback=getattr(event, "media_id", None)),
             )
         except Exception as exc:
-            logger.error(f"Error undeleting media {getattr(event, 'record_id', getattr(event, 'media_id', None))}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error undeleting media {getattr(event, 'record_id', getattr(event, 'media_id', None))}: {exc}")
             self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
             return
 
@@ -1186,7 +1186,7 @@ class MediaWindow(Container):
                     )
                 )
         except Exception as exc:
-            logger.error(f"Error toggling read-it-later for {record_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error toggling read-it-later for {record_id}: {exc}")
             self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
             return
 
@@ -1199,7 +1199,7 @@ class MediaWindow(Container):
         try:
             await self._refresh_current_browse_results_async()
         except Exception as exc:
-            logger.error(f"Error refreshing browse results after read-it-later toggle for {record_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error refreshing browse results after read-it-later toggle for {record_id}: {exc}")
             self.app_instance.notify(f"Error loading media: {str(exc)[:100]}", severity="error")
             return
 
@@ -1380,7 +1380,7 @@ class MediaWindow(Container):
                                    f"response length: {len(str(result)) if result else 0}")
                         return result
                     except Exception as e:
-                        logger.error(f"Error in LLM API call: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Error in LLM API call: {e}")
                         raise
                 
                 # Run in thread since it's a sync function
@@ -1433,7 +1433,7 @@ class MediaWindow(Container):
                         
                         logger.info("Analysis display updated successfully")
                     except Exception as e:
-                        logger.error(f"Error updating analysis display: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Error updating analysis display: {e}")
                     
                     self.app_instance.notify("Analysis generated successfully", severity="information")
                 else:
@@ -1447,7 +1447,7 @@ class MediaWindow(Container):
                         logger.error(f"Error resetting analysis display: {e}")
                     
             except Exception as e:
-                logger.error(f"Error performing analysis: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Error performing analysis: {e}")
                 self.app_instance.notify(f"Error: {str(e)[:100]}", severity="error")
         
         # Run the analysis in a worker
@@ -1482,7 +1482,7 @@ class MediaWindow(Container):
             self.app_instance.notify(str(exc), severity="warning")
             return
         except Exception as exc:
-            logger.error(f"Error saving analysis for {record_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving analysis for {record_id}: {exc}")
             self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
             return
 
@@ -1528,7 +1528,7 @@ class MediaWindow(Container):
                 self.app_instance.notify("Failed to save analysis as note", severity="error")
                 
         except Exception as e:
-            logger.error(f"Error saving analysis as note: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving analysis as note: {e}")
             self.app_instance.notify(f"Error: {str(e)[:100]}", severity="error")
     
     @on(MediaAnalysisOverwriteEvent)
@@ -1560,7 +1560,7 @@ class MediaWindow(Container):
             self.app_instance.notify(str(exc), severity="warning")
             return
         except Exception as exc:
-            logger.error(f"Error overwriting analysis for {record_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error overwriting analysis for {record_id}: {exc}")
             self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
             return
 
@@ -1598,7 +1598,7 @@ class MediaWindow(Container):
             self.app_instance.notify(str(exc), severity="warning")
             return
         except Exception as exc:
-            logger.error(f"Error deleting analysis {event.version_uuid}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error deleting analysis {event.version_uuid}: {exc}")
             self.app_instance.notify(f"Error: {str(exc)[:100]}", severity="error")
             return
 
@@ -1664,7 +1664,7 @@ class MediaWindow(Container):
                 self.runtime_state.browse_items = list(results)
             self.list_panel.load_items(results, page, total_pages)
         except Exception as e:
-            logger.error(f"Error updating search results: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating search results: {e}")
     
     def watch_media_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
         """React to media_active_view changes from app.py button handlers."""
@@ -1741,7 +1741,7 @@ class MediaWindow(Container):
                 self.list_panel.set_loading(False)
                     
             except Exception as e:
-                logger.error(f"Error during media search: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Error during media search: {e}")
                 self.list_panel.set_loading(False)
                 # Notify user of error
                 self.app_instance.notify(f"Error loading media: {str(e)[:100]}", severity="error")

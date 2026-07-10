@@ -169,30 +169,44 @@ async def test_run_library_rag_search_maps_empty_and_failed_results_to_recovery(
 
 
 @pytest.mark.asyncio
-async def test_run_library_rag_search_logs_failed_retrieval_without_query_text(monkeypatch) -> None:
-    calls = []
-
-    def record_warning(message, *args, **kwargs):
-        calls.append((message, args, kwargs))
-
-    monkeypatch.setattr(library_rag_service.logger, "warning", record_warning)
-
-    failed = await run_library_rag_search(
-        SimpleNamespace(library_rag_search_service=RaisingLibraryRagSearchService()),
-        LibraryRagSearchRequest(
-            query="sensitive private query",
-            source_types=("notes", "media"),
-            mode="search",
-            top_k=7,
-        ),
+async def test_run_library_rag_search_logs_failed_retrieval_without_query_text() -> None:
+    # Capture through a real loguru sink instead of monkeypatching
+    # `logger.warning`: the call site uses `logger.opt(exception=True)`
+    # (loguru's traceback capture -- the stdlib `exc_info=True` kwarg is a
+    # silent no-op under loguru), and `.opt()` returns a fresh logger whose
+    # `.warning` would bypass a patched attribute anyway.
+    records = []
+    sink_id = library_rag_service.logger.add(
+        lambda message: records.append(message.record), level="WARNING"
     )
+    try:
+        failed = await run_library_rag_search(
+            SimpleNamespace(library_rag_search_service=RaisingLibraryRagSearchService()),
+            LibraryRagSearchRequest(
+                query="sensitive private query",
+                source_types=("notes", "media"),
+                mode="search",
+                top_k=7,
+            ),
+        )
+    finally:
+        library_rag_service.logger.remove(sink_id)
 
     assert failed.status == "failed"
-    assert calls
-    message, _args, kwargs = calls[0]
-    assert "Library Search/RAG retrieval failed." in message
-    assert kwargs["mode"] == "search"
-    assert kwargs["top_k"] == 7
-    assert kwargs["source_types"] == ("notes", "media")
-    assert kwargs["exc_info"] is True
-    assert "sensitive private query" not in str((message, kwargs))
+    matching = [
+        record
+        for record in records
+        if "Library Search/RAG retrieval failed." in record["message"]
+    ]
+    assert matching
+    record = matching[0]
+    assert record["extra"]["mode"] == "search"
+    assert record["extra"]["top_k"] == 7
+    assert record["extra"]["source_types"] == ("notes", "media")
+    # The traceback must actually be attached to the record now -- this is
+    # strictly stronger than the old assertion that the (no-op) exc_info
+    # kwarg was merely passed along.
+    assert record["exception"] is not None
+    assert record["exception"].type is RuntimeError
+    assert "sensitive private query" not in record["message"]
+    assert "sensitive private query" not in str(record["extra"])

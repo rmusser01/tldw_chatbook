@@ -79,9 +79,8 @@ class WorkflowsScreen(BaseAppScreen):
                 has_recent_work=has_recent_work,
             )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Failed to load Workflows Console launch item from Home active-work adapter.",
-                exc_info=True,
             )
             return None
         for item in tuple(getattr(dashboard_input, "active_work_items", ()) or ()):

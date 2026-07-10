@@ -296,7 +296,7 @@ async def handle_media_nav_button_pressed(app: 'TldwCli', event: Button.Pressed)
         logger.info(f"MediaWindow activated for type: {type_slug}")
 
     except Exception as e:
-        logger.error(f"Error in handle_media_nav_button_pressed for '{button_id}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error in handle_media_nav_button_pressed for '{button_id}': {e}")
         app.notify(f"Error switching media view: {str(e)[:100]}", severity="error")
 
 
@@ -322,10 +322,10 @@ async def handle_media_search_button_pressed(app: 'TldwCli', event: Button.Press
         app.media_current_page = 1 # Reset to page 1 for new search
         await perform_media_search_and_display(app, type_slug, search_term, keyword_filter)
     except QueryError as e:
-        logger.error(f"UI component not found for media search button '{button_id}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"UI component not found for media search button '{button_id}': {e}")
         app.notify("Search UI error.", severity="error")
     except Exception as e:
-        logger.error(f"Error in handle_media_search_button_pressed for '{button_id}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error in handle_media_search_button_pressed for '{button_id}': {e}")
         app.notify(f"Error performing media search: {str(e)[:100]}", severity="error")
 
 
@@ -456,7 +456,7 @@ async def handle_media_load_selected_button_pressed(app: 'TldwCli', event: Butto
         from ..Widgets.media_details_widget import MediaDetailsWidget
         details_widget = app.query_one(f"#{details_widget_id}", MediaDetailsWidget)
     except QueryError as e:
-        logger.error(f"UI component not found for media load selected '{button_id}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"UI component not found for media load selected '{button_id}': {e}")
         app.notify("Load details UI error.", severity="error")
         return
 
@@ -635,7 +635,7 @@ async def perform_media_search_and_display(app: 'TldwCli', type_slug: str, searc
             pass
 
     except (QueryError, RuntimeError, Exception) as e:
-        logger.error(f"Error during media search for type '{type_slug}': {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error during media search for type '{type_slug}': {str(e)}")
         # Attempt to show error in the list view if possible
         try:
             list_view = app.query_one(f"#{list_view_id}", ListView)
@@ -765,7 +765,7 @@ async def handle_media_metadata_update(app: 'TldwCli', event: MediaMetadataUpdat
             app.notify(f"Failed to update media: {message}", severity="error")
             
     except Exception as e:
-        logger.error(f"Error updating media metadata: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error updating media metadata: {e}")
         app.notify(f"Error updating metadata: {str(e)[:100]}", severity="error")
 
 
@@ -807,7 +807,7 @@ async def handle_media_undelete(app: 'TldwCli', event: MediaUndeleteEvent) -> No
             app.notify(f"Failed to restore '{media_item.get('title', 'Untitled')}'", severity="error")
             
     except Exception as e:
-        logger.error(f"Error undeleting media: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error undeleting media: {e}")
         app.notify(f"Error restoring media: {str(e)[:100]}", severity="error")
 
 
@@ -828,7 +828,7 @@ async def handle_media_generate_analysis(app: App, event: Button.Pressed) -> Non
         viewer_panel.handle_generate_analysis()
         
     except Exception as e:
-        logger.error(f"Error generating media analysis: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error generating media analysis: {e}")
         app.notify(f"Error generating analysis: {str(e)[:100]}", severity="error")
 
 
@@ -844,7 +844,7 @@ async def handle_media_save_analysis(app: App, event: Button.Pressed) -> None:
         viewer_panel.handle_save_analysis()
         
     except Exception as e:
-        logger.error(f"Error saving media analysis: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error saving media analysis: {e}")
         app.notify(f"Error saving analysis: {str(e)[:100]}", severity="error")
 
 
@@ -860,7 +860,7 @@ async def handle_media_edit_analysis(app: App, event: Button.Pressed) -> None:
         viewer_panel.handle_edit_analysis()
         
     except Exception as e:
-        logger.error(f"Error editing media analysis: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error editing media analysis: {e}")
         app.notify(f"Error editing analysis: {str(e)[:100]}", severity="error")
 
 
@@ -876,7 +876,7 @@ async def handle_media_overwrite_analysis(app: App, event: Button.Pressed) -> No
         viewer_panel.handle_overwrite_analysis()
         
     except Exception as e:
-        logger.error(f"Error overwriting media analysis: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error overwriting media analysis: {e}")
         app.notify(f"Error overwriting analysis: {str(e)[:100]}", severity="error")
 
 
@@ -890,7 +890,7 @@ async def handle_media_sidebar_toggle(app: App, event: Button.Pressed) -> None:
             app.notify("Media sidebar state not available", severity="warning")
             
     except Exception as e:
-        logger.error(f"Error toggling media sidebar: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error toggling media sidebar: {e}")
 
 
 async def handle_media_list_collapse(app: App, event: Button.Pressed) -> None:
@@ -910,7 +910,7 @@ async def handle_media_list_collapse(app: App, event: Button.Pressed) -> None:
                 app.notify("Media list toggle not available", severity="warning")
                 
     except Exception as e:
-        logger.error(f"Error collapsing media list: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error collapsing media list: {e}")
 
 
 async def handle_media_refresh_button_pressed(app: App, event: Button.Pressed) -> None:
@@ -927,7 +927,7 @@ async def handle_media_refresh_button_pressed(app: App, event: Button.Pressed) -
             app.notify("Media refresh not available", severity="warning")
             
     except Exception as e:
-        logger.error(f"Error refreshing media view: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error refreshing media view: {e}")
         app.notify(f"Error refreshing media: {str(e)[:100]}", severity="error")
 
 

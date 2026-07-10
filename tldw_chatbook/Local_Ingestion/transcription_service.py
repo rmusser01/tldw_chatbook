@@ -496,7 +496,7 @@ class TranscriptionService:
                         logger.info(f"Identified {result['num_speakers']} speakers")
                         
                 except Exception as e:
-                    logger.error(f"Diarization failed: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"Diarization failed: {e}")
                     result['diarization_performed'] = False
                     result['diarization_error'] = str(e)
                     # Continue with transcription result even if diarization fails
@@ -794,7 +794,7 @@ class TranscriptionService:
                         except Exception as e:
                             logger.warning(f"Progress callback error after model loading: {e}")
                 except Exception as e:
-                    logger.error(f"Failed to load Whisper model: {str(e)}", exc_info=True)
+                    logger.opt(exception=True).error(f"Failed to load Whisper model: {str(e)}")
                     # Provide more helpful error message
                     error_msg = f"Failed to load model {model}: {str(e)}"
                     
@@ -879,7 +879,7 @@ class TranscriptionService:
                 segments_generator, info = whisper_model.transcribe(audio_path, **options)
                 logger.info(f"whisper_model.transcribe() returned successfully, got generator and info")
             except Exception as e:
-                logger.error(f"whisper_model.transcribe() failed: {type(e).__name__}: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error(f"whisper_model.transcribe() failed: {type(e).__name__}: {str(e)}")
                 raise TranscriptionError(f"Whisper transcription failed: {str(e)}") from e
             
             logger.debug(f"Whisper transcription started, processing segments...")
@@ -1034,7 +1034,7 @@ class TranscriptionService:
             return result
             
         except Exception as e:
-            logger.error(f"Faster-whisper transcription failed: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Faster-whisper transcription failed: {str(e)}")
             raise TranscriptionError(
                 f"Transcription failed: {str(e)}"
             ) from e
@@ -1084,7 +1084,7 @@ class TranscriptionService:
                 model_load_time = time.time() - model_load_start
                 logger.info(f"Qwen2Audio model loaded successfully in {model_load_time:.2f} seconds")
             except Exception as e:
-                logger.error(f"Failed to load Qwen2Audio model: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error(f"Failed to load Qwen2Audio model: {str(e)}")
                 raise TranscriptionError(
                     f"Failed to load Qwen2Audio: {str(e)}"
                 ) from e
@@ -1167,7 +1167,7 @@ class TranscriptionService:
             }
             
         except Exception as e:
-            logger.error(f"Qwen2Audio transcription failed: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Qwen2Audio transcription failed: {str(e)}")
             raise TranscriptionError(
                 f"Qwen2Audio transcription failed: {str(e)}"
             ) from e
@@ -1228,7 +1228,7 @@ class TranscriptionService:
                 logger.debug(f"Model device: {self._parakeet_model.device}")
                 
             except Exception as e:
-                logger.error(f"Failed to load Parakeet model: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error(f"Failed to load Parakeet model: {str(e)}")
                 raise TranscriptionError(
                     f"Failed to load Parakeet model: {str(e)}"
                 ) from e
@@ -1290,7 +1290,7 @@ class TranscriptionService:
                 raise TranscriptionError("No transcription produced")
                 
         except Exception as e:
-            logger.error(f"Parakeet transcription failed: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Parakeet transcription failed: {str(e)}")
             raise TranscriptionError(
                 f"Parakeet transcription failed: {str(e)}"
             ) from e
@@ -1368,7 +1368,7 @@ class TranscriptionService:
                 logger.debug(f"Model device: {self._canary_model.device}")
                 
             except Exception as e:
-                logger.error(f"Failed to load Canary model: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error(f"Failed to load Canary model: {str(e)}")
                 raise TranscriptionError(
                     f"Failed to load Canary model: {str(e)}"
                 ) from e
@@ -1491,7 +1491,7 @@ class TranscriptionService:
             return result
             
         except Exception as e:
-            logger.error(f"Canary transcription failed: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Canary transcription failed: {str(e)}")
             raise TranscriptionError(
                 f"Canary transcription failed: {str(e)}"
             ) from e
@@ -1567,7 +1567,7 @@ class TranscriptionService:
                         logger.info(f"Lightning Whisper MLX model loaded successfully in {model_load_time:.2f} seconds")
 
                     except Exception as e:
-                        logger.error(f"Failed to load Lightning Whisper MLX model: {str(e)}", exc_info=True)
+                        logger.opt(exception=True).error(f"Failed to load Lightning Whisper MLX model: {str(e)}")
                         raise TranscriptionError(
                             f"Failed to load Lightning Whisper MLX model: {str(e)}"
                         ) from e
@@ -1689,7 +1689,7 @@ class TranscriptionService:
             return result
             
         except Exception as e:
-            logger.error(f"Lightning Whisper MLX transcription failed: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Lightning Whisper MLX transcription failed: {str(e)}")
             raise TranscriptionError(
                 f"Lightning Whisper MLX transcription failed: {str(e)}"
             ) from e
@@ -1839,7 +1839,7 @@ class TranscriptionService:
                     logger.info(f"Parakeet MLX model loaded successfully in {model_load_time:.2f} seconds")
                     
                 except Exception as e:
-                    logger.error(f"Failed to load Parakeet MLX model: {str(e)}", exc_info=True)
+                    logger.opt(exception=True).error(f"Failed to load Parakeet MLX model: {str(e)}")
                     raise TranscriptionError(
                         f"Failed to load Parakeet MLX model: {str(e)}"
                     ) from e
@@ -2121,7 +2121,7 @@ class TranscriptionService:
             
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Parakeet MLX transcription failed: {error_msg}", exc_info=True)
+            logger.opt(exception=True).error(f"Parakeet MLX transcription failed: {error_msg}")
             
             # Check if this is a memory allocation error
             if "metal::malloc" in error_msg.lower() or "buffer size" in error_msg.lower():
@@ -2352,7 +2352,7 @@ class TranscriptionService:
             raise TranscriptionError(error_msg)
         except Exception as e:
             error_msg = f"Remote whisper transcription failed: {str(e)}"
-            logger.error(error_msg, exc_info=True)
+            logger.opt(exception=True).error(error_msg)
             raise TranscriptionError(error_msg) from e
     
     def get_available_providers(self) -> List[str]:

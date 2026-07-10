@@ -88,9 +88,8 @@ class PersonasConversationsController:
                 self.screen._character_db(), int(character_id), limit=20
             ) or []
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"Could not list conversations for character {character_id}.",
-                exc_info=True,
             )
             records = []
         rows = tuple(
@@ -120,7 +119,7 @@ class PersonasConversationsController:
                 rows, empty_copy="No saved conversations."
             )
         except Exception:
-            logger.warning("Could not render the conversations panel.", exc_info=True)
+            logger.opt(exception=True).warning("Could not render the conversations panel.")
 
     # ===== Read-only view =====
 
@@ -171,9 +170,8 @@ class PersonasConversationsController:
                 self.screen._character_db(), conversation_id, character_name, None, limit=200
             ) or []
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"Could not load messages for conversation {conversation_id}.",
-                exc_info=True,
             )
             history = []
         messages: list[dict] = []

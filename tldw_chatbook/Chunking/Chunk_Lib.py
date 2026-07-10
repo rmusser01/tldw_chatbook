@@ -1172,7 +1172,7 @@ class Chunker:
                     accumulated_summaries.append(f"[Summarization error for this part (unexpected type): {chunk_for_llm[:100]}...]")
 
             except Exception as e_llm:
-                logger.error(f"Exception calling llm_summarize_step_func for part {i+1}: {e_llm}", exc_info=True)
+                logger.opt(exception=True).error(f"Exception calling llm_summarize_step_func for part {i+1}: {e_llm}")
                 accumulated_summaries.append(f"[Exception during summarization for this part: {chunk_for_llm[:100]}...]")
 
         final_summary = '\n\n---\n\n'.join(accumulated_summaries) # Join with a clear separator
@@ -1504,7 +1504,7 @@ def improved_chunking_process(text: str,
         logger.error(f"ChunkingError in chunking process: {ce}")
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in chunking process: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in chunking process: {e}")
         raise ChunkingError(f"Unexpected error in chunking process: {e}") from e
 
     chunks_with_metadata_list = []
@@ -1557,7 +1557,7 @@ def improved_chunking_process(text: str,
         logger.info(f"Improved chunking process completed: {len(chunks_with_metadata_list)} chunks created using method '{effective_options['method']}', language: {effective_options.get('language', 'unknown')}")
         return chunks_with_metadata_list
     except Exception as e:
-        logger.error(f"Error creating chunk metadata: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error creating chunk metadata: {e}")
         raise ChunkingError(f"Error creating chunk metadata: {e}") from e
 
 
