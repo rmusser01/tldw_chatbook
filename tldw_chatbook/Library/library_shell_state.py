@@ -228,15 +228,9 @@ def build_library_shell_state(
         canvas_kind = selected_row.target_id
         canvas_target = ""
         canvas_empty_copy = LIBRARY_CANVAS_LANDING_COPY
-    elif selected_row.target_kind == "mode":
-        # Mode rows resolve to mode canvas
-        canvas_kind = "mode"
-        canvas_target = selected_row.target_id
-        canvas_empty_copy = LIBRARY_CANVAS_LANDING_COPY
     elif selected_row.target_kind == "handoff":
         # Handoff rows (study/flashcards/quizzes) resolve to the handoff
-        # canvas: a Library-owned trio plus the Study handoff detail widget,
-        # mirroring the (legacy) mode-row resolution above.
+        # canvas: a Library-owned trio plus the Study handoff detail widget.
         canvas_kind = "handoff"
         canvas_target = selected_row.target_id
         canvas_empty_copy = LIBRARY_CANVAS_LANDING_COPY
