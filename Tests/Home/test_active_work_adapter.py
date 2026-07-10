@@ -218,6 +218,49 @@ def test_local_notification_adapter_maps_local_watchlist_runs_to_active_work():
     assert dashboard_input.active_work_items[0].console_available is True
 
 
+def test_local_notification_adapter_escapes_markup_hostile_watchlist_run_title():
+    """(whole-branch review fix wave -- the c9ba88dc watchlist title escape
+    shipped without direct coverage) A watchlist run's ``source_title`` is a
+    user-typed subscription name (stored verbatim from
+    ``subscriptions.name`` by ``local_watchlists_service``, not
+    system-generated text), and flows straight into a Textual ``Button``
+    label in ``HomeRail.compose()`` -- Button labels parse Rich markup, so
+    an unescaped title containing bracket syntax raises ``MarkupError`` and
+    crashes Home's mount for as long as the run stays in
+    ``_HOME_WATCHLIST_RUN_STATUSES``. Mirrors
+    ``test_local_notification_adapter_escapes_markup_hostile_ingest_job_title``.
+    """
+
+    class FakeWatchlistsService:
+        def list_home_run_snapshot(self, *, limit=20):
+            return [
+                {
+                    "id": "local:watchlist_run:9",
+                    "run_id": 9,
+                    "source_id": 3,
+                    "status": "failed",
+                    "source_title": 'a [b="c] watch',
+                    "backend": "local",
+                },
+            ]
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        watchlist_service=FakeWatchlistsService()
+    )
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = dashboard_input.active_work_items[0]
+    # Escaped form: rich.markup.escape backslash-prefixes the opening
+    # bracket so Textual renders it as a literal character instead of
+    # trying to parse a tag (mirrors the ingest-title escape test).
+    assert item.title == 'a \\[b="c] watch'
+    assert item.title == escape('a [b="c] watch')
+
+
 def test_local_notification_adapter_opens_local_watchlist_run_details():
     class FakeWatchlistsService:
         def list_home_run_snapshot(self, *, limit=20):

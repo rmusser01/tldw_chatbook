@@ -56,6 +56,16 @@ class LibraryIngestFormState:
         chunk_size: The chunk-size field's raw text (display-echo only;
             parsed and clamped to ``[MIN_CHUNK_SIZE, MAX_CHUNK_SIZE]`` at
             submit time, never here).
+        advanced_open: Whether the "Advanced options" ``Collapsible`` is
+            currently expanded. Synced from the live widget's ``collapsed``
+            reactive by the screen's ``Collapsible.Toggled`` handler (both
+            a manual click and any future programmatic assignment), and
+            read back on every render (``collapsed=not advanced_open``) so
+            a recompose -- the analyze/chunk toggle handlers' own, or a
+            registry-listener-driven one -- never snaps an expanded panel
+            shut out from under the user (mirrors
+            ``_library_rag_history_collapsed``/
+            ``sync_library_rag_history_collapsed`` in ``library_screen.py``).
     """
 
     path: str = ""
@@ -65,6 +75,7 @@ class LibraryIngestFormState:
     analyze: bool = False
     chunk: bool = False
     chunk_size: str = str(DEFAULT_CHUNK_SIZE)
+    advanced_open: bool = False
 
 
 @dataclass(frozen=True)

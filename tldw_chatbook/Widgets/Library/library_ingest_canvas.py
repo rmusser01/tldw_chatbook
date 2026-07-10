@@ -9,7 +9,10 @@ from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Static
 
-from tldw_chatbook.Library.library_ingest_state import LibraryIngestCanvasState
+from tldw_chatbook.Library.library_ingest_state import (
+    QUEUE_EMPTY_COPY,
+    LibraryIngestCanvasState,
+)
 
 
 def _toggle_label(*, enabled: bool, text: str) -> str:
@@ -94,7 +97,14 @@ class LibraryIngestCanvas(VerticalScroll):
         )
         with Collapsible(
             title="Advanced options",
-            collapsed=True,
+            # Renders from the form echo's `advanced_open` field (not a
+            # hardcoded True) so a recompose while the panel is expanded --
+            # the analyze/chunk toggle handlers' own, or a registry-listener
+            # -driven one -- never re-collapses it out from under the user.
+            # The screen's `Collapsible.Toggled` handler keeps this field in
+            # sync with the live widget's `collapsed` reactive (mirrors the
+            # `#library-rag-history` collapsible's own state-sync pattern).
+            collapsed=not state.form.advanced_open,
             id="library-ingest-advanced",
         ):
             yield Button(
@@ -134,7 +144,7 @@ class LibraryIngestCanvas(VerticalScroll):
         )
         if not state.queue_rows:
             yield Static(
-                "No ingest jobs yet.",
+                QUEUE_EMPTY_COPY,
                 id="library-ingest-queue-empty",
                 markup=False,
             )

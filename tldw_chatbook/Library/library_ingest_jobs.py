@@ -9,10 +9,16 @@ Accepted v1 limits (binding; do not "fix" these without a follow-up task):
 - **In-memory only.** The registry has no persistence layer. All job history
   -- queued, running, done, and failed jobs alike -- dies with the app
   process. There is no restart/resume.
-- **A running job dies on quit.** If the app exits while a job is
-  ``RUNNING``, that job's progress is lost; it is not resumed or marked
-  ``FAILED`` on the next launch (matching the legacy ``TAB_INGEST`` behavior
-  this replaces).
+- **Quitting waits for the in-flight file to finish; queued jobs are
+  lost.** The queue-runner worker (``_run_library_ingest_queue`` in
+  ``app.py``) runs on a background thread, and the app waits for that
+  thread to join before it finishes shutting down -- so a job that is
+  already ``RUNNING`` when the user quits completes its ingest and its
+  ``mark_done``/``mark_failed`` DB write normally; it is not silently
+  dropped mid-file. Any jobs still ``QUEUED`` behind it, however, are never
+  claimed -- the runner exits with the process, and nothing resumes them
+  or marks them ``FAILED`` on the next launch (matching the legacy
+  ``TAB_INGEST`` behavior this replaces).
 - **Serial queue.** Exactly one job runs at a time; ``next_queued()`` hands
   jobs out one at a time in FIFO order. Parallel ingestion is a follow-up.
 
@@ -139,6 +145,19 @@ class LibraryIngestJobRegistry:
             callback: A zero-argument callable. Invoked synchronously,
                 on the UI thread, after ``submit``/``mark_running``/
                 ``mark_done``/``mark_failed``/``requeue`` succeed.
+
+        Reentrancy contract: a listener must not mutate the registry (call
+        ``submit``/``mark_running``/``mark_done``/``mark_failed``/
+        ``requeue``) from inside its own callback. ``_notify_listeners``
+        iterates a snapshot of ``self._listeners``, so add/remove-ing a
+        *listener* mid-callback is safe -- but a mutating call would
+        recursively re-enter ``_notify_listeners`` while the outer call is
+        still iterating, and (for ``submit``/``requeue``) would append to
+        ``self._jobs`` while an outer mutation's own state may still be in
+        the middle of being applied. Nothing in this class enforces the
+        contract; it is documented here because callers (e.g.
+        ``LibraryScreen._handle_library_ingest_registry_changed``) depend
+        on it and must only read (``jobs()``/``counts()``), never mutate.
         """
         self._listeners.append(callback)
 
@@ -237,6 +256,16 @@ class LibraryIngestJobRegistry:
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
             unknown. Unknown ids never raise.
+
+        No state-machine guard: this unconditionally overwrites whatever
+        state the job was in (it does not check that it was ``QUEUED``
+        first). The queue-runner (``_run_library_ingest_queue`` in
+        ``app.py``) is the sole intended caller of ``mark_running``/
+        ``mark_done``/``mark_failed``, and it always drives a job either
+        ``queued`` -> ``running`` -> ``done``/``failed``, or straight
+        ``queued`` -> ``failed`` as the fast-fail path (an error, e.g. an
+        undetectable file type, raised before ``mark_running`` is ever
+        reached). Calling this out of that order is not rejected here.
         """
         index = self._find_index(job_id)
         if index is None:
@@ -261,6 +290,10 @@ class LibraryIngestJobRegistry:
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
             unknown. Unknown ids never raise.
+
+        No state-machine guard: see ``mark_running``'s docstring. The
+        queue-runner is the sole intended caller and only ever reaches this
+        after a preceding ``mark_running`` on the same job.
         """
         index = self._find_index(job_id)
         if index is None:
@@ -285,6 +318,12 @@ class LibraryIngestJobRegistry:
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
             unknown. Unknown ids never raise.
+
+        No state-machine guard: see ``mark_running``'s docstring. The
+        queue-runner is the sole intended caller, and reaches this from
+        either ``running`` (a mid-ingest exception) or, as the fast-fail
+        path, directly from ``queued`` (an error before ``mark_running``
+        was ever called).
         """
         index = self._find_index(job_id)
         if index is None:

@@ -7109,6 +7109,62 @@ async def test_library_shell_ingest_canvas_db_unavailable_disables_start(tmp_pat
         assert screen.query_one("#library-ingest-start", Button).disabled is True
 
 
+@pytest.mark.asyncio
+async def test_library_shell_ingest_advanced_expand_survives_toggle_and_listener_recompose(tmp_path):
+    """(F1, whole-branch review fix) The Advanced options collapsible must
+    stay expanded across BOTH kinds of recompose the ingest canvas can hit
+    while the panel is open: the analyze/chunk toggle handlers' own
+    ``refresh(recompose=True)``, and the registry listener's recompose on a
+    job transition (``_handle_library_ingest_registry_changed``). Before the
+    fix, the widget hardcoded ``collapsed=True`` on every compose, so
+    pressing "Analyze after ingest" INSIDE the panel closed it out from
+    under the user (mirrors
+    ``test_library_shell_history_manual_expand_survives_scope_toggle_recompose``).
+    """
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-advanced")
+    source = tmp_path / "note.txt"
+    source.write_text("Advanced options must survive a recompose.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+        await _open_library_ingest_canvas(screen, pilot)
+
+        # Starts collapsed.
+        assert screen.query_one("#library-ingest-advanced", Collapsible).collapsed is True
+
+        # Mirror a user click on the collapsible header (expand).
+        screen.query_one("#library-ingest-advanced", Collapsible).collapsed = False
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            if screen._library_ingest_form.advanced_open is True:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError("Manual expand never synced back to advanced_open.")
+
+        # Pressing the analyze toggle (INSIDE the panel) recomposes the canvas.
+        screen.query_one("#library-ingest-analyze-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-ingest-advanced")
+
+        assert screen.query_one("#library-ingest-advanced", Collapsible).collapsed is False
+
+        # A registry-listener-driven recompose (job transition) must also
+        # leave the panel expanded -- submit programmatically, exactly like
+        # the queue-runner's own call_from_thread-marshaled transitions.
+        harness.submit_library_ingest_job(source_path=str(source))
+        for _ in range(_INGEST_POLL_ATTEMPTS):
+            jobs = harness.library_ingest_jobs.jobs()
+            if jobs and jobs[0].state == IngestJobState.DONE:
+                break
+            await pilot.pause(_INGEST_POLL_INTERVAL)
+        else:
+            raise AssertionError(f"Job never reached DONE: {harness.library_ingest_jobs.jobs()}")
+        await pilot.pause()
+
+        assert screen.query_one("#library-ingest-advanced", Collapsible).collapsed is False
+
+
 class _IngestCanvasWidgetHost(App):
     """Bare host for mounting ``LibraryIngestCanvas`` directly with a
     hand-built state -- used only to exercise the widget's markup-escaping

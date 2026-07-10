@@ -35,6 +35,7 @@ from ...Library.library_collections_service import LibraryCollectionsServiceErro
 from ...Library.library_collections_state import LibraryCollectionsPanelState
 from ...Library.library_conversations_state import build_library_conversations_state
 from ...Library.library_ingest_state import (
+    INGEST_UNAVAILABLE_COPY,
     LibraryIngestCanvasState,
     LibraryIngestFormState,
     build_library_ingest_state,
@@ -858,7 +859,14 @@ class LibraryScreen(BaseAppScreen):
             else:
                 self.refresh(recompose=True)
 
-    @work(exclusive=True)
+    # Own group, deliberately separate from the "default" group the plain
+    # `self.run_worker(self._sync_collections_panel(...))` calls above use
+    # (they take no explicit group either). Both were previously exclusive
+    # in the SAME (default) group, so an ingest-completion poke into this
+    # worker (see `_handle_library_ingest_registry_changed`) could cancel
+    # an in-flight Collections load. A separate group makes the two
+    # `exclusive=True` scopes independent.
+    @work(exclusive=True, group="library_source_snapshot")
     async def _refresh_local_source_snapshot(self) -> None:
         (
             records,
@@ -5430,6 +5438,33 @@ class LibraryScreen(BaseAppScreen):
             browse_callback,
         )
 
+    @on(Collapsible.Toggled, "#library-ingest-advanced")
+    def sync_library_ingest_advanced_open(self, event: Collapsible.Toggled) -> None:
+        """Track manual expand/collapse so recomposes preserve the user's choice.
+
+        Mirrors ``sync_library_rag_history_collapsed`` exactly (see that
+        handler's docstring for the full reasoning): ``Collapsible``'s
+        ``collapsed`` reactive is defined with ``init=False``, so
+        ``_watch_collapsed`` -- and therefore this ``Toggled`` message --
+        fires only on an actual *change* of the reactive, never merely from
+        ``compose()`` constructing a fresh ``Collapsible(collapsed=...)``
+        with a value that happens to equal the reactive's own default.
+        Concretely: the widget always passes
+        ``collapsed=not state.form.advanced_open``, and the reactive's
+        default is ``True`` -- so a compose only posts a spurious ``Toggled``
+        when it constructs the panel already-expanded (``advanced_open`` is
+        ``True``, i.e. ``collapsed=False`` differs from the ``True``
+        default), which immediately reasserts the same ``True`` this
+        handler already holds. Every recompose this handler must survive
+        (the analyze/chunk toggles, a registry-listener-driven job
+        transition) is triggered by something OTHER than a manual header
+        click, so this handler is never invoked by them -- only a real
+        user click (or a future programmatic ``collapsible.collapsed =``
+        assignment) fires it, exactly like the history panel's precedent.
+        """
+        event.stop()
+        self._library_ingest_form.advanced_open = not event.collapsible.collapsed
+
     @on(Button.Pressed, "#library-ingest-analyze-toggle")
     def handle_library_ingest_analyze_toggle(self, event: Button.Pressed) -> None:
         """Flip the "Analyze after ingest" form toggle.
@@ -5487,7 +5522,7 @@ class LibraryScreen(BaseAppScreen):
             return
         submit = getattr(self.app_instance, "submit_library_ingest_job", None)
         if not callable(submit):
-            self._notify_library_ingest_warning("Ingest is unavailable in this runtime.")
+            self._notify_library_ingest_warning(INGEST_UNAVAILABLE_COPY)
             return
         submit(
             source_path=str(validated_path),
