@@ -683,26 +683,29 @@ def test_triage_next_hint_suppresses_duplicate_recovery_for_selected_failed_item
 
 
 def test_triage_next_hint_still_suggests_recovery_when_nothing_selected():
-    """Same failed-item state, but with nothing selected -- the count-only
-    canvas is not the failed item's own canvas, so the suggestion is not
-    suppressed."""
+    """A genuine no-selection state keeps the unsuppressed suggestion.
+
+    Count-only input (``failed_run_count`` without any ``active_work_items``)
+    produces no selectable rail rows at all, so ``build_home_triage_state``
+    takes its count-only fallback branch -- which is not any failed item's
+    own canvas, so the H3 suppression must NOT fire there and the Next hint
+    stays ``review_failed_work``.
+
+    Note: an unknown ``selected_row_id`` with a failed item present is NOT a
+    no-selection state -- ``choose_home_selected_item`` falls back to the
+    failed item itself, which (correctly) triggers the suppression. Only the
+    empty-rows path exercises the unselected behavior.
+    """
     state = HomeDashboardInput(
         model_ready=True,
         has_library_content=True,
-        active_work_items=(
-            HomeActiveWorkItem(
-                item_id="local:ingest:1",
-                title="report.xyz",
-                source="Library",
-                status="failed",
-                detail_route="library",
-            ),
-        ),
+        failed_run_count=1,
     )
 
-    triage = build_home_triage_state(state, selected_row_id="does-not-exist", now=_NOW)
+    triage = build_home_triage_state(state, now=_NOW)
 
-    assert triage.selected_row_id == "local:ingest:1"
+    assert triage.selected_row_id == ""
+    assert triage.canvas.next_action.action_id == "review_failed_work"
 
 
 def test_triage_next_hint_not_suppressed_when_routes_differ():
