@@ -67,6 +67,11 @@ class LocalQuizService:
         return self._require_db().list_quizzes(q=normalized_q, limit=limit, offset=offset)
 
     def count_quizzes(self) -> int:
+        """Count non-deleted local quizzes.
+
+        Returns:
+            The exact number of non-deleted local quizzes.
+        """
         return int(self._require_db().count_quizzes())
 
     def get_quiz(self, quiz_id: str) -> Any:

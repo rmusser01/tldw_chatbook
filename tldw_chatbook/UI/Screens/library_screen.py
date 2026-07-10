@@ -1071,9 +1071,18 @@ class LibraryScreen(BaseAppScreen):
             The exact count, or ``None`` if the call failed or returned
             something other than an ``int``.
         """
+        # SQLite ``:memory:`` connections are thread-local (``threading.local``
+        # on ``CharactersRAGDB``) -- only the thread that created the DB has
+        # the migrated schema. Forcing this single COUNT(*) query onto a
+        # worker thread would open a brand-new, unmigrated in-memory
+        # connection and fail. Same guard as
+        # ``LibraryLocalRagSearchService._search_conversations`` and
+        # ``_fetch_library_conversation_by_id``.
+        chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
+        isolate_in_worker = not bool(getattr(chachanotes_db, "is_memory_db", False))
         try:
             result = await self._run_library_service_call(
-                count_callable, isolate_in_worker=True, **kwargs
+                count_callable, isolate_in_worker=isolate_in_worker, **kwargs
             )
         except Exception:
             logger.debug(f"Failed to fetch {label} count for Library create rail.", exc_info=True)

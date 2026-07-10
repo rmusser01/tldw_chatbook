@@ -17,6 +17,15 @@ logger = logger.bind(module="LibraryLocalRagSearchService")
 _SEARCH_RUNTIME_BACKEND = "local-fts"
 _RAG_RUNTIME_BACKEND = "rag-semantic"
 _KNOWN_KEYWORD_SOURCE_TYPES = ("notes", "media", "conversations")
+# Mirrors `library_rag_state`'s `_OPEN_SOURCE_TYPE_MAP` canonicalization:
+# raw provenance `source_type` values -> the scope-toggle identifiers used
+# by `LibraryRagScopeState`/the Search canvas's per-source toggles.
+_SEMANTIC_SOURCE_TYPE_MAP = {
+    "note": "notes", "notes": "notes",
+    "media": "media", "media_chunk": "media",
+    "conversation": "conversations", "conversations": "conversations",
+    "chat": "conversations",
+}
 
 
 class LibraryLocalRagSearchService:
@@ -158,14 +167,24 @@ class LibraryLocalRagSearchService:
     async def _search_semantic(
         self,
         query: str,
-        scope: tuple[str, ...],  # noqa: ARG002 - accepted for parity with keyword search
+        scope: tuple[str, ...],
         top_k: int,
         kwargs: Mapping[str, Any],
     ) -> Any:
         """Delegate to the app's optional RAG runtime, or report it as absent.
 
-        `scope` is accepted for interface symmetry with keyword search but is
-        not used to filter the RAG runtime's index today.
+        The RAG runtime's index is not itself scoped by source type, so
+        results are post-filtered here: each row's provenance
+        ``source_type`` is canonicalized via ``_SEMANTIC_SOURCE_TYPE_MAP``
+        (mirroring ``library_rag_state``'s ``_OPEN_SOURCE_TYPE_MAP``) and
+        dropped when it resolves to a *known* type that is not in `scope`
+        (e.g. `media` toggled off drops `media`/`media_chunk` rows). Rows
+        whose provenance source type is missing or unrecognized are always
+        kept -- there is no way to attribute them to a scope toggle, and
+        silently hiding un-attributable evidence would be worse than
+        occasionally over-including it. An empty `scope` disables filtering
+        entirely as a defensive guard; in practice the Search canvas's run
+        gate never lets a query reach this method with no source selected.
         """
         rag_service = getattr(self._app, "_rag_service", None)
         search = getattr(rag_service, "search", None)
@@ -182,6 +201,8 @@ class LibraryLocalRagSearchService:
             include_citations=include_citations,
         )
         rows = [_semantic_row(item) for item in raw_results or ()]
+        if scope:
+            rows = [row for row in rows if _semantic_row_matches_scope(row, scope)]
         return {"results": rows, "runtime_backend": _RAG_RUNTIME_BACKEND}
 
 
@@ -260,6 +281,27 @@ def _semantic_row(item: Any) -> dict[str, Any]:
     if citations:
         row["citations"] = [_semantic_citation(citation) for citation in citations]
     return row
+
+
+def _semantic_row_matches_scope(row: Mapping[str, Any], scope: tuple[str, ...]) -> bool:
+    """True when `row` survives rag-mode scope post-filtering.
+
+    Args:
+        row: A normalized `_semantic_row` output.
+        scope: Selected Library source type identifiers (never empty --
+            callers guard that case before calling this).
+
+    Returns:
+        `False` only when the row's provenance `source_type` canonicalizes
+        to a *known* type that is not in `scope`. Rows with missing or
+        unrecognized provenance always return `True` (see `_search_semantic`).
+    """
+    provenance = row.get("provenance")
+    raw_source_type = provenance.get("source_type") if isinstance(provenance, Mapping) else None
+    canonical = _SEMANTIC_SOURCE_TYPE_MAP.get(str(raw_source_type or "").strip().lower())
+    if canonical is None:
+        return True
+    return canonical in scope
 
 
 def _semantic_citation(citation: Any) -> dict[str, Any]:

@@ -22,6 +22,10 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_CREATE_NOTE,
 )
+from tldw_chatbook.Study_Interop.local_quiz_service import LocalQuizService
+from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
+from tldw_chatbook.Study_Interop.quiz_scope_service import QuizScopeService
+from tldw_chatbook.Study_Interop.study_scope_service import StudyScopeService
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -3716,6 +3720,52 @@ async def test_library_shell_create_rail_degrades_without_study_count_seams():
         # Study-count degrade must never surface as a Library lookup error --
         # that error state is reserved for the three browse sources.
         assert screen._library_lookup_error is None
+
+
+@pytest.mark.asyncio
+async def test_library_shell_create_rail_flashcards_due_count_reads_in_memory_db():
+    """F4a (PR #590 review, Qodo): study/quiz counts must not be forced onto
+    a worker thread when ChaChaNotes is an in-memory SQLite DB. SQLite
+    ``:memory:`` connections are thread-local (``threading.local``), so a
+    worker thread invoking ``count_due_flashcards``/``count_decks`` would
+    open a brand-new, unmigrated in-memory connection and the count query
+    would fail -- degrading the badge to uncounted even though real data
+    exists. Mirrors the ``is_memory_db`` guard already used by
+    ``LibraryLocalRagSearchService._search_conversations`` and
+    ``LibraryScreen._fetch_library_conversation_by_id``. Uses real
+    ``StudyScopeService``/``QuizScopeService`` wrapping real
+    ``LocalStudyService``/``LocalQuizService`` over a real in-memory
+    ``CharactersRAGDB`` (not fakes) so the thread-locality is genuinely
+    exercised.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    db = CharactersRAGDB(":memory:", client_id="test-client")
+    try:
+        deck_id = db.create_deck("Biology")
+        db.create_flashcard(
+            {"deck_id": deck_id, "front": "ATP", "back": "Energy", "tags": "", "type": "basic"}
+        )
+        app.chachanotes_db = db
+        app.study_scope_service = StudyScopeService(
+            local_service=LocalStudyService(db), server_service=None
+        )
+        app.study_quiz_scope_service = QuizScopeService(
+            local_service=LocalQuizService(db), server_service=None
+        )
+        host = LibraryHarness(app)
+
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+
+            flashcards_button = screen.query_one("#library-row-create-flashcards", Button)
+            decks_label = str(screen.query_one("#library-row-create-study").label)
+
+            assert "Flashcards due: 1" in str(flashcards_button.label)
+            assert "Study decks (1)" in decks_label
+    finally:
+        db.close_connection()
 
 
 @pytest.mark.asyncio

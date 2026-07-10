@@ -215,14 +215,13 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             return
         try:
             count = self.flashcards_due_provider()
+            if count is None:
+                self._flashcards_due_count = 0
+                return
+            self._flashcards_due_count = max(0, int(count))
         except Exception as e:
             logger.debug(f"Failed to fetch due-flashcards count for Home: {e}")
             self._flashcards_due_count = 0
-            return
-        if count is None:
-            self._flashcards_due_count = 0
-            return
-        self._flashcards_due_count = max(0, int(count))
 
     def refresh_chatbook_artifact_snapshot(self, *, limit: int = 20) -> None:
         """Refresh cached local Chatbook artifacts off the Home compose path."""

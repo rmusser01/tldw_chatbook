@@ -291,6 +291,108 @@ async def test_unknown_scope_type_is_ignored_quietly():
     assert result.status == "blocked"
 
 
+# F3 (PR #590 review, Qodo): rag mode must post-filter semantic rows by the
+# selected scope's canonical source type. Rows with an unknown/missing
+# provenance source type are always kept (we cannot classify them).
+@pytest.mark.asyncio
+async def test_rag_mode_filters_semantic_rows_by_scope():
+    rag_service = FakeRagService(
+        results=[
+            {
+                "id": "note-chunk",
+                "score": 0.9,
+                "document": "Note evidence.",
+                "metadata": {"title": "Note doc", "source_id": "note-1", "source_type": "note"},
+            },
+            {
+                "id": "media-chunk",
+                "score": 0.8,
+                "document": "Media evidence.",
+                "metadata": {"title": "Media doc", "source_id": "media-1", "source_type": "media_chunk"},
+            },
+            {
+                "id": "conversation-chunk",
+                "score": 0.7,
+                "document": "Conversation evidence.",
+                "metadata": {"title": "Chat doc", "source_id": "chat-1", "source_type": "chat"},
+            },
+            {
+                "id": "unknown-chunk",
+                "score": 0.6,
+                "document": "Unattributed evidence.",
+                "metadata": {"title": "Mystery doc", "source_id": "mystery-1"},
+            },
+        ]
+    )
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("credential", ("notes",), "rag", top_k=5)
+
+    source_ids = {row["source_id"] for row in result["results"]}
+    # Only the note row (matches scope) and the unattributable row (unknown
+    # provenance, always kept) survive; media and conversation are dropped.
+    assert source_ids == {"note-1", "mystery-1"}
+
+
+# Full scope selects every known source type, so nothing is dropped.
+@pytest.mark.asyncio
+async def test_rag_mode_full_scope_keeps_all_rows():
+    rag_service = FakeRagService(
+        results=[
+            {
+                "id": "note-chunk",
+                "score": 0.9,
+                "document": "Note evidence.",
+                "metadata": {"title": "Note doc", "source_id": "note-1", "source_type": "note"},
+            },
+            {
+                "id": "media-chunk",
+                "score": 0.8,
+                "document": "Media evidence.",
+                "metadata": {"title": "Media doc", "source_id": "media-1", "source_type": "media_chunk"},
+            },
+            {
+                "id": "conversation-chunk",
+                "score": 0.7,
+                "document": "Conversation evidence.",
+                "metadata": {"title": "Chat doc", "source_id": "chat-1", "source_type": "chat"},
+            },
+        ]
+    )
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search(
+        "credential", ("notes", "media", "conversations"), "rag", top_k=5
+    )
+
+    source_ids = {row["source_id"] for row in result["results"]}
+    assert source_ids == {"note-1", "media-1", "chat-1"}
+
+
+# Empty scope never reaches the service in practice (UI gate), but the
+# service must guard defensively rather than dropping every row.
+@pytest.mark.asyncio
+async def test_rag_mode_empty_scope_does_not_filter():
+    rag_service = FakeRagService(
+        results=[
+            {
+                "id": "note-chunk",
+                "score": 0.9,
+                "document": "Note evidence.",
+                "metadata": {"title": "Note doc", "source_id": "note-1", "source_type": "note"},
+            },
+        ]
+    )
+    app = SimpleNamespace(_rag_service=rag_service)
+    service = LibraryLocalRagSearchService(app)
+
+    result = await service.search("credential", (), "rag", top_k=5)
+
+    assert [row["source_id"] for row in result["results"]] == ["note-1"]
+
+
 # rag mode success path: delegates to _rag_service.search and maps results.
 @pytest.mark.asyncio
 async def test_rag_mode_delegates_and_maps_results():

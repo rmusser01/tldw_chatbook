@@ -122,7 +122,19 @@ class HomeScreen(BaseAppScreen):
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
         refresh_flashcards_due = getattr(adapter, "refresh_flashcards_due_snapshot", None)
         if callable(refresh_flashcards_due):
-            refresh_flashcards_due()
+            chachanotes_db = getattr(self.app_instance, "chachanotes_db", None)
+            if getattr(chachanotes_db, "is_memory_db", False):
+                # SQLite ``:memory:`` connections are thread-local -- the
+                # flashcards-due provider ultimately queries ChaChaNotes
+                # directly, and only the thread that created the DB has the
+                # migrated schema. Running the refresh on THIS worker thread
+                # would open a brand-new, unmigrated in-memory connection, so
+                # hop back onto the UI thread for the in-memory case.
+                # File-backed DBs keep the off-thread call -- that's the
+                # whole point of this worker.
+                self.app.call_from_thread(refresh_flashcards_due)
+            else:
+                refresh_flashcards_due()
         refresh_snapshot = getattr(adapter, "refresh_chatbook_artifact_snapshot", None)
         if not callable(refresh_snapshot):
             return

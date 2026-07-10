@@ -1102,3 +1102,20 @@ def test_flashcards_due_count_defaults_to_zero_without_provider():
     )
 
     assert dashboard_input.flashcards_due_count == 0
+
+
+def test_flashcards_due_provider_returning_noncoercible_object_degrades_to_zero():
+    """F1 (PR #590 review): a provider returning a value whose ``__int__``
+    raises must degrade to 0 like any other provider failure, not crash the
+    Home refresh worker thread. The old implementation caught exceptions
+    from calling the provider but coerced ``int(count)`` outside the try.
+    """
+    adapter = LocalNotificationHomeActiveWorkAdapter(flashcards_due_provider=lambda: object())
+
+    adapter.refresh_flashcards_due_snapshot()
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.flashcards_due_count == 0
