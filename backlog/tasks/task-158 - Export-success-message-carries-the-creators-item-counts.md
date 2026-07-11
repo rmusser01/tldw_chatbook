@@ -18,5 +18,6 @@ On a successful Library export the completion notification reports only the path
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Success notification includes exported item counts,Deleted-mid-export skips are reflected in the message
+- [ ] #1 Success notification includes exported item counts
+- [ ] #2 Deleted-mid-export skips are reflected in the message
 <!-- AC:END -->

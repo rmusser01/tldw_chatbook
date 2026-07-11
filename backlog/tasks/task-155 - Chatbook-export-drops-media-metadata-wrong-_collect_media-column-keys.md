@@ -19,5 +19,6 @@ ChatbookCreator._collect_media reads media_type/created_at/updated_at from dict 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Exported media entries carry the correct type and timestamps,Round-trip test asserts media type survives export+import
+- [ ] #1 Exported media entries carry the correct type and timestamps
+- [ ] #2 Round-trip test asserts media type survives export+import
 <!-- AC:END -->

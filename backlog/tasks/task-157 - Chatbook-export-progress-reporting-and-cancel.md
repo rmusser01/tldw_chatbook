@@ -18,5 +18,7 @@ The Library export worker shows a static Exporting… line because ChatbookCreat
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Export form shows real progress while a large export runs,User can cancel an in-flight export,Creator exposes progress/cancel hooks
+- [ ] #1 Export form shows real progress while a large export runs
+- [ ] #2 User can cancel an in-flight export
+- [ ] #3 Creator exposes progress/cancel hooks
 <!-- AC:END -->

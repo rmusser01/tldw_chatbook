@@ -18,5 +18,6 @@ Home's Retry control dispatches through the unscoped summarize_home_dashboard co
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Pressing Retry on a selected failed Home item requeues THAT item,Regression test with 2+ retryable failed items asserts the selected item is the one requeued
+- [ ] #1 Pressing Retry on a selected failed Home item requeues THAT item
+- [ ] #2 Regression test with 2+ retryable failed items asserts the selected item is the one requeued
 <!-- AC:END -->

@@ -19,5 +19,6 @@ The generic Home Pause control renders for local Library ingest items (they ente
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Pause is not shown for ingest items OR is wired to a real pause action,Behavior covered by a Home pilot
+- [ ] #1 Pause is not shown for ingest items OR is wired to a real pause action
+- [ ] #2 Behavior covered by a Home pilot
 <!-- AC:END -->

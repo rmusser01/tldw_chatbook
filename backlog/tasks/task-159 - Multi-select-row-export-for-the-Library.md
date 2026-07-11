@@ -18,5 +18,6 @@ F4 shipped current-scope export (everything, or a section's current filter). Add
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 User can check individual Library rows and export exactly those,Export form accepts an explicit id set as its scope
+- [ ] #1 User can check individual Library rows and export exactly those
+- [ ] #2 Export form accepts an explicit id set as its scope
 <!-- AC:END -->

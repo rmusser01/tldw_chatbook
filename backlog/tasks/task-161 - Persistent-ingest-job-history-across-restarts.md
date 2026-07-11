@@ -18,5 +18,6 @@ The Library ingest job registry is in-memory only; queued/failed jobs are lost o
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Ingest job history survives an app restart,Failed/queued jobs can be retried after restart
+- [ ] #1 Ingest job history survives an app restart
+- [ ] #2 Failed/queued jobs can be retried after restart
 <!-- AC:END -->

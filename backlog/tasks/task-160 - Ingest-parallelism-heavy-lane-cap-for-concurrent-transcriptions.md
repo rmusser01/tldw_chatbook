@@ -18,5 +18,6 @@ F3's parallel parse pool runs all media types through one pool (default min(3, c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Concurrent transcription parses are capped independently of document parses,Config controls the heavy-lane cap
+- [ ] #1 Concurrent transcription parses are capped independently of document parses
+- [ ] #2 Config controls the heavy-lane cap
 <!-- AC:END -->
