@@ -1229,6 +1229,53 @@ def test_local_notification_adapter_maps_ingest_jobs_to_active_work():
     assert failed.status == "failed"
 
 
+def test_local_notification_adapter_marks_permanent_failed_ingest_job_retry_unavailable():
+    """(M4, fix batch F1b) A validation-class (permanent) ingest failure
+    must not offer Retry on Home -- the adapter mirrors the registry's
+    ``permanent`` flag into ``retry_available``."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/broken.xyz",
+            state=IngestJobState.FAILED,
+            error="Unsupported file type: .xyz.",
+            permanent=True,
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = dashboard_input.active_work_items[0]
+    assert item.status == "failed"
+    assert item.retry_available is False
+
+
+def test_local_notification_adapter_marks_ordinary_failed_ingest_job_retry_available():
+    """(M4) A non-permanent failure keeps Retry available."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/broken.txt",
+            state=IngestJobState.FAILED,
+            error="boom",
+            permanent=False,
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = dashboard_input.active_work_items[0]
+    assert item.retry_available is True
+
+
 def test_local_notification_adapter_promotes_done_ingest_jobs_to_recent_work():
     """H1 (fix batch F1b): a DONE ingest job has nothing actionable left in
     Needs Attention/Running, but it must not vanish from Home entirely --

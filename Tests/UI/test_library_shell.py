@@ -7471,10 +7471,66 @@ async def test_library_shell_ingest_canvas_invalid_path_notifies_and_submits_not
 
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues(tmp_path):
-    """(c) A failed job (missing file, submitted programmatically) renders
-    a failed row with Retry; pressing Retry appends a fresh queued job and
-    (L3b AB wave, B1) supersedes the original -- the queue shows exactly
-    ONE row for the retried file, not two."""
+    """(c) A failed (non-permanent) job renders a failed row with Retry;
+    pressing Retry appends a fresh queued job and (L3b AB wave, B1)
+    supersedes the original -- the queue shows exactly ONE row for the
+    retried file, not two.
+
+    (M4 re-anchor, fix batch F1b) A *missing-file* failure is now
+    classified permanent and withholds Retry entirely by design (see
+    ``test_library_shell_ingest_canvas_permanent_failure_has_no_retry_button``
+    below), so this test drives a non-permanent failure directly through
+    the registry instead -- keeping its original focus on the canvas's
+    Retry-button-press -> requeue -> single-row-collapse flow, independent
+    of the runner's own failure classification (covered separately in
+    ``Tests/Library/test_library_ingest_runner.py``).
+    """
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    source = tmp_path / "flaky.txt"
+    source.write_text("Retried content.", encoding="utf-8")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        failing_job = harness.library_ingest_jobs.submit(source_path=str(source))
+        harness.library_ingest_jobs.mark_running(failing_job.job_id)
+        harness.library_ingest_jobs.mark_failed(
+            failing_job.job_id, error="boom", permanent=False
+        )
+
+        await _open_library_ingest_canvas(screen, pilot)
+        # Row-action buttons are keyed by job_id, not row index (PR #591
+        # review, F1) -- this is the only job in a fresh registry, so its
+        # id is deterministically "ingest-job-1".
+        await _wait_for_selector(screen, pilot, "#library-ingest-retry-ingest-job-1")
+        row_text = str(screen.query_one("#library-ingest-row-0").renderable)
+        assert row_text.startswith("✗ failed · flaky.txt")
+
+        jobs_before = len(harness.library_ingest_jobs.jobs())
+        screen.query_one("#library-ingest-retry-ingest-job-1", Button).press()
+        await pilot.pause()
+
+        jobs_after = harness.library_ingest_jobs.jobs()
+        # B1: the original failed job is superseded, not kept alongside the
+        # fresh copy -- net job count is unchanged (one hidden, one added).
+        assert len(jobs_after) == jobs_before
+        newest = jobs_after[0]
+        assert newest.job_id != failing_job.job_id
+        assert newest.source_path == str(source)
+
+        # The canvas itself must show exactly one row -- not the retried
+        # QUEUED copy sitting alongside a still-visible failed original.
+        await pilot.pause()
+        assert len(list(screen.query(".library-ingest-row"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_permanent_failure_has_no_retry_button(tmp_path):
+    """(M4, fix batch F1b) A missing-file failure is classified permanent
+    by the real queue-runner -- the canvas withholds Retry entirely (but
+    still offers Dismiss)."""
     db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
     missing = tmp_path / "does-not-exist.txt"
     harness = _LibraryIngestCanvasHarness(db)
@@ -7491,31 +7547,40 @@ async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues
             await pilot.pause(_INGEST_POLL_INTERVAL)
         else:
             raise AssertionError("Job never reached FAILED.")
+        assert jobs[failing_job.job_id].permanent is True
 
         await _open_library_ingest_canvas(screen, pilot)
-        # Row-action buttons are keyed by job_id, not row index (PR #591
-        # review, F1) -- this is the only job in a fresh registry, so its
-        # id is deterministically "ingest-job-1".
-        await _wait_for_selector(screen, pilot, "#library-ingest-retry-ingest-job-1")
-        row_text = str(screen.query_one("#library-ingest-row-0").renderable)
-        assert row_text.startswith("✗ failed · does-not-exist.txt")
+        await _wait_for_selector(screen, pilot, "#library-ingest-dismiss-ingest-job-1")
 
-        jobs_before = len(harness.library_ingest_jobs.jobs())
-        screen.query_one("#library-ingest-retry-ingest-job-1", Button).press()
-        await pilot.pause()
+        assert not list(screen.query("#library-ingest-retry-ingest-job-1"))
+        assert screen.query_one("#library-ingest-dismiss-ingest-job-1", Button)
+        # Defense in depth (registry-level guard) even if something bypasses
+        # the canvas's own button gating.
+        assert harness.retry_library_ingest_job(failing_job.job_id) is None
 
-        jobs_after = harness.library_ingest_jobs.jobs()
-        # B1: the original failed job is superseded, not kept alongside the
-        # fresh copy -- net job count is unchanged (one hidden, one added).
-        assert len(jobs_after) == jobs_before
-        newest = jobs_after[0]
-        assert newest.job_id != failing_job.job_id
-        assert newest.source_path == str(missing)
 
-        # The canvas itself must show exactly one row -- not the retried
-        # QUEUED copy sitting alongside a still-visible failed original.
-        await pilot.pause()
-        assert len(list(screen.query(".library-ingest-row"))) == 1
+@pytest.mark.asyncio
+async def test_library_shell_ingest_canvas_failed_row_actions_share_one_line(tmp_path):
+    """(L5, fix batch F1b) Retry and Dismiss render on ONE line -- wrapped
+    in a shared ``Horizontal`` -- rather than stacking vertically."""
+    db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
+    harness = _LibraryIngestCanvasHarness(db)
+
+    async with harness.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = harness.screen_stack[-1]
+        await _wait_for_library_shell(screen, pilot)
+
+        job = harness.library_ingest_jobs.submit(source_path="/tmp/broken.pdf")
+        harness.library_ingest_jobs.mark_running(job.job_id)
+        harness.library_ingest_jobs.mark_failed(job.job_id, error="boom", permanent=False)
+
+        await _open_library_ingest_canvas(screen, pilot)
+        await _wait_for_selector(screen, pilot, f"#library-ingest-retry-{job.job_id}")
+
+        retry_button = screen.query_one(f"#library-ingest-retry-{job.job_id}", Button)
+        dismiss_button = screen.query_one(f"#library-ingest-dismiss-{job.job_id}", Button)
+        assert retry_button.region.y == dismiss_button.region.y
+        assert retry_button.parent is dismiss_button.parent
 
 
 @pytest.mark.asyncio

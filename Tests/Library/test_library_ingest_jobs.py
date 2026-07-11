@@ -83,6 +83,66 @@ def test_mark_failed_transitions_and_fills_error() -> None:
     assert failed.finished_at is not None
 
 
+def test_mark_failed_permanent_defaults_false() -> None:
+    """(M4, fix batch F1b) Every pre-existing caller of ``mark_failed`` --
+    none of which pass ``permanent`` -- keeps today's always-retryable
+    behavior."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+
+    failed = registry.mark_failed(job.job_id, error="boom")
+
+    assert failed.permanent is False
+
+
+def test_mark_failed_permanent_true_is_stamped_on_the_job() -> None:
+    """(M4) The queue-runner classifies validation-class failures (an
+    unsupported file type, a missing source file) as ``permanent`` --
+    ``mark_failed`` just stores whatever it's told."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+
+    failed = registry.mark_failed(
+        job.job_id, error="Unsupported file type: .xyz.", permanent=True
+    )
+
+    assert failed.permanent is True
+    assert failed.state == IngestJobState.FAILED
+
+
+def test_requeue_refuses_a_permanent_failed_job() -> None:
+    """(M4) ``requeue`` is defense in depth alongside the queue row's own
+    ``can_retry`` gating and Home's ``retry_available`` gating -- even a
+    direct call against a permanently-failed job_id must be a no-op."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+    failed = registry.mark_failed(
+        job.job_id, error="Unsupported file type: .xyz.", permanent=True
+    )
+
+    assert registry.requeue(failed.job_id) is None
+    # The permanently-failed job is untouched -- still visible, still FAILED.
+    jobs_by_id = {j.job_id: j for j in registry.jobs()}
+    assert jobs_by_id[failed.job_id].state == IngestJobState.FAILED
+
+
+def test_requeue_still_works_for_a_non_permanent_failed_job() -> None:
+    """(M4) An ordinary (non-permanent) failure stays retryable -- no
+    regression from adding the ``permanent`` guard."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+    failed = registry.mark_failed(job.job_id, error="boom", permanent=False)
+
+    requeued = registry.requeue(failed.job_id)
+
+    assert requeued is not None
+    assert requeued.state == IngestJobState.QUEUED
+
+
 def test_finished_at_wall_blank_until_a_terminal_transition() -> None:
     """(H1, fix batch F1b) ``finished_at_wall`` is the wall-clock ISO-8601
     UTC counterpart to the monotonic ``finished_at`` -- Home's Recent feed

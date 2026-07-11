@@ -1041,24 +1041,41 @@ ConsoleSettingsModal Select > SelectOverlay Option.-selected {
     color: $ds-text-primary;
 }
 
-/* (L3b AB wave, A3) A row followed by an action button (Open in Library /
-   Retry / Dismiss) trims its own bottom margin to 0 -- the action button's
-   own `.library-ingest-row-action` margin below supplies the spacing
-   instead (tight gap above, blank line below), so the button reads as
-   belonging to THIS row rather than the row underneath it. Plain rows
-   (queued/running, or a defensively action-less done row) keep the base
-   `.library-ingest-row` bottom margin for normal row-to-row spacing. */
+/* (L3b AB wave, A3) A row followed by action button(s) (Open in Library /
+   Retry / Dismiss) trims its own bottom margin to 0 -- the actions
+   wrapper's own `.library-ingest-row-actions` margin below supplies the
+   spacing instead (tight gap above, blank line below), so the button(s)
+   read as belonging to THIS row rather than the row underneath it. Plain
+   rows (queued/running, or a defensively action-less done row) keep the
+   base `.library-ingest-row` bottom margin for normal row-to-row
+   spacing. */
 .library-ingest-row-with-actions {
     margin: 0 0 0 0;
 }
 
-/* Shared by every per-row action button (Open in Library / Retry /
-   Dismiss) -- indented 2 cells so it visually nests under its row, no gap
-   above (tight to the row it belongs to, whose own margin is trimmed via
+/* (L5, fix batch F1b) The wrapper around a row's action button(s) --
+   Retry+Dismiss on a failed row, or Open in Library alone on a done row
+   (the two never coexist on the same row). Carries the spacing the
+   individual `.library-ingest-row-action` buttons used to carry alone
+   (A3, above) now applied once to the whole group: indented 2 cells so it
+   visually nests under its row, no gap above (tight to the row it
+   belongs to, whose own margin is trimmed via
    `.library-ingest-row-with-actions` above), one blank line below before
-   whatever comes next (another row's action, or the next row). */
-.library-ingest-row-action {
+   whatever comes next (another row, or "Clear finished"). `height: auto`
+   keeps it from inheriting `Horizontal`'s `1fr` default, which would
+   otherwise fight every other row for the VerticalScroll's height. */
+.library-ingest-row-actions {
+    height: auto;
     margin: 0 0 1 2;
+}
+
+/* Shared by every per-row action button (Open in Library / Retry /
+   Dismiss) inside `.library-ingest-row-actions` above -- now just a small
+   right gap between same-row siblings (Retry from Dismiss) so the pair
+   reads as two distinct buttons rather than running together; the
+   wrapper itself supplies the row's own indent/top/bottom spacing. */
+.library-ingest-row-action {
+    margin: 0 1 0 0;
 }
 
 /* (L3b AB wave, B2) "Clear finished" sits below every queue row -- a top

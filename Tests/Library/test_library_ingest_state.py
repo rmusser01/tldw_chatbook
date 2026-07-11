@@ -244,6 +244,96 @@ def test_failed_row_line_format():
     assert row.can_dismiss is True
 
 
+# --- M4 (fix batch F1b): permanent failures don't offer Retry -------------
+
+
+def test_permanent_failed_row_cannot_retry_but_can_dismiss():
+    jobs = (
+        _job(
+            state=IngestJobState.FAILED,
+            source_path="/tmp/report.xyz",
+            started_at=100.0,
+            finished_at=101.0,
+            error="Unsupported file type: .xyz. Supported types: PDF, TXT",
+            permanent=True,
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    row = state.queue_rows[0]
+    assert row.can_retry is False
+    assert row.can_dismiss is True
+
+
+def test_non_permanent_failed_row_can_retry():
+    jobs = (
+        _job(
+            state=IngestJobState.FAILED,
+            source_path="/tmp/report.txt",
+            started_at=100.0,
+            finished_at=101.0,
+            error="boom",
+            permanent=False,
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    row = state.queue_rows[0]
+    assert row.can_retry is True
+    assert row.can_dismiss is True
+
+
+# --- L4 (fix batch F1b): short row reason, supported list on the form -----
+
+
+def test_failed_row_line_drops_supported_types_tail():
+    jobs = (
+        _job(
+            state=IngestJobState.FAILED,
+            source_path="/tmp/report.xyz",
+            started_at=100.0,
+            finished_at=101.0,
+            error=(
+                "Unsupported file type: .xyz. Supported types: PDF, DOCX, "
+                "ODT, RTF, EPUB, MOBI, AZW, FB2, HTML, TXT, MD, MP3, M4A, "
+                "WAV, FLAC, OGG, AAC, MP4, AVI, MKV, MOV, WEBM"
+            ),
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    row = state.queue_rows[0]
+    assert row.line == "✗ failed · report.xyz · Unsupported file type: .xyz."
+    assert "Supported types:" not in row.line
+
+
+def test_failed_row_line_without_marker_passes_through_whole():
+    jobs = (
+        _job(
+            state=IngestJobState.FAILED,
+            source_path="/tmp/report.txt",
+            started_at=100.0,
+            finished_at=101.0,
+            error="Media database is unavailable.",
+        ),
+    )
+    state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    row = state.queue_rows[0]
+    assert row.line == "✗ failed · report.txt · Media database is unavailable."
+
+
+def test_supported_types_line_present_and_derived_from_live_registry():
+    state = build_library_ingest_state((), form=LibraryIngestFormState())
+    assert state.supported_types_line.startswith("Supported: ")
+    assert "TXT" in state.supported_types_line
+    assert "XML" not in state.supported_types_line
+
+
+def test_supported_types_line_always_visible_regardless_of_jobs():
+    empty_state = build_library_ingest_state((), form=LibraryIngestFormState())
+    jobs = (_job(state=IngestJobState.QUEUED),)
+    populated_state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
+    assert empty_state.supported_types_line == populated_state.supported_types_line
+    assert populated_state.supported_types_line != ""
+
+
 def test_basename_used_for_nested_path():
     jobs = (_job(state=IngestJobState.QUEUED, source_path="/a/b/c/deep.md"),)
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())

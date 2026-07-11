@@ -510,6 +510,98 @@ def test_canvas_primary_control_is_empty_when_nothing_selectable():
     assert triage.canvas.primary_control_id == ""
 
 
+def test_canvas_omits_retry_control_when_selected_item_retry_unavailable():
+    """(M4, fix batch F1b) A permanently-failed item (e.g. a Library ingest
+    job with an unsupported file type) offers no Retry control at all --
+    not even pointed at another failed item."""
+    state = _items_input(
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:job-1",
+                title="report.xyz",
+                source="Library",
+                status="failed",
+                detail_route="library",
+                retry_available=False,
+            ),
+        )
+    )
+    triage = build_home_triage_state(state, selected_row_id="local:ingest:job-1", now=_NOW)
+
+    control_ids = {c.control_id for c in triage.canvas.actions}
+    assert "home-retry" not in control_ids
+    assert triage.canvas.primary_control_id != "home-retry"
+
+
+def test_canvas_keeps_retry_control_when_selected_item_retry_available():
+    """(M4) An ordinary failure (retry_available defaults True) is
+    unaffected -- Retry stays present and primary."""
+    state = _items_input(
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:job-1",
+                title="report.txt",
+                source="Library",
+                status="failed",
+                detail_route="library",
+            ),
+        )
+    )
+    triage = build_home_triage_state(state, selected_row_id="local:ingest:job-1", now=_NOW)
+
+    control_ids = {c.control_id for c in triage.canvas.actions}
+    assert "home-retry" in control_ids
+    assert triage.canvas.primary_control_id == "home-retry"
+
+
+def test_build_home_controls_selected_item_retry_unavailable_omits_home_retry():
+    """Unit-level check directly on build_home_controls (not just through
+    the triage builder)."""
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:job-1",
+                title="report.xyz",
+                source="Library",
+                status="failed",
+                detail_route="library",
+                retry_available=False,
+            ),
+        ),
+    )
+    selected = state.active_work_items[0]
+
+    controls = build_home_controls(state, selected_row_id=selected.item_id, selected_item=selected)
+
+    assert all(c.control_id != "home-retry" for c in controls)
+
+
+def test_build_home_controls_without_selected_item_keeps_default_retry_behavior():
+    """No ``selected_item`` passed (every pre-M4 caller) -- Retry stays
+    unconditionally offered for any failed run, unaffected by the new
+    parameter's default."""
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:job-1",
+                title="report.xyz",
+                source="Library",
+                status="failed",
+                detail_route="library",
+                retry_available=False,
+            ),
+        ),
+    )
+
+    controls = build_home_controls(state)
+
+    assert any(c.control_id == "home-retry" for c in controls)
+
+
 def test_canvas_primary_control_flips_between_failed_item_and_flashcards_row():
     """Selecting a different row moves primary emphasis with it (no button
     stays permanently accented) -- mirrors the live pilot: failed ingest

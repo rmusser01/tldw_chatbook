@@ -602,6 +602,15 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                         if job.state == IngestJobState.FAILED and job.error
                         else ""
                     ),
+                    # M4 (fix batch F1b): a permanent (validation-class)
+                    # failure fails the same way on every retry -- Home
+                    # withholds home-retry for it the same way the ingest
+                    # canvas withholds its own Retry button
+                    # (IngestQueueRow.can_retry). Non-FAILED jobs keep the
+                    # default True; it's meaningless for them either way.
+                    retry_available=(
+                        not job.permanent if job.state == IngestJobState.FAILED else True
+                    ),
                 )
             )
         return items

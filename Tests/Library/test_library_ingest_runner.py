@@ -151,18 +151,41 @@ async def test_failing_job_does_not_block_next_queued_job(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_retry_of_failed_job_succeeds_once_file_exists(tmp_path: Path) -> None:
+async def test_retry_of_failed_job_succeeds_once_transient_error_clears(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """(M4 re-anchor, fix batch F1b) A missing source file is now
+    classified *permanent* -- see
+    ``test_missing_file_failure_is_permanent_and_refuses_retry`` below --
+    so Retry is withheld for it by design and it can no longer stand in for
+    "a failure that clears up by the time of the retry". This test keeps
+    that original intent (a requeued job can reach DONE once whatever
+    caused the first failure is gone) with a genuinely transient,
+    non-permanent failure instead: the ingest seam raises once, then
+    succeeds on the very same, always-present file.
+    """
     db = _make_db(tmp_path)
-    target = tmp_path / "arrives-later.txt"
+    target = _write_text_file(tmp_path, "arrives-later.txt", "Arrived just in time.")
     app = _IngestRunnerHarness(db)
+
+    import tldw_chatbook.app as app_module
+
+    real_ingest_local_file = app_module.ingest_local_file
+    call_count = {"n": 0}
+
+    def _flaky_ingest_local_file(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("transient ingest hiccup")
+        return real_ingest_local_file(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "ingest_local_file", _flaky_ingest_local_file)
 
     async with app.run_test() as pilot:
         failing_job = app.submit_library_ingest_job(source_path=str(target))
         failed = await _wait_for_job_state(app, pilot, failing_job.job_id, IngestJobState.FAILED)
+        assert failed.permanent is False
         await _wait_for_runner_idle(app, pilot)
-
-        # The file now exists at the same source_path the failed job used.
-        target.write_text("Arrived just in time.", encoding="utf-8")
 
         requeued = app.retry_library_ingest_job(failed.job_id)
         assert requeued is not None
@@ -176,6 +199,46 @@ async def test_retry_of_failed_job_succeeds_once_file_exists(tmp_path: Path) -> 
         assert "Arrived just in time" in row["content"]
 
         await _wait_for_runner_idle(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_missing_file_failure_is_permanent_and_refuses_retry(tmp_path: Path) -> None:
+    """(M4, fix batch F1b) A ``FileNotFoundError`` from the ingest seam
+    fails the exact same way on every attempt -- the queue-runner
+    classifies it ``permanent``, and ``retry_library_ingest_job`` must
+    refuse it (defense in depth, on top of the canvas withholding the
+    Retry button entirely for a permanent row)."""
+    db = _make_db(tmp_path)
+    missing = tmp_path / "does-not-exist.txt"
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test() as pilot:
+        failing_job = app.submit_library_ingest_job(source_path=str(missing))
+        failed = await _wait_for_job_state(app, pilot, failing_job.job_id, IngestJobState.FAILED)
+        await _wait_for_runner_idle(app, pilot)
+
+        assert failed.permanent is True
+        assert app.retry_library_ingest_job(failed.job_id) is None
+
+
+@pytest.mark.asyncio
+async def test_unsupported_file_type_failure_is_permanent_and_refuses_retry(
+    tmp_path: Path,
+) -> None:
+    """(M4) An unsupported extension is a validation-class failure too --
+    classified ``permanent``, Retry refused."""
+    db = _make_db(tmp_path)
+    unsupported = _write_text_file(tmp_path, "note.xyz", "irrelevant content")
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test() as pilot:
+        failing_job = app.submit_library_ingest_job(source_path=str(unsupported))
+        failed = await _wait_for_job_state(app, pilot, failing_job.job_id, IngestJobState.FAILED)
+        await _wait_for_runner_idle(app, pilot)
+
+        assert failed.permanent is True
+        assert "Unsupported file type" in failed.error
+        assert app.retry_library_ingest_job(failed.job_id) is None
 
 
 @pytest.mark.asyncio

@@ -128,6 +128,16 @@ class HomeActiveWorkItem:
     console_available: bool = False
     updated_at: str = ""
     status_detail: str = ""
+    # M4 (fix batch F1b): whether this item's own recovery control (Retry)
+    # should be offered at all. ``True`` by default so every pre-existing
+    # producer -- which never sets this -- keeps today's always-retryable
+    # behavior. Library ingest jobs set it to ``not job.permanent`` for
+    # FAILED items: a validation-class failure (unsupported file type,
+    # missing source file) fails the same way on every retry, so Home
+    # withholds the ``home-retry`` control for it (see
+    # ``build_home_controls``) the same way the ingest canvas withholds its
+    # own Retry button (``IngestQueueRow.can_retry``).
+    retry_available: bool = True
 
 
 @dataclass(frozen=True)
@@ -282,6 +292,7 @@ def build_home_controls(
     state: HomeDashboardInput,
     *,
     selected_row_id: str = "",
+    selected_item: HomeActiveWorkItem | None = None,
 ) -> tuple[HomeControl, ...]:
     """Build the Home canvas's control set.
 
@@ -298,12 +309,36 @@ def build_home_controls(
             selection concept (``summarize_home_dashboard``, and the
             triage builder's own count-only fallback) simply omit this and
             keep today's unconditional-when-due behavior.
+        selected_item: The resolved ``HomeActiveWorkItem`` behind
+            ``selected_row_id``, when the selection is a real work item
+            (M4, fix batch F1b) -- threaded through the same way H2 threads
+            ``selected_row_id``. When this item's own status is failed and
+            its ``retry_available`` is ``False``, the ``home-retry``
+            control is omitted entirely rather than pointing Retry at a
+            failure that will just fail the same way again -- and, when
+            failed, its route/target also replace whichever failed item
+            ``_first_item_for_status`` would otherwise have picked, so
+            Retry always reflects the selected item, not just "the first
+            failed item in the list". ``None`` (the default) preserves
+            today's behavior exactly for every caller without a selection
+            concept (``summarize_home_dashboard``, the triage builder's own
+            count-only fallback): Retry targets whichever failed item
+            ``_first_item_for_status`` finds, unconditionally offered
+            whenever any failed run/schedule exists.
     """
     controls: list[HomeControl] = []
     approval_item = _first_item_for_status(state, _APPROVAL_STATUSES)
     running_item = _first_item_for_status(state, _RUNNING_STATUSES)
     paused_item = _first_item_for_status(state, _PAUSED_STATUSES)
     failed_item = _first_item_for_status(state, _FAILED_STATUSES)
+    selected_item_is_failed = (
+        selected_item is not None and _normalized_status(selected_item) in _FAILED_STATUSES
+    )
+    if selected_item_is_failed:
+        # The selected row's own failure -- not just "the first failed item
+        # in the list" -- is what Retry (and its retry_available gate)
+        # should reflect when a real item is selected.
+        failed_item = selected_item
     chatbook_item = _first_chatbook_artifact_item(state)
     detail_item = choose_home_selected_item(state)
 
@@ -346,7 +381,12 @@ def build_home_controls(
                 paused_item.item_id if paused_item else None,
             )
         )
-    if _failed_run_count(state) or _failed_schedule_count(state):
+    # M4: only a *selected* failed item's own retry_available can withhold
+    # Retry -- callers with no selection concept (summarize_home_dashboard,
+    # the triage builder's own count-only fallback) keep today's
+    # unconditional-when-failed behavior unchanged.
+    retry_withheld = selected_item_is_failed and not selected_item.retry_available
+    if (_failed_run_count(state) or _failed_schedule_count(state)) and not retry_withheld:
         failed_route = failed_item.detail_route if failed_item else "schedules"
         controls.append(
             HomeControl(
@@ -846,9 +886,9 @@ def build_home_triage_state(
         # "Review flashcards" shortcut is scoped out of a real work item's
         # canvas (kept for the synthetic flashcards row and for "nothing
         # selected", below).
-        controls = build_home_controls(state, selected_row_id=selected.row_id)
         if selected.row_id == HOME_FLASHCARDS_DUE_ROW_ID:
             # Synthetic row: no backing HomeActiveWorkItem to look up.
+            controls = build_home_controls(state, selected_row_id=selected.row_id)
             canvas = HomeCanvasState(
                 title=f"Flashcards due: {state.flashcards_due_count}",
                 lines=(
@@ -871,6 +911,12 @@ def build_home_triage_state(
                 i
                 for i in tuple(state.active_work_items) + tuple(state.recent_work_items)
                 if i.item_id == selected.row_id
+            )
+            # M4: thread the resolved item so build_home_controls can gate
+            # home-retry on *this* item's own retry_available rather than
+            # just "the first failed item in the list".
+            controls = build_home_controls(
+                state, selected_row_id=selected.row_id, selected_item=item
             )
             # H3: the Next hint must not repeat the selected item's own
             # recovery control (e.g. a failed item's canvas already offers
