@@ -1,0 +1,58 @@
+---
+id: TASK-152
+title: Address PR 596 verified review findings
+status: In Progress
+assignee:
+  - '@codex'
+created_date: '2026-07-11 22:08'
+updated_date: '2026-07-11 22:16'
+labels:
+  - pr-review
+  - library
+  - ingestion
+  - navigation
+dependencies: []
+priority: high
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Correct all reproducible correctness data-loss concurrency runtime search and test-isolation issues found while reviewing PR 596 so the dev-to-main promotion is safe to merge.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Abrupt parse-worker death fails only jobs owned by that pool generation and allows retry.
+- [ ] #2 Spawned parse workers do not preload the application or heavy ML stack before parsing.
+- [ ] #3 Ingest shutdown finishes only an already-claimed write and does not drain ready payloads.
+- [ ] #4 Library note navigation never discards edits after a failed save.
+- [ ] #5 App navigation vetoes when pending-work flush raises.
+- [ ] #6 Settings drafts survive fresh-screen navigation.
+- [ ] #7 Plain Library search queries with punctuation return matching FTS results.
+- [ ] #8 Auto document parsing falls back to the native parser when deferred Docling import is broken.
+- [ ] #9 Tests never write the user CLI config.
+- [ ] #10 Retired Notes mode-chip assertions are removed.
+- [ ] #11 All review threads are resolved and focused verification passes.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+
+ADR path: N/A
+
+Reason: Regression fixes implement existing pool/single-writer and fresh-screen state contracts; no new boundary, dependency, schema, or policy is introduced.
+
+Spec: `Docs/superpowers/specs/2026-07-11-pr-596-review-fixes-design.md`
+
+Detailed plan: `Docs/superpowers/plans/2026-07-11-pr-596-review-fixes.md`
+
+1. Add pool generations, sentinel death monitoring, stale-callback isolation, and shutdown claim guards with red-green tests.
+2. Add spawn-lightweight supported CLI launchers and a real spawn preload regression.
+3. Make app and Library navigation fail closed and round-trip Settings drafts through fresh screens.
+4. Quote plain-text input only at raw FTS boundaries and restore automatic native fallback for broken Docling imports.
+5. Isolate test config writes and remove the retired Notes CSS contract.
+6. Run focused and broad verification, then complete task and PR hygiene.
+<!-- SECTION:PLAN:END -->
