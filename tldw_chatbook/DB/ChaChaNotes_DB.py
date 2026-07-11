@@ -2162,12 +2162,11 @@ UPDATE db_schema_version
             
             logger.debug(f"CharactersRAGDB initialization completed successfully for {self.db_path_str}")
         except (CharactersRAGDBError, sqlite3.Error) as e:
-            logger.critical(f"FATAL: DB Initialization failed for {self.db_path_str}: {e}", exc_info=True)
+            logger.opt(exception=True).critical(f"FATAL: DB Initialization failed for {self.db_path_str}: {e}")
             self.close_connection()  # Attempt to clean up
             raise CharactersRAGDBError(f"Database initialization failed: {e}") from e
         except Exception as e:
-            logger.critical(f"FATAL: Unexpected error during DB Initialization for {self.db_path_str}: {e}",
-                            exc_info=True)
+            logger.opt(exception=True).critical(f"FATAL: Unexpected error during DB Initialization for {self.db_path_str}: {e}")
             self.close_connection()
             raise CharactersRAGDBError(f"Unexpected database initialization error: {e}") from e
 
@@ -2218,7 +2217,7 @@ UPDATE db_schema_version
                 logger.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} (Journal: {conn.execute('PRAGMA journal_mode;').fetchone()[0]}) for thread {threading.get_ident()}")
             except sqlite3.Error as e:
-                logger.error(f"Failed to connect to database {self.db_path_str}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Failed to connect to database {self.db_path_str}: {e}")
                 self._local.conn = None
                 raise CharactersRAGDBError(f"Failed to connect to database '{self.db_path_str}': {e}") from e
         return self._local.conn
@@ -2320,13 +2319,13 @@ UPDATE db_schema_version
             logger.info(f"Database backup successful from '{self.db_path_str}' to '{str(backup_db_path_obj)}'")
             return True
         except ValueError as ve: # Catch specific ValueError for path mismatch first
-            logger.error(f"ValueError during database backup: {ve}", exc_info=True)
+            logger.opt(exception=True).error(f"ValueError during database backup: {ve}")
             return False
         except sqlite3.Error as e:
-            logger.error(f"SQLite error during database backup: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"SQLite error during database backup: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error during database backup: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error during database backup: {e}")
             return False
         finally:
             if backup_conn:
@@ -2447,7 +2446,7 @@ UPDATE db_schema_version
                 "error_type": "database_error"
             })
             
-            logger.error(f"Query execution failed: {query[:300]}... Error: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Query execution failed: {query[:300]}... Error: {e}")
             raise CharactersRAGDBError(f"Query execution failed: {e}") from e
 
     def execute_many(self, query: str, params_list: List[tuple], *, commit: bool = False) -> Optional[sqlite3.Cursor]:
@@ -2486,7 +2485,7 @@ UPDATE db_schema_version
                 raise ConflictError(message=f"Unique constraint violation during batch: {e}") from e
             raise CharactersRAGDBError(f"Database constraint violation during batch: {e}") from e
         except sqlite3.Error as e:
-            logger.error(f"Execute Many failed: {query[:150]}... Error: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Execute Many failed: {query[:150]}... Error: {e}")
             raise CharactersRAGDBError(f"Execute Many failed: {e}") from e
 
     # --- Transaction Context ---
@@ -2530,7 +2529,7 @@ UPDATE db_schema_version
         except sqlite3.Error as e:
             if "no such table" in str(e).lower() and "db_schema_version" in str(e).lower():
                 return 0
-            logger.error(f"Could not determine database schema version for '{self._SCHEMA_NAME}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Could not determine database schema version for '{self._SCHEMA_NAME}': {e}")
             raise SchemaError(f"Could not determine schema version for '{self._SCHEMA_NAME}': {e}") from e
 
     def _apply_schema_v4(self, conn: sqlite3.Connection):
@@ -2561,12 +2560,12 @@ UPDATE db_schema_version
                     f"[{self._SCHEMA_NAME} V4] Schema version update check failed. Expected 4, got: {final_version}")
             logger.info(f"[{self._SCHEMA_NAME} V4] Schema 4 applied and version confirmed for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V4] Schema application failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V4] Schema application failed: {e}")
             raise SchemaError(f"DB schema V4 setup failed for '{self._SCHEMA_NAME}': {e}") from e
         except SchemaError:
             raise
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V4] Unexpected error during schema V4 application: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V4] Unexpected error during schema V4 application: {e}")
             raise SchemaError(f"Unexpected error applying schema V4 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v4_to_v5(self, conn: sqlite3.Connection):
@@ -2598,10 +2597,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V4→V5] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V4→V5] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V4→V5] Migration failed: {e}")
             raise SchemaError(f"Migration from V4 to V5 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V4→V5] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V4→V5] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V4 to V5 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v5_to_v6(self, conn: sqlite3.Connection):
@@ -2633,10 +2632,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V5→V6] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V5→V6] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V5→V6] Migration failed: {e}")
             raise SchemaError(f"Migration from V5 to V6 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V5→V6] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V5→V6] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V5 to V6 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v6_to_v7(self, conn: sqlite3.Connection):
@@ -2668,10 +2667,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V6→V7] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V6→V7] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V6→V7] Migration failed: {e}")
             raise SchemaError(f"Migration from V6 to V7 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V6→V7] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V6→V7] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V6 to V7 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v8_to_v9(self, conn: sqlite3.Connection):
@@ -2703,10 +2702,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V8→V9] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V8→V9] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V8→V9] Migration failed: {e}")
             raise SchemaError(f"Migration from V8 to V9 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V8→V9] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V8→V9] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V8 to V9 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v9_to_v10(self, conn: sqlite3.Connection):
@@ -2738,10 +2737,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V9→V10] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V9→V10] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V9→V10] Migration failed: {e}")
             raise SchemaError(f"Migration from V9 to V10 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V9→V10] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V9→V10] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V9 to V10 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v10_to_v11(self, conn: sqlite3.Connection):
@@ -2773,10 +2772,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V10→V11] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V10→V11] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V10→V11] Migration failed: {e}")
             raise SchemaError(f"Migration from V10 to V11 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V10→V11] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V10→V11] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V10 to V11 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v11_to_v12(self, conn: sqlite3.Connection):
@@ -2808,10 +2807,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V11→V12] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V11→V12] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V11→V12] Migration failed: {e}")
             raise SchemaError(f"Migration from V11 to V12 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V11→V12] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V11→V12] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V11 to V12 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v12_to_v13(self, conn: sqlite3.Connection):
@@ -2834,10 +2833,10 @@ UPDATE db_schema_version
 
             logger.info(f"[{self._SCHEMA_NAME} V12→V13] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V12→V13] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V12→V13] Migration failed: {e}")
             raise SchemaError(f"Migration from V12 to V13 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V12→V13] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V12→V13] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V12 to V13 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v13_to_v14(self, conn: sqlite3.Connection):
@@ -2859,10 +2858,10 @@ UPDATE db_schema_version
 
             logger.info(f"[{self._SCHEMA_NAME} V13→V14] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V13→V14] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V13→V14] Migration failed: {e}")
             raise SchemaError(f"Migration from V13 to V14 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V13→V14] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V13→V14] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V13 to V14 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v14_to_v15(self, conn: sqlite3.Connection):
@@ -2884,10 +2883,10 @@ UPDATE db_schema_version
 
             logger.info(f"[{self._SCHEMA_NAME} V14→V15] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V14→V15] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V14→V15] Migration failed: {e}")
             raise SchemaError(f"Migration from V14 to V15 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V14→V15] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V14→V15] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V14 to V15 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v15_to_v16(self, conn: sqlite3.Connection):
@@ -2943,10 +2942,10 @@ UPDATE db_schema_version
 
             logger.info(f"[{self._SCHEMA_NAME} V15→V16] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V15→V16] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V15→V16] Migration failed: {e}")
             raise SchemaError(f"Migration from V15 to V16 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V15→V16] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V15→V16] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V15 to V16 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v16_to_v17(self, conn: sqlite3.Connection):
@@ -2969,10 +2968,10 @@ UPDATE db_schema_version
 
             logger.info(f"[{self._SCHEMA_NAME} V16→V17] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V16→V17] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V16→V17] Migration failed: {e}")
             raise SchemaError(f"Migration from V16 to V17 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V16→V17] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V16→V17] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V16 to V17 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _migrate_from_v7_to_v8(self, conn: sqlite3.Connection):
@@ -3004,10 +3003,10 @@ UPDATE db_schema_version
             
             logger.info(f"[{self._SCHEMA_NAME} V7→V8] Migration completed successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logger.error(f"[{self._SCHEMA_NAME} V7→V8] Migration failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V7→V8] Migration failed: {e}")
             raise SchemaError(f"Migration from V7 to V8 failed for '{self._SCHEMA_NAME}': {e}") from e
         except Exception as e:
-            logger.error(f"[{self._SCHEMA_NAME} V7→V8] Unexpected error during migration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[{self._SCHEMA_NAME} V7→V8] Unexpected error during migration: {e}")
             raise SchemaError(f"Unexpected error migrating from V7 to V8 for '{self._SCHEMA_NAME}': {e}") from e
 
     def _initialize_schema(self):
@@ -3084,10 +3083,10 @@ UPDATE db_schema_version
                     f"Database schema '{self._SCHEMA_NAME}' successfully initialized/migrated to version {final_version_check}.")
 
         except (SchemaError, sqlite3.Error) as e:
-            logger.error(f"Schema initialization/migration failed for '{self._SCHEMA_NAME}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Schema initialization/migration failed for '{self._SCHEMA_NAME}': {e}")
             raise SchemaError(f"Schema initialization/migration for '{self._SCHEMA_NAME}' failed: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error during schema initialization for '{self._SCHEMA_NAME}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error during schema initialization for '{self._SCHEMA_NAME}': {e}")
             raise CharactersRAGDBError(f"Unexpected error applying schema for '{self._SCHEMA_NAME}': {e}") from e
 
     # --- Internal Helpers ---
@@ -3695,10 +3694,10 @@ UPDATE db_schema_version
                 "status": "error",
                 "error_type": "integrity_error"
             })
-            logger.critical(f"DATABASE IntegrityError during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}", exc_info=True)
+            logger.opt(exception=True).critical(f"DATABASE IntegrityError during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}")
             raise CharactersRAGDBError(f"Database integrity error during single update: {e}") from e
         except sqlite3.DatabaseError as e:
-            logger.critical(f"DATABASE ERROR during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}", exc_info=True)
+            logger.opt(exception=True).critical(f"DATABASE ERROR during update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}")
             raise CharactersRAGDBError(f"Database error during single update: {e}") from e
         except ConflictError:  # Re-raise ConflictErrors from _get_current_db_version or manual checks
             # Log error metrics
@@ -3713,16 +3712,14 @@ UPDATE db_schema_version
                 "error_type": "version_conflict"
             })
             
-            logger.warning(f"ConflictError during update_character_card for ID {character_id}.",
-                           exc_info=False)  # exc_info=True if needed
+            logger.opt(exception=False).warning(f"ConflictError during update_character_card for ID {character_id}.")  # exc_info=True if needed
             raise
         except InputError:  # Should not happen if initial `if not card_data:` check is there.
-            logger.warning(f"InputError during update_character_card for ID {character_id}.", exc_info=False)
+            logger.opt(exception=False).warning(f"InputError during update_character_card for ID {character_id}.")
             raise
         except Exception as e:  # Catch any other unexpected Python errors
-            logger.error(
-                f"Unexpected Python error in update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"Unexpected Python error in update_character_card (SINGLE UPDATE STRATEGY) for ID {character_id}: {e}")
             raise CharactersRAGDBError(f"Unexpected error updating character card: {e}") from e
 
     def soft_delete_character_card(self, character_id: int, expected_version: int) -> Optional[bool]:
@@ -3842,9 +3839,8 @@ UPDATE db_schema_version
                 "status": "error",
                 "error_type": "database_error"
             })
-            logger.error(
-                f"Database error soft-deleting character card ID {character_id} (expected v{expected_version}): {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"Database error soft-deleting character card ID {character_id} (expected v{expected_version}): {e}")
             raise
 
     def delete_character_card(self, character_id: int) -> bool:
@@ -3878,7 +3874,7 @@ UPDATE db_schema_version
             logger.error(f"Conflict error deleting character card ID {character_id}: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error deleting character card ID {character_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error deleting character card ID {character_id}: {e}")
             raise CharactersRAGDBError(f"Error deleting character card: {e}") from e
 
     @staticmethod
@@ -3974,9 +3970,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(
+            logger.opt(exception=True).error(
                 f"Database error restoring character card ID {character_id} (expected v{expected_version}): {e}",
-                exc_info=True,
             )
             raise
 
@@ -4391,10 +4386,10 @@ UPDATE db_schema_version
             
             return conversations
         except CharactersRAGDBError as e:
-            logger.error(f"Database error listing all active conversations: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Database error listing all active conversations: {e}")
             raise  # Re-raise the specific error
         except Exception as e:  # Catch any other unexpected errors
-            logger.error(f"Unexpected error listing all active conversations: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error listing all active conversations: {e}")
             raise CharactersRAGDBError(f"Unexpected error listing conversations: {e}") from e
 
     def get_conversation_by_id(self, conversation_id: str, include_deleted: bool = False) -> Optional[Dict[str, Any]]:
@@ -4984,13 +4979,12 @@ UPDATE db_schema_version
         except InputError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(
+            logger.opt(exception=True).error(
                 f"Application-level database error in update_conversation for ID {conversation_id}: {e}",
-                exc_info=True,
             )
             raise
         except Exception as e:
-            logger.error(f"Unexpected Python error in update_conversation for ID {conversation_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected Python error in update_conversation for ID {conversation_id}: {e}")
             raise CharactersRAGDBError(f"Unexpected error during update_conversation: {e}") from e
 
     def soft_delete_conversation(self, conversation_id: str, expected_version: int) -> Optional[bool]:
@@ -5065,9 +5059,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(
-                f"Database error soft-deleting conversation ID {conversation_id} (expected v{expected_version}): {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"Database error soft-deleting conversation ID {conversation_id} (expected v{expected_version}): {e}")
             raise
 
     def restore_conversation(self, conversation_id: str, expected_version: int) -> Optional[bool]:
@@ -5142,9 +5135,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(
+            logger.opt(exception=True).error(
                 f"Database error restoring conversation ID {conversation_id} (expected v{expected_version}): {e}",
-                exc_info=True,
             )
             raise
 
@@ -5566,16 +5558,14 @@ UPDATE db_schema_version
                     f"Updated message ID {message_id} from version {expected_version} to version {next_version_val}. Fields updated: {fields_to_update_sql if fields_to_update_sql else 'None'}")
                 return True
         except sqlite3.IntegrityError as e:
-            logger.error(f"SQLite integrity error updating message ID {message_id} (expected v{expected_version}): {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"SQLite integrity error updating message ID {message_id} (expected v{expected_version}): {e}")
             raise CharactersRAGDBError(f"Database integrity error updating message: {e}") from e
         except ConflictError:
             raise
         except InputError: # Should not be raised from here directly, but for completeness
             raise
         except CharactersRAGDBError as e:
-            logger.error(f"Database error updating message ID {message_id} (expected v{expected_version}): {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"Database error updating message ID {message_id} (expected v{expected_version}): {e}")
             raise
 
     def soft_delete_message(self, message_id: str, expected_version: int) -> Optional[bool]:
@@ -5648,8 +5638,7 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(f"Database error soft-deleting message ID {message_id} (expected v{expected_version}): {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"Database error soft-deleting message ID {message_id} (expected v{expected_version}): {e}")
             raise
 
     def update_message_feedback(self, message_id: str, feedback: str, expected_version: int) -> bool:
@@ -5774,7 +5763,7 @@ UPDATE db_schema_version
         except InputError:
             raise
         except Exception as e:
-            logger.error(f"Error creating message variant: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error creating message variant: {e}")
             raise CharactersRAGDBError(f"Failed to create message variant: {e}") from e
     
     def get_message_variants(self, message_id: str) -> List[Dict[str, Any]]:
@@ -5816,7 +5805,7 @@ UPDATE db_schema_version
                 return variants
                 
         except Exception as e:
-            logger.error(f"Error getting message variants: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error getting message variants: {e}")
             raise CharactersRAGDBError(f"Failed to get message variants: {e}") from e
     
     def select_message_variant(self, variant_id: str) -> bool:
@@ -5866,7 +5855,7 @@ UPDATE db_schema_version
         except InputError:
             raise
         except Exception as e:
-            logger.error(f"Error selecting message variant: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error selecting message variant: {e}")
             raise CharactersRAGDBError(f"Failed to select message variant: {e}") from e
 
     def search_messages_by_content(self, content_query: str, conversation_id: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
@@ -6213,18 +6202,16 @@ UPDATE db_schema_version
                     raise ConflictError(
                         f"Cannot update {table_name} ID {item_id}: {db_unique_col_name} '{val}' already exists.",
                         entity=table_name, entity_id=val) from e
-            logger.error(
-                f"SQLite integrity error during update of {table_name} ID {item_id} (expected version {expected_version}): {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"SQLite integrity error during update of {table_name} ID {item_id} (expected version {expected_version}): {e}")
             raise CharactersRAGDBError(f"Database integrity error updating {table_name} ({item_id}): {e}") from e
         except ConflictError:
             raise
         except InputError: # Should be caught by callers if they check 'update_data' emptiness first
             raise
         except CharactersRAGDBError as e:
-            logger.error(
-                f"Database error updating {table_name} ID {item_id} (expected version {expected_version}): {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"Database error updating {table_name} ID {item_id} (expected version {expected_version}): {e}")
             raise
         # No implicit return None, function should return True or raise.
 
@@ -6319,9 +6306,8 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:  # Catches sqlite3.Error from conn.execute
-            logger.error(
-                f"Database error soft-deleting {table_name} ID {item_id} (expected version {expected_version}): {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"Database error soft-deleting {table_name} ID {item_id} (expected version {expected_version}): {e}")
             raise
         # No implicit return None.
 
@@ -6734,8 +6720,7 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:  # Catches sqlite3.Error
-            logger.error(f"Database error updating note ID {note_id} (expected v{expected_version}): {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"Database error updating note ID {note_id} (expected v{expected_version}): {e}")
             raise
 
     def soft_delete_note(self, note_id: str, expected_version: int) -> Optional[bool]:
@@ -6785,8 +6770,7 @@ UPDATE db_schema_version
         except ConflictError:
             raise
         except CharactersRAGDBError as e:
-            logger.error(f"Database error soft-deleting note ID {note_id} (expected v{expected_version}): {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"Database error soft-deleting note ID {note_id} (expected v{expected_version}): {e}")
             raise
 
     def search_notes(self, search_term: str, limit: int = 10) -> List[Dict[str, Any]]:
@@ -6863,10 +6847,10 @@ UPDATE db_schema_version
                 f"{operation.capitalize()}ed {link_table}: {col1_name}={col1_val}, {col2_name}={col2_val}. Rows affected: {rows_affected}")
             return rows_affected > 0
         except sqlite3.Error as e: # Catch SQLite specific errors from conn.execute
-            logger.error(f"SQLite error during {operation} for {link_table} ({col1_name}={col1_val}, {col2_name}={col2_val}): {e}", exc_info=True)
+            logger.opt(exception=True).error(f"SQLite error during {operation} for {link_table} ({col1_name}={col1_val}, {col2_name}={col2_val}): {e}")
             raise CharactersRAGDBError(f"Database error during {operation} for {link_table}: {e}") from e
         except CharactersRAGDBError as e: # Catch custom errors like InputError
-            logger.error(f"Application error during {operation} for {link_table}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Application error during {operation} for {link_table}: {e}")
             raise
 
 
@@ -9250,15 +9234,14 @@ class TransactionContextManager:
                     self.conn.commit()
                     logger.debug(f"Transaction (outermost) committed successfully on thread {threading.get_ident()}.")
                 except sqlite3.Error as commit_err:
-                    logger.error(f"Failed to commit transaction on thread {threading.get_ident()}: {commit_err}", exc_info=True)
+                    logger.opt(exception=True).error(f"Failed to commit transaction on thread {threading.get_ident()}: {commit_err}")
                     # Attempt rollback after failed commit
                     try:
                         self.conn.rollback()
                         logger.debug(f"Rollback after failed commit successful on thread {threading.get_ident()}.")
                     except sqlite3.Error as rb_err_after_commit_fail:
-                        logger.critical(
-                            f"Rollback after failed commit also FAILED on thread {threading.get_ident()}: {rb_err_after_commit_fail}",
-                            exc_info=True)
+                        logger.opt(exception=True).critical(
+                            f"Rollback after failed commit also FAILED on thread {threading.get_ident()}: {rb_err_after_commit_fail}")
                     # Re-raise the commit error so the caller knows the transaction failed.
                     # Encapsulate it if it's not already a DB-specific error from our library.
                     if not isinstance(commit_err, CharactersRAGDBError):
@@ -9272,9 +9255,8 @@ class TransactionContextManager:
                     logger.debug(
                         f"Transaction (outermost) rolled back due to exception ({exc_type.__name__}) on thread {threading.get_ident()}.")
                 except sqlite3.Error as rollback_err:
-                    logger.error(
-                        f"Failed to rollback transaction after exception on thread {threading.get_ident()}: {rollback_err}",
-                        exc_info=True)
+                    logger.opt(exception=True).error(
+                        f"Failed to rollback transaction after exception on thread {threading.get_ident()}: {rollback_err}")
                     # If rollback also fails, we wrap both errors
                     raise CharactersRAGDBError(
                         f"Rollback failed after exception: {rollback_err}. Original exception: {exc_val}") from rollback_err

@@ -162,10 +162,8 @@ class EventDispatcher:
                 await handler(self.app, event)
                 return True
             except Exception as e:
-                self.logger.error(
-                    f"Error in handler for button '{button_id}': {e}",
-                    exc_info=True
-                )
+                self.logger.opt(exception=True).error(
+                    f"Error in handler for button '{button_id}': {e}")
                 return False
         
         # Check prefix handlers
@@ -175,10 +173,8 @@ class EventDispatcher:
                     await handler(self.app, event)
                     return True
                 except Exception as e:
-                    self.logger.error(
-                        f"Error in prefix handler for button '{button_id}': {e}",
-                        exc_info=True
-                    )
+                    self.logger.opt(exception=True).error(
+                        f"Error in prefix handler for button '{button_id}': {e}")
                     return False
         
         # Try window delegation as fallback

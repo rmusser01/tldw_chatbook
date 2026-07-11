@@ -119,7 +119,7 @@ class LibraryLocalRagSearchService:
                 user_id=user_id,
             )
         except Exception:
-            logger.warning("Library keyword search: notes seam failed.", exc_info=True)
+            logger.opt(exception=True).warning("Library keyword search: notes seam failed.")
             return True, []
         return True, [_note_row(item) for item in raw_results or () if isinstance(item, Mapping)]
 
@@ -135,7 +135,7 @@ class LibraryLocalRagSearchService:
         try:
             payload = await service.search_media(mode="local", query=query, limit=top_k, offset=0)
         except Exception:
-            logger.warning("Library keyword search: media seam failed.", exc_info=True)
+            logger.opt(exception=True).warning("Library keyword search: media seam failed.")
             return True, []
         items = payload.get("items", []) if isinstance(payload, Mapping) else []
         return True, [_media_row(item) for item in items if isinstance(item, Mapping)]
@@ -160,7 +160,7 @@ class LibraryLocalRagSearchService:
                     db.search_conversations_by_content, query, top_k
                 )
         except Exception:
-            logger.warning("Library keyword search: conversations seam failed.", exc_info=True)
+            logger.opt(exception=True).warning("Library keyword search: conversations seam failed.")
             return True, []
         return True, [_conversation_row(item) for item in raw_results or () if isinstance(item, Mapping)]
 

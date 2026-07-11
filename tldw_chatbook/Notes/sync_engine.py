@@ -446,7 +446,7 @@ class NotesSyncEngine:
                 "error_type": type(e).__name__
             })
             
-            logger.error(f"Sync session {session_id} failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Sync session {session_id} failed: {e}")
             self._update_sync_session(session_id, progress, SyncStatus.FAILED)
             raise
         finally:

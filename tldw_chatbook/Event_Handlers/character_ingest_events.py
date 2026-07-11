@@ -76,7 +76,7 @@ async def _update_character_preview_display(app: 'TldwCli') -> None:
         logger.error(f"UI component not found for character preview update: {e}")
         app.notify("Error updating character preview UI.", severity="error")
     except Exception as e:
-        logger.error(f"Unexpected error updating character preview: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error updating character preview: {e}")
         app.notify("Unexpected error during character preview update.", severity="error")
 
 
@@ -138,7 +138,7 @@ def _parse_single_character_file_for_preview(file_path: Path, app_ref: 'TldwCli'
         return [preview_data]
 
     except Exception as e:
-        logger.error(f"Error parsing character file {file_path} for preview: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error parsing character file {file_path} for preview: {e}")
         app_ref.notify(f"Error previewing {file_path.name}.", severity="error")
         return [{"filename": file_path.name, "name": f"Error: {file_path.name}", "error": str(e)}]
 
@@ -179,7 +179,7 @@ async def _handle_character_file_selected_callback(app: 'TldwCli', selected_path
         except QueryError:
             logger.error("Could not find #ingest-characters-selected-files-list ListView to update.")
         except Exception as e_lv:
-            logger.error(f"Error updating character list view: {e_lv}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating character list view: {e_lv}")
 
         parsed_chars_from_file = _parse_single_character_file_for_preview(selected_path, app)
         app.parsed_characters_for_preview.extend(parsed_chars_from_file)
@@ -304,7 +304,7 @@ async def handle_ingest_characters_import_now_button_pressed(app: 'TldwCli', eve
                     "message": f"Import error: {ie}. A required library might be missing."
                 })
             except Exception as e:
-                logger.error(f"Error importing character from {file_path}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Error importing character from {file_path}: {e}")
                 results.append({
                     "file_path": str(file_path),
                     "character_name": file_path.stem,
@@ -353,7 +353,7 @@ async def handle_ingest_characters_import_now_button_pressed(app: 'TldwCli', eve
         app.call_later(ccp_handlers.populate_ccp_character_select, app)
 
     def on_import_failure_char(error: Exception):
-        logger.error(f"Character import worker failed critically: {error}", exc_info=True)
+        logger.opt(exception=True).error(f"Character import worker failed critically: {error}")
         try:
             status_area_widget = app.query_one("#ingest-character-import-status-area", TextArea)
             # Append error to existing text or load new text

@@ -166,7 +166,7 @@ class CCPPromptHandler:
             logger.info(f"Found {len(self.search_results)} prompts matching '{search_term}'")
             
         except Exception as e:
-            logger.error(f"Error searching prompts: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error searching prompts: {e}")
     
     async def _update_search_results_ui(self) -> None:
         """Update the prompt search results ListView."""
@@ -216,7 +216,7 @@ class CCPPromptHandler:
                 logger.warning("No prompt selected to load")
                 
         except Exception as e:
-            logger.error(f"Error loading selected prompt: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error loading selected prompt: {e}")
     
     async def load_prompt(self, prompt_id: Any) -> None:
         """Load a prompt and display it in the editor (async wrapper).
@@ -296,7 +296,7 @@ class CCPPromptHandler:
                 logger.error(f"Failed to load prompt {prompt_id}")
                 
         except Exception as e:
-            logger.error(f"Error loading prompt {prompt_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error loading prompt {prompt_id}: {e}")
     
     def _display_prompt_in_editor(self) -> None:
         """Display the loaded prompt in the editor."""
@@ -321,7 +321,7 @@ class CCPPromptHandler:
             logger.debug(f"Displayed prompt '{data.get('name', 'Unknown')}' in editor")
             
         except Exception as e:
-            logger.error(f"Error displaying prompt in editor: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error displaying prompt in editor: {e}")
     
     def _set_input_value(self, selector: str, value: str) -> None:
         """Set an Input widget's value."""
@@ -357,7 +357,7 @@ class CCPPromptHandler:
             logger.info("Switched to prompt editor for new prompt")
             
         except Exception as e:
-            logger.error(f"Error creating new prompt: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error creating new prompt: {e}")
     
     def _clear_editor_fields(self) -> None:
         """Clear all prompt editor fields."""
@@ -395,7 +395,7 @@ class CCPPromptHandler:
                     await self._create_prompt(prompt_data)
                 
         except Exception as e:
-            logger.error(f"Error saving prompt: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving prompt: {e}")
     
     def _gather_editor_data(self) -> Dict[str, Any]:
         """Gather all data from the prompt editor fields."""
@@ -410,7 +410,7 @@ class CCPPromptHandler:
             data["keywords"] = self.window.query_one("#ccp-editor-prompt-keywords-textarea", TextArea).text
             
         except Exception as e:
-            logger.error(f"Error gathering editor data: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error gathering editor data: {e}")
         
         return data
 
@@ -451,7 +451,7 @@ class CCPPromptHandler:
             search_input = self.window.query_one("#ccp-prompt-search-input", Input)
             await self.handle_search(search_input.value)
         except Exception:
-            logger.debug("Prompt search refresh skipped after scoped save", exc_info=True)
+            logger.opt(exception=True).debug("Prompt search refresh skipped after scoped save")
     
     @work(thread=True)
     def _create_prompt(self, data: Dict[str, Any]) -> None:
@@ -497,7 +497,7 @@ class CCPPromptHandler:
                 logger.error("Failed to create new prompt")
                 
         except Exception as e:
-            logger.error(f"Error creating prompt: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error creating prompt: {e}")
     
     @work(thread=True)
     def _update_prompt(self, prompt_id: int, data: Dict[str, Any]) -> None:
@@ -543,7 +543,7 @@ class CCPPromptHandler:
                 logger.error(f"Failed to update prompt {prompt_id}")
                 
         except Exception as e:
-            logger.error(f"Error updating prompt: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating prompt: {e}")
     
     async def handle_clone_prompt(self) -> None:
         """Clone the current prompt."""
@@ -565,7 +565,7 @@ class CCPPromptHandler:
             logger.info("Prepared prompt clone in editor")
             
         except Exception as e:
-            logger.error(f"Error cloning prompt: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error cloning prompt: {e}")
     
     async def handle_delete_prompt(self) -> None:
         """Delete the current prompt."""
@@ -591,7 +591,7 @@ class CCPPromptHandler:
                         search_input = self.window.query_one("#ccp-prompt-search-input", Input)
                         await self.handle_search(search_input.value)
                     except Exception:
-                        logger.debug("Prompt search refresh skipped after scoped delete", exc_info=True)
+                        logger.opt(exception=True).debug("Prompt search refresh skipped after scoped delete")
                 else:
                     logger.error(f"Failed to delete prompt {deleted_prompt_id}")
                 return
@@ -622,7 +622,7 @@ class CCPPromptHandler:
                 logger.error(f"Failed to delete prompt {self.current_prompt_id}")
                 
         except Exception as e:
-            logger.error(f"Error deleting prompt: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error deleting prompt: {e}")
 
     async def handle_record_prompt_usage(self) -> None:
         """Record usage for the current prompt through the active prompt backend."""
@@ -643,7 +643,7 @@ class CCPPromptHandler:
             self._update_prompt_usage_display(prompt_data)
             self._notify("Prompt usage recorded.", severity="success")
         except Exception as e:
-            logger.error(f"Error recording prompt usage: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error recording prompt usage: {e}")
             self._set_static_value("#ccp-editor-prompt-version-status", f"Usage update failed: {e}")
             self._notify(f"Prompt usage update failed: {e}", severity="error")
 
@@ -662,7 +662,7 @@ class CCPPromptHandler:
             )
             self._set_static_value("#ccp-editor-prompt-version-status", self._format_prompt_versions(versions))
         except Exception as e:
-            logger.error(f"Error listing prompt versions: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error listing prompt versions: {e}")
             self._set_static_value("#ccp-editor-prompt-version-status", f"Version history unavailable: {e}")
             self._notify(f"Prompt version history unavailable: {e}", severity="warning")
 
@@ -695,7 +695,7 @@ class CCPPromptHandler:
             self._set_static_value("#ccp-editor-prompt-version-status", f"Prompt restored v{version}.")
             self._notify(f"Prompt restored to version {version}.", severity="success")
         except Exception as e:
-            logger.error(f"Error restoring prompt version: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error restoring prompt version: {e}")
             self._set_static_value("#ccp-editor-prompt-version-status", f"Version restore failed: {e}")
             self._notify(f"Prompt version restore failed: {e}", severity="error")
     
@@ -754,4 +754,4 @@ class CCPPromptHandler:
             logger.info(f"Imported prompt from {file_path}")
             
         except Exception as e:
-            logger.error(f"Error importing prompt: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error importing prompt: {e}")

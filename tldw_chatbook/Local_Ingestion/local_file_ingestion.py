@@ -40,7 +40,7 @@ def detect_file_type(file_path: Union[str, Path]) -> str:
         file_path: Path to the file
         
     Returns:
-        File type as string: 'pdf', 'document', 'ebook', 'xml', 'plaintext', 'html'
+        File type as string: 'pdf', 'document', 'ebook', 'plaintext', 'html'
         
     Raises:
         FileIngestionError: If file type is not supported
@@ -59,10 +59,6 @@ def detect_file_type(file_path: Union[str, Path]) -> str:
     # E-book files
     elif extension in ['.epub', '.mobi', '.azw', '.azw3', '.fb2']:
         return 'ebook'
-    
-    # XML files
-    elif extension in ['.xml', '.rss', '.atom']:
-        return 'xml'
     
     # HTML files (web articles)
     elif extension in ['.html', '.htm']:
@@ -83,7 +79,7 @@ def detect_file_type(file_path: Union[str, Path]) -> str:
     else:
         raise FileIngestionError(
             f"Unsupported file type: {extension}. "
-            f"Supported types: PDF, DOCX, ODT, RTF, EPUB, MOBI, AZW, FB2, XML, HTML, TXT, MD, "
+            f"Supported types: PDF, DOCX, ODT, RTF, EPUB, MOBI, AZW, FB2, HTML, TXT, MD, "
             f"MP3, M4A, WAV, FLAC, OGG, AAC, MP4, AVI, MKV, MOV, WEBM"
         )
 
@@ -99,7 +95,6 @@ def get_supported_extensions() -> Dict[str, List[str]]:
         'pdf': ['.pdf'],
         'document': ['.doc', '.docx', '.odt', '.rtf'],
         'ebook': ['.epub', '.mobi', '.azw', '.azw3', '.fb2'],
-        'xml': ['.xml', '.rss', '.atom'],
         'html': ['.html', '.htm'],
         'plaintext': ['.txt', '.md', '.markdown', '.rst', '.log', '.csv'],
         'audio': ['.mp3', '.m4a', '.wav', '.flac', '.ogg', '.aac', '.wma', '.opus'],

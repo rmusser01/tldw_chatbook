@@ -458,7 +458,7 @@ class ChatScreen(BaseAppScreen):
                 logger.error("chat_window is None")
 
         except Exception as e:
-            logger.error(f"Error updating model dropdown: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating model dropdown: {e}")
 
     @on(Select.Changed, "#chat-api-model")
     def on_chat_api_model_changed(self, event: Select.Changed) -> None:
@@ -976,7 +976,7 @@ class ChatScreen(BaseAppScreen):
             workspaces = tuple(registry_service.list_workspaces())
             active_workspace = registry_service.get_active_workspace()
         except Exception:
-            logger.warning("Unable to open Console workspace switcher", exc_info=True)
+            logger.opt(exception=True).warning("Unable to open Console workspace switcher")
             self.app_instance.notify(
                 "Workspace registry could not be read.",
                 severity="error",
@@ -999,9 +999,8 @@ class ChatScreen(BaseAppScreen):
             try:
                 registry_service.set_active_workspace(workspace_id)
             except Exception:
-                logger.warning(
+                logger.opt(exception=True).warning(
                     "Unable to switch Console workspace",
-                    exc_info=True,
                 )
                 self.app_instance.notify(
                     "Workspace could not be selected.",
@@ -1452,9 +1451,8 @@ class ChatScreen(BaseAppScreen):
                 self._current_console_workspace_context().active_workspace_id or ""
             ).strip()
         except Exception:
-            logger.debug(
+            logger.opt(exception=True).debug(
                 "Unable to read current workspace context for conversation search",
-                exc_info=True,
             )
             workspace_id = ""
         if workspace_id:
@@ -1465,7 +1463,7 @@ class ChatScreen(BaseAppScreen):
             try:
                 workspace = get_active_workspace()
             except Exception:
-                logger.debug("Unable to read active workspace for conversation search", exc_info=True)
+                logger.opt(exception=True).debug("Unable to read active workspace for conversation search")
                 workspace = None
             workspace_id = str(getattr(workspace, "workspace_id", "") or "").strip()
             if workspace_id:
@@ -1731,7 +1729,7 @@ class ChatScreen(BaseAppScreen):
                 if workspace is not None:
                     workspace_name = workspace.name
             except Exception:
-                logger.debug("Unable to read Console workspace title", exc_info=True)
+                logger.opt(exception=True).debug("Unable to read Console workspace title")
         if not workspace_name:
             workspace_name = "Workspace"
         return f"{workspace_name} Chat"
@@ -1770,9 +1768,8 @@ class ChatScreen(BaseAppScreen):
                 return
             registry_service.set_active_workspace(workspace_id)
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Unable to align Console workspace with selected tab",
-                exc_info=True,
             )
 
     def _console_composer_or_none(self) -> ConsoleComposerBar | None:
@@ -2203,9 +2200,8 @@ class ChatScreen(BaseAppScreen):
                 self._current_console_workspace_context()
             )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Unable to activate Console workspace for browser row",
-                exc_info=True,
             )
 
     def _console_session_id_for_browser_row(
@@ -2272,14 +2268,14 @@ class ChatScreen(BaseAppScreen):
             try:
                 ensure_default()
             except Exception:
-                logger.debug("Unable to ensure default workspace for Console browser", exc_info=True)
+                logger.opt(exception=True).debug("Unable to ensure default workspace for Console browser")
         list_workspaces = getattr(service, "list_workspaces", None)
         if not callable(list_workspaces):
             return ()
         try:
             return tuple(list_workspaces())
         except Exception:
-            logger.debug("Unable to list Console browser workspaces", exc_info=True)
+            logger.opt(exception=True).debug("Unable to list Console browser workspaces")
             return ()
 
     def _console_browser_workspace_labels(self) -> dict[str, str]:
@@ -2319,7 +2315,7 @@ class ChatScreen(BaseAppScreen):
         try:
             return {str(conversation_id) for conversation_id in list_marked()}
         except Exception:
-            logger.debug("Unable to read local conversation stars", exc_info=True)
+            logger.opt(exception=True).debug("Unable to read local conversation stars")
             return set()
 
     def _apply_console_browser_star_state(
@@ -2403,11 +2399,10 @@ class ChatScreen(BaseAppScreen):
             try:
                 memberships = list_conversations(workspace_id)
             except Exception:
-                logger.debug(
+                logger.opt(exception=True).debug(
                     "Unable to list Console browser workspace conversations "
                     "workspace_id={}",
                     workspace_id,
-                    exc_info=True,
                 )
                 continue
             for membership in memberships:
@@ -2840,7 +2835,7 @@ class ChatScreen(BaseAppScreen):
         try:
             memberships = list_conversations(workspace_id)
         except Exception:
-            logger.debug("Unable to search workspace conversation memberships", exc_info=True)
+            logger.opt(exception=True).debug("Unable to search workspace conversation memberships")
             return []
         rows: list[ConsoleWorkspaceConversationRow] = []
         current_conversation = self._current_console_conversation_id()
@@ -5284,7 +5279,7 @@ class ChatScreen(BaseAppScreen):
         try:
             return ConsoleSessionSettings(**values)
         except TypeError:
-            logger.debug("Skipping invalid Console session settings payload", exc_info=True)
+            logger.opt(exception=True).debug("Skipping invalid Console session settings payload")
             return None
 
     @staticmethod
@@ -5562,7 +5557,7 @@ class ChatScreen(BaseAppScreen):
             logger.info(f"Saved chat state: {len(self.chat_state.tabs)} tabs, interface: {state.get('interface_type')}")
             
         except Exception as e:
-            logger.error(f"Error saving chat state: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving chat state: {e}")
         
         return state
     
@@ -5598,7 +5593,7 @@ class ChatScreen(BaseAppScreen):
                     self.chat_state = ChatScreenState()
             
         except Exception as e:
-            logger.error(f"Error restoring chat state: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error restoring chat state: {e}")
             self.chat_state = ChatScreenState()
     
     async def _perform_state_restoration(self) -> None:
@@ -5650,7 +5645,7 @@ class ChatScreen(BaseAppScreen):
             logger.info("Chat state restoration complete")
             
         except Exception as e:
-            logger.error(f"Error during state restoration: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error during state restoration: {e}")
     
     def _get_tab_container(self):
         """Get the ChatTabContainer widget."""
@@ -5883,7 +5878,7 @@ class ChatScreen(BaseAppScreen):
                     ),
                 ).to_payload()
             except (TypeError, ValueError, ValidationError):
-                logger.warning("Could not build evidence bundle for handoff", exc_info=True)
+                logger.opt(exception=True).warning("Could not build evidence bundle for handoff")
 
         self._pending_console_launch_context = ConsoleLiveWorkLaunch.from_values(
             source=payload.source,
@@ -7089,7 +7084,7 @@ class ChatScreen(BaseAppScreen):
             shell_bar.sync_from_tab_state(active_tab)
             logger.debug(f"Synced shell bar from active tab {active_tab.tab_id}")
         except Exception as e:
-            logger.error(f"Failed to sync shell bar from state: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to sync shell bar from state: {e}")
 
     def sync_shell_bar_from_session_data(self, session_data: Optional[ChatSessionData]) -> None:
         """Push the live active session contract into the mounted shell bar."""
@@ -7133,7 +7128,7 @@ class ChatScreen(BaseAppScreen):
                 )
             self._sync_console_transcript_guidance()
         except Exception as e:
-            logger.error(f"Failed to sync shell bar from live session: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to sync shell bar from live session: {e}")
 
     def on_chat_tab_container_active_session_changed(
         self,
@@ -7330,7 +7325,7 @@ class ChatScreen(BaseAppScreen):
             else:
                 logger.debug("No input text to restore")
         except Exception as e:
-            logger.error(f"Error restoring input text: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error restoring input text: {e}")
     
     def _save_scroll_positions(self) -> None:
         """Save scroll positions for all tabs."""
@@ -7432,7 +7427,7 @@ class ChatScreen(BaseAppScreen):
                         f"Temperature: {active_tab.temperature_override}, Max tokens: {active_tab.max_tokens_override}")
                 
         except Exception as e:
-            logger.error(f"Error saving sidebar settings: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving sidebar settings: {e}")
     
     def _save_attachments(self) -> None:
         """Save pending attachment states."""
@@ -7536,7 +7531,7 @@ class ChatScreen(BaseAppScreen):
             self._sync_compact_shell_controls_from_sidebar()
                     
         except Exception as e:
-            logger.error(f"Error restoring sidebar settings: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error restoring sidebar settings: {e}")
     
     async def _restore_attachments(self) -> None:
         """Restore pending attachments."""
@@ -8159,7 +8154,7 @@ class ChatScreen(BaseAppScreen):
             self._log_sidebar_widgets()
             
         except Exception as e:
-            logger.error(f"Error running diagnostics: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error running diagnostics: {e}")
     
     def _log_sidebar_widgets(self) -> None:
         """Log all sidebar widgets for debugging state preservation."""

@@ -37,6 +37,12 @@ LIBRARY_RAG_EMPTY_STATE_SELECTOR = "library-rag-empty-state"
 LIBRARY_RAG_USE_IN_CONSOLE_DISABLED_REASON = (
     "Run a query and select usable evidence before sending to Console."
 )
+# The "#library-rag-scope-summary" strip text. One source of truth shared by
+# the panel's compose path (library_search_rag_panel._scope_summary) and the
+# screen's incremental refresh path (LibraryScreen._library_rag_scope_summary)
+# so the two can't drift apart. Per-source counts are deliberately absent --
+# the scope toggle buttons directly below the strip already carry them (L6).
+LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY = "Scope: all local sources"
 LIBRARY_RAG_QUERY_MAX_LENGTH = 2_000
 LIBRARY_RAG_DISPLAY_MAX_LENGTH = 1_000
 LIBRARY_RAG_SNIPPET_MAX_LENGTH = 4_000
@@ -511,7 +517,7 @@ class LibraryRagQueryState:
             include_citations=include_citations,
             status="ready" if enabled else "blocked",
             run_action=LibraryRagActionState(
-                label="Run Search/RAG",
+                label="Run",
                 enabled=enabled,
                 widget_id=LIBRARY_RAG_RUN_ACTION_ID,
                 disabled_reason=disabled_reason,
@@ -650,15 +656,29 @@ class LibraryRagResultRow:
 
     @property
     def row_badge_label(self) -> str:
-        """One-line source authority summary for result list scanning."""
-        return " | ".join(
-            (
-                self.source_type_badge_label,
-                self.workspace_badge_label,
-                self.citation_count_badge_label,
-                self.eligibility_badge_label,
-            )
-        )
+        """One-line source authority summary for result list scanning.
+
+        Humanized composition (UX wave M5): badges that would only restate
+        the default/no-signal case are dropped rather than listed
+        unconditionally, and the remainder is joined with the app-wide
+        " · " separator (not "|"). The source-type badge always appears;
+        the workspace badge is dropped when it is the default "all
+        workspaces"; the citation-count badge appears only when there are
+        citations; eligibility contributes nothing when "eligible" and
+        "excluded from context" when "blocked". Examples: "media",
+        "media · 2 citations", "media · excluded from context". The
+        individual badge properties above are unchanged -- other call
+        sites/tests depend on their current behavior.
+        """
+        parts = [self.source_type_badge_label]
+        workspace_label = self.workspace_badge_label
+        if workspace_label != "all workspaces":
+            parts.append(workspace_label)
+        if len(self.citations) > 0:
+            parts.append(self.citation_count_badge_label)
+        if self.eligibility_badge_label == "blocked":
+            parts.append("excluded from context")
+        return " · ".join(parts)
 
     @property
     def source_identity_label(self) -> str:

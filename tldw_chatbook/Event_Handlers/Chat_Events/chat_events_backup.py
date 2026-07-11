@@ -218,7 +218,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                 text_area.focus()
                 return
         except Exception as exc:
-            loguru_logger.error("Failed to inspect last message for resend: %s", exc, exc_info=True)
+            loguru_logger.opt(exception=True).error("Failed to inspect last message for resend: %s", exc)
             text_area.focus()
             return
 
@@ -323,7 +323,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                     if world_books:
                         loguru_logger.info(f"Found {len(world_books)} world books for conversation {active_conversation_id}")
                 except Exception as e:
-                    loguru_logger.error(f"Failed to load world books: {e}", exc_info=True)
+                    loguru_logger.opt(exception=True).error(f"Failed to load world books: {e}")
             
             # Check character's embedded world info
             has_character_book = False
@@ -341,7 +341,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                     )
                     loguru_logger.info(f"World info processor initialized with {len(world_info_processor.entries)} active entries")
                 except Exception as e:
-                    loguru_logger.error(f"Failed to initialize world info processor: {e}", exc_info=True)
+                    loguru_logger.opt(exception=True).error(f"Failed to initialize world info processor: {e}")
     else:
         loguru_logger.info("No active character data. Using system prompt from left sidebar UI.")
 
@@ -474,7 +474,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
         loguru_logger.debug(f"Built chat history for API with {len(chat_history_for_api)} messages.")
 
     except Exception as e:
-        loguru_logger.error(f"Failed to build chat history for API: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Failed to build chat history for API: {e}")
         await chat_container.mount(ChatMessage(Text.from_markup("Internal Error: Could not retrieve chat history."), role="System", classes="-error"))
         return
 
@@ -514,7 +514,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
             except AttributeError as e:
                 loguru_logger.debug(f"Enhanced chat window attribute error: {e}")
             except Exception as e:
-                loguru_logger.warning(f"Unexpected error getting pending attachment/image: {e}", exc_info=True)
+                loguru_logger.opt(exception=True).warning(f"Unexpected error getting pending attachment/image: {e}")
         
         # Get user display name from User Identifier or default to "User"
         user_display_name = llm_user_identifier_value or "User"
@@ -593,9 +593,9 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                 else:
                     loguru_logger.error(f"Failed to save user message to DB for conversation {active_conversation_id}.")
             except (CharactersRAGDBError, InputError) as e_add_msg: # Catch specific errors from ccl
-                loguru_logger.error(f"Error saving user message to DB: {e_add_msg}", exc_info=True)
+                loguru_logger.opt(exception=True).error(f"Error saving user message to DB: {e_add_msg}")
             except Exception as e_add_msg_generic:
-                 loguru_logger.error(f"Generic error saving user message to DB: {e_add_msg_generic}", exc_info=True)
+                 loguru_logger.opt(exception=True).error(f"Generic error saving user message to DB: {e_add_msg_generic}")
 
     elif app.current_chat_is_ephemeral:
         loguru_logger.debug("Chat is ephemeral. User message not saved to DB at this stage.")
@@ -687,7 +687,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
     except ImportError:
         loguru_logger.debug("RAG events not available - skipping RAG context")
     except Exception as e:
-        loguru_logger.error(f"Error getting RAG context: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error getting RAG context: {e}")
     
     # --- 10.6. Apply Chat Dictionaries if enabled ---
     # Get active dictionaries for the current conversation
@@ -714,7 +714,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                     loguru_logger.info(f"Total chat dictionary entries loaded: {len(chatdict_entries)}")
             
         except Exception as e:
-            loguru_logger.error(f"Error loading chat dictionaries: {e}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error loading chat dictionaries: {e}")
             # Continue without dictionaries on error
     
     # --- 10.7. Apply World Info if enabled ---
@@ -766,7 +766,7 @@ async def handle_chat_send_button_pressed(app: 'TldwCli', event: Button.Pressed)
                 app.current_world_info_active = False
                 app.current_world_info_count = 0
         except Exception as e:
-            loguru_logger.error(f"Error processing world info: {e}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error processing world info: {e}")
             # Continue without world info on error
     
     # --- 11. Prepare and Dispatch API Call via Worker ---
@@ -1084,20 +1084,17 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                                 f"ccl.edit_message_content returned False for {action_widget.message_id_internal} without raising an exception.")
                             app.notify("Failed to save edit to DB (update operation returned false).", severity="error")
                     except ConflictError as e_conflict:
-                        loguru_logger.error(
-                            f"Conflict updating message {action_widget.message_id_internal} in DB: {e_conflict}",
-                            exc_info=True)
+                        loguru_logger.opt(exception=True).error(
+                            f"Conflict updating message {action_widget.message_id_internal} in DB: {e_conflict}")
                         app.notify(f"Save conflict: {e_conflict}. Please reload the chat or message.", severity="error",
                                    timeout=7)
                     except (CharactersRAGDBError, InputError) as e_db_update:
-                        loguru_logger.error(
-                            f"DB/Input error updating message {action_widget.message_id_internal} in DB: {e_db_update}",
-                            exc_info=True)
+                        loguru_logger.opt(exception=True).error(
+                            f"DB/Input error updating message {action_widget.message_id_internal} in DB: {e_db_update}")
                         app.notify(f"Failed to save edit to DB: {e_db_update}", severity="error")
                     except Exception as e_generic_update:  # Catch any other unexpected error
-                        loguru_logger.error(
-                            f"Unexpected error updating message {action_widget.message_id_internal} in DB: {e_generic_update}",
-                            exc_info=True)
+                        loguru_logger.opt(exception=True).error(
+                            f"Unexpected error updating message {action_widget.message_id_internal} in DB: {e_generic_update}")
                         app.notify(f"An unexpected error occurred while saving the edit: {e_generic_update}",
                                    severity="error")
 
@@ -1108,7 +1105,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                 action_widget._editing = False
                 button.label = get_char(EMOJI_EDIT, FALLBACK_EDIT)
             except Exception as e_edit_stop:
-                loguru_logger.error(f"Error stopping edit: {e_edit_stop}", exc_info=True)
+                loguru_logger.opt(exception=True).error(f"Error stopping edit: {e_edit_stop}")
                 if 'markdown_widget' in locals() and markdown_widget.is_mounted:
                     await markdown_widget.update(message_text)  # Restore text
                     markdown_widget.display = True
@@ -1182,7 +1179,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                         app.notify("Failed to create note", severity="error")
                         
                 except Exception as e:
-                    loguru_logger.error(f"Error creating note from message: {e}", exc_info=True)
+                    loguru_logger.opt(exception=True).error(f"Error creating note from message: {e}")
                     app.notify(f"Failed to create note: {str(e)}", severity="error")
             
             elif isinstance(result, str):
@@ -1577,8 +1574,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
                             loguru_logger.error(f"Cannot delete message {message_id_to_delete}: missing version information")
                             app.notify("Cannot delete message: missing version information", severity="error")
                     except Exception as e_db_delete:
-                        loguru_logger.error(f"Failed to delete message {message_id_to_delete} from DB: {e_db_delete}",
-                                            exc_info=True)
+                        loguru_logger.opt(exception=True).error(f"Failed to delete message {message_id_to_delete} from DB: {e_db_delete}")
                         app.notify("Failed to delete message from DB.", severity="error")
             except Exception as exc:
                 logging.error("Failed to delete message widget: %s", exc, exc_info=True)
@@ -1973,7 +1969,7 @@ async def handle_chat_action_button_pressed(app: 'TldwCli', button: Button, acti
             loguru_logger.info(f"Selected variant {variant_id} as the active variant for message {original_id}")
             
         except Exception as e:
-            loguru_logger.error(f"Error selecting variant: {e}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error selecting variant: {e}")
             app.notify(f"Failed to select variant: {e}", severity="error")
     
     elif "suggest-response-button" in button_classes and action_widget.has_class("-ai"):
@@ -2255,11 +2251,11 @@ async def handle_chat_save_current_chat_button_pressed(app: 'TldwCli', event: Bu
                 app.notify("Failed to save chat (no ID returned).", severity="error")
 
         except Exception as e_save_chat:
-            loguru_logger.error(f"Exception while saving chat: {e_save_chat}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Exception while saving chat: {e_save_chat}")
             app.notify(f"Error saving chat: {str(e_save_chat)[:100]}", severity="error")
     
     except Exception as e_outer:
-        loguru_logger.error(f"Unexpected error in save current chat handler: {e_outer}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Unexpected error in save current chat handler: {e_outer}")
         app.notify(f"Unexpected error saving chat: {str(e_outer)[:100]}", severity="error")
 
 
@@ -2363,7 +2359,7 @@ async def handle_chat_convert_to_note_button_pressed(app: 'TldwCli', event: Butt
             loguru_logger.error("Notes service returned None for note ID")
             
     except Exception as e:
-        loguru_logger.error(f"Error converting conversation to note: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error converting conversation to note: {e}")
         app.notify(f"Failed to convert conversation: {str(e)}", severity="error")
 
 
@@ -2476,7 +2472,7 @@ async def handle_chat_clone_current_chat_button_pressed(app: 'TldwCli', event: B
             loguru_logger.error("Failed to create cloned conversation - no ID returned")
             
     except Exception as e:
-        loguru_logger.error(f"Error cloning chat: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error cloning chat: {e}")
         app.notify(f"Failed to clone chat: {str(e)[:100]}", severity="error")
 
 
@@ -2570,17 +2566,16 @@ async def handle_chat_save_details_button_pressed(app: 'TldwCli', event: Button.
             app.notify("No changes to save.", severity="information", timeout=2)
 
     except QueryError as e_query:
-        loguru_logger.error(f"Save Conversation Details: UI component not found: {e_query}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Save Conversation Details: UI component not found: {e_query}")
         app.notify("Error accessing UI fields.", severity="error", timeout=3)
     except ConflictError as e_conflict:
-        loguru_logger.error(f"Conflict saving conversation details for {conversation_id}: {e_conflict}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Conflict saving conversation details for {conversation_id}: {e_conflict}")
         app.notify(f"Save conflict: {e_conflict}. Please reload.", severity="error", timeout=5)
     except CharactersRAGDBError as e_db:  # More generic DB error
-        loguru_logger.error(f"DB error saving conversation details for {conversation_id}: {e_db}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"DB error saving conversation details for {conversation_id}: {e_db}")
         app.notify("Database error saving details.", severity="error", timeout=3)
     except Exception as e_unexp:
-        loguru_logger.error(f"Unexpected error saving conversation details for {conversation_id}: {e_unexp}",
-                            exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Unexpected error saving conversation details for {conversation_id}: {e_unexp}")
         app.notify("Unexpected error saving details.", severity="error", timeout=3)
 
 
@@ -2613,13 +2608,13 @@ async def handle_chat_load_selected_button_pressed(app: 'TldwCli', event: Button
         app.notify(f"Chat '{conversation_title}' loaded.", severity="information")
 
     except QueryError as e_query:
-        loguru_logger.error(f"UI component not found for loading chat: {e_query}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"UI component not found for loading chat: {e_query}")
         app.notify("Error accessing UI for loading chat.", severity="error")
     except CharactersRAGDBError as e_db: # Make sure CharactersRAGDBError is imported
-        loguru_logger.error(f"Database error loading chat: {e_db}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Database error loading chat: {e_db}")
         app.notify("Database error loading chat.", severity="error")
     except Exception as e_unexp:
-        loguru_logger.error(f"Unexpected error loading chat: {e_unexp}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Unexpected error loading chat: {e_unexp}")
         app.notify("Unexpected error loading chat.", severity="error")
 
 
@@ -2798,7 +2793,7 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
         loguru_logger.info(f"Conversation search yielded {len(conversations)} results for display.")
 
     except QueryError as e_query:
-        loguru_logger.error(f"UI component not found during conversation search: {e_query}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"UI component not found during conversation search: {e_query}")
         if 'results_list_view' in locals() and results_list_view.is_mounted:
             try:
                 await results_list_view.append(ListItem(Label("Error: UI component missing.")))
@@ -2807,7 +2802,7 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
                 # AttributeError if results_list_view is None or invalid
                 pass
     except CharactersRAGDBError as e_db:
-        loguru_logger.error(f"Database error during conversation search: {e_db}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Database error during conversation search: {e_db}")
         if 'results_list_view' in locals() and results_list_view.is_mounted:
             try:
                 await results_list_view.append(ListItem(Label("Error: Database search failed.")))
@@ -2816,7 +2811,7 @@ async def perform_chat_conversation_search(app: 'TldwCli') -> None:
                 # AttributeError if results_list_view is None or invalid
                 pass
     except Exception as e_unexp:
-        loguru_logger.error(f"Unexpected error during conversation search: {e_unexp}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Unexpected error during conversation search: {e_unexp}")
         if 'results_list_view' in locals() and results_list_view.is_mounted:
             try:
                 await results_list_view.append(ListItem(Label("Error: Unexpected search failure.")))
@@ -2846,7 +2841,7 @@ async def handle_chat_search_checkbox_changed(app: 'TldwCli', checkbox_id: str, 
             if value:
                 char_filter_select.value = Select.BLANK  # Clear selection when "All" is checked
         except QueryError as e:
-            loguru_logger.error(f"Error accessing character filter select: {e}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error accessing character filter select: {e}")
 
     # Trigger a new search based on any checkbox change that affects the filter
     await perform_chat_conversation_search(app)
@@ -3146,10 +3141,10 @@ async def handle_chat_character_search_input_changed(app: 'TldwCli', event: Inpu
         await _populate_chat_character_search_list(app, search_term)
 
     except QueryError as e_query:
-        loguru_logger.error(f"UI component not found for character search: {e_query}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"UI component not found for character search: {e_query}")
         # Don't notify here as it's an input change, could be spammy. Log is enough.
     except Exception as e_unexp:
-        loguru_logger.error(f"Unexpected error in character search input change: {e_unexp}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Unexpected error in character search input change: {e_unexp}")
         # Don't notify here.
 
 
@@ -3223,7 +3218,7 @@ async def handle_chat_load_character_button_pressed(app: 'TldwCli', event: Butto
             app.query_one("#chat-character-system-prompt-edit", TextArea).text = character_data_full.get('system_prompt', '')
             app.query_one("#chat-character-first-message-edit", TextArea).text = character_data_full.get('first_message', '')
         except QueryError as qe_populate:
-            loguru_logger.error(f"Error populating character edit fields: {qe_populate}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error populating character edit fields: {qe_populate}")
             app.notify("Error updating character display fields.", severity="error")
             # Potentially revert app.current_chat_active_character_data if UI update fails critically
             # app.current_chat_active_character_data = None # Or previous state
@@ -3289,7 +3284,7 @@ async def handle_chat_load_character_button_pressed(app: 'TldwCli', event: Butto
                 except QueryError as e_chat_log:
                     loguru_logger.error(f"Could not find #chat-log to check for messages or mount greeting: {e_chat_log}")
                 except Exception as e_greeting:
-                    loguru_logger.error(f"Error displaying character greeting: {e_greeting}", exc_info=True)
+                    loguru_logger.opt(exception=True).error(f"Error displaying character greeting: {e_greeting}")
             else:
                 loguru_logger.debug("No active character data (active_char_data_dict is None), skipping greeting.")
         # --- End of fix ---
@@ -3297,10 +3292,10 @@ async def handle_chat_load_character_button_pressed(app: 'TldwCli', event: Butto
         loguru_logger.info(f"Character ID {selected_char_id} loaded and fields populated.")
 
     except QueryError as e_query:
-        loguru_logger.error(f"UI component not found for loading character: {e_query}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"UI component not found for loading character: {e_query}")
         app.notify("Error: Character load UI elements missing.", severity="error")
     except Exception as e_unexp:
-        loguru_logger.error(f"Unexpected error loading character: {e_unexp}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Unexpected error loading character: {e_unexp}")
         app.notify("Unexpected error during character load.", severity="error")
 
 
@@ -3393,19 +3388,17 @@ async def handle_chat_clear_active_character_button_pressed(app: 'TldwCli', even
         loguru_logger.debug("Cleared active character data and UI fields from within #chat-right-sidebar.")
 
     except QueryError as e:
-        loguru_logger.error(
+        loguru_logger.opt(exception=True).error(
             f"UI component not found when clearing character fields within #chat-right-sidebar. "
-            f"Widget ID/Selector: {getattr(e, 'widget_id', getattr(e, 'selector', 'N/A'))}",
-            exc_info=True
-        )
+            f"Widget ID/Selector: {getattr(e, 'widget_id', getattr(e, 'selector', 'N/A'))}")
         app.notify("Error clearing character fields (UI component not found).", severity="error")
     except Exception as e_unexp:
-        loguru_logger.error(f"Unexpected error clearing active character: {e_unexp}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Unexpected error clearing active character: {e_unexp}")
         app.notify("Error clearing active character.", severity="error")
 
 
 async def handle_chat_prompt_search_input_changed(app: 'TldwCli', event_value: str) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     search_term = event_value.strip()
     logger.debug(f"Chat Tab: Prompt search input changed to: '{search_term}'")
 
@@ -3456,7 +3449,7 @@ async def handle_chat_prompt_search_input_changed(app: 'TldwCli', event_value: s
             logger.info(f"Chat Tab: Prompt search for '{search_term}' found no results.")
 
     except prompts_interop.DatabaseError as e_db:
-        logger.error(f"Chat Tab: Database error during prompt search: {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"Chat Tab: Database error during prompt search: {e_db}")
         try:  # Attempt to update UI with error
             results_list_view = app.query_one("#chat-prompt-search-results-listview", ListView)
             await results_list_view.clear()
@@ -3464,7 +3457,7 @@ async def handle_chat_prompt_search_input_changed(app: 'TldwCli', event_value: s
         except Exception:
             pass
     except Exception as e:
-        logger.error(f"Chat Tab: Unexpected error during prompt search: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Chat Tab: Unexpected error during prompt search: {e}")
         try:  # Attempt to update UI with error
             results_list_view = app.query_one("#chat-prompt-search-results-listview", ListView)
             await results_list_view.clear()
@@ -3474,17 +3467,17 @@ async def handle_chat_prompt_search_input_changed(app: 'TldwCli', event_value: s
 
 
 async def perform_chat_prompt_search(app: 'TldwCli') -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     try:
         search_input_widget = app.query_one("#chat-prompt-search-input",
                                             Input)  # Ensure Input is imported where this is called
         await handle_chat_prompt_search_input_changed(app, search_input_widget.value)
     except Exception as e:
-        logger.error(f"Chat Tab: Error performing prompt search via perform_chat_prompt_search: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Chat Tab: Error performing prompt search via perform_chat_prompt_search: {e}")
 
 
 async def handle_chat_view_selected_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug("Chat Tab: View Selected Prompt button pressed.")
 
     try:
@@ -3538,10 +3531,10 @@ async def handle_chat_view_selected_prompt_button_pressed(app: 'TldwCli', event:
             logger.error(f"Chat Tab: Failed to fetch details for prompt identifier: {identifier_to_fetch}")
 
     except prompts_interop.DatabaseError as e_db:
-        logger.error(f"Chat Tab: Database error viewing selected prompt: {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"Chat Tab: Database error viewing selected prompt: {e_db}")
         app.notify("Database error loading prompt.", severity="error")
     except Exception as e:
-        logger.error(f"Chat Tab: Unexpected error viewing selected prompt: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Chat Tab: Unexpected error viewing selected prompt: {e}")
         app.notify("Error loading prompt for viewing.", severity="error")
         # Clear display areas on generic error too
         try:
@@ -3587,20 +3580,20 @@ async def _populate_chat_character_search_list(app: 'TldwCli', search_term: Opti
             loguru_logger.info(f"Character list populated using {operation_type}. Found {len(characters)} characters.")
 
         except Exception as e_db_call:
-            loguru_logger.error(f"Error during DB call ({operation_type}): {e_db_call}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error during DB call ({operation_type}): {e_db_call}")
             await results_list_view.append(ListItem(Label(f"Error during {operation_type}.")))
 
     except QueryError as e_query:
-        loguru_logger.error(f"UI component not found for character list population: {e_query}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"UI component not found for character list population: {e_query}")
         # Avoid app.notify here as this function might be called when tab is not fully visible.
         # Let the calling context (e.g., direct user action) handle user notifications if appropriate.
     except Exception as e_unexp:
-        loguru_logger.error(f"Unexpected error in _populate_chat_character_search_list: {e_unexp}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Unexpected error in _populate_chat_character_search_list: {e_unexp}")
         # Avoid app.notify here as well.
 
 
 async def handle_chat_copy_system_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug("Chat Tab: Copy System Prompt button pressed.")
     try:
         system_display_widget = app.query_one("#chat-prompt-system-display", TextArea)
@@ -3613,12 +3606,12 @@ async def handle_chat_copy_system_prompt_button_pressed(app: 'TldwCli', event: B
             app.notify("No system prompt content to copy.", severity="warning")
             logger.warning("Chat Tab: No system prompt content available to copy.")
     except Exception as e:
-        logger.error(f"Chat Tab: Error copying system prompt: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Chat Tab: Error copying system prompt: {e}")
         app.notify("Error copying system prompt.", severity="error")
 
 
 async def handle_chat_copy_user_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug("Chat Tab: Copy User Prompt button pressed.")
     try:
         user_display_widget = app.query_one("#chat-prompt-user-display", TextArea)
@@ -3631,7 +3624,7 @@ async def handle_chat_copy_user_prompt_button_pressed(app: 'TldwCli', event: But
             app.notify("No user prompt content to copy.", severity="warning")
             logger.warning("Chat Tab: No user prompt content available to copy.")
     except Exception as e:
-        logger.error(f"Chat Tab: Error copying user prompt: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Chat Tab: Error copying user prompt: {e}")
         app.notify("Error copying user prompt.", severity="error")
 
 
@@ -3639,7 +3632,7 @@ async def handle_chat_template_search_input_changed(app: 'TldwCli', event_value:
     """Handle changes to the template search input in the Chat tab."""
     from tldw_chatbook.Chat.prompt_template_manager import get_available_templates
 
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     search_term = event_value.strip().lower()
     logger.debug(f"Chat Tab: Template search input changed to: '{search_term}'")
 
@@ -3671,7 +3664,7 @@ async def handle_chat_template_search_input_changed(app: 'TldwCli', event_value:
             logger.info(f"Chat Tab: Template search for '{search_term}' found no results.")
 
     except Exception as e:
-        logger.error(f"Chat Tab: Error during template search: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Chat Tab: Error during template search: {e}")
         try:
             template_list_view = app.query_one("#chat-template-list-view", ListView)
             await template_list_view.clear()
@@ -3684,7 +3677,7 @@ async def handle_chat_apply_template_button_pressed(app: 'TldwCli', event: Butto
     """Handle the Apply Template button press in the Chat tab."""
     from tldw_chatbook.Chat.prompt_template_manager import load_template
 
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug("Chat Tab: Apply Template button pressed.")
 
     try:
@@ -3728,7 +3721,7 @@ async def handle_chat_apply_template_button_pressed(app: 'TldwCli', event: Butto
         logger.info(f"Chat Tab: Applied template: {template_name}")
 
     except Exception as e:
-        logger.error(f"Chat Tab: Error applying template: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Chat Tab: Error applying template: {e}")
         app.notify("Error applying template.", severity="error")
 
 
@@ -3751,7 +3744,7 @@ async def handle_chat_sidebar_prompt_search_changed(
     new_value : str
         The raw text currently in the search-input.  Leading / trailing whitespace is ignored.
     """
-    logger = getattr(app, "loguru_logger", logging)  # fall back to stdlib if unavailable
+    logger = getattr(app, "loguru_logger", loguru_logger)  # fall back to module-level loguru logger if unavailable
     search_term = (new_value or "").strip()
     logger.debug(f"Sidebar-Prompt-Search changed → '{search_term}'")
 
@@ -3787,7 +3780,7 @@ async def handle_chat_sidebar_prompt_search_changed(
                 include_deleted = False,
             )
         except Exception as e:
-            logger.error(f"[Prompts] Default-list load failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"[Prompts] Default-list load failed: {e}")
             await results_view.append(ListItem(Label("Failed to load prompts.")))
             return
     # === A term is present → Run a full search. ===
@@ -3801,11 +3794,11 @@ async def handle_chat_sidebar_prompt_search_changed(
                 include_deleted  = False,
             )
         except prompts_interop.DatabaseError as dbe:
-            logger.error(f"[Prompts] DB error during search: {dbe}", exc_info=True)
+            logger.opt(exception=True).error(f"[Prompts] DB error during search: {dbe}")
             await results_view.append(ListItem(Label("Database error while searching.")))
             return
         except Exception as ex:
-            logger.error(f"[Prompts] Unknown error during search: {ex}", exc_info=True)
+            logger.opt(exception=True).error(f"[Prompts] Unknown error during search: {ex}")
             await results_view.append(ListItem(Label("Error during search.")))
             return
 
@@ -3846,14 +3839,14 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         markdown_widget = message_widget.query_one(".message-text", Markdown)
         original_display_text_obj = message_widget.message_text # Save the original text
     except QueryError as qe:
-        loguru_logger.error(f"Error querying essential UI component for continuation: {qe}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error querying essential UI component for continuation: {qe}")
         app.notify("Error initializing continuation: UI component missing.", severity="error")
         if continue_button_widget and original_button_label: # Attempt to restore button if found
             continue_button_widget.disabled = False
             continue_button_widget.label = original_button_label
         return
     except Exception as e_init: # Catch any other init error
-        loguru_logger.error(f"Unexpected error during continue response initialization: {e_init}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Unexpected error during continue response initialization: {e_init}")
         app.notify("Unexpected error starting continuation.", severity="error")
         if continue_button_widget and original_button_label:
             continue_button_widget.disabled = False
@@ -3893,13 +3886,13 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         loguru_logger.debug(f"Built history for API continuation with {len(history_for_api)} messages. Last message is the one to continue.")
 
     except QueryError as e:
-        loguru_logger.error(f"Continue Response: Could not find UI elements for history: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Continue Response: Could not find UI elements for history: {e}")
         app.notify("Error: Chat log or other UI element not found.", severity="error")
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
         if markdown_widget: markdown_widget.update(original_display_text_obj)
         return
     except Exception as e_hist:
-        loguru_logger.error(f"Error building history for continuation: {e_hist}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error building history for continuation: {e_hist}")
         app.notify("Error preparing message history for continuation.", severity="error")
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
         if markdown_widget: markdown_widget.update(original_display_text_obj)
@@ -3919,7 +3912,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
             markdown_widget.update(original_message_text + thinking_indicator_suffix)
 
     except Exception as e_indicator: # Non-critical if this fails
-        loguru_logger.warning(f"Could not update message with thinking indicator: {e_indicator}", exc_info=True)
+        loguru_logger.opt(exception=True).warning(f"Could not update message with thinking indicator: {e_indicator}")
 
     # Prompt for the LLM to continue the last message in the history
     continuation_prompt_instruction = (
@@ -3956,7 +3949,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         llm_tool_choice_widget = app.query_one(f"#{prefix}-llm-tool-choice", Input)
         llm_fixed_tokens_kobold_widget = app.query_one(f"#{prefix}-llm-fixed-tokens-kobold", Checkbox)
     except QueryError as e:
-        loguru_logger.error(f"Continue Response: Could not find UI settings widgets for '{prefix}': {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Continue Response: Could not find UI settings widgets for '{prefix}': {e}")
         app.notify("Error: Missing UI settings for continuation.", severity="error")
         if markdown_widget: markdown_widget.update(original_display_text_obj) # Restore original text
         if continue_button_widget: continue_button_widget.disabled = False; continue_button_widget.label = original_button_label
@@ -4100,7 +4093,7 @@ async def handle_continue_response_button_pressed(app: 'TldwCli', event: Button.
         return
         
     except Exception as e_worker:
-        loguru_logger.error(f"Error starting continue worker: {e_worker}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error starting continue worker: {e_worker}")
         app.notify(f"Failed to start continuation: {str(e_worker)[:100]}", severity="error")
         
         # Restore original state on error
@@ -4162,13 +4155,13 @@ async def handle_respond_for_me_button_pressed(app: 'TldwCli', event: Button.Pre
             loguru_logger.debug(f"Built history for suggestion API with {len(history_for_api)} messages.")
 
         except QueryError as e_hist_query:
-            loguru_logger.error(f"Respond for Me: Could not find UI elements for history: {e_hist_query}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Respond for Me: Could not find UI elements for history: {e_hist_query}")
             app.notify("Error: Chat log not found.", severity="error")
             raise # Re-raise to go to finally
         except ValueError: # Catch empty history explicitly if needed for specific handling before finally
             raise
         except Exception as e_hist_build:
-            loguru_logger.error(f"Error building history for suggestion: {e_hist_build}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error building history for suggestion: {e_hist_build}")
             app.notify("Error preparing message history for suggestion.", severity="error")
             raise # Re-raise to go to finally
 
@@ -4218,7 +4211,7 @@ async def handle_respond_for_me_button_pressed(app: 'TldwCli', event: Button.Pre
                 loguru_logger.warning("Respond for Me: Could not find '#chat-strip-thinking-tags-checkbox'. Defaulting to True.")
                 strip_thinking_tags_value_suggest = True
         except QueryError as e_params_query:
-            loguru_logger.error(f"Respond for Me: Could not find UI settings widgets: {e_params_query}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Respond for Me: Could not find UI settings widgets: {e_params_query}")
             app.notify("Error: Missing UI settings for suggestion.", severity="error")
             raise # Re-raise to go to finally
 
@@ -4348,7 +4341,7 @@ async def handle_respond_for_me_button_pressed(app: 'TldwCli', event: Button.Pre
         loguru_logger.warning(f"Respond for Me: Value error encountered: {e_val}")
         # Notification for empty history is handled above. Others as they occur.
     except Exception as e_main:
-        loguru_logger.error(f"Failed to generate suggestion: {e_main}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Failed to generate suggestion: {e_main}")
         app.notify(f"Failed to generate suggestion: {str(e_main)[:100]}", severity="error", timeout=5)
     finally:
         if respond_button:
@@ -4393,7 +4386,7 @@ async def handle_stop_chat_generation_pressed(app: 'TldwCli', event: Button.Pres
                         app.current_ai_message_widget.mark_generation_complete() # Finalize UI state
                         loguru_logger.info("Non-streaming AI message widget UI updated for cancellation.")
                     except QueryError as qe_widget_update:
-                        loguru_logger.error(f"Error updating non-streaming AI message widget UI on cancellation: {qe_widget_update}", exc_info=True)
+                        loguru_logger.opt(exception=True).error(f"Error updating non-streaming AI message widget UI on cancellation: {qe_widget_update}")
                 else:
                     loguru_logger.warning("Non-streaming cancellation: current_ai_message_widget not found or not mounted.")
             else: # It was a streaming request
@@ -4402,7 +4395,7 @@ async def handle_stop_chat_generation_pressed(app: 'TldwCli', event: Button.Pres
                 # The on_stream_done event (with error or cancellation status) will then handle UI finalization.
 
         except Exception as e_cancel:
-            loguru_logger.error(f"Error during worker cancellation or UI update: {e_cancel}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error during worker cancellation or UI update: {e_cancel}")
             app.notify("Error trying to stop generation.", severity="error")
     else:
         loguru_logger.info("No active and running chat worker to stop.")
@@ -4558,7 +4551,7 @@ async def generate_document_with_llm(app: 'TldwCli', document_type: str,
         loguru_logger.info(f"Generated {document_type} with note ID: {note_id}")
         
     except Exception as e:
-        loguru_logger.error(f"Error generating {document_type}: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error generating {document_type}: {e}")
         app.notify(f"Failed to generate {document_type}: {str(e)}", severity="error")
 
 

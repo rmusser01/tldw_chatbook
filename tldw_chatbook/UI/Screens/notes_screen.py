@@ -1070,7 +1070,7 @@ class NotesScreen(BaseAppScreen):
             )
             await self._populate_scope_list_if_available(items)
         except Exception as exc:  # pragma: no cover - defensive path
-            logger.error(f"Error refreshing server notes scope: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error refreshing server notes scope: {exc}")
             self._set_state(
                 server_notes_loading=False,
                 server_notes_refreshing=False,
@@ -1115,7 +1115,7 @@ class NotesScreen(BaseAppScreen):
                 workspace_error=None,
             )
         except Exception as exc:  # pragma: no cover - defensive path
-            logger.error(f"Error refreshing workspace scope: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error refreshing workspace scope: {exc}")
             self._set_state(
                 workspace_loading=False,
                 workspace_refreshing=False,
@@ -1684,7 +1684,7 @@ class NotesScreen(BaseAppScreen):
             pyperclip.copy(self._build_export_content(export_format))
             self._notify(f"Note copied to clipboard as {export_format}!", severity="information")
         except Exception as exc:  # pragma: no cover - clipboard environment dependent
-            logger.error(f"Failed to copy note to clipboard: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to copy note to clipboard: {exc}")
             self._notify(f"Error copying note: {type(exc).__name__}", severity="error")
 
     async def _export_current_note(self, export_format: str) -> None:
@@ -1718,7 +1718,7 @@ class NotesScreen(BaseAppScreen):
             selected_path.write_text(self._build_export_content(export_format), encoding="utf-8")
             self._notify(f"Note exported successfully to {selected_path.name}", severity="information")
         except Exception as exc:  # pragma: no cover - filesystem errors are environment dependent
-            logger.error(f"Error exporting note to '{selected_path}': {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error exporting note to '{selected_path}': {exc}")
             self._notify(f"Error exporting note: {type(exc).__name__}", severity="error")
 
     def _update_unsaved_indicator(self) -> None:
@@ -1930,7 +1930,7 @@ class NotesScreen(BaseAppScreen):
             self._sync_legacy_local_selection()
             return True
         except Exception as exc:
-            logger.error(f"Error saving note: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving note: {exc}")
             self._notify(f"Error saving note: {type(exc).__name__}", severity="error")
             return False
 
@@ -2008,7 +2008,7 @@ class NotesScreen(BaseAppScreen):
                 study_materials_policy="general",
             )
         except Exception as exc:
-            logger.error(f"Error creating workspace: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error creating workspace: {exc}")
             self._notify(f"Error creating workspace: {type(exc).__name__}", severity="error")
             return False
         if not isinstance(result, dict):
@@ -2061,7 +2061,7 @@ class NotesScreen(BaseAppScreen):
                 study_materials_policy=policy,
             )
         except Exception as exc:
-            logger.error(f"Error saving workspace details: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving workspace details: {exc}")
             self._notify(f"Error saving workspace: {type(exc).__name__}", severity="error")
             return False
         if not isinstance(result, dict):
@@ -2120,7 +2120,7 @@ class NotesScreen(BaseAppScreen):
                 selected=selected,
             )
         except Exception as exc:
-            logger.error(f"Error saving workspace source: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving workspace source: {exc}")
             self._notify(f"Error saving workspace source: {type(exc).__name__}", severity="error")
             return False
         if not isinstance(result, dict):
@@ -2171,7 +2171,7 @@ class NotesScreen(BaseAppScreen):
                 content=content,
             )
         except Exception as exc:
-            logger.error(f"Error saving workspace artifact: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving workspace artifact: {exc}")
             self._notify(f"Error saving workspace artifact: {type(exc).__name__}", severity="error")
             return False
         if not isinstance(result, dict):
@@ -2250,7 +2250,7 @@ class NotesScreen(BaseAppScreen):
                 selected=selected,
             )
         except Exception as exc:
-            logger.error(f"Error creating workspace source: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error creating workspace source: {exc}")
             self._notify(f"Error creating workspace source: {type(exc).__name__}", severity="error")
             return False
         if not isinstance(result, dict):
@@ -2304,7 +2304,7 @@ class NotesScreen(BaseAppScreen):
                 content=content,
             )
         except Exception as exc:
-            logger.error(f"Error creating workspace artifact: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error creating workspace artifact: {exc}")
             self._notify(f"Error creating workspace artifact: {type(exc).__name__}", severity="error")
             return False
         if not isinstance(result, dict):
@@ -2367,7 +2367,7 @@ class NotesScreen(BaseAppScreen):
             await self.refresh_current_scope()
             self._notify("Note deleted", severity="information")
         except Exception as exc:
-            logger.error(f"Error deleting note: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error deleting note: {exc}")
             self._notify(f"Error deleting note: {type(exc).__name__}", severity="error")
 
     async def _load_note(self, note_id: Any) -> Optional[PendingNavigation]:
@@ -2581,7 +2581,7 @@ class NotesScreen(BaseAppScreen):
             await self.refresh_current_scope()
             self._notify("Workspace deleted", severity="information")
         except Exception as exc:
-            logger.error(f"Error deleting workspace: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error deleting workspace: {exc}")
             self._notify(f"Error deleting workspace: {type(exc).__name__}", severity="error")
 
     async def _delete_current_workspace_resource(self) -> None:
@@ -2637,7 +2637,7 @@ class NotesScreen(BaseAppScreen):
             await self.refresh_current_scope()
             self._notify(f"Workspace {resource_kind} deleted", severity="information")
         except Exception as exc:
-            logger.error(f"Error deleting workspace {resource_kind}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error deleting workspace {resource_kind}: {exc}")
             self._notify(f"Error deleting workspace {resource_kind}: {type(exc).__name__}", severity="error")
 
     async def _clear_editor(self) -> None:

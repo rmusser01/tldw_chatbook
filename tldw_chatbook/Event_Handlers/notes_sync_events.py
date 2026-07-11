@@ -130,7 +130,7 @@ async def handle_sync_start_button(app: 'TldwCli', event: Button.Pressed) -> Non
             app.notify("Sync completed successfully", severity="information")
         
     except Exception as e:
-        logger.error(f"Error during sync: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error during sync: {e}")
         app.notify(f"Sync failed: {str(e)}", severity="error")
 
 
@@ -167,7 +167,7 @@ async def handle_sync_save_profile_button(app: 'TldwCli', event: Button.Pressed)
         app.notify(f"Profile '{profile_name}' saved", severity="information")
         
     except Exception as e:
-        logger.error(f"Error saving sync profile: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error saving sync profile: {e}")
         app.notify(f"Failed to save profile: {str(e)}", severity="error")
 
 
@@ -227,7 +227,7 @@ async def handle_sync_profile_run_button(app: 'TldwCli', event: Button.Pressed) 
         sync_widget.load_sync_history()
         
     except Exception as e:
-        logger.error(f"Error running sync profile: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error running sync profile: {e}")
         app.notify(f"Profile sync failed: {str(e)}", severity="error")
 
 
@@ -255,7 +255,7 @@ async def handle_sync_profile_delete_button(app: 'TldwCli', event: Button.Presse
             app.notify(f"Failed to delete profile '{profile_name}'", severity="error")
             
     except Exception as e:
-        logger.error(f"Error deleting sync profile: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error deleting sync profile: {e}")
         app.notify(f"Failed to delete profile: {str(e)}", severity="error")
 
 
@@ -269,7 +269,7 @@ async def handle_sync_refresh_status_button(app: 'TldwCli', event: Button.Presse
         app.notify("Sync status refreshed", severity="information", timeout=2)
         
     except Exception as e:
-        logger.error(f"Error refreshing sync status: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error refreshing sync status: {e}")
         app.notify(f"Failed to refresh status: {str(e)}", severity="error")
 
 
@@ -289,7 +289,7 @@ async def handle_sync_cancel_button(app: 'TldwCli', event: Button.Pressed) -> No
             progress_widget.hide_progress()
             
     except Exception as e:
-        logger.error(f"Error handling sync cancel/close: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error handling sync cancel/close: {e}")
 
 
 async def handle_sync_history_details_button(app: 'TldwCli', event: Button.Pressed) -> None:
@@ -309,7 +309,7 @@ async def handle_sync_history_details_button(app: 'TldwCli', event: Button.Press
         app.notify("Sync session details (not yet implemented)", severity="information")
         
     except Exception as e:
-        logger.error(f"Error viewing sync history details: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error viewing sync history details: {e}")
 
 
 async def handle_sync_history_conflicts_button(app: 'TldwCli', event: Button.Pressed) -> None:
@@ -329,7 +329,7 @@ async def handle_sync_history_conflicts_button(app: 'TldwCli', event: Button.Pre
         app.notify("Sync conflicts view (not yet implemented)", severity="information")
         
     except Exception as e:
-        logger.error(f"Error viewing sync conflicts: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error viewing sync conflicts: {e}")
 
 
 async def handle_sync_notes_filter_changed(app: 'TldwCli', event_value: str) -> None:
@@ -342,7 +342,7 @@ async def handle_sync_notes_filter_changed(app: 'TldwCli', event_value: str) -> 
         sync_widget.refresh_notes_status()
         
     except Exception as e:
-        logger.error(f"Error filtering sync notes: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error filtering sync notes: {e}")
 
 
 async def handle_sync_status_filter_changed(app: 'TldwCli', event) -> None:
@@ -356,7 +356,7 @@ async def handle_sync_status_filter_changed(app: 'TldwCli', event) -> None:
             sync_widget.refresh_notes_status()
             
         except Exception as e:
-            logger.error(f"Error filtering by sync status: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error filtering by sync status: {e}")
 
 
 # Button handler map for sync events

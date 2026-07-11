@@ -58,7 +58,7 @@ def load_template(template_name: str) -> Optional[PromptTemplate]:
         logger.error(f"Error decoding JSON for template: {template_name}")
     except Exception as e:
         error_message_str = str(e)
-        logger.error("Error loading template {}: {}", template_name, error_message_str, exc_info=True)
+        logger.opt(exception=True).error("Error loading template {}: {}", template_name, error_message_str)
     return None
 
 
@@ -73,7 +73,7 @@ def safe_render(template_str: str, data: dict[str, Any]) -> str:
         tmpl = _SANDBOX.from_string(template_str)
         return tmpl.render(**data)
     except Exception as exc:
-        logger.error("Template render error %s", exc, exc_info=False)
+        logger.opt(exception=False).error("Template render error %s", exc)
         return template_str      # fail closed: return raw
 
 
@@ -93,7 +93,7 @@ def apply_template_to_string(template_string: Optional[str], data: Dict[str, Any
         logger.warning(f"Placeholder {e} not found in data for template string: '{template_string}'")
         return template_string # Fallback to original
     except Exception as e:
-        logger.error(f"Error applying template string '{template_string}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error applying template string '{template_string}': {e}")
         return template_string # Return original on error
 
 

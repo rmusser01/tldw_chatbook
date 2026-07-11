@@ -6,7 +6,7 @@ from typing import Any
 
 from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import Button, Collapsible, Input, Static
 
 from tldw_chatbook.Library.library_ingest_state import (
@@ -76,6 +76,16 @@ class LibraryIngestCanvas(VerticalScroll):
             id="library-ingest-browse",
             classes="library-canvas-action",
             compact=True,
+        )
+        # L4 (fix batch F1b): the supported-extensions list lives here,
+        # always visible, instead of being repeated on every failed queue
+        # row (see the row's own short_error) -- reuses the same quiet-line
+        # class as the other muted informational lines on this canvas.
+        yield Static(
+            state.supported_types_line,
+            id="library-ingest-supported-types",
+            classes="library-ingest-quiet-line",
+            markup=False,
         )
         yield Input(
             value=state.form.title,
@@ -166,14 +176,16 @@ class LibraryIngestCanvas(VerticalScroll):
             # mount time (the L3a lesson; mirrors
             # ``library_rag_history_children``'s escaped Button labels).
             row_classes = "library-ingest-row"
-            if row.can_open or row.can_retry:
-                # A row with an action button below it gets its own
-                # bottom-margin trimmed to 0 (A3) -- the button's own
-                # ``.library-ingest-row-action`` margin supplies the "tight
+            has_actions = row.can_open or row.can_retry or row.can_dismiss
+            if has_actions:
+                # A row with action buttons below it gets its own
+                # bottom-margin trimmed to 0 (A3) -- the actions row's own
+                # ``.library-ingest-row-actions`` margin supplies the "tight
                 # gap above, blank line below" spacing instead, so the
-                # button reads as belonging to THIS row rather than the one
-                # below it. Plain rows (queued/running, or a done row with
-                # no action) keep their own margin for row-to-row spacing.
+                # button(s) read as belonging to THIS row rather than the
+                # one below it. Plain rows (queued/running, or a done row
+                # with no action) keep their own margin for row-to-row
+                # spacing.
                 row_classes += " library-ingest-row-with-actions"
             yield Static(
                 escape_markup(row.line),
@@ -190,36 +202,49 @@ class LibraryIngestCanvas(VerticalScroll):
             # can't, because the screen's handlers resolve the job by id
             # from the live registry rather than by re-indexing a rebuilt
             # snapshot (see the PR #591 review's F1 finding).
-            if row.can_open:
-                yield Button(
-                    "Open in Library",
-                    id=f"library-ingest-open-{row.job_id}",
-                    classes=(
-                        "library-canvas-action library-ingest-open "
-                        "library-ingest-row-action"
-                    ),
-                    compact=True,
-                )
-            if row.can_retry:
-                yield Button(
-                    "Retry",
-                    id=f"library-ingest-retry-{row.job_id}",
-                    classes=(
-                        "library-canvas-action library-ingest-retry "
-                        "library-ingest-row-action"
-                    ),
-                    compact=True,
-                )
-            if row.can_dismiss:
-                yield Button(
-                    "Dismiss",
-                    id=f"library-ingest-dismiss-{row.job_id}",
-                    classes=(
-                        "library-canvas-action library-ingest-dismiss "
-                        "library-ingest-row-action"
-                    ),
-                    compact=True,
-                )
+            #
+            # (L5, fix batch F1b) A row's action buttons (Open in Library /
+            # Retry / Dismiss -- never more than one of "Open in Library"
+            # or the Retry+Dismiss pair applies to the same row, since
+            # can_open is DONE-only and can_retry/can_dismiss are
+            # FAILED-only) are wrapped in one ``Horizontal`` so a failed
+            # row's Retry and Dismiss sit on one line instead of stacking
+            # vertically. Both children here are fixed-width compact
+            # Buttons -- never a 1fr sibling mixed with a fixed-width one,
+            # the known non-rendering failure mode for this canvas family
+            # (see the class docstring).
+            if has_actions:
+                with Horizontal(classes="library-ingest-row-actions"):
+                    if row.can_open:
+                        yield Button(
+                            "Open in Library",
+                            id=f"library-ingest-open-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-open "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_retry:
+                        yield Button(
+                            "Retry",
+                            id=f"library-ingest-retry-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-retry "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_dismiss:
+                        yield Button(
+                            "Dismiss",
+                            id=f"library-ingest-dismiss-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-dismiss "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
         if state.queue_show_clear_finished:
             yield Button(
                 "Clear finished",

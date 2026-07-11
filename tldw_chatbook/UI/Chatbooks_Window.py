@@ -247,7 +247,7 @@ class ChatbooksWindow(Widget):
             self.chatbooks = chatbooks
             
         except Exception as e:
-            logger.error(f"Error refreshing chatbooks: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error refreshing chatbooks: {e}")
     
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

@@ -495,7 +495,7 @@ def process_image(
         logger.info(f"Image processing completed with status: {result['status']}")
         
     except Exception as e:
-        logger.error(f"Error processing image: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing image: {e}")
         result["status"] = "Error"
         result["error"] = str(e)
         log_counter("image_processing_error", labels={"error": type(e).__name__})

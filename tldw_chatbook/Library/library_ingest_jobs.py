@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Callable
 
@@ -98,6 +99,15 @@ class LibraryIngestJob:
             transitions to ``RUNNING``; ``None`` until then.
         finished_at: ``time.monotonic()`` timestamp taken when the job
             transitions to ``DONE`` or ``FAILED``; ``None`` until then.
+        finished_at_wall: The wall-clock counterpart to ``finished_at``,
+            stamped ``datetime.now(timezone.utc).isoformat()`` inside
+            ``mark_done``/``mark_failed`` (H1, fix batch F1b). Unlike
+            ``submitted_at``/``started_at``/``finished_at`` (``time.
+            monotonic()`` floats with no fixed epoch), this is a real ISO-
+            8601 UTC timestamp -- it exists so DONE/FAILED jobs can be
+            sorted and age-labeled by real time once they leave the active
+            queue (e.g. Home's Recent feed). ``""`` until a job reaches a
+            terminal state.
         superseded: ``True`` once a ``FAILED`` job has been retried via
             ``requeue`` (L3b AB wave, B1) -- hides it from ``jobs()``/
             ``counts()`` and makes ``mark_running``/``mark_done``/
@@ -109,6 +119,18 @@ class LibraryIngestJob:
             gone" reasons (auto-superseded-by-retry vs. user-dismissed)
             never get confused with one another. Never set anywhere except
             inside ``dismiss``.
+        permanent: ``True`` when a ``FAILED`` job's cause can never succeed
+            on a bare retry -- an unsupported file type or a missing source
+            file (M4, fix batch F1b): the same file at the same path will
+            fail the exact same way every time, so offering Retry for it is
+            dead bait. Set only by ``mark_failed``'s ``permanent`` kwarg
+            (the queue-runner classifies the exception; see
+            ``_classify_library_ingest_failure`` in ``app.py``), never
+            flipped afterward. ``False`` for every other job, including
+            every non-``FAILED`` state. ``requeue`` refuses a permanent job
+            (returns ``None``) as defense in depth, matching the queue
+            row's own ``can_retry = failed and not permanent`` gating in
+            ``library_ingest_state.py``.
     """
 
     job_id: str
@@ -126,8 +148,10 @@ class LibraryIngestJob:
     submitted_at: float = 0.0
     started_at: float | None = None
     finished_at: float | None = None
+    finished_at_wall: str = ""
     superseded: bool = False
     dismissed: bool = False
+    permanent: bool = False
 
 
 class LibraryIngestJobRegistry:
@@ -309,7 +333,7 @@ class LibraryIngestJobRegistry:
         return replace(updated)
 
     def mark_done(self, job_id: str, *, media_id: int) -> LibraryIngestJob | None:
-        """Transition a job to ``DONE`` and stamp ``finished_at``.
+        """Transition a job to ``DONE`` and stamp ``finished_at``/``finished_at_wall``.
 
         Args:
             job_id: The job to transition.
@@ -336,17 +360,25 @@ class LibraryIngestJobRegistry:
             state=IngestJobState.DONE,
             media_id=media_id,
             finished_at=time.monotonic(),
+            finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[index] = updated
         self._notify_listeners()
         return replace(updated)
 
-    def mark_failed(self, job_id: str, *, error: str) -> LibraryIngestJob | None:
-        """Transition a job to ``FAILED`` and stamp ``finished_at``.
+    def mark_failed(
+        self, job_id: str, *, error: str, permanent: bool = False
+    ) -> LibraryIngestJob | None:
+        """Transition a job to ``FAILED`` and stamp ``finished_at``/``finished_at_wall``.
 
         Args:
             job_id: The job to transition.
             error: A sanitized, single-line failure message.
+            permanent: Whether the failure is a validation-class one that
+                can never succeed on a bare retry (M4, fix batch F1b -- see
+                ``LibraryIngestJob.permanent``'s docstring). ``False`` by
+                default so every pre-existing caller keeps today's
+                always-retryable behavior.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
@@ -369,7 +401,9 @@ class LibraryIngestJobRegistry:
             current,
             state=IngestJobState.FAILED,
             error=error,
+            permanent=permanent,
             finished_at=time.monotonic(),
+            finished_at_wall=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[index] = updated
         self._notify_listeners()
@@ -378,11 +412,14 @@ class LibraryIngestJobRegistry:
     def requeue(self, job_id: str) -> LibraryIngestJob | None:
         """Append a fresh ``QUEUED`` copy of a ``FAILED`` job, superseding it.
 
-        Only works on a ``FAILED``, not-yet-hidden job -- calling this on a
-        job in any other state, an unknown id, or an already
-        ``superseded``/``dismissed`` id is a no-op that returns ``None``
-        (this rejects retrying the same original twice, which would
-        otherwise silently fork duplicate retries off one dead job_id).
+        Only works on a ``FAILED``, not-yet-hidden, not-``permanent`` job --
+        calling this on a job in any other state, an unknown id, an already
+        ``superseded``/``dismissed`` id, or a ``permanent`` job (M4, fix
+        batch F1b -- defense in depth alongside the queue row's own
+        ``can_retry`` gating and Home's ``retry_available`` gating) is a
+        no-op that returns ``None`` (this also rejects retrying the same
+        original twice, which would otherwise silently fork duplicate
+        retries off one dead job_id).
 
         (L3b AB wave, B1) The original failed job is marked ``superseded``
         -- it stays in the registry's internal history (so its data is not
@@ -407,7 +444,12 @@ class LibraryIngestJobRegistry:
         if index is None:
             return None
         source = self._jobs[index]
-        if source.state != IngestJobState.FAILED or source.superseded or source.dismissed:
+        if (
+            source.state != IngestJobState.FAILED
+            or source.superseded
+            or source.dismissed
+            or source.permanent
+        ):
             return None
         new_job = LibraryIngestJob(
             job_id=self._allocate_job_id(),

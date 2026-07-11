@@ -871,7 +871,7 @@ def chat_api_call(
                                message=f"Unexpected HTTP status {status_code} from {endpoint_lower}. Detail: {error_text[:200]}",
                                status_code=status_code)
     except requests.exceptions.RequestException as e:
-        logger.error(f"Network error connecting to {endpoint_lower}: {e}", exc_info=False)
+        logger.opt(exception=False).error(f"Network error connecting to {endpoint_lower}: {e}")
         raise ChatProviderError(provider=endpoint_lower, message=f"Network error: {e}", status_code=504)
     except (ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError, ChatConfigurationError, ChatProviderError,
             ChatAPIError) as e_chat_direct:
@@ -887,7 +887,7 @@ def chat_api_call(
         )
         raise e_chat_direct  # Re-raise the specific error
     except (ValueError, TypeError, KeyError) as e:
-        logger.error(f"Value/Type/Key error during chat API call setup for {endpoint_lower}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Value/Type/Key error during chat API call setup for {endpoint_lower}: {e}")
         error_type = "Configuration/Parameter Error"
         if "Unsupported API endpoint" in str(e):
             raise ChatConfigurationError(provider=endpoint_lower, message=f"Unsupported API endpoint: {endpoint_lower}")

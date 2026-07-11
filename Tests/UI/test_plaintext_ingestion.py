@@ -10,6 +10,11 @@ import pytest
 from textual.widgets import Button, Input
 
 from Tests.textual_test_utils import widget_pilot
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+    FileIngestionError,
+    detect_file_type,
+    get_supported_extensions,
+)
 from tldw_chatbook.UI.MediaIngestWindowRebuilt import LocalIngestionPanel
 
 
@@ -30,6 +35,38 @@ def test_plaintext_extensions_are_supported() -> None:
 
     assert ".txt" in panel.supported_extensions["plaintext"]
     assert ".md" in panel.supported_extensions["plaintext"]
+
+
+def test_xml_is_not_advertised_as_a_supported_extension() -> None:
+    """(A2) ``ingest_local_file`` only ever raised "XML file processing is
+    not yet implemented" for a detected ``'xml'`` file type -- advertising
+    it as supported (both to the panel's file picker and in
+    ``get_supported_extensions``) was dishonest. Neither should list it.
+    """
+    panel = LocalIngestionPanel(MagicMock())
+
+    assert "xml" not in panel.supported_extensions
+    assert "xml" not in get_supported_extensions()
+
+
+def test_xml_file_detection_yields_the_honest_unsupported_error() -> None:
+    """(A2) An ``.xml`` file must fail at detection time with the same
+    honest "unsupported file type" error any other unhandled extension
+    gets, instead of silently detecting as ``'xml'`` and only failing later,
+    deep inside ``ingest_local_file``, with a not-yet-implemented message.
+    The unsupported-type message itself must no longer claim XML is
+    supported either.
+    """
+    with pytest.raises(FileIngestionError) as exc_info:
+        detect_file_type(Path("notes.xml"))
+
+    message = str(exc_info.value)
+    assert "Unsupported file type" in message
+    # The rejected extension itself (".xml", lowercase from Path.suffix)
+    # naturally appears in the message -- what must NOT appear is XML
+    # (uppercase, matching the "Supported types" list's format) among the
+    # types this error claims ARE supported.
+    assert "XML" not in message
 
 
 @pytest.mark.asyncio

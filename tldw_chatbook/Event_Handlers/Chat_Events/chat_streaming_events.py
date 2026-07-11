@@ -7,6 +7,7 @@ import re
 import threading
 #
 # Third-party Imports
+from loguru import logger as _loguru_fallback_logger
 from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.css.query import QueryError
@@ -28,7 +29,7 @@ from tldw_chatbook.Widgets.tool_message_widgets import ToolExecutionWidget
 
 async def handle_streaming_chunk(self, event: StreamingChunk) -> None:
     """Handles incoming chunks of text during streaming."""
-    logger = getattr(self, 'loguru_logger', logging)
+    logger = getattr(self, 'loguru_logger', _loguru_fallback_logger)
     
     # Check if this is a continuation (has continue_message_widget) or a new message
     current_widget = None
@@ -93,9 +94,9 @@ async def handle_streaming_chunk(self, event: StreamingChunk) -> None:
                     f"on_streaming_chunk: Current tab is {self.current_tab}, not attempting to scroll chat log.")
 
         except QueryError as e:
-            logger.error(f"Error accessing UI components during streaming chunk update: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error accessing UI components during streaming chunk update: {e}")
         except Exception as e_chunk:  # Catch any other unexpected error
-            logger.error("Unexpected error processing streaming chunk: {}", e_chunk, exc_info=True)
+            logger.opt(exception=True).error("Unexpected error processing streaming chunk: {}", e_chunk)
     else:
         logger.warning(
             "Received StreamingChunk but no current_ai_message_widget is active/mounted or tab is not Chat/CCP.")
@@ -103,7 +104,7 @@ async def handle_streaming_chunk(self, event: StreamingChunk) -> None:
 
 async def handle_stream_done(self, event: StreamDone) -> None:
     """Handles the end of a stream, including errors and successful completion."""
-    logger = getattr(self, 'loguru_logger', logging)
+    logger = getattr(self, 'loguru_logger', _loguru_fallback_logger)
     logger.info(f"StreamDone received. Final text length: {len(event.full_text)}. Error: '{event.error}'")
 
     # Check if this is a continuation or a new message
@@ -238,13 +239,13 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                                     )
                                     logger.debug(f"Saved tool results message to DB with ID: {tool_result_db_id}")
                                 except Exception as e:
-                                    logger.error(f"Error saving tool messages to DB: {e}", exc_info=True)
-                            
+                                    logger.opt(exception=True).error(f"Error saving tool messages to DB: {e}")
+
                             # Continue conversation with tool results
                             await self._continue_conversation_with_tools(results, tool_calls)
-                            
+
                         except Exception as e:
-                            logger.error(f"Error executing tools: {e}", exc_info=True)
+                            logger.opt(exception=True).error(f"Error executing tools: {e}")
                             self.notify(f"Tool execution error: {str(e)}", severity="error")
                     else:
                         logger.warning("Could not find chat container for mounting tool widgets")
@@ -281,7 +282,7 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                                 logger.error(f"Failed to update continued message {ai_widget.message_id_internal} in DB")
                                 self.notify("Failed to save continuation to DB", severity="error")
                         except Exception as e_update:
-                            logger.error(f"Error updating continued message: {e_update}", exc_info=True)
+                            logger.opt(exception=True).error(f"Error updating continued message: {e_update}")
                             self.notify(f"DB error saving continuation: {str(e_update)[:100]}", severity="error")
                 else:
                     # For new messages, add to conversation
@@ -367,17 +368,17 @@ async def handle_stream_done(self, event: StreamDone) -> None:
                                     else:
                                         logger.error(f"Failed to create variant for message {original_id}")
                                 except Exception as e:
-                                    logger.error(f"Error creating message variant: {e}", exc_info=True)
+                                    logger.opt(exception=True).error(f"Error creating message variant: {e}")
                             
                             # Clear regeneration tracking
                             delattr(self, 'regenerating_message_widget')
                             if hasattr(self, 'regenerating_original_id'):
                                 delattr(self, 'regenerating_original_id')
                     except (CharactersRAGDBError, InputError) as e_save_ai_stream:
-                        logger.error(f"DB Error saving streamed AI message: {e_save_ai_stream}", exc_info=True)
+                        logger.opt(exception=True).error(f"DB Error saving streamed AI message: {e_save_ai_stream}")
                         self.notify(f"DB error saving message: {e_save_ai_stream}", severity="error")
                     except Exception as e_save_unexp:
-                        logger.error(f"Unexpected error saving streamed AI message: {e_save_unexp}", exc_info=True)
+                        logger.opt(exception=True).error(f"Unexpected error saving streamed AI message: {e_save_unexp}")
                         self.notify("Unexpected error saving message.", severity="error")
             elif not event.full_text.strip() and not event.error:
                 logger.info("Stream finished with no error but content was empty/whitespace. Not saving to DB.")
@@ -395,13 +396,13 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             logger.debug(f"Could not update token counter: {e}")
 
     except QueryError as e:
-        logger.error(f"QueryError during StreamDone UI update (event.error='{event.error}'): {e}", exc_info=True)
+        logger.opt(exception=True).error(f"QueryError during StreamDone UI update (event.error='{event.error}'): {e}")
         if event.error:  # If there was an underlying stream error, make sure user sees it
             self.notify(f"Stream Error (UI issue): {event.error}", severity="error", timeout=10)
         else:  # If stream was fine, but UI update failed
             self.notify("Error finalizing AI message display.", severity="error")
     except Exception as e_done_unexp:  # Catch any other unexpected error during the try block
-        logger.error(f"Unexpected error in on_stream_done (event.error='{event.error}'): {e_done_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error in on_stream_done (event.error='{event.error}'): {e_done_unexp}")
         self.notify("Internal error finalizing stream.", severity="error")
     finally:
         # This block executes regardless of exceptions in the try block above.
@@ -462,8 +463,7 @@ async def handle_stream_done(self, event: StreamDone) -> None:
             except QueryError:
                 logger.warning(f"Could not focus input '{input_id_to_focus}' in on_stream_done (widget not found).")
             except Exception as e_focus_final:
-                logger.error(f"Error focusing input '{input_id_to_focus}' in on_stream_done: {e_focus_final}",
-                             exc_info=True)
+                logger.opt(exception=True).error(f"Error focusing input '{input_id_to_focus}' in on_stream_done: {e_focus_final}")
         else:
             logger.debug(f"No specific input to focus for tab {self.current_tab} in on_stream_done.")
 
@@ -475,7 +475,7 @@ async def _continue_conversation_with_tools(self, tool_results, tool_calls):
         tool_results: List of tool execution results
         tool_calls: Original tool calls that were executed
     """
-    logger = getattr(self, 'loguru_logger', logging)
+    logger = getattr(self, 'loguru_logger', _loguru_fallback_logger)
     
     try:
         # Format tool results for the conversation
@@ -528,7 +528,7 @@ async def _continue_conversation_with_tools(self, tool_results, tool_calls):
             self.notify("Could not continue conversation with tool results", severity="warning")
             
     except Exception as e:
-        logger.error(f"Error continuing conversation with tool results: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error continuing conversation with tool results: {e}")
         self.notify(f"Error continuing conversation: {str(e)}", severity="error")
 
 #

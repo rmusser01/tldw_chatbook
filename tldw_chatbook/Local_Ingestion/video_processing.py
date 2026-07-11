@@ -532,7 +532,7 @@ class LocalVideoProcessor:
                     logger.info(f"[VIDEO] Audio extraction completed successfully: {audio_path}")
                     logger.info(f"[VIDEO] Extracted audio file size: {os.path.getsize(audio_path) / (1024*1024):.2f} MB")
                 except Exception as e:
-                    logger.error(f"[VIDEO] Audio extraction failed: {type(e).__name__}: {str(e)}", exc_info=True)
+                    logger.opt(exception=True).error(f"[VIDEO] Audio extraction failed: {type(e).__name__}: {str(e)}")
                     raise
             
             # Process audio using audio processor
@@ -562,7 +562,7 @@ class LocalVideoProcessor:
                 )
                 logger.info("[VIDEO] Audio processor _process_single_audio() returned successfully")
             except Exception as e:
-                logger.error(f"[VIDEO] Audio processing failed with exception: {type(e).__name__}: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error(f"[VIDEO] Audio processing failed with exception: {type(e).__name__}: {str(e)}")
                 raise
             
             # Log detailed result information
@@ -609,7 +609,7 @@ class LocalVideoProcessor:
                     result["db_message"] = db_result.get("message", "Stored successfully")
                     logger.info(f"[VIDEO] Database storage successful: id={db_result.get('id')}, message={db_result.get('message')}")
                 except Exception as e:
-                    logger.error(f"[VIDEO] Database storage failed: {type(e).__name__}: {str(e)}", exc_info=True)
+                    logger.opt(exception=True).error(f"[VIDEO] Database storage failed: {type(e).__name__}: {str(e)}")
                     result["db_id"] = None
                     result["db_message"] = f"Database storage failed: {str(e)}"
                     raise
@@ -676,7 +676,7 @@ class LocalVideoProcessor:
                 result["status"] = "Cancelled"
                 result["error"] = "Processing cancelled by user"
             else:
-                logger.error(f"Error processing video: {error_msg}", exc_info=True)
+                logger.opt(exception=True).error(f"Error processing video: {error_msg}")
                 result["status"] = "Error"
                 result["error"] = error_msg
             
@@ -851,7 +851,7 @@ class LocalVideoProcessor:
             return {"id": media_id, "message": "Stored successfully"}
             
         except Exception as e:
-            logger.error(f"[VIDEO] Database storage error: {type(e).__name__}: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"[VIDEO] Database storage error: {type(e).__name__}: {str(e)}")
             return {"message": f"Storage failed: {str(e)}"}
 
 

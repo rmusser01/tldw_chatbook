@@ -1276,7 +1276,7 @@ class TTSPlaygroundWidget(Widget):
                 logger.warning("No audio file to play")
                 self.app.notify("No audio file to play", severity="warning")
         except Exception as e:
-            logger.error(f"Error playing audio: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error playing audio: {e}")
             self.app.notify(f"Playback error: {str(e)}", severity="error")
             # Reset button states on error
             self.query_one("#audio-play-btn", Button).disabled = False

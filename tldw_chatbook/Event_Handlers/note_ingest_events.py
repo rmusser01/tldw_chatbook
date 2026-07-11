@@ -75,7 +75,7 @@ IGNORE_WHEN_COPYING_END
         logger.error(f"UI component not found for note preview update: {e}")
         app.notify("Error updating note preview UI.", severity="error")
     except Exception as e:
-        logger.error(f"Unexpected error updating note preview: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error updating note preview: {e}")
         app.notify("Unexpected error during note preview update.", severity="error")
 
 
@@ -124,7 +124,7 @@ def _parse_single_note_file_for_preview(file_path: Path, app_ref: 'TldwCli', imp
             "error": str(e)
         })
     except Exception as e:
-        logger.error(f"Unexpected error parsing note file {file_path}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error parsing note file {file_path}: {e}")
         preview_notes.append({
             "filename": file_path.name,
             "title": f"Error: {file_path.name}",
@@ -334,8 +334,7 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
                             "template_key": key
                         })
                     except Exception as e:
-                        logger.error(f"Error importing template '{note_data['title']}' from {file_path}: {e}",
-                                     exc_info=True)
+                        logger.opt(exception=True).error(f"Error importing template '{note_data['title']}' from {file_path}: {e}")
                         results.append({
                             "file_path": str(file_path),
                             "note_title": note_data["title"],
@@ -385,7 +384,7 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
                             "note_id": note_id
                         })
                     except (ChaChaConflictError, CharactersRAGDBError, ValueError) as e:
-                        logger.error(f"Error importing note '{note_data['title']}' from {file_path}: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Error importing note '{note_data['title']}' from {file_path}: {e}")
                         results.append({
                             "file_path": str(file_path),
                             "note_title": note_data["title"],
@@ -393,8 +392,7 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
                             "message": f"DB/Input error: {type(e).__name__} - {str(e)[:100]}"
                         })
                     except Exception as e:
-                        logger.error(f"Unexpected error importing note '{note_data['title']}' from {file_path}: {e}",
-                                     exc_info=True)
+                        logger.opt(exception=True).error(f"Unexpected error importing note '{note_data['title']}' from {file_path}: {e}")
                         results.append({
                             "file_path": str(file_path),
                             "note_title": note_data["title"],
@@ -452,7 +450,7 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
 
     def on_import_failure_notes(error: Exception):
         import_type = "template" if import_as_templates else "note"
-        logger.error(f"{import_type.capitalize()} import worker failed critically: {error}", exc_info=True)
+        logger.opt(exception=True).error(f"{import_type.capitalize()} import worker failed critically: {error}")
         try:
             status_area_cb_fail = app.query_one("#ingest-notes-import-status-area", TextArea)
             current_text = status_area_cb_fail.text

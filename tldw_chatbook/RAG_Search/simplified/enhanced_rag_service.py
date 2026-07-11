@@ -220,7 +220,7 @@ class EnhancedRAGService(RAGService):
             
         except Exception as e:
             log_counter("enhanced_rag_document_index_error", labels={"error": type(e).__name__})
-            logger.error(f"Failed to index document {doc_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to index document {doc_id}: {e}")
             return IndexingResult(
                 doc_id=doc_id,
                 chunks_created=0,

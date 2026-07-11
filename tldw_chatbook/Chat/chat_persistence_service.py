@@ -173,9 +173,8 @@ class ChatPersistenceService:
                 expected_version=expected_version,
             )
         except Exception:
-            logger.bind(conversation_id=conversation_id).error(
+            logger.bind(conversation_id=conversation_id).opt(exception=True).error(
                 "Failed to soft-delete workspace conversation after membership link failure",
-                exc_info=True,
             )
             raise
 

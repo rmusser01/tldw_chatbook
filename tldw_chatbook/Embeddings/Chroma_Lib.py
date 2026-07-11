@@ -195,7 +195,7 @@ class ChromaDBManager:
             self.embedding_factory = EmbeddingFactory(cfg=validated_config)
             self.embedding_config_schema: EmbeddingConfigSchema = self.embedding_factory.config
         except Exception as e:
-            logger.critical(f"Failed to initialize embedding system for user '{self.user_id}': {e}", exc_info=True)
+            logger.opt(exception=True).critical(f"Failed to initialize embedding system for user '{self.user_id}': {e}")
             raise RuntimeError(f"Embedding system initialization failed: {e}") from e
 
         # This part of your code seems to be using an old key. Let's make it more robust too.
@@ -214,8 +214,7 @@ class ChromaDBManager:
         try:
             self.user_chroma_path.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            logger.critical(f"Failed to create ChromaDB path {self.user_chroma_path} for '{self.user_id}': {e}",
-                            exc_info=True)
+            logger.opt(exception=True).critical(f"Failed to create ChromaDB path {self.user_chroma_path} for '{self.user_id}': {e}")
             raise RuntimeError(f"Could not create ChromaDB storage directory: {e}") from e
 
         logger.info(f"ChromaDBManager for user '{self.user_id}' path: {self.user_chroma_path}")
@@ -230,8 +229,7 @@ class ChromaDBManager:
                 )
             )
         except Exception as e:
-            logger.critical(f"Failed to init ChromaDB Client for '{self.user_id}' at {self.user_chroma_path}: {e}",
-                            exc_info=True)
+            logger.opt(exception=True).critical(f"Failed to init ChromaDB Client for '{self.user_id}' at {self.user_chroma_path}: {e}")
             raise RuntimeError(f"ChromaDB client initialization failed: {e}") from e
 
         self.default_embedding_model_id = self.embedding_config_schema.default_model_id
@@ -394,12 +392,10 @@ class ChromaDBManager:
                 logger.error(
                     f"User '{self.user_id}': Failed to create valid dummy embedding for '{model_id}' dim inference. Got: {dummy_embedding_np}")
         except (IOError, ValueError) as e:  # Catch errors from EmbeddingFactory
-            logger.error(
-                f"User '{self.user_id}': Error during dummy embedding for model '{model_id}' (dim inference): {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"User '{self.user_id}': Error during dummy embedding for model '{model_id}' (dim inference): {e}")
         except Exception as e:
-            logger.error(f"User '{self.user_id}': Unexpected error inferring dimension for '{model_id}': {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"User '{self.user_id}': Unexpected error inferring dimension for '{model_id}': {e}")
         return None
 
     def _resolve_embedding_model_id(self,  # Largely unchanged, relies on self.default_embedding_model_id
@@ -462,17 +458,14 @@ class ChromaDBManager:
                     f"User '{self.user_id}': Accessed/Created collection '{name_to_use}' with metadata: {collection.metadata}.")
                 return collection
             except ValueError as ve:
-                logger.error(f"User '{self.user_id}': Invalid collection name '{name_to_use}' or metadata: {ve}",
-                             exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Invalid collection name '{name_to_use}' or metadata: {ve}")
                 raise RuntimeError(
                     f"Failed to access/create collection '{name_to_use}': Invalid name/metadata.") from ve
             except ChromaError as ce:
-                logger.error(f"User '{self.user_id}': ChromaDB error for collection '{name_to_use}': {ce}",
-                             exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': ChromaDB error for collection '{name_to_use}': {ce}")
                 raise RuntimeError(f"Failed to access/create collection '{name_to_use}': {ce}") from ce
             except Exception as e:
-                logger.error(f"User '{self.user_id}': Unexpected error for collection '{name_to_use}': {e}",
-                             exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Unexpected error for collection '{name_to_use}': {e}")
                 raise RuntimeError(f"Failed to access/create collection '{name_to_use}': {e}") from e
 
     # --- Async Situate Context ---
@@ -519,8 +512,7 @@ class ChromaDBManager:
             )
             return response.strip() if response else ""
         except Exception as e:
-            logger.error(f"User '{self.user_id}': Error in situate_context with LLM '{api_name_for_context}': {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"User '{self.user_id}': Error in situate_context with LLM '{api_name_for_context}': {e}")
             return ""
 
     # process_and_store_content (and other methods using embeddings) will now use self.embedding_factory
@@ -630,7 +622,7 @@ class ChromaDBManager:
                     ) # type: ignore
                     logger.debug(f"process_and_store_content: Successfully generated embeddings with shape {embeddings_array.shape}")
                 except (IOError, ValueError) as e:
-                    logger.error(f"process_and_store_content: User '{self.user_id}': EmbeddingFactory error for media_id {media_id}: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"process_and_store_content: User '{self.user_id}': EmbeddingFactory error for media_id {media_id}: {e}")
                     raise RuntimeError(f"Failed to generate embeddings: {e}") from e
 
                 logger.debug(f"process_and_store_content: Preparing metadata for {len(chunks)} chunks")
@@ -671,19 +663,16 @@ class ChromaDBManager:
             logger.info(f"process_and_store_content: User '{self.user_id}': Successfully finished processing media_id {media_id}")
 
         except ValueError as ve:
-            logger.error(
-                f"process_and_store_content: User '{self.user_id}': Input/config error (media {media_id}, coll '{actual_collection_name}'): {ve}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"process_and_store_content: User '{self.user_id}': Input/config error (media {media_id}, coll '{actual_collection_name}'): {ve}")
             raise
         except RuntimeError as rte:
-            logger.error(
-                f"process_and_store_content: User '{self.user_id}': Runtime error (media {media_id}, coll '{actual_collection_name}'): {rte}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"process_and_store_content: User '{self.user_id}': Runtime error (media {media_id}, coll '{actual_collection_name}'): {rte}")
             raise
         except Exception as e:
-            logger.error(
-                f"process_and_store_content: User '{self.user_id}': Unexpected error (media {media_id}, coll '{actual_collection_name}'): {e}",
-                exc_info=True)
+            logger.opt(exception=True).error(
+                f"process_and_store_content: User '{self.user_id}': Unexpected error (media {media_id}, coll '{actual_collection_name}'): {e}")
             raise
 
     def store_in_chroma(self, collection_name: str,  # Logic for dim check and metadata updated
@@ -726,10 +715,10 @@ class ChromaDBManager:
                     logger.error(f"User '{self.user_id}': Collection '{collection_name}' not found in store_in_chroma. Should be pre-created.")
                     current_collection = self.get_or_create_collection(collection_name) # Fallback
                 else:
-                    logger.error(f"User '{self.user_id}': Failed to get collection '{collection_name}': {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"User '{self.user_id}': Failed to get collection '{collection_name}': {e}")
                     raise RuntimeError(f"Failed to get collection '{collection_name}': {e}") from e
             except Exception as e:
-                logger.error(f"User '{self.user_id}': Unexpected error getting collection '{collection_name}': {e}", exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Unexpected error getting collection '{collection_name}': {e}")
                 raise RuntimeError(f"Unexpected error getting collection '{collection_name}': {e}") from e
 
             logger.info(
@@ -766,7 +755,7 @@ class ChromaDBManager:
                             logger.info(
                                 f"User '{self.user_id}': Updated metadata for '{current_collection.name}' with inferred dim {sampled_dim}.")
             except Exception as e:
-                logger.error(f"User '{self.user_id}': Error updating metadata for collection '{current_collection.name}': {e}", exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Error updating metadata for collection '{current_collection.name}': {e}")
                 raise RuntimeError(f"Error updating metadata for collection '{current_collection.name}': {e}") from e
 
             # --- IMPROVEMENT: SAFER COLLECTION RECREATION LOGIC ---
@@ -808,21 +797,18 @@ class ChromaDBManager:
                 current_collection.upsert(documents=texts, embeddings=embeddings_list, ids=ids, metadatas=cleaned_metadatas)
                 logger.info(f"User '{self.user_id}': Upserted {len(ids)} items to '{current_collection.name}'.")
             except (InvalidDimensionException, ChromaError, Exception) as e:
-                logger.error(f"User '{self.user_id}': Error upserting to '{current_collection.name}': {e}", exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Error upserting to '{current_collection.name}': {e}")
                 raise RuntimeError(f"ChromaDB operation failed during upsert: {e}") from e
 
             except InvalidDimensionException as ide:
-                logger.error(
-                    f"User '{self.user_id}': ChromaDB InvalidDimensionException for '{current_collection.name}': {ide}.",
-                    exc_info=True)
+                logger.opt(exception=True).error(
+                    f"User '{self.user_id}': ChromaDB InvalidDimensionException for '{current_collection.name}': {ide}.")
                 raise RuntimeError(f"ChromaDB dimension error during upsert: {ide}") from ide
             except ChromaError as ce:
-                logger.error(f"User '{self.user_id}': ChromaDB error storing to '{current_collection.name}': {ce}",
-                             exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': ChromaDB error storing to '{current_collection.name}': {ce}")
                 raise RuntimeError(f"ChromaDB operation failed: {ce}") from ce
             except Exception as e:
-                logger.error(f"User '{self.user_id}': Unexpected error storing to '{current_collection.name}': {e}",
-                             exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Unexpected error storing to '{current_collection.name}': {e}")
                 raise RuntimeError(f"Unexpected error during ChromaDB storage: {e}") from e
         return current_collection
 
@@ -950,17 +936,17 @@ class ChromaDBManager:
                 return output
 
             except (ValueError, RuntimeError) as e:
-                logger.error(f"vector_search: User '{self.user_id}': Error during vector search in '{_collection_name_for_ops}': {e}", exc_info=True)
+                logger.opt(exception=True).error(f"vector_search: User '{self.user_id}': Error during vector search in '{_collection_name_for_ops}': {e}")
                 raise
             except (ChromaError) as e:
                 if self._is_collection_not_found_error(e):
                     logger.warning(f"vector_search: User '{self.user_id}': Collection '{_collection_name_for_ops}' not found during search. Returning empty.")
                     return []
                 else:
-                    logger.error(f"vector_search: User '{self.user_id}': ChromaDB-related error during search in '{_collection_name_for_ops}': {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"vector_search: User '{self.user_id}': ChromaDB-related error during search in '{_collection_name_for_ops}': {e}")
                     raise RuntimeError(f"ChromaDB operation failed during vector search: {e}") from e
             except Exception as e:
-                logger.error(f"vector_search: User '{self.user_id}': Unexpected error during search in '{_collection_name_for_ops}': {e}", exc_info=True)
+                logger.opt(exception=True).error(f"vector_search: User '{self.user_id}': Unexpected error during search in '{_collection_name_for_ops}': {e}")
                 raise RuntimeError(f"Unexpected error during vector search: {e}") from e
 
     def reset_chroma_collection(self, collection_name: Optional[str] = None, new_metadata: Optional[Dict[str, Any]] = None):
@@ -975,19 +961,16 @@ class ChromaDBManager:
                 if self._is_collection_not_found_error(e):
                     logger.info(f"User '{self.user_id}': Collection '{name_to_reset}' did not exist for deletion.")
                 else:  # Other ChromaError or ValueError
-                    logger.error(
-                        f"User '{self.user_id}': ChromaDB error deleting '{name_to_reset}' for reset: {e}. Will attempt creation.",
-                        exc_info=True)
+                    logger.opt(exception=True).error(
+                        f"User '{self.user_id}': ChromaDB error deleting '{name_to_reset}' for reset: {e}. Will attempt creation.")
             except Exception as e:
-                logger.error(
-                    f"User '{self.user_id}': Unexpected error deleting '{name_to_reset}' for reset: {e}. Will attempt creation.",
-                    exc_info=True)
+                logger.opt(exception=True).error(
+                    f"User '{self.user_id}': Unexpected error deleting '{name_to_reset}' for reset: {e}. Will attempt creation.")
             try:
                 self.get_or_create_collection(name_to_reset, collection_metadata=cleaned_new_metadata)
                 logger.info(f"User '{self.user_id}': Successfully (re)created collection: '{name_to_reset}'.")
             except Exception as ice:
-                logger.error(f"User '{self.user_id}': Failed to create collection '{name_to_reset}' after reset: {ice}",
-                             exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Failed to create collection '{name_to_reset}' after reset: {ice}")
                 raise RuntimeError(f"Failed to finalize reset for collection '{name_to_reset}': {ice}") from ice
 
     def delete_from_collection(self, ids: List[str], collection_name: Optional[str] = None):
@@ -1005,11 +988,10 @@ class ChromaDBManager:
                 if self._is_collection_not_found_error(e):
                     logger.warning(f"User '{self.user_id}': Collection '{_collection_name_for_ops}' not found for deletion of IDs {ids}.")
                 else: # Other ChromaError or ValueError
-                    logger.error(f"User '{self.user_id}': ChromaDB error deleting from '{_collection_name_for_ops}': {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"User '{self.user_id}': ChromaDB error deleting from '{_collection_name_for_ops}': {e}")
                     raise RuntimeError(f"ChromaDB deletion failed: PLACEHOLDER") from e # Original code had 'ce', assuming e
             except Exception as e:
-                logger.error(f"User '{self.user_id}': Unexpected error deleting from '{_collection_name_for_ops}': {e}",
-                             exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Unexpected error deleting from '{_collection_name_for_ops}': {e}")
                 raise RuntimeError(f"Unexpected error during deletion: {e}") from e
 
     def query_collection_with_precomputed_embeddings(
@@ -1033,16 +1015,16 @@ class ChromaDBManager:
                     where=self._clean_metadata(where_clause) if where_clause else None, include=effective_include_fields
                 )
             except ValueError as ve:
-                logger.error(f"User '{self.user_id}': Input validation error: {ve}", exc_info=True); raise
+                logger.opt(exception=True).error(f"User '{self.user_id}': Input validation error: {ve}"); raise
             except (ChromaError, ValueError) as e:
                 if self._is_collection_not_found_error(e):
                     logger.warning(f"User '{self.user_id}': Collection '{_collection_name_for_ops}' not found for precomputed query.")
                     return QueryResult(ids=[[]], embeddings=None, documents=None, metadatas=None, distances=None, uris=None, data=None) # type: ignore
                 else:
-                    logger.error(f"User '{self.user_id}': ChromaDB error querying '{_collection_name_for_ops}': {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"User '{self.user_id}': ChromaDB error querying '{_collection_name_for_ops}': {e}")
                     raise RuntimeError(f"ChromaDB query with precomputed embeddings failed: {e}") from e
             except Exception as e:
-                logger.error(f"User '{self.user_id}': Unexpected error querying '{_collection_name_for_ops}': {e}", exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Unexpected error querying '{_collection_name_for_ops}': {e}")
                 raise RuntimeError(f"Unexpected error during query: {e}") from e
 
     def count_items_in_collection(self, collection_name: Optional[str] = None) -> int:
@@ -1056,11 +1038,10 @@ class ChromaDBManager:
                     logger.info(f"User '{self.user_id}': Collection '{_collection_name_for_ops}' not found for count. Returning 0.")
                     return 0
                 else: # Other ChromaError or ValueError
-                    logger.error(f"User '{self.user_id}': Error counting items in '{_collection_name_for_ops}': {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"User '{self.user_id}': Error counting items in '{_collection_name_for_ops}': {e}")
                     raise RuntimeError(f"Failed to count items in collection: {e}") from e
             except Exception as e:
-                logger.error(f"User '{self.user_id}': Error counting items in '{_collection_name_for_ops}': {e}",
-                             exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Error counting items in '{_collection_name_for_ops}': {e}")
                 raise RuntimeError(f"Failed to count items in collection: {e}") from e
 
     def list_collections(self) -> Sequence[Collection]:
@@ -1069,7 +1050,7 @@ class ChromaDBManager:
             try:
                 return self.client.list_collections()
             except Exception as e:
-                logger.error(f"User '{self.user_id}': Error listing collections: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Error listing collections: {e}")
                 raise RuntimeError(f"Failed to list collections: {e}") from e
 
     def delete_collection(self, collection_name: str):
@@ -1082,11 +1063,10 @@ class ChromaDBManager:
                 if self._is_collection_not_found_error(e):
                      logger.warning(f"User '{self.user_id}': Collection '{collection_name}' not found for deletion.")
                 else: # Other ChromaError or ValueError
-                    logger.error(f"User '{self.user_id}': ChromaDB error deleting collection '{collection_name}': {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"User '{self.user_id}': ChromaDB error deleting collection '{collection_name}': {e}")
                     raise RuntimeError(f"ChromaDB failed to delete collection '{collection_name}': {e}") from e
             except Exception as e:
-                logger.error(f"User '{self.user_id}': Unexpected error deleting collection '{collection_name}': {e}",
-                             exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Unexpected error deleting collection '{collection_name}': {e}")
                 raise RuntimeError(f"Unexpected error deleting collection '{collection_name}': {e}") from e
 
     def close(self):
@@ -1098,7 +1078,7 @@ class ChromaDBManager:
                 self.embedding_factory.close()
                 logger.info(f"User '{self.user_id}': EmbeddingFactory closed.")
             except Exception as e:
-                logger.error(f"User '{self.user_id}': Error closing EmbeddingFactory: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"User '{self.user_id}': Error closing EmbeddingFactory: {e}")
 
         # ChromaDB PersistentClient doesn't have an explicit close method in the same way.
         # Resources are typically managed by its lifecycle (e.g., when the object is garbage collected).

@@ -82,6 +82,7 @@ from ...Library.library_rag_service import (
 )
 from ...Library.library_rag_state import (
     LIBRARY_RAG_QUERY_MAX_LENGTH,
+    LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY,
     LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES,
     LIBRARY_SEARCH_HISTORY_ENTRY_MAX_CHARS,
     LIBRARY_SEARCH_HISTORY_LIMIT,
@@ -184,16 +185,22 @@ LIBRARY_STUDY_HANDOFF_MODES = {
         # consolidation).
         "header": "Study decks",
         "action_label": "Study Dashboard",
+        # UX wave L2: the button reads as a verb ("Continue in Study")
+        # instead of restating the destination's own name -- action_label
+        # still backs the header/purpose/recovery copy below.
+        "button_label": "Continue in Study",
         "purpose": "Plan study decks from Library sources.",
     },
     "flashcards": {
         "header": "Flashcards",
         "action_label": "Flashcards",
+        "button_label": "Continue in Study",
         "purpose": "Generate or review cards from Library sources.",
     },
     "quizzes": {
         "header": "Quizzes",
         "action_label": "Quizzes",
+        "button_label": "Continue in Study",
         "purpose": "Generate or resume quizzes from Library sources.",
     },
 }
@@ -753,7 +760,14 @@ class LibraryScreen(BaseAppScreen):
             # the create-note rail row's own target_id. The rail row's
             # flush of a dirty editor is handled upstream by
             # apply_navigation_context's mounted dirty-editor branch; here we
-            # only apply the selection the recompose reads.
+            # only apply the selection the recompose reads. Reset the note
+            # editor state FIRST (a cached, already-mounted screen re-entered
+            # via this deep link can still hold a previously opened note's
+            # id/detail/version) then re-assert the create-note target state
+            # AFTER, since the reset flips _library_notes_view back to
+            # "list" -- same reset-then-set ordering as
+            # _open_library_item_by_id's notes branch.
+            self._reset_library_note_editor_state()
             self._library_selected_row_id = LIBRARY_ROW_CREATE_NOTE
         if ingest_media:
             # Home's ingest-jobs "Open details" control re-points here
@@ -828,6 +842,65 @@ class LibraryScreen(BaseAppScreen):
             records, counts, total_known, lookup_error, recovery_state, study_counts
         )
 
+    def _carry_selected_conversation_into_snapshot(
+        self,
+        records: dict[str, tuple[Mapping[str, Any], ...]],
+    ) -> dict[str, tuple[Mapping[str, Any], ...]]:
+        """Preserve an out-of-page selected conversation across a snapshot replace.
+
+        (C3) A wholesale ``_local_source_records`` replace -- the periodic
+        background refresh, not a user action -- can silently drop the
+        currently-open conversation if it fell off the loaded page (the
+        conversations snapshot is capped, see
+        ``LIBRARY_SOURCE_PAGE_SIZES["conversations"]``) or was fetched
+        out-of-band via ``_open_library_item_by_id`` and prepended into the
+        OLD records. Without this, the next recompose would silently reset
+        the selection to the first row (``_ensure_selected_conversation_id``)
+        even though the user never navigated away -- the same class of race
+        ``_open_library_item_by_id`` already guards against for its own
+        out-of-snapshot fetch, just triggered by a background refresh
+        instead of a user click.
+
+        Pure in-memory merge: reads the OLD ``self._local_source_records``
+        (not yet replaced) and the INCOMING ``records``, and -- only when the
+        selected id is present in the old snapshot but missing from the new
+        one -- prepends the old record into the new conversations tuple so
+        the selection survives the replace.
+
+        Args:
+            records: The incoming snapshot about to replace
+                ``self._local_source_records``.
+
+        Returns:
+            ``records``, unchanged, or with the selected conversation's
+            record prepended into its ``"conversations"`` tuple.
+        """
+        selected_id = getattr(self, "_selected_conversation_id", "")
+        if not selected_id:
+            return records
+        old_conversations = getattr(self, "_local_source_records", {}).get(
+            "conversations", ()
+        )
+        old_index_by_id = {
+            self._conversation_record_id(record, index): record
+            for index, record in enumerate(old_conversations)
+        }
+        carried_record = old_index_by_id.get(selected_id)
+        if carried_record is None:
+            # Not present in the old snapshot either -- nothing to carry.
+            return records
+        new_conversations = records.get("conversations", ())
+        new_ids = {
+            self._conversation_record_id(record, index)
+            for index, record in enumerate(new_conversations)
+        }
+        if selected_id in new_ids:
+            # Still present in the incoming snapshot -- no carry-over needed.
+            return records
+        merged = dict(records)
+        merged["conversations"] = (carried_record, *new_conversations)
+        return merged
+
     def _apply_local_source_snapshot(
         self,
         records: dict[str, tuple[Mapping[str, Any], ...]],
@@ -837,6 +910,7 @@ class LibraryScreen(BaseAppScreen):
         recovery_state: DestinationRecoveryState | None = None,
         study_counts: dict[str, int | None] | None = None,
     ) -> None:
+        records = self._carry_selected_conversation_into_snapshot(records)
         self._local_source_records = records
         self._local_source_counts = counts
         self._local_source_total_known = total_known
@@ -1072,7 +1146,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             result = await self._run_library_service_call(count_notes, isolate_in_worker=True, **kwargs)
         except Exception:
-            logger.warning("Failed to fetch exact local notes count; using sample count.", exc_info=True)
+            logger.opt(exception=True).warning("Failed to fetch exact local notes count; using sample count.")
             return None
         return result if isinstance(result, int) else None
 
@@ -1113,7 +1187,7 @@ class LibraryScreen(BaseAppScreen):
                 count_callable, isolate_in_worker=isolate_in_worker, **kwargs
             )
         except Exception:
-            logger.debug(f"Failed to fetch {label} count for Library create rail.", exc_info=True)
+            logger.opt(exception=True).debug(f"Failed to fetch {label} count for Library create rail.")
             return None
         return result if isinstance(result, int) else None
 
@@ -1235,9 +1309,8 @@ class LibraryScreen(BaseAppScreen):
                 empty_study_counts,
             )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Failed to load local Library source snapshot.",
-                exc_info=True,
             )
             return (
                 empty_records,
@@ -1427,7 +1500,7 @@ class LibraryScreen(BaseAppScreen):
 
         Mirrors ``_selected_conversation_handoff_payload``, but reads the
         currently loaded media detail (``_library_media_detail``) instead of
-        a selected browser row -- the media viewer's "Use in Chat" action
+        a selected browser row -- the media viewer's "Use in Console" action
         stages whatever item is open in the in-canvas viewer, not a row
         selection from the list.
 
@@ -1797,6 +1870,7 @@ class LibraryScreen(BaseAppScreen):
         return {
             "header": mode["header"],
             "action_label": action_label,
+            "button_label": mode["button_label"],
             "purpose": mode["purpose"],
             "context": context_copy,
             "owner": LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
@@ -1940,7 +2014,7 @@ class LibraryScreen(BaseAppScreen):
         }.get(kind, "library-open-study")
         handoff_toolbar = Horizontal(
             Button(
-                copy["action_label"],
+                copy["button_label"],
                 id=action_button_id,
                 # D3: the Open action is the canvas's primary control.
                 classes="library-canvas-action console-action-primary",
@@ -2443,7 +2517,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(f"Failed to load Library media detail for {media_id!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Failed to load Library media detail for {media_id!r}.")
             detail = None
         # Discard out-of-order results: if the user has since selected a
         # different media row (or left the viewer), a slower in-flight fetch
@@ -2457,6 +2531,21 @@ class LibraryScreen(BaseAppScreen):
             return
         self._library_media_detail = detail if isinstance(detail, Mapping) else None
         self._library_media_highlights = highlights
+        if (
+            self._library_media_detail is None
+            and media_id == self._selected_media_id
+            and self._library_media_view == "viewer"
+        ):
+            # The record backing an opened item vanished between the click
+            # and this fetch resolving (e.g. deleted elsewhere, or a stale
+            # Search/RAG "Open" result) -- mirror the equivalent
+            # "Conversation is unavailable." notify _open_library_item_by_id
+            # gives its conversations branch, and fall back to the list
+            # view instead of leaving an empty/stuck viewer.
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Media item is unavailable.", severity="warning")
+            self._library_media_view = "list"
         if self.is_mounted:
             self.refresh(recompose=True)
 
@@ -2487,9 +2576,8 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(
-                f"Failed to load Library media highlights for {media_id!r}.", exc_info=True
-            )
+            logger.opt(exception=True).warning(
+                f"Failed to load Library media highlights for {media_id!r}.")
             return []
         return list(highlights) if isinstance(highlights, list) else []
 
@@ -2535,7 +2623,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(f"Failed to load Library note detail for {note_id!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Failed to load Library note detail for {note_id!r}.")
             detail = None
         # Discard out-of-order results: if the user has since selected a
         # different note (or left the editor), a slower in-flight fetch for
@@ -2619,9 +2707,8 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(
-                f"Failed to load keywords for Library note {note_id!r}.", exc_info=True
-            )
+            logger.opt(exception=True).warning(
+                f"Failed to load keywords for Library note {note_id!r}.")
             return None
         return list(keywords) if isinstance(keywords, list) else None
 
@@ -3068,7 +3155,7 @@ class LibraryScreen(BaseAppScreen):
         except ConflictError:
             result = False
         except Exception:
-            logger.warning(f"Library note save failed for {note_id!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Library note save failed for {note_id!r}.")
             if note_id != self._selected_note_id or self._library_notes_view != "editor":
                 return
             self._library_note_autosave_state = "error"
@@ -3169,9 +3256,8 @@ class LibraryScreen(BaseAppScreen):
                 try:
                     await worker.wait()
                 except Exception:
-                    logger.debug(
+                    logger.opt(exception=True).debug(
                         "In-flight note-save worker errored while flushing; continuing.",
-                        exc_info=True,
                     )
         if not self._library_note_dirty:
             return
@@ -3220,9 +3306,8 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"Failed to reload Library note {note_id!r} after a save conflict.",
-                exc_info=True,
             )
             return
         if note_id != self._selected_note_id:
@@ -3291,9 +3376,8 @@ class LibraryScreen(BaseAppScreen):
         except ConflictError:
             result = False
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"Failed to overwrite Library note {note_id!r} after a save conflict.",
-                exc_info=True,
             )
             return
         if note_id != self._selected_note_id:
@@ -3543,9 +3627,8 @@ class LibraryScreen(BaseAppScreen):
                 encoding="utf-8",
             )
         except Exception as exc:
-            logger.warning(
-                f"Error exporting Library note {note_id!r} to '{validated_path}'.", exc_info=True
-            )
+            logger.opt(exception=True).warning(
+                f"Error exporting Library note {note_id!r} to '{validated_path}'.")
             if callable(notify):
                 notify(f"Error exporting note: {type(exc).__name__}", severity="error")
             return
@@ -3605,7 +3688,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             copy_to_clipboard(export_content)
         except Exception as exc:
-            logger.warning(f"Failed to copy Library note {note_id!r} to clipboard.", exc_info=True)
+            logger.opt(exception=True).warning(f"Failed to copy Library note {note_id!r} to clipboard.")
             if callable(notify):
                 notify(f"Error copying note: {type(exc).__name__}", severity="error")
             return
@@ -3674,7 +3757,7 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Console handoff is unavailable for Library Notes.", severity="warning")
             return
-        open_chat_with_handoff(payload)
+        open_chat_with_handoff(payload, action_label="Use in Console")
 
     @on(Button.Pressed, "#library-note-use-in-console")
     def handle_library_note_use_in_console(self, event: Button.Pressed) -> None:
@@ -3688,7 +3771,19 @@ class LibraryScreen(BaseAppScreen):
         self._open_selected_library_note_handoff()
 
     def _library_rail_preferences(self):
-        """Read persisted Library rail section preferences."""
+        """Read persisted Library rail section preferences, defensively.
+
+        (C4) Same restart-persistence gap as
+        ``_load_library_search_history``: ``self.app_instance.app_config``
+        (from ``load_settings()``) can come back without a ``library``
+        section at all even when ``config.toml`` has persisted
+        ``[library.rail_state]`` on disk -- so a freshly started app would
+        otherwise always reopen every rail section at its hardcoded
+        default instead of the user's last-chosen open/collapsed state.
+        Falls back to a live ``get_cli_setting("library.rail_state")`` read
+        of the CLI config file when ``app_config`` doesn't already carry a
+        usable ``sections`` dict; ``app_config`` wins whenever it does.
+        """
         app_config = getattr(self.app_instance, "app_config", None)
         raw = None
         if isinstance(app_config, dict):
@@ -3697,6 +3792,18 @@ class LibraryScreen(BaseAppScreen):
                 rail_state = library_config.get("rail_state")
                 if isinstance(rail_state, dict):
                     raw = rail_state.get("sections")
+        if not isinstance(raw, dict):
+            try:
+                # Dotted 1-arg form, same shape as
+                # `_load_library_search_history`'s CLI fallback:
+                # `get_cli_setting("library.rail_state")` returns
+                # `config["library"]["rail_state"]` (the rail_state
+                # sub-dict), not the "sections" dict directly.
+                cli_rail_state = get_cli_setting("library.rail_state")
+            except Exception:
+                cli_rail_state = None
+            if isinstance(cli_rail_state, dict):
+                raw = cli_rail_state.get("sections")
         return coerce_library_rail_preferences(raw)
 
     def _load_library_search_history(self) -> tuple[str, ...]:
@@ -4067,7 +4174,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning("Library notes filter failed.", exc_info=True)
+            logger.opt(exception=True).warning("Library notes filter failed.")
             return
         if query != self._library_notes_filter:
             return
@@ -4140,14 +4247,14 @@ class LibraryScreen(BaseAppScreen):
         try:
             note_path = validate_path_simple(str(selected_path), require_exists=True)
         except ValueError:
-            logger.warning(f"Rejected Library note import path {selected_path!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Rejected Library note import path {selected_path!r}.")
             self._notify_library_note_create_warning("Could not import that file.")
             return
 
         try:
             file_size = note_path.stat().st_size
         except OSError:
-            logger.warning(f"Could not stat Library note import file '{note_path}'.", exc_info=True)
+            logger.opt(exception=True).warning(f"Could not stat Library note import file '{note_path}'.")
             self._notify_library_note_create_warning("Could not import that file.")
             return
         if file_size > LIBRARY_NOTE_CONTENT_MAX_CHARS * 4:
@@ -4163,7 +4270,7 @@ class LibraryScreen(BaseAppScreen):
                 note_path.read_text, encoding="utf-8", errors="strict"
             )
         except (OSError, UnicodeDecodeError):
-            logger.warning(f"Could not read Library note import file '{note_path}'.", exc_info=True)
+            logger.opt(exception=True).warning(f"Could not read Library note import file '{note_path}'.")
             self._notify_library_note_create_warning("Could not import that file.")
             return
 
@@ -4494,7 +4601,7 @@ class LibraryScreen(BaseAppScreen):
                     f"{count_noun(len(results.errors), 'error')} during sync",
                 )
         except Exception as exc:
-            logger.error(f"Library notes sync failed (folder={folder}): {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Library notes sync failed (folder={folder}): {exc}")
             self._library_notes_sync_status = sync_status_line("failed", error=str(exc))
             self._library_notes_sync_activity = append_activity(
                 self._library_notes_sync_activity, f"Sync failed: {exc}"
@@ -4689,7 +4796,7 @@ class LibraryScreen(BaseAppScreen):
                 Path(raw_path).expanduser(), require_exists=True
             )
         except ValueError:
-            logger.warning(f"Rejected Library ingest path {raw_path!r}.", exc_info=True)
+            logger.opt(exception=True).warning(f"Rejected Library ingest path {raw_path!r}.")
             self._notify_library_ingest_warning("Could not find that file.")
             return
         submit = getattr(self.app_instance, "submit_library_ingest_job", None)
@@ -5017,9 +5124,8 @@ class LibraryScreen(BaseAppScreen):
         except ConflictError:
             deleted = False
         except Exception:
-            logger.warning(
-                f"Failed to delete Library note {note_id!r}.", exc_info=True
-            )
+            logger.opt(exception=True).warning(
+                f"Failed to delete Library note {note_id!r}.")
             if note_id != self._selected_note_id or self._library_notes_view != "editor":
                 return
             self._library_note_confirming_delete = False
@@ -5230,7 +5336,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning("Library note create failed.", exc_info=True)
+            logger.opt(exception=True).warning("Library note create failed.")
             self._notify_library_note_create_warning("Could not create the note.")
             return
 
@@ -5416,9 +5522,8 @@ class LibraryScreen(BaseAppScreen):
                     media_id, title=title, author=author, url=url, keywords=keywords
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to save Library media edit for {media_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to save Library media edit for {media_id!r}.")
                 self._notify_library_media_edit_warning(
                     "Could not save media changes; showing the latest saved version."
                 )
@@ -5550,9 +5655,8 @@ class LibraryScreen(BaseAppScreen):
                 )
                 deleted = True
             except Exception:
-                logger.warning(
-                    f"Failed to delete Library media item {media_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to delete Library media item {media_id!r}.")
                 self._notify_library_media_delete_warning(
                     "Could not delete this media item."
                 )
@@ -5665,9 +5769,8 @@ class LibraryScreen(BaseAppScreen):
                     isolate_in_worker=True,
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to add Library media highlight for {media_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to add Library media highlight for {media_id!r}.")
                 self._notify_library_media_highlight_warning("Could not add this highlight.")
         else:
             self._notify_library_media_highlight_warning("Highlights are unavailable.")
@@ -5711,9 +5814,8 @@ class LibraryScreen(BaseAppScreen):
                     isolate_in_worker=True,
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to delete Library media highlight {highlight_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to delete Library media highlight {highlight_id!r}.")
                 self._notify_library_media_highlight_warning("Could not delete this highlight.")
         else:
             self._notify_library_media_highlight_warning("Highlights are unavailable.")
@@ -5892,9 +5994,8 @@ class LibraryScreen(BaseAppScreen):
                     isolate_in_worker=True,
                 )
             except Exception:
-                logger.warning(
+                logger.opt(exception=True).warning(
                     f"Failed to toggle Library media read-it-later state for {media_id!r}.",
-                    exc_info=True,
                 )
                 self._notify_library_media_read_later_warning(
                     "Could not update read-it-later status."
@@ -6016,9 +6117,8 @@ class LibraryScreen(BaseAppScreen):
                     isolate_in_worker=True,
                 )
             except Exception:
-                logger.warning(
-                    f"Failed to save Library media analysis for {media_id!r}.", exc_info=True
-                )
+                logger.opt(exception=True).warning(
+                    f"Failed to save Library media analysis for {media_id!r}.")
                 self._notify_library_media_analysis_warning(
                     "Could not save analysis changes; showing the latest saved version."
                 )
@@ -6042,7 +6142,7 @@ class LibraryScreen(BaseAppScreen):
         """Hand off the selected media item to the Media screen.
 
         Args:
-            event: Button press event emitted by the "Open in Media" action.
+            event: Button press event emitted by the "Open in Media manager" action.
         """
         event.stop()
         self.post_message(NavigateToScreen("media"))
@@ -6190,7 +6290,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             records = await self._run_library_service_call(list_collections)
         except Exception:
-            logger.warning("Failed to load Library Collections.", exc_info=True)
+            logger.opt(exception=True).warning("Failed to load Library Collections.")
             self._library_collections_records = ()
             self._library_sync_profile_summary = None
             self._library_collections_loaded = True
@@ -6252,7 +6352,7 @@ class LibraryScreen(BaseAppScreen):
                 ),
             )
         except Exception:
-            logger.warning("Failed to load Library Collections sync dry-run state.", exc_info=True)
+            logger.opt(exception=True).warning("Failed to load Library Collections sync dry-run state.")
             return tuple(records)
 
         latest_report = latest_mirror_record["report"] if latest_mirror_record else None
@@ -6350,7 +6450,7 @@ class LibraryScreen(BaseAppScreen):
                 isolate_in_worker=True,
             )
         except Exception:
-            logger.warning("Failed to load Sync v2 profile summary.", exc_info=True)
+            logger.opt(exception=True).warning("Failed to load Sync v2 profile summary.")
             return None
         return summary if isinstance(summary, Mapping) else None
 
@@ -6777,9 +6877,8 @@ class LibraryScreen(BaseAppScreen):
                     get_conversation_by_id, conversation_id, include_deleted=False
                 )
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 f"Failed to fetch Library conversation {conversation_id!r} by id.",
-                exc_info=True,
             )
             return None
         return record if isinstance(record, Mapping) else None
@@ -6920,6 +7019,22 @@ class LibraryScreen(BaseAppScreen):
             panel_state,
             force_collapsed=panel_state.history_collapsed if force_history_collapse else None,
         )
+        # `force_history_collapse` is only set True from the results-arrival
+        # transition in `_apply_library_rag_search_outcome` -- every other
+        # refresh trigger (scope toggle, mode toggle, evidence selection)
+        # passes the default False. Reuse that same signal (C2) to scroll
+        # the Evidence heading back into view once results just landed.
+        # Deliberately done LAST, after every widget mutation above
+        # (results *and* history) has settled: mounting/removing the
+        # history rows also changes the panel's virtual size, and a scroll
+        # issued before that would just get overridden by it.
+        if force_history_collapse and panel_state.results:
+            try:
+                self.query_one(
+                    "#library-rag-results-heading", Static
+                ).scroll_visible(animate=False)
+            except NoMatches:
+                pass
 
     async def _refresh_library_rag_query_status_widgets(
         self,
@@ -7045,13 +7160,7 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
-        counts = {option.source_type: option.count for option in panel_state.scope.options}
-        return (
-            "Scope: all local"
-            f" | Notes {counts.get('notes', 0)}"
-            f" | Media {counts.get('media', 0)}"
-            f" | Conversations {counts.get('conversations', 0)}"
-        )
+        return LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY
 
     def _open_selected_conversation_handoff(self) -> None:
         workspace_state = self._library_workspace_depth_state()
@@ -7070,7 +7179,7 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Console handoff is unavailable for Library Conversations.", severity="warning")
             return
-        open_chat_with_handoff(payload)
+        open_chat_with_handoff(payload, action_label="Use in Console")
 
     @on(Button.Pressed, "#library-conversation-open-console")
     def open_selected_conversation_in_console(self, event: Button.Pressed) -> None:
@@ -7112,14 +7221,14 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify("Console handoff is unavailable for Library Media.", severity="warning")
             return
-        open_chat_with_handoff(payload)
+        open_chat_with_handoff(payload, action_label="Use in Console")
 
     @on(Button.Pressed, "#library-media-use-in-chat")
     def use_media_in_chat(self, event: Button.Pressed) -> None:
-        """Handle the media viewer's "Use in Chat" action.
+        """Handle the media viewer's "Use in Console" action.
 
         Args:
-            event: Button press event emitted by the viewer's "Use in Chat" action.
+            event: Button press event emitted by the viewer's "Use in Console" action.
         """
         event.stop()
         self._open_selected_media_handoff()
@@ -7151,7 +7260,7 @@ class LibraryScreen(BaseAppScreen):
             )
             registry_service.set_active_workspace(workspace_id)
         except Exception:
-            logger.warning("Failed to create local Library workspace", exc_info=True)
+            logger.opt(exception=True).warning("Failed to create local Library workspace")
             notify = getattr(self.app_instance, "notify", None)
             if callable(notify):
                 notify("Local workspace could not be created.", severity="error")
@@ -7224,5 +7333,6 @@ class LibraryScreen(BaseAppScreen):
                 source_owner="local",
                 source_selector_state="local",
                 metadata=self._source_snapshot_metadata(),
-            )
+            ),
+            action_label="Use in Console",
         )

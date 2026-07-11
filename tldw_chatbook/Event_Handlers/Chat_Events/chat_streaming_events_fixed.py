@@ -143,7 +143,7 @@ def execute_tools(
             save_tool_messages_to_db(app, tool_calls, results, session_id)
             
     except Exception as e:
-        loguru_logger.error(f"Error executing tools: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error executing tools: {e}")
         app.post_message(ChatError(f"Tool execution error: {str(e)}"))
 
 
@@ -190,7 +190,7 @@ def save_stream_to_db(
             loguru_logger.warning("Failed to save stream to DB")
             
     except Exception as e:
-        loguru_logger.error(f"Error saving stream to DB: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error saving stream to DB: {e}")
 
 
 def save_tool_messages_to_db(
@@ -233,7 +233,7 @@ def save_tool_messages_to_db(
         loguru_logger.debug(f"Saved tool results to DB: {tool_result_id}")
         
     except Exception as e:
-        loguru_logger.error(f"Error saving tool messages to DB: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error saving tool messages to DB: {e}")
 
 
 # ==================== HELPER FUNCTIONS ====================

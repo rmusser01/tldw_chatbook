@@ -5,8 +5,70 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from tldw_chatbook.Constants import TAB_SETTINGS
+from tldw_chatbook.Constants import TAB_LLM, TAB_SETTINGS, TAB_STUDY, get_tab_display_label
+from tldw_chatbook.UI.Navigation.shell_destinations import (
+    get_shell_destination,
+    resolve_shell_route,
+)
 from tldw_chatbook.Workspaces.conversation_browser_state import format_console_relative_age
+
+
+# C1: human-readable labels for the Home canvas "Opens: <label>" line.
+# `shell_destinations` is a leaf module (no imports back into `Home` or
+# `UI.Screens`), so this stays a pure, cycle-free lookup. Overrides win over
+# the generic shell-destination resolution for routes whose canonical
+# destination label would otherwise be misleading (e.g. "study" resolves to
+# the Library destination via its legacy-route alias, which would read as
+# "Opens: Library" instead of the more specific "Opens: Study").
+HOME_ROUTE_LABEL_OVERRIDES = {
+    "llm": get_tab_display_label(TAB_LLM),
+    TAB_LLM: get_tab_display_label(TAB_LLM),
+    "search-rag": "Search/RAG",
+    "study": get_tab_display_label(TAB_STUDY),
+}
+
+# M1: cap on the failed-item canvas's status-detail (failure reason) line,
+# so one runaway/verbose error message can't blow out the canvas.
+_STATUS_DETAIL_MAX_CHARS = 140
+
+
+def _home_route_label(route: str) -> str:
+    """Resolve a Home canvas ``detail_route`` to a human-readable label.
+
+    Args:
+        route: The raw route/destination id stored on a work item or rail
+            row (e.g. ``"chat"``, ``"study"``, ``"watchlists"``).
+
+    Returns:
+        A human-facing label suitable for ``f"Opens: {label}"``.
+    """
+    route = route.strip()
+    if route in HOME_ROUTE_LABEL_OVERRIDES:
+        return HOME_ROUTE_LABEL_OVERRIDES[route]
+
+    resolved = resolve_shell_route(route)
+    try:
+        return get_shell_destination(resolved.destination_id).accessible_label
+    except KeyError:
+        return route.replace("_", " ").replace("-", " ").title()
+
+
+def _truncate_status_detail(text: str, *, limit: int = _STATUS_DETAIL_MAX_CHARS) -> str:
+    """Truncate a canvas status-detail (failure reason) line to ``limit`` chars.
+
+    Args:
+        text: The (already-escaped) status detail text.
+        limit: Maximum length of the returned string, ellipsis included.
+
+    Returns:
+        ``text`` unchanged when it already fits within ``limit``, otherwise
+        the text cut short with a trailing "…" so the total length is
+        exactly ``limit``.
+    """
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 0)].rstrip() + "…"
 
 
 APPROVAL_RUN_STATUS = "approval"
@@ -65,6 +127,17 @@ class HomeActiveWorkItem:
     detail_route: str = "chat"
     console_available: bool = False
     updated_at: str = ""
+    status_detail: str = ""
+    # M4 (fix batch F1b): whether this item's own recovery control (Retry)
+    # should be offered at all. ``True`` by default so every pre-existing
+    # producer -- which never sets this -- keeps today's always-retryable
+    # behavior. Library ingest jobs set it to ``not job.permanent`` for
+    # FAILED items: a validation-class failure (unsupported file type,
+    # missing source file) fails the same way on every retry, so Home
+    # withholds the ``home-retry`` control for it (see
+    # ``build_home_controls``) the same way the ingest canvas withholds its
+    # own Retry button (``IngestQueueRow.can_retry``).
+    retry_available: bool = True
 
 
 @dataclass(frozen=True)
@@ -128,7 +201,26 @@ class HomeDashboard:
     controls: tuple[HomeControl, ...]
 
 
-def choose_next_best_action(state: HomeDashboardInput) -> HomeAction:
+def choose_next_best_action(
+    state: HomeDashboardInput,
+    *,
+    exclude: frozenset[str] = frozenset(),
+) -> HomeAction:
+    """Pick the single highest-priority Home "Next" suggestion.
+
+    Args:
+        state: Adapter-provided dashboard input.
+        exclude: ``action_id`` values to skip even when their branch would
+            otherwise win (H3, fix batch F1b) -- used by the triage canvas
+            builder to fall through to the next-best suggestion when the
+            top one would just repeat the selected item's own recovery
+            control (e.g. a failed item's canvas already offers Retry).
+            Honored by the ``review_failed_work`` and ``resume_active_work``
+            branches (the two the canvas builder needs to suppress: the
+            latter's "Live work is already running." copy is false when
+            nothing is actually running -- F1b whole-wave review). Empty by
+            default, so every other caller is unaffected.
+    """
     if not state.model_ready:
         return HomeAction(
             "fix_model_setup",
@@ -151,14 +243,14 @@ def choose_next_best_action(state: HomeDashboardInput) -> HomeAction:
             "Scheduled work needs recovery.",
         )
     failed_item = _first_item_for_status(state, _FAILED_STATUSES)
-    if _failed_run_count(state):
+    if _failed_run_count(state) and "review_failed_work" not in exclude:
         return HomeAction(
             "review_failed_work",
             "Review failed work",
             failed_item.detail_route if failed_item else state.active_detail_route,
             "Failed work needs recovery.",
         )
-    if _active_run_count(state):
+    if _active_run_count(state) and "resume_active_work" not in exclude:
         return HomeAction(
             "resume_active_work",
             "Resume active work",
@@ -200,12 +292,57 @@ def choose_home_selected_item(state: HomeDashboardInput) -> HomeActiveWorkItem |
     )
 
 
-def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
+def build_home_controls(
+    state: HomeDashboardInput,
+    *,
+    selected_row_id: str = "",
+    selected_item: HomeActiveWorkItem | None = None,
+) -> tuple[HomeControl, ...]:
+    """Build the Home canvas's control set.
+
+    Args:
+        state: Adapter-provided dashboard input.
+        selected_row_id: The currently selected Home rail row id, or ""
+            when nothing is selected (the count-only fallback path).
+            Threaded through only from ``build_home_triage_state`` (H2,
+            fix batch F1b) so the global "Review flashcards" shortcut can
+            be scoped to "no real item selected": it is a global shortcut,
+            not the selected item's own control, so it has no business
+            sitting on a real work item's canvas next to that item's own
+            controls (Retry, Approve, ...). Callers that don't have a
+            selection concept (``summarize_home_dashboard``, and the
+            triage builder's own count-only fallback) simply omit this and
+            keep today's unconditional-when-due behavior.
+        selected_item: The resolved ``HomeActiveWorkItem`` behind
+            ``selected_row_id``, when the selection is a real work item
+            (M4, fix batch F1b) -- threaded through the same way H2 threads
+            ``selected_row_id``. When this item's own status is failed and
+            its ``retry_available`` is ``False``, the ``home-retry``
+            control is omitted entirely rather than pointing Retry at a
+            failure that will just fail the same way again -- and, when
+            failed, its route/target also replace whichever failed item
+            ``_first_item_for_status`` would otherwise have picked, so
+            Retry always reflects the selected item, not just "the first
+            failed item in the list". ``None`` (the default) preserves
+            today's behavior exactly for every caller without a selection
+            concept (``summarize_home_dashboard``, the triage builder's own
+            count-only fallback): Retry targets whichever failed item
+            ``_first_item_for_status`` finds, unconditionally offered
+            whenever any failed run/schedule exists.
+    """
     controls: list[HomeControl] = []
     approval_item = _first_item_for_status(state, _APPROVAL_STATUSES)
     running_item = _first_item_for_status(state, _RUNNING_STATUSES)
     paused_item = _first_item_for_status(state, _PAUSED_STATUSES)
     failed_item = _first_item_for_status(state, _FAILED_STATUSES)
+    selected_item_is_failed = (
+        selected_item is not None and _normalized_status(selected_item) in _FAILED_STATUSES
+    )
+    if selected_item_is_failed:
+        # The selected row's own failure -- not just "the first failed item
+        # in the list" -- is what Retry (and its retry_available gate)
+        # should reflect when a real item is selected.
+        failed_item = selected_item
     chatbook_item = _first_chatbook_artifact_item(state)
     detail_item = choose_home_selected_item(state)
 
@@ -248,7 +385,12 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
                 paused_item.item_id if paused_item else None,
             )
         )
-    if _failed_run_count(state) or _failed_schedule_count(state):
+    # M4: only a *selected* failed item's own retry_available can withhold
+    # Retry -- callers with no selection concept (summarize_home_dashboard,
+    # the triage builder's own count-only fallback) keep today's
+    # unconditional-when-failed behavior unchanged.
+    retry_withheld = selected_item_is_failed and not selected_item.retry_available
+    if (_failed_run_count(state) or _failed_schedule_count(state)) and not retry_withheld:
         failed_route = failed_item.detail_route if failed_item else "schedules"
         controls.append(
             HomeControl(
@@ -311,7 +453,9 @@ def build_home_controls(state: HomeDashboardInput) -> tuple[HomeControl, ...]:
                     chatbook_item.item_id,
                 )
             )
-    if state.flashcards_due_count > 0:
+    if state.flashcards_due_count > 0 and (
+        not selected_row_id or selected_row_id == HOME_FLASHCARDS_DUE_ROW_ID
+    ):
         controls.append(
             HomeControl(
                 "home-review-flashcards",
@@ -742,14 +886,22 @@ def build_home_triage_state(
         selected = all_rows.get(fallback_item.item_id) if fallback_item else None
     next_action = choose_next_best_action(state)
     if selected is not None:
-        controls = build_home_controls(state)
+        # H2: thread the selection into build_home_controls so the global
+        # "Review flashcards" shortcut is scoped out of a real work item's
+        # canvas (kept for the synthetic flashcards row and for "nothing
+        # selected", below).
         if selected.row_id == HOME_FLASHCARDS_DUE_ROW_ID:
             # Synthetic row: no backing HomeActiveWorkItem to look up.
+            controls = build_home_controls(state, selected_row_id=selected.row_id)
             canvas = HomeCanvasState(
                 title=f"Flashcards due: {state.flashcards_due_count}",
                 lines=(
-                    f"{selected.glyph} due for review \u00b7 Library",
-                    "Route: study",
+                    # L7: "Library" alone reads as a source/destination
+                    # mismatch (flashcards live in Study, not Library) --
+                    # name the actual feature while still crediting the
+                    # Library-sourced due count.
+                    f"{selected.glyph} due for review \u00b7 Study decks in Library",
+                    f"Opens: {_home_route_label('study')}",
                 ),
                 actions=controls,
                 next_action=next_action,
@@ -764,17 +916,51 @@ def build_home_triage_state(
                 for i in tuple(state.active_work_items) + tuple(state.recent_work_items)
                 if i.item_id == selected.row_id
             )
+            # M4: thread the resolved item so build_home_controls can gate
+            # home-retry on *this* item's own retry_available rather than
+            # just "the first failed item in the list".
+            controls = build_home_controls(
+                state, selected_row_id=selected.row_id, selected_item=item
+            )
+            # H3: the Next hint must not repeat the selected item's own
+            # recovery control (e.g. a failed item's canvas already offers
+            # Retry) -- when the engine's top suggestion is exactly that,
+            # for exactly this item's route, recompute with that branch
+            # suppressed so it falls through to the next one.
+            item_next_action = next_action
+            if (
+                next_action.action_id == "review_failed_work"
+                and _normalized_status(item) in _FAILED_STATUSES
+                and item.detail_route == next_action.target_route
+            ):
+                excluded_actions = {"review_failed_work"}
+                if _running_run_count(state) == 0:
+                    # (F1b whole-wave review, live QA) The fallthrough
+                    # branch, resume_active_work, claims "Live work is
+                    # already running." -- but _active_run_count counts
+                    # failed/queued attention items too, so with nothing
+                    # actually RUNNING that copy is false (the Running rail
+                    # section says "Nothing running right now." right beside
+                    # it). Exclude it as well and keep falling through.
+                    excluded_actions.add("resume_active_work")
+                item_next_action = choose_next_best_action(
+                    state, exclude=frozenset(excluded_actions)
+                )
             status_line = f"{selected.glyph} {item.status} \u00b7 {item.source}"
             if selected.age_label:
                 status_line += f" \u00b7 since {selected.age_label}"
+            lines = [status_line]
+            if item.status_detail:
+                # M1: the failure reason, as its own line right after the
+                # status line -- truncated so one runaway error message
+                # can't blow out the canvas.
+                lines.append(_truncate_status_detail(item.status_detail))
+            lines.append(f"Opens: {_home_route_label(item.detail_route)}")
             canvas = HomeCanvasState(
                 title=item.title,
-                lines=(
-                    status_line,
-                    f"Route: {item.detail_route}",
-                ),
+                lines=tuple(lines),
                 actions=controls,
-                next_action=next_action,
+                next_action=item_next_action,
                 next_action_is_canvas=False,
                 primary_control_id=_canvas_primary_control_id(
                     selected.status_category, controls

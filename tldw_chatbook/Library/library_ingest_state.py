@@ -4,12 +4,17 @@ Renders the app-level Library ingest job registry (``library_ingest_jobs.py``)
 plus a small local form echo into the immutable state
 ``LibraryIngestCanvas`` (the widget in ``Widgets/Library/library_ingest_canvas.py``)
 renders from. Textual-free (stdlib only) so it is unit-testable without
-booting the TUI, mirroring ``library_notes_sync_state.py``.
+booting the TUI, mirroring ``library_notes_sync_state.py``. The one non-
+stdlib data source -- ``get_supported_extensions()`` from the heavy
+``Local_Ingestion`` package (L4, fix batch F1b) -- is deliberately a
+function-scoped, memoized import inside ``_supported_types_line``, so
+merely importing this module stays light; see that helper's docstring.
 """
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import PurePath
 from typing import Sequence
 
@@ -40,6 +45,80 @@ MAX_CHUNK_SIZE = 5000
 _GLYPH_ACTIVE = "●"  # "●" -- queued or running
 _GLYPH_DONE = "✓"  # "✓"
 _GLYPH_FAILED = "✗"  # "✗"
+
+# L4 (fix batch F1b): the failed-row line's "Supported types: ..." tail
+# moves to the form as its own always-visible line, prefixed with this
+# exact copy.
+SUPPORTED_TYPES_PREFIX = "Supported: "
+
+# L4: the marker `local_file_ingestion.py`'s "Unsupported file type" error
+# copy uses to separate the offending extension from its own supported-list
+# tail -- shared here so the queue row's ``short_error`` split can never
+# drift out of sync with that error string's exact punctuation.
+_SUPPORTED_TYPES_ERROR_MARKER = " Supported types:"
+
+
+def short_ingest_error(error: str) -> str:
+    """Return the short (queue-row) form of an ingest job's error message.
+
+    Drops the trailing ``" Supported types: ..."`` tail that
+    ``local_file_ingestion.py``'s "Unsupported file type" error carries --
+    that list lives on the ingest form as its own always-visible line (L4,
+    fix batch F1b) instead of being repeated on every failure surface. An
+    error without that exact marker passes through whole.
+
+    Single source of truth for BOTH failure-reason surfaces: the Library
+    ingest queue row (``_build_queue_row``) and Home's failed-item canvas
+    line (``active_work_adapter._local_ingest_job_items``) call this same
+    helper, so the two can never drift apart (F1b whole-wave review).
+
+    Args:
+        error: The raw ``LibraryIngestJob.error`` text.
+
+    Returns:
+        The error up to (excluding) the supported-types marker, right-
+        stripped; the whole error when the marker is absent.
+    """
+    return error.split(_SUPPORTED_TYPES_ERROR_MARKER)[0].rstrip()
+
+
+@lru_cache(maxsize=1)
+def _supported_types_line() -> str:
+    """Build the ingest form's supported-extensions line.
+
+    Derived live from ``get_supported_extensions()`` -- the exact same
+    function whose values back ``local_file_ingestion.py``'s "Unsupported
+    file type" error copy -- rather than a hardcoded duplicate list, so the
+    form's line and the runner's error copy can never drift apart (the A2
+    lesson: never hand-duplicate a value that already has a canonical
+    source).
+
+    The import is deliberately function-scoped, and the result is memoized
+    (``lru_cache``): importing ``tldw_chatbook.Local_Ingestion`` pulls the
+    full heavy ingestion module graph (PDF/audio/video processing, config,
+    DB), which would break this module's importable-in-isolation contract
+    (see the module docstring) and slow every isolated unit test of the
+    Library state modules. In production the graph is already loaded (the
+    queue-runner in ``app.py`` imports it eagerly), so the deferred import
+    costs nothing there; the supported-extensions set is a hardcoded
+    constant of the ingest seam, so caching the first result forever is
+    safe.
+
+    Returns:
+        ``"Supported: "`` followed by every supported extension (upper-
+        cased, dot stripped, comma-joined), in ``get_supported_extensions()``'s
+        own media-type -> extension-list order.
+    """
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+        get_supported_extensions,
+    )
+
+    extensions = [
+        ext.lstrip(".").upper()
+        for exts in get_supported_extensions().values()
+        for ext in exts
+    ]
+    return SUPPORTED_TYPES_PREFIX + ", ".join(extensions)
 
 
 @dataclass
@@ -101,8 +180,12 @@ class IngestQueueRow:
             syntax like ``[/bracket]``).
         can_open: True only for a ``done`` job with a resolved ``media_id``
             -- gates the row's "Open in Library" action.
-        can_retry: True only for a ``failed`` job -- gates the row's
-            "Retry" action.
+        can_retry: True only for a ``failed`` job whose ``permanent`` flag
+            is ``False`` (M4, fix batch F1b) -- gates the row's "Retry"
+            action. A ``permanent`` failure (an unsupported file type or a
+            missing source file) will fail the exact same way every time,
+            so Retry is withheld entirely rather than offering dead bait;
+            ``can_dismiss`` stays available either way.
         can_dismiss: True only for a ``failed`` job -- gates the row's
             "Dismiss" action (L3b AB wave, B2). Currently identical to
             ``can_retry`` (both actions are FAILED-only per the registry's
@@ -141,6 +224,12 @@ class LibraryIngestCanvasState:
             both would be redundant, since without a registry the media-db
             gate can never even be checked in production.
         form: The form echo (see ``LibraryIngestFormState``).
+        supported_types_line: (L4, fix batch F1b) A muted, always-visible
+            line listing every ingestible extension, built live from
+            ``get_supported_extensions()`` (see ``_supported_types_line``)
+            rather than hardcoded -- rendered under the Browse… button so
+            it stays reachable without being repeated on every failed queue
+            row (see ``IngestQueueRow.line``'s ``short_error``).
         start_enabled: Whether the "Start ingest" button is enabled --
             requires a working registry, an available media DB, and a
             non-blank typed path.
@@ -170,6 +259,7 @@ class LibraryIngestCanvasState:
     server_quiet_line: str
     unavailable_line: str
     form: LibraryIngestFormState
+    supported_types_line: str
     start_enabled: bool
     start_quiet_line: str
     queue_heading: str
@@ -223,7 +313,12 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
       ``" · {detected_type}"`` appended when the seam has reported one.
     - queued: ``"● queued · {basename}"``.
     - done: ``"✓ done · {basename} · {elapsed}"``.
-    - failed: ``"✗ failed · {basename} · {error}"``.
+    - failed: ``"✗ failed · {basename} · {short_error}"``, where
+      ``short_error`` (L4, fix batch F1b) drops a trailing
+      ``" Supported types: ..."`` tail from ``job.error`` -- that list now
+      lives on the form as ``supported_types_line`` instead, always visible
+      rather than repeated on every failed row. An error without that exact
+      marker passes through whole.
     """
     basename = _basename(job.source_path)
     if job.state == IngestJobState.RUNNING:
@@ -258,12 +353,13 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
             media_id=job.media_id,
         )
     # FAILED -- the only remaining IngestJobState member.
+    short_error = short_ingest_error(job.error)
     return IngestQueueRow(
         job_id=job.job_id,
         glyph=_GLYPH_FAILED,
-        line=f"{_GLYPH_FAILED} failed · {basename} · {job.error}",
+        line=f"{_GLYPH_FAILED} failed · {basename} · {short_error}",
         can_open=False,
-        can_retry=True,
+        can_retry=not job.permanent,
         can_dismiss=True,
         media_id=job.media_id,
     )
@@ -354,6 +450,7 @@ def build_library_ingest_state(
         server_quiet_line=server_quiet_line,
         unavailable_line=unavailable_line,
         form=form,
+        supported_types_line=_supported_types_line(),
         start_enabled=start_enabled,
         start_quiet_line=start_quiet_line,
         queue_heading=QUEUE_HEADING_COPY,

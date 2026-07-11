@@ -210,18 +210,16 @@ class ChatAttachmentHandler:
             logger.error(f"Out of memory processing file: {file_path}")
             self.app_instance.notify("File too large to process", severity="error")
         elif isinstance(error, (IOError, OSError)):
-            logger.error(
+            logger.opt(exception=True).error(
                 f"File system error processing attachment: {error}",
-                exc_info=True,
             )
             self.app_instance.notify(
                 f"File system error: {str(error)}",
                 severity="error",
             )
         else:
-            logger.critical(
+            logger.opt(exception=True).critical(
                 f"Unexpected error processing file attachment: {error}",
-                exc_info=True,
             )
             self.app_instance.notify("An unexpected error occurred", severity="error")
 
@@ -377,7 +375,7 @@ class ChatAttachmentHandler:
             logger.error(f"Invalid data type or value in processed file: {e}")
             self.app_instance.notify(f"Failed to process file: {str(e)}", severity="error")
         except RuntimeError as e:
-            logger.error(f"Runtime error handling processed file: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Runtime error handling processed file: {e}")
             self.app_instance.notify("Failed to process file", severity="error")
     
     def clear_attachment_state(self):

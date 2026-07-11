@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
 async def populate_ccp_character_select(app: 'TldwCli') -> None:
     """Populates the character selection dropdown in the CCP tab."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Attempting to populate #conv-char-character-select dropdown.")
     
     if not app.notes_service:
@@ -82,9 +82,9 @@ async def populate_ccp_character_select(app: 'TldwCli') -> None:
             logger.info("No characters found to populate #conv-char-character-select.")
 
     except QueryError as e_query:
-        logger.error(f"Failed to find #conv-char-character-select widget: {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to find #conv-char-character-select widget: {e_query}")
     except CharactersRAGDBError as e_db:
-        logger.error(f"Database error populating #conv-char-character-select: {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"Database error populating #conv-char-character-select: {e_db}")
         try:
             char_select_widget_err = app.query_one("#conv-char-character-select", Select)
             char_select_widget_err.set_options([("Error Loading Characters", Select.BLANK)])
@@ -92,7 +92,7 @@ async def populate_ccp_character_select(app: 'TldwCli') -> None:
         except QueryError:
             pass
     except Exception as e_unexp:
-        logger.error(f"Unexpected error populating #conv-char-character-select: {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error populating #conv-char-character-select: {e_unexp}")
         try:
             char_select_widget_unexp = app.query_one("#conv-char-character-select", Select)
             char_select_widget_unexp.set_options([("Error Loading (Unexpected)", Select.BLANK)])
@@ -103,7 +103,7 @@ async def populate_ccp_character_select(app: 'TldwCli') -> None:
 
 async def populate_ccp_prompts_list_view(app: 'TldwCli', search_term: Optional[str] = None) -> None:
     """Populates the prompts list view in the CCP tab."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     
     
     if not app.prompts_service_initialized:
@@ -143,9 +143,9 @@ async def populate_ccp_prompts_list_view(app: 'TldwCli', search_term: Optional[s
                 await list_view_prompt.append(item)
         logger.info(f"Populated CCP prompts list. Search: '{search_term}', Found: {len(results)}")
     except QueryError as e_query:
-        logger.error(f"UI component error populating CCP prompts list: {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"UI component error populating CCP prompts list: {e_query}")
     except (prompts_interop.DatabaseError, RuntimeError) as e_prompt_service:
-        logger.error(f"Error populating CCP prompts list: {e_prompt_service}", exc_info=True)
+        logger.opt(exception=True).error(f"Error populating CCP prompts list: {e_prompt_service}")
         try:
             list_view_err_detail = app.query_one("#ccp-prompts-listview", ListView)
             await list_view_err_detail.clear()
@@ -154,12 +154,12 @@ async def populate_ccp_prompts_list_view(app: 'TldwCli', search_term: Optional[s
         except QueryError:
             pass
     except Exception as e_unexp:
-        logger.error(f"Unexpected error populating CCP prompts list: {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error populating CCP prompts list: {e_unexp}")
 
 
 def clear_ccp_prompt_fields(app: 'TldwCli') -> None:
     """Clears prompt input fields in the CCP right pane."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     app._clear_prompt_fields()
 
 
@@ -169,7 +169,7 @@ def clear_ccp_prompt_fields(app: 'TldwCli') -> None:
 #
 ########################################################################################################################
 async def _character_import_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     if selected_path:
         logger.info(f"Character card import selected: {selected_path}")
         if not app.notes_service:
@@ -193,16 +193,16 @@ async def _character_import_callback(app: 'TldwCli', selected_path: Optional[Pat
             await populate_ccp_character_select(app) # Refresh in case it was a duplicate name
         except ImportError as ie: # E.g., PyYAML missing for Markdown with frontmatter
             app.notify(f"Import error: {ie}. A required library might be missing.", severity="error", timeout=8)
-            logger.error(f"Import error for character card '{selected_path}': {ie}", exc_info=True)
+            logger.opt(exception=True).error(f"Import error for character card '{selected_path}': {ie}")
         except Exception as e:
             app.notify(f"Error importing character card: {type(e).__name__}", severity="error", timeout=6)
-            logger.error(f"Error importing character card '{selected_path}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error importing character card '{selected_path}': {e}")
     else:
         logger.info("Character card import cancelled.")
         app.notify("Character import cancelled.", severity="information", timeout=2)
 
 async def handle_ccp_import_character_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Import Character Card button pressed.")
 
     defined_filters = Filters(
@@ -220,7 +220,7 @@ async def handle_ccp_import_character_button_pressed(app: 'TldwCli', event: Butt
 
 
 async def handle_ccp_left_load_character_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging) # Or however logger is typically obtained
+    logger = getattr(app, 'loguru_logger', loguru_logger) # Or however logger is typically obtained
     logger.info("CCP Load Selected Character button (left pane) pressed.")
     try:
         # Get the Select widget from the left pane
@@ -269,17 +269,17 @@ async def handle_ccp_left_load_character_button_pressed(app: 'TldwCli', event: B
                 logger.warning(f"Failed to load character details for ID: {selected_character_id}")
 
         except CharactersRAGDBError as e_db_rag:
-            logger.error(f"Database error loading character {selected_character_id}: {e_db_rag}", exc_info=True)
+            logger.opt(exception=True).error(f"Database error loading character {selected_character_id}: {e_db_rag}")
             app.notify(f"Database error loading character: {e_db_rag}", severity="error")
         except Exception as e_load_char: # Catch other potential errors from ccl.load_character_and_image
-            logger.error(f"Error loading character data/image for ID {selected_character_id}: {e_load_char}", exc_info=True)
+            logger.opt(exception=True).error(f"Error loading character data/image for ID {selected_character_id}: {e_load_char}")
             app.notify(f"Error loading character: {type(e_load_char).__name__}", severity="error")
 
     except QueryError as e_query:
-        logger.error(f"UI component not found during load character (left pane): {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"UI component not found during load character (left pane): {e_query}")
         app.notify("Error: UI component missing for loading character.", severity="error")
     except Exception as e_unexp:
-        logger.error(f"Unexpected error during load character (left pane): {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error during load character (left pane): {e_unexp}")
         app.notify("An unexpected error occurred while trying to load character view.", severity="error")
 
 
@@ -326,7 +326,7 @@ async def handle_ccp_refresh_character_list_button_pressed(app: 'TldwCli', event
         app.notify("Character list refreshed.", severity="information")
         logger.info("Character list refreshed successfully.")
     except Exception as e:
-        logger.error(f"Error refreshing character list: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error refreshing character list: {e}")
         app.notify("Failed to refresh character list.", severity="error")
 
 
@@ -408,16 +408,16 @@ async def handle_ccp_card_save_button_pressed(app: 'TldwCli', event: Button.Pres
             logger.error(f"Update for character ID {char_id} did not return updated data or confirmation.")
 
     except ConflictError as e_conflict:
-        logger.warning(f"ConflictError saving character ID {char_id}: {e_conflict}", exc_info=True)
+        logger.opt(exception=True).warning(f"ConflictError saving character ID {char_id}: {e_conflict}")
         app.notify("Save conflict: Data has been modified elsewhere. Please reload and try again.", severity="error", timeout=7)
     except QueryError as e_query:
-        logger.error(f"UI component not found during save character card: {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"UI component not found during save character card: {e_query}")
         app.notify("Error: UI component missing for saving character.", severity="error")
     except CharactersRAGDBError as e_db:
-        logger.error(f"CharactersRAGDBError saving character ID {char_id}: {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"CharactersRAGDBError saving character ID {char_id}: {e_db}")
         app.notify(f"Error saving character: {type(e_db).__name__}. Check logs.", severity="error")
     except Exception as e_unexp:
-        logger.error(f"Unexpected error saving character ID {char_id}: {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error saving character ID {char_id}: {e_unexp}")
         app.notify(f"An unexpected error occurred: {type(e_unexp).__name__}. Check logs.", severity="error")
 
 
@@ -515,16 +515,16 @@ async def handle_ccp_card_clone_button_pressed(app: 'TldwCli', event: Button.Pre
             logger.error(f"Cloning character '{original_name_from_ui}' did not return new character details or ID.")
 
     except ConflictError as e_conflict:
-        logger.warning(f"ConflictError cloning character '{original_name_from_ui}': {e_conflict}", exc_info=True)
+        logger.opt(exception=True).warning(f"ConflictError cloning character '{original_name_from_ui}': {e_conflict}")
         app.notify(f"Save conflict while cloning: {e_conflict}. Please try again.", severity="error", timeout=7)
     except QueryError as e_query:
-        logger.error(f"UI component not found during clone character card: {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"UI component not found during clone character card: {e_query}")
         app.notify("Error: UI component missing for cloning character.", severity="error")
     except CharactersRAGDBError as e_db:
-        logger.error(f"CharactersRAGDBError cloning character '{original_name_from_ui}': {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"CharactersRAGDBError cloning character '{original_name_from_ui}': {e_db}")
         app.notify(f"Error cloning character: {type(e_db).__name__}. Check logs.", severity="error")
     except Exception as e_unexp:
-        logger.error(f"Unexpected error cloning character '{original_name_from_ui}': {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error cloning character '{original_name_from_ui}': {e_unexp}")
         app.notify(f"An unexpected error occurred while cloning: {type(e_unexp).__name__}. Check logs.",
                    severity="error")
 
@@ -602,19 +602,19 @@ async def handle_ccp_right_delete_character_button_pressed(app: 'TldwCli', event
 
 
     except CharactersRAGDBError as e_db: # More specific DB errors
-        logger.error(f"Database error deleting character ID {character_id_to_delete}: {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"Database error deleting character ID {character_id_to_delete}: {e_db}")
         app.notify(f"Error deleting character: {type(e_db).__name__}. Check logs.", severity="error")
     except QueryError as e_query: # If query_one for clearing fields fails
-        logger.error(f"UI component error during delete character (likely clearing fields): {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"UI component error during delete character (likely clearing fields): {e_query}")
         app.notify("UI error during character deletion process.", severity="error")
     except Exception as e_unexp:
-        logger.error(f"Unexpected error deleting character ID {character_id_to_delete}: {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error deleting character ID {character_id_to_delete}: {e_unexp}")
         app.notify(f"An unexpected error occurred while deleting: {type(e_unexp).__name__}. Check logs.", severity="error")
 
 
 async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
     """Performs conversation search for the CCP tab with enhanced capabilities."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug("Performing CCP conversation search...")
     try:
         # Get all search inputs
@@ -769,9 +769,8 @@ async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
                         if char_details and char_details.get('name'):
                             char_name_prefix = f"[{char_details['name']}] "
                     except Exception as e_char_name_fetch:
-                        logger.warning(
-                            f"Could not fetch char name for conv {conv_data['id']}, char_id {char_id_for_conv}: {e_char_name_fetch}",
-                            exc_info=False)
+                        logger.opt(exception=False).warning(
+                            f"Could not fetch char name for conv {conv_data['id']}, char_id {char_id_for_conv}: {e_char_name_fetch}")
 
                 display_title = f"{char_name_prefix}{base_title}"
                 item = ListItem(Label(display_title))
@@ -784,17 +783,17 @@ async def perform_ccp_conversation_search(app: 'TldwCli') -> None:
             f"yielded {len(conversations)} results.")
 
     except QueryError as e_query:
-        logger.error(f"UI component not found during CCP conversation search: {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"UI component not found during CCP conversation search: {e_query}")
         if 'results_list_view' in locals() and results_list_view.is_mounted:
             await results_list_view.clear()
             await results_list_view.append(ListItem(Label("Error: UI component missing.")))
     except CharactersRAGDBError as e_db:
-        logger.error(f"Database error during CCP conversation search: {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"Database error during CCP conversation search: {e_db}")
         if 'results_list_view' in locals() and results_list_view.is_mounted:
             await results_list_view.clear()
             await results_list_view.append(ListItem(Label("Error: Database search failed.")))
     except Exception as e_unexp:
-        logger.error(f"Unexpected error during CCP conversation search: {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error during CCP conversation search: {e_unexp}")
         if 'results_list_view' in locals() and results_list_view.is_mounted:
             await results_list_view.clear()
             await results_list_view.append(ListItem(Label("Error: Unexpected search failure.")))
@@ -813,7 +812,7 @@ async def handle_ccp_conversation_search_button_pressed(app: 'TldwCli', event: B
 
 async def handle_ccp_load_conversation_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles loading a selected conversation in the CCP tab."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Load Conversation button pressed.")
     try:
         results_list_view = app.query_one("#conv-char-search-results-list", ListView)
@@ -903,19 +902,19 @@ async def handle_ccp_load_conversation_button_pressed(app: 'TldwCli', event: But
         app.notify(f"Conversation '{title_input_ccp.value}' loaded.", severity="information")
 
     except QueryError as e_query:
-        logger.error(f"UI component not found during CCP load conversation: {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"UI component not found during CCP load conversation: {e_query}")
         app.notify("Error: UI component missing for loading.", severity="error")
     except CharactersRAGDBError as e_db:
-        logger.error(f"Database error during CCP load conversation: {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"Database error during CCP load conversation: {e_db}")
         app.notify("Error loading conversation data from database.", severity="error")
     except Exception as e_unexp:
-        logger.error(f"Unexpected error during CCP load conversation: {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error during CCP load conversation: {e_unexp}")
         app.notify("An unexpected error occurred while loading conversation.", severity="error")
 
 
 async def handle_ccp_save_conversation_details_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles saving conversation title/keywords in the CCP tab."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Save Conversation Details button pressed.")
     if not app.current_conv_char_tab_conversation_id:
         logger.warning("No current conversation loaded in CCP tab to save details for.")
@@ -991,24 +990,23 @@ async def handle_ccp_save_conversation_details_button_pressed(app: 'TldwCli', ev
             app.notify("No changes to save.", severity="information")
 
     except ConflictError as e_conflict:
-        logger.error(
-            f"CCP: Conflict saving conversation details for {app.current_conv_char_tab_conversation_id}: {e_conflict}",
-            exc_info=True)
+        logger.opt(exception=True).error(
+            f"CCP: Conflict saving conversation details for {app.current_conv_char_tab_conversation_id}: {e_conflict}")
         app.notify(f"Save conflict: {e_conflict}. Please reload.", severity="error")
     except QueryError as e_query:
-        logger.error(f"CCP: UI component not found for saving details: {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP: UI component not found for saving details: {e_query}")
         app.notify("Error accessing UI fields.", severity="error")
     except CharactersRAGDBError as e_db:
-        logger.error(f"CCP: Database error saving details: {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP: Database error saving details: {e_db}")
         app.notify("Database error saving details.", severity="error")
     except Exception as e_unexp:
-        logger.error(f"CCP: Unexpected error saving details: {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP: Unexpected error saving details: {e_unexp}")
         app.notify("An unexpected error occurred.", severity="error")
 
 
 async def handle_ccp_prompt_create_new_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None: # This one is for the RIGHT pane
     """Handles creating a new prompt in the CCP tab's RIGHT PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Create New Prompt button pressed.")
     clear_ccp_prompt_fields(app)
     try:
@@ -1029,14 +1027,14 @@ async def handle_ccp_prompt_create_new_button_pressed(app: 'TldwCli', event: But
         app.query_one("#ccp-prompt-name-input", Input).focus() # Focus in right pane
         app.notify("Ready to create a new prompt in the right-side editor.", severity="information")
     except QueryError as e_query: # This can happen if the right sidebar is collapsed
-        logger.error(f"CCP: UI error preparing for new prompt (right pane): {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP: UI error preparing for new prompt (right pane): {e_query}")
         app.notify("UI error creating new prompt.", severity="error")
 
 async def handle_ccp_center_pane_new_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """
     Handles the 'New Prompt' button that is intended to open the CENTER PANE editor.
     """
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Center Pane 'New Prompt' button pressed.")
 
     # 1. Signal the intent to edit a new prompt (clears any existing loaded prompt ID)
@@ -1052,7 +1050,7 @@ async def handle_ccp_center_pane_new_prompt_button_pressed(app: 'TldwCli', event
 
 async def handle_ccp_prompt_load_selected_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles loading a selected prompt from the LEFT PANE list into the RIGHT PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Load Selected Prompt button pressed (loads into right pane editor).")
     try:
         list_view = app.query_one("#ccp-prompts-listview", ListView)
@@ -1068,12 +1066,12 @@ async def handle_ccp_prompt_load_selected_button_pressed(app: 'TldwCli', event: 
         app.notify("Prompt list not found.", severity="error")
     except Exception as e:  # Catch broader exceptions during load
         app.notify(f"Error loading prompt: {str(e)[:100]}", severity="error")  # Show part of error
-        logger.error(f"Error loading prompt from list: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error loading prompt from list: {e}")
 
 
 async def handle_ccp_prompt_save_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles saving a new or existing prompt from the RIGHT PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Save Prompt button pressed (saves from right pane editor).")
     if not app.prompts_service_initialized:
         app.notify("Prompts service not available.", severity="error")
@@ -1136,16 +1134,16 @@ async def handle_ccp_prompt_save_button_pressed(app: 'TldwCli', event: Button.Pr
     except prompts_interop.DatabaseError as e_db:
         app.notify(f"Database Error: {e_db}", severity="error", timeout=6)
     except QueryError as e_query:
-        logger.error(f"CCP Save Prompt (right pane): UI component error: {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP Save Prompt (right pane): UI component error: {e_query}")
         app.notify("UI Error saving prompt.", severity="error")
     except Exception as e_save:
-        logger.error(f"CCP: Error saving prompt (right pane): {e_save}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP: Error saving prompt (right pane): {e_save}")
         app.notify(f"Error saving prompt: {type(e_save).__name__}", severity="error")
 
 
 async def handle_ccp_prompt_clone_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles cloning the currently loaded prompt in the RIGHT PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Clone Prompt button pressed (clones from right pane editor).")
     if not app.prompts_service_initialized or app.current_prompt_id is None:
         app.notify("No prompt loaded in right pane editor to clone or service unavailable.", severity="warning")
@@ -1172,13 +1170,13 @@ async def handle_ccp_prompt_clone_button_pressed(app: 'TldwCli', event: Button.P
         else:
             app.notify(f"Failed to clone prompt: {msg_clone}", severity="error")
     except Exception as e_clone:
-        logger.error(f"CCP: Error cloning prompt (from right pane): {e_clone}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP: Error cloning prompt (from right pane): {e_clone}")
         app.notify(f"Error cloning prompt: {type(e_clone).__name__}", severity="error")
 
 
 async def handle_ccp_prompt_delete_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles deleting (soft) the currently loaded prompt from the RIGHT PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Delete Prompt button pressed (deletes based on right pane editor state).")
     if not app.prompts_service_initialized or app.current_prompt_id is None:
         app.notify("No prompt loaded in right pane editor to delete or service unavailable.", severity="warning")
@@ -1232,14 +1230,14 @@ async def handle_ccp_prompt_delete_button_pressed(app: 'TldwCli', event: Button.
                 clear_ccp_prompt_fields(app)
 
     except prompts_interop.ConflictError as e_cf_del: # Specific exception from your DB class
-        logger.error(f"CCP: Conflict error deleting prompt: {e_cf_del}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP: Conflict error deleting prompt: {e_cf_del}")
         app.notify(f"Conflict error deleting prompt: {e_cf_del}", severity="error")
         await populate_ccp_prompts_list_view(app) # Refresh list
     except prompts_interop.DatabaseError as e_db_del: # Specific exception from your DB class
-        logger.error(f"CCP: Database error deleting prompt: {e_db_del}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP: Database error deleting prompt: {e_db_del}")
         app.notify(f"Database error deleting prompt: {type(e_db_del).__name__}", severity="error")
     except Exception as e_del: # Catch any other unexpected exceptions
-        logger.error(f"CCP: Unexpected error deleting prompt: {e_del}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP: Unexpected error deleting prompt: {e_del}")
         app.notify(f"Unexpected error deleting prompt: {type(e_del).__name__}", severity="error")
 
 
@@ -1266,7 +1264,7 @@ async def handle_ccp_conversation_tags_search_input_changed(app: 'TldwCli', even
 
 async def handle_ccp_search_checkbox_changed(app: 'TldwCli', checkbox_id: str, value: bool) -> None:
     """Handles checkbox state changes in CCP conversation search."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.debug(f"CCP search checkbox '{checkbox_id}' changed to {value}")
     
     if checkbox_id == "conv-char-search-all-characters-checkbox":
@@ -1277,7 +1275,7 @@ async def handle_ccp_search_checkbox_changed(app: 'TldwCli', checkbox_id: str, v
             if value:
                 char_select_widget.value = Select.BLANK  # Clear selection when "All" is checked
         except QueryError as e:
-            logger.error(f"Error accessing character select widget: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error accessing character select widget: {e}")
     
     # Trigger a new search when checkbox state changes
     await perform_ccp_conversation_search(app)
@@ -1341,7 +1339,7 @@ async def _conversation_import_callback(app: 'TldwCli', selected_path: Optional[
                 app.notify("Failed to import conversation. Check logs.", severity="error")
         except Exception as e:
             app.notify(f"Error importing conversation: {type(e).__name__}", severity="error", timeout=6)
-            logger.error(f"Error importing conversation from '{selected_path}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error importing conversation from '{selected_path}': {e}")
     else:
         logger.info("Conversation import cancelled.")
         app.notify("Conversation import cancelled.", severity="information", timeout=2)
@@ -1474,14 +1472,14 @@ def _parse_prompt_from_file_content(file_content_str: str) -> Optional[Dict[str,
         else:
             logger.debug("Custom plain text parsing did not yield a valid 'name' or was empty.")
     except Exception as e_custom:
-        logger.error(f"Error parsing prompt file as custom plain text: {e_custom}", exc_info=True)
+        logger.opt(exception=True).error(f"Error parsing prompt file as custom plain text: {e_custom}")
         return None
         # If all parsing attempts fail
     logger.error("All parsing attempts for prompt file failed.")
     return None
 
 async def _prompt_import_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     if selected_path:
         logger.info(f"Prompt import selected: {selected_path}")
         if not app.prompts_service_initialized:
@@ -1520,13 +1518,13 @@ async def _prompt_import_callback(app: 'TldwCli', selected_path: Optional[Path])
             logger.error(f"Prompt file not found: {selected_path}")
         except Exception as e:
             app.notify(f"Error importing prompt: {type(e).__name__}", severity="error", timeout=6)
-            logger.error(f"Error importing prompt from '{selected_path}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error importing prompt from '{selected_path}': {e}")
     else:
         logger.info("Prompt import cancelled.")
         app.notify("Prompt import cancelled.", severity="information", timeout=2)
 
 async def handle_ccp_import_prompt_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Import Prompt button pressed.")
 
     defined_filters = Filters(
@@ -1545,7 +1543,7 @@ async def handle_ccp_import_prompt_button_pressed(app: 'TldwCli', event: Button.
 ########################################################################################################################
 async def handle_ccp_editor_prompt_save_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles saving a new or existing prompt from the CENTER PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Editor Save Prompt button pressed (saves from center pane editor).")
     if not app.prompts_service_initialized:
         app.notify("Prompts service not available.", severity="error")
@@ -1609,16 +1607,16 @@ async def handle_ccp_editor_prompt_save_button_pressed(app: 'TldwCli', event: Bu
     except prompts_interop.DatabaseError as e_db:
         app.notify(f"Editor Database Error: {e_db}", severity="error", timeout=6)
     except QueryError as e_query:
-        logger.error(f"CCP Editor Save Prompt: UI component error: {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP Editor Save Prompt: UI component error: {e_query}")
         app.notify("UI Error saving prompt from editor.", severity="error")
     except Exception as e_save:
-        logger.error(f"CCP Editor: Error saving prompt: {e_save}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP Editor: Error saving prompt: {e_save}")
         app.notify(f"Editor: Error saving prompt: {type(e_save).__name__}", severity="error")
 
 
 async def handle_ccp_editor_prompt_clone_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles cloning the prompt currently in the CENTER PANE editor."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Editor Clone Prompt button pressed.")
     if not app.prompts_service_initialized or app.current_prompt_id is None:
         app.notify("No prompt loaded in editor to clone or service unavailable.", severity="warning")
@@ -1647,7 +1645,7 @@ async def handle_ccp_editor_prompt_clone_button_pressed(app: 'TldwCli', event: B
         else:
             app.notify(f"Editor: Failed to clone prompt: {msg_clone}", severity="error")
     except Exception as e_clone:
-        logger.error(f"CCP Editor: Error cloning prompt: {e_clone}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP Editor: Error cloning prompt: {e_clone}")
         app.notify(f"Editor: Error cloning prompt: {type(e_clone).__name__}", severity="error")
 
 
@@ -1693,13 +1691,13 @@ async def handle_ccp_editor_prompt_delete_button_pressed(app: 'TldwCli', event: 
                 app.ccp_active_view = "conversation_details_view"
 
     except prompts_interop.ConflictError as e_cf_del:
-        logger.error(f"CCP Editor: Conflict deleting prompt: {e_cf_del}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP Editor: Conflict deleting prompt: {e_cf_del}")
         app.notify(f"Editor: Conflict error deleting prompt: {e_cf_del}", severity="error")
     except prompts_interop.DatabaseError as e_db_del:
-        logger.error(f"CCP Editor: Database error deleting prompt: {e_db_del}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP Editor: Database error deleting prompt: {e_db_del}")
         app.notify(f"Editor: Database error deleting prompt: {type(e_db_del).__name__}", severity="error")
     except Exception as e_del:
-        logger.error(f"CCP Editor: Unexpected error deleting prompt: {e_del}", exc_info=True)
+        logger.opt(exception=True).error(f"CCP Editor: Unexpected error deleting prompt: {e_del}")
         app.notify(f"Editor: Unexpected error deleting prompt: {type(e_del).__name__}", severity="error")
 
 # ##############################################################
@@ -1878,18 +1876,18 @@ async def handle_ccp_editor_char_save_button_pressed(app: 'TldwCli', event: Butt
 
 
     except ConflictError as e_conflict:
-        logger.warning(f"Conflict saving character '{char_name}': {e_conflict}", exc_info=True)
+        logger.opt(exception=True).warning(f"Conflict saving character '{char_name}': {e_conflict}")
         app.notify(f"Save conflict: Data was modified elsewhere. Please reload and try again.", severity="error", timeout=7)
         if app.current_editing_character_id: # Reload to show current state from DB
             await _helper_ccp_load_character_into_center_pane_editor(app, app.current_editing_character_id)
     except CharactersRAGDBError as e_db:
-        logger.error(f"Database error saving character '{char_name}': {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"Database error saving character '{char_name}': {e_db}")
         app.notify(f"Database error saving character: {type(e_db).__name__}", severity="error")
     except QueryError as e_query:
-        logger.error(f"UI component error saving character: {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"UI component error saving character: {e_query}")
         app.notify("UI Error: Could not access character editor fields.", severity="error")
     except Exception as e_unexp:
-        logger.error(f"Unexpected error saving character '{char_name}': {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error saving character '{char_name}': {e_unexp}")
         app.notify(f"An unexpected error occurred: {type(e_unexp).__name__}", severity="error")
 
 # ##############################################################
@@ -1930,7 +1928,7 @@ async def _helper_ccp_clear_center_pane_character_editor_fields(app: 'TldwCli') 
     except QueryError as e:
         loguru_logger.error(f"Error clearing CCP center pane character editor fields: {e}")
     except Exception as e_clear:
-        loguru_logger.error(f"Unexpected error clearing CCP center pane character editor fields: {e_clear}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Unexpected error clearing CCP center pane character editor fields: {e_clear}")
 
 async def _helper_ccp_load_character_into_center_pane_editor(app: 'TldwCli', character_id: str) -> None:
     """Loads character details into the CCP CENTER PANE editor and updates app state."""
@@ -2004,16 +2002,16 @@ async def _helper_ccp_load_character_into_center_pane_editor(app: 'TldwCli', cha
             loguru_logger.warning(f"Character details not found for ID {character_id} for editor.")
 
     except CharactersRAGDBError as e_db:
-        loguru_logger.error(f"Database error loading character for CCP editing (ID: {character_id}): {e_db}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Database error loading character for CCP editing (ID: {character_id}): {e_db}")
         app.notify(f"Database error loading character: {type(e_db).__name__}", severity="error")
         await _helper_ccp_clear_center_pane_character_editor_fields(app)
         app.current_editing_character_id = None
         app.current_editing_character_data = None
     except QueryError as e_query:
-        loguru_logger.error(f"UI component error loading character for CCP editing (ID: {character_id}): {e_query}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"UI component error loading character for CCP editing (ID: {character_id}): {e_query}")
         app.notify("UI Error: Could not populate character editor fields.", severity="error")
     except Exception as e:
-        loguru_logger.error(f"Unexpected error loading character for CCP editing (ID: {character_id}): {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Unexpected error loading character for CCP editing (ID: {character_id}): {e}")
         app.notify(f"Error loading character into editor: {type(e).__name__}", severity="error")
         await _helper_ccp_clear_center_pane_character_editor_fields(app)
         app.current_editing_character_id = None
@@ -2085,10 +2083,10 @@ async def handle_ccp_editor_char_clone_button_pressed(app: 'TldwCli', event: But
             app.notify(f"Failed to clone character '{original_name}'.", severity="error")
 
     except CharactersRAGDBError as e_db:
-        logger.error(f"Database error cloning character from editor: {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"Database error cloning character from editor: {e_db}")
         app.notify(f"Database error cloning: {type(e_db).__name__}", severity="error")
     except Exception as e_unexp:
-        logger.error(f"Unexpected error cloning character from editor: {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error cloning character from editor: {e_unexp}")
         app.notify(f"Unexpected error cloning: {type(e_unexp).__name__}", severity="error")
 
 
@@ -2140,7 +2138,7 @@ async def handle_ccp_editor_char_cancel_button_pressed(app: 'TldwCli', event: Bu
                     app.ccp_active_view = "conversation_messages_view" # Fallback
 
             except Exception as e_load:
-                logger.error(f"Error reloading original character data (ID: {stored_character_id}) on cancel: {e_load}", exc_info=True)
+                logger.opt(exception=True).error(f"Error reloading original character data (ID: {stored_character_id}) on cancel: {e_load}")
                 app.notify("Error restoring character view. Clearing editor.", severity="error")
                 await _helper_ccp_clear_center_pane_character_editor_fields(app)
                 app.ccp_active_view = "conversation_messages_view" # Fallback
@@ -2168,12 +2166,12 @@ async def handle_ccp_editor_char_cancel_button_pressed(app: 'TldwCli', event: Bu
             app.notify("New character creation cancelled.", severity="information")
 
     except QueryError as e_query:
-        logger.error(f"UI component error during cancel character edit (querying cancel button): {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"UI component error during cancel character edit (querying cancel button): {e_query}")
         app.notify("UI Error: Could not properly cancel character edit.", severity="error")
         # Attempt to recover by switching to a default view
         app.ccp_active_view = "conversation_messages_view"
     except Exception as e_unexp:
-        logger.error(f"Unexpected error during cancel character edit: {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error during cancel character edit: {e_unexp}")
         app.notify(f"An unexpected error occurred: {type(e_unexp).__name__}", severity="error")
         # Attempt to recover
         app.ccp_active_view = "conversation_messages_view"
@@ -2231,14 +2229,14 @@ async def handle_ccp_editor_char_delete_button_pressed(app: 'TldwCli', event: Bu
             await populate_ccp_character_select(app)
 
     except ConflictError as e_conflict:
-        logger.error(f"Conflict error deleting character {character_id_to_delete} from editor: {e_conflict}", exc_info=True)
+        logger.opt(exception=True).error(f"Conflict error deleting character {character_id_to_delete} from editor: {e_conflict}")
         app.notify(f"Conflict deleting character: {e_conflict}", severity="error")
         await populate_ccp_character_select(app)
     except CharactersRAGDBError as e_db:
-        logger.error(f"Database error deleting character {character_id_to_delete} from editor: {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"Database error deleting character {character_id_to_delete} from editor: {e_db}")
         app.notify(f"Database error deleting: {type(e_db).__name__}", severity="error")
     except Exception as e_unexp:
-        logger.error(f"Unexpected error deleting character {character_id_to_delete} from editor: {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error deleting character {character_id_to_delete} from editor: {e_unexp}")
         app.notify(f"Unexpected error deleting: {type(e_unexp).__name__}", severity="error")
 
 
@@ -2298,7 +2296,7 @@ async def handle_ccp_editor_char_image_button_pressed(app: 'TldwCli', event: But
                 app.notify(f"Image selected: {Path(selected_path).name}", severity="information")
                 
             except Exception as e:
-                logger.error(f"Error loading image file: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Error loading image file: {e}")
                 app.notify(f"Error loading image: {str(e)}", severity="error")
         else:
             logger.info("Image selection cancelled.")
@@ -2347,7 +2345,7 @@ async def _finish_new_prompt_setup(app: 'TldwCli') -> None:
 # ##############################################################
 async def handle_ccp_tab_sidebar_toggle(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handles sidebar toggles specific to the CCP tab."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     button_id = event.button.id
     if button_id == "toggle-conv-char-left-sidebar":
         app.conv_char_sidebar_left_collapsed = not app.conv_char_sidebar_left_collapsed
@@ -2496,7 +2494,7 @@ async def handle_ccp_generate_description_button_pressed(app: 'TldwCli', event: 
         logger.error(f"UI component not found: {e}")
         app.notify("UI error generating description", severity="error")
     except Exception as e:
-        logger.error(f"Error generating description: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error generating description: {e}")
         app.notify(f"Error: {str(e)}", severity="error")
         # Re-enable the button on error
         if generate_button:
@@ -2563,7 +2561,7 @@ async def handle_ccp_generate_personality_button_pressed(app: 'TldwCli', event: 
         # Worker will be handled in on_worker_state_changed
             
     except Exception as e:
-        logger.error(f"Error generating personality: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error generating personality: {e}")
         app.notify(f"Error: {str(e)}", severity="error")
         # Re-enable the button on error
         if generate_button:
@@ -2632,7 +2630,7 @@ async def handle_ccp_generate_scenario_button_pressed(app: 'TldwCli', event: But
         # Worker will be handled in on_worker_state_changed
             
     except Exception as e:
-        logger.error(f"Error generating scenario: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error generating scenario: {e}")
         app.notify(f"Error: {str(e)}", severity="error")
         # Re-enable the button on error
         if generate_button:
@@ -2704,7 +2702,7 @@ async def handle_ccp_generate_first_message_button_pressed(app: 'TldwCli', event
         # Worker will be handled in on_worker_state_changed
             
     except Exception as e:
-        logger.error(f"Error generating first message: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error generating first message: {e}")
         app.notify(f"Error: {str(e)}", severity="error")
         # Re-enable the button on error
         if generate_button:
@@ -2776,7 +2774,7 @@ async def handle_ccp_generate_system_prompt_button_pressed(app: 'TldwCli', event
         # Worker will be handled in on_worker_state_changed
             
     except Exception as e:
-        logger.error(f"Error generating system prompt: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error generating system prompt: {e}")
         app.notify(f"Error: {str(e)}", severity="error")
         # Re-enable the button on error
         if generate_button:
@@ -2847,7 +2845,7 @@ Format your response with clear headers for each section."""
         # Worker will be handled in on_worker_state_changed
             
     except Exception as e:
-        logger.error(f"Error generating character profile: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error generating character profile: {e}")
         app.notify(f"Error: {str(e)}", severity="error")
     finally:
         # Re-enable the button
@@ -2912,7 +2910,7 @@ async def handle_conv_char_export_text_button_pressed(app: 'TldwCli', event: But
         logger.info(f"Exported conversation to text: {export_path}")
         
     except Exception as e:
-        logger.error(f"Error exporting conversation as text: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error exporting conversation as text: {e}")
         app.notify(f"Error exporting conversation: {type(e).__name__}", severity="error")
 
 
@@ -2963,7 +2961,7 @@ async def handle_conv_char_export_json_button_pressed(app: 'TldwCli', event: But
         logger.info(f"Exported conversation to JSON: {export_path}")
         
     except Exception as e:
-        logger.error(f"Error exporting conversation as JSON: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error exporting conversation as JSON: {e}")
         app.notify(f"Error exporting conversation: {type(e).__name__}", severity="error")
 
 
@@ -3025,7 +3023,7 @@ async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Butt
             app.notify("Failed to export character.", severity="error")
             
     except Exception as e:
-        logger.error(f"Error exporting character card: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error exporting character card: {e}")
         app.notify(f"Error exporting character: {type(e).__name__}", severity="error")
 
 
@@ -3037,7 +3035,7 @@ async def handle_ccp_export_character_button_pressed(app: 'TldwCli', event: Butt
 
 async def populate_ccp_dictionary_select(app: 'TldwCli') -> None:
     """Populates the dictionary selection dropdown in the CCP tab."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Attempting to populate #ccp-dictionary-select dropdown.")
     
     if not app.notes_service:
@@ -3072,9 +3070,9 @@ async def populate_ccp_dictionary_select(app: 'TldwCli') -> None:
             logger.info("No dictionaries found to populate #ccp-dictionary-select.")
 
     except QueryError as e_query:
-        logger.error(f"Failed to find #ccp-dictionary-select widget: {e_query}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to find #ccp-dictionary-select widget: {e_query}")
     except CharactersRAGDBError as e_db:
-        logger.error(f"Database error populating #ccp-dictionary-select: {e_db}", exc_info=True)
+        logger.opt(exception=True).error(f"Database error populating #ccp-dictionary-select: {e_db}")
         try:
             dict_select_widget_err = app.query_one("#ccp-dictionary-select", Select)
             dict_select_widget_err.set_options([("Error Loading Dictionaries", Select.BLANK)])
@@ -3082,7 +3080,7 @@ async def populate_ccp_dictionary_select(app: 'TldwCli') -> None:
         except QueryError:
             pass
     except Exception as e_unexp:
-        logger.error(f"Unexpected error populating #ccp-dictionary-select: {e_unexp}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error populating #ccp-dictionary-select: {e_unexp}")
         try:
             dict_select_widget_unexp = app.query_one("#ccp-dictionary-select", Select)
             dict_select_widget_unexp.set_options([("Error Loading (Unexpected)", Select.BLANK)])
@@ -3092,7 +3090,7 @@ async def populate_ccp_dictionary_select(app: 'TldwCli') -> None:
 
 
 async def _dictionary_import_callback(app: 'TldwCli', selected_path: Optional[Path]) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     if selected_path:
         logger.info(f"Dictionary import selected: {selected_path}")
         if not app.notes_service:
@@ -3114,13 +3112,13 @@ async def _dictionary_import_callback(app: 'TldwCli', selected_path: Optional[Pa
             await populate_ccp_dictionary_select(app)  # Refresh in case it was a duplicate name
         except Exception as e:
             app.notify(f"Error importing dictionary: {type(e).__name__}", severity="error", timeout=6)
-            logger.error(f"Error importing dictionary '{selected_path}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error importing dictionary '{selected_path}': {e}")
     else:
         logger.info("Dictionary import cancelled.")
 
 
 async def handle_ccp_import_dictionary_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Import Dictionary button pressed.")
 
     defined_filters = Filters(
@@ -3134,7 +3132,7 @@ async def handle_ccp_import_dictionary_button_pressed(app: 'TldwCli', event: But
 
 
 async def handle_ccp_create_dictionary_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Create Dictionary button pressed.")
     
     # Switch to dictionary editor view
@@ -3185,7 +3183,7 @@ async def handle_ccp_create_dictionary_button_pressed(app: 'TldwCli', event: But
 
 
 async def handle_ccp_load_dictionary_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Load Dictionary button pressed.")
     
     if not app.notes_service:
@@ -3231,19 +3229,19 @@ async def handle_ccp_load_dictionary_button_pressed(app: 'TldwCli', event: Butto
             app.notify("Failed to load dictionary.", severity="error")
             
     except Exception as e:
-        logger.error(f"Error loading dictionary: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error loading dictionary: {e}")
         app.notify("Error loading dictionary", severity="error")
 
 
 async def handle_ccp_refresh_dictionary_list_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Refresh Dictionary List button pressed.")
     await populate_ccp_dictionary_select(app)
     app.notify("Dictionary list refreshed", severity="information")
 
 
 async def handle_ccp_dict_edit_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Edit button pressed.")
     
     if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
@@ -3284,12 +3282,12 @@ async def handle_ccp_dict_edit_button_pressed(app: 'TldwCli', event: Button.Pres
             app.notify("Failed to load dictionary for editing.", severity="error")
             
     except Exception as e:
-        logger.error(f"Error loading dictionary for edit: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error loading dictionary for edit: {e}")
         app.notify("Error loading dictionary for edit", severity="error")
 
 
 async def handle_ccp_editor_dict_save_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Save button pressed.")
     
     if not app.notes_service:
@@ -3351,12 +3349,12 @@ async def handle_ccp_editor_dict_save_button_pressed(app: 'TldwCli', event: Butt
     except ValueError as ve:
         app.notify(f"Invalid input: {ve}", severity="error")
     except Exception as e:
-        logger.error(f"Error saving dictionary: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error saving dictionary: {e}")
         app.notify("Error saving dictionary", severity="error")
 
 
 async def handle_ccp_dict_export_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Export button pressed.")
     
     if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
@@ -3377,12 +3375,12 @@ async def handle_ccp_dict_export_button_pressed(app: 'TldwCli', event: Button.Pr
             app.notify("Failed to export dictionary.", severity="error")
             
     except Exception as e:
-        logger.error(f"Error exporting dictionary: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error exporting dictionary: {e}")
         app.notify("Error exporting dictionary", severity="error")
 
 
 async def handle_ccp_dict_delete_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Delete button pressed.")
     
     if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
@@ -3429,12 +3427,12 @@ async def handle_ccp_dict_delete_button_pressed(app: 'TldwCli', event: Button.Pr
             app.notify("Failed to delete dictionary.", severity="error")
             
     except Exception as e:
-        logger.error(f"Error deleting dictionary: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error deleting dictionary: {e}")
         app.notify("Error deleting dictionary", severity="error")
 
 
 async def handle_ccp_dict_add_entry_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Add Dictionary Entry button pressed.")
     
     try:
@@ -3477,12 +3475,12 @@ async def handle_ccp_dict_add_entry_button_pressed(app: 'TldwCli', event: Button
     except ValueError as ve:
         app.notify(f"Invalid input: {ve}", severity="error")
     except Exception as e:
-        logger.error(f"Error adding entry: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error adding entry: {e}")
         app.notify("Error adding entry", severity="error")
 
 
 async def handle_ccp_dict_remove_entry_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Remove Dictionary Entry button pressed.")
     
     try:
@@ -3499,12 +3497,12 @@ async def handle_ccp_dict_remove_entry_button_pressed(app: 'TldwCli', event: But
             app.notify("No entry selected to remove.", severity="warning")
             
     except Exception as e:
-        logger.error(f"Error removing entry: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error removing entry: {e}")
         app.notify("Error removing entry", severity="error")
 
 
 async def handle_ccp_editor_dict_cancel_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Cancel Edit button pressed.")
     
     app.editing_dictionary_id = None
@@ -3521,7 +3519,7 @@ async def handle_ccp_editor_dict_cancel_button_pressed(app: 'TldwCli', event: Bu
 
 async def handle_ccp_dict_apply_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Apply the current dictionary to the active conversation."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Apply button pressed.")
     
     if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
@@ -3571,13 +3569,13 @@ async def handle_ccp_dict_apply_button_pressed(app: 'TldwCli', event: Button.Pre
             app.notify("Failed to load conversation details.", severity="error")
             
     except Exception as e:
-        logger.error(f"Error applying dictionary: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error applying dictionary: {e}")
         app.notify("Error applying dictionary", severity="error")
 
 
 async def handle_ccp_dict_clone_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Clone the current dictionary."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Clone button pressed.")
     
     if not hasattr(app, 'loaded_dictionary_id') or not app.loaded_dictionary_id:
@@ -3619,13 +3617,13 @@ async def handle_ccp_dict_clone_button_pressed(app: 'TldwCli', event: Button.Pre
             app.notify("Failed to load dictionary for cloning.", severity="error")
             
     except Exception as e:
-        logger.error(f"Error cloning dictionary: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error cloning dictionary: {e}")
         app.notify("Error cloning dictionary", severity="error")
 
 
 async def handle_ccp_dict_remove_from_conv_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Remove selected dictionary from the active conversation."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Remove from Conversation button pressed.")
     
     if not app.current_ccp_conversation_id:
@@ -3674,13 +3672,13 @@ async def handle_ccp_dict_remove_from_conv_button_pressed(app: 'TldwCli', event:
             app.notify("No dictionary selected.", severity="warning")
             
     except Exception as e:
-        logger.error(f"Error removing dictionary from conversation: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error removing dictionary from conversation: {e}")
         app.notify("Error removing dictionary", severity="error")
 
 
 async def handle_ccp_dict_update_priority_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Update the priority of dictionaries in the conversation."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("CCP Dictionary Update Priority button pressed.")
     
     # This is a placeholder for future priority ordering functionality
@@ -3689,7 +3687,7 @@ async def handle_ccp_dict_update_priority_button_pressed(app: 'TldwCli', event: 
 
 async def populate_active_dictionaries_list(app: 'TldwCli') -> None:
     """Populate the active dictionaries list for the current conversation."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     
     if not app.current_ccp_conversation_id or not app.notes_service:
         return
@@ -3715,7 +3713,7 @@ async def populate_active_dictionaries_list(app: 'TldwCli') -> None:
             logger.info(f"Populated active dictionaries list with {len(active_dict_ids)} items.")
             
     except Exception as e:
-        logger.error(f"Error populating active dictionaries: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error populating active dictionaries: {e}")
 
 
 ########################################################################################################################
@@ -3726,14 +3724,14 @@ async def populate_active_dictionaries_list(app: 'TldwCli') -> None:
 
 async def handle_ccp_import_worldbook_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle Import World Book button press."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Import World Book button pressed")
     app.notify("Import World Book functionality coming soon!", severity="information")
     # TODO: Implement file picker and import logic
 
 async def handle_ccp_create_worldbook_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle Create World Book button press."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Create World Book button pressed")
     
     try:
@@ -3759,7 +3757,7 @@ async def handle_ccp_create_worldbook_button_pressed(app: 'TldwCli', event: Butt
         await handle_ccp_refresh_worldbook_list_button_pressed(app, event)
         
     except Exception as e:
-        logger.error(f"Error creating world book: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error creating world book: {e}")
         app.notify(f"Failed to create world book: {e}", severity="error")
 
 async def handle_ccp_worldbook_search_input_changed(app: 'TldwCli', event: Input.Changed) -> None:
@@ -3767,7 +3765,7 @@ async def handle_ccp_worldbook_search_input_changed(app: 'TldwCli', event: Input
     if event.input.id != "ccp-worldbook-search-input":
         return
         
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     search_term = event.value
     logger.debug(f"World book search term: '{search_term}'")
     
@@ -3775,7 +3773,7 @@ async def handle_ccp_worldbook_search_input_changed(app: 'TldwCli', event: Input
 
 async def handle_ccp_worldbook_load_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle Load Selected World Book button press."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Load World Book button pressed")
     
     try:
@@ -3793,12 +3791,12 @@ async def handle_ccp_worldbook_load_button_pressed(app: 'TldwCli', event: Button
             app.notify(f"Loaded world book ID {world_book_id}", severity="success")
             
     except Exception as e:
-        logger.error(f"Error loading world book: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error loading world book: {e}")
         app.notify(f"Failed to load world book: {e}", severity="error")
 
 async def handle_ccp_worldbook_edit_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle Edit Selected World Book button press."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Edit World Book button pressed")
     
     try:
@@ -3816,19 +3814,19 @@ async def handle_ccp_worldbook_edit_button_pressed(app: 'TldwCli', event: Button
             app.notify(f"Editing world book ID {world_book_id}", severity="information")
             
     except Exception as e:
-        logger.error(f"Error editing world book: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error editing world book: {e}")
         app.notify(f"Failed to edit world book: {e}", severity="error")
 
 async def handle_ccp_refresh_worldbook_list_button_pressed(app: 'TldwCli', event: Button.Pressed) -> None:
     """Handle Refresh World Book List button press."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     logger.info("Refresh World Book List button pressed")
     
     await populate_ccp_worldbook_list(app)
 
 async def populate_ccp_worldbook_list(app: 'TldwCli', search_term: str = "") -> None:
     """Populate the world book list view."""
-    logger = getattr(app, 'loguru_logger', logging)
+    logger = getattr(app, 'loguru_logger', loguru_logger)
     
     try:
         from ..Character_Chat.world_book_manager import WorldBookManager
@@ -3873,7 +3871,7 @@ async def populate_ccp_worldbook_list(app: 'TldwCli', search_term: str = "") -> 
                 await listview.append(ListItem(Label("No world books available")))
                 
     except Exception as e:
-        logger.error(f"Error populating world book list: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error populating world book list: {e}")
         app.notify(f"Failed to load world books: {e}", severity="error")
 
 

@@ -1284,7 +1284,12 @@ class MediaViewerPanel(Container):
             self._update_analysis_navigation()
             
         except Exception as e:
-            logger.error(f"Error loading all analyses: {e}", exc_info=True)
+            media_id = (
+                self.media_data.get("id") if isinstance(self.media_data, dict) else None
+            )
+            logger.opt(exception=True).error(
+                f"Error loading all analyses for media_id={media_id}: {e}"
+            )
             self.all_analyses = []
             self.current_analysis_index = 0
             self.current_analysis = None
@@ -1753,7 +1758,7 @@ class MediaViewerPanel(Container):
             self._update_analysis_button_states()
             
         except Exception as e:
-            logger.error(f"Error generating analysis: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error generating analysis: {e}")
             self.app_instance.notify(f"Error: {str(e)[:100]}", severity="error")
     
     @on(Button.Pressed, "#prev-analysis-btn")
@@ -1843,7 +1848,7 @@ class MediaViewerPanel(Container):
                 logger.info("Edit mode deactivated")
                 
         except Exception as e:
-            logger.error(f"Error toggling edit mode: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error toggling edit mode: {e}")
         
         self._update_analysis_button_states()
     

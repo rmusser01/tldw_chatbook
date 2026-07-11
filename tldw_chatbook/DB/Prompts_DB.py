@@ -277,14 +277,14 @@ class PromptsDatabase:
             initialization_successful = True  # Mark as successful if no exception occurred
         except (DatabaseError, SchemaError, sqlite3.Error) as e:
             # Catch specific DB/Schema errors and general SQLite errors during init
-            logging.critical(f"FATAL: Prompts DB Initialization failed for {self.db_path_str}: {e}", exc_info=True)
+            logging.opt(exception=True).critical(f"FATAL: Prompts DB Initialization failed for {self.db_path_str}: {e}")
             # Attempt to clean up the connection before raising
             self.close_connection() # Important to call this if available
             # Re-raise as a DatabaseError to signal catastrophic failure
             raise DatabaseError(f"Prompts Database initialization failed: {e}") from e
         except Exception as e:
             # Catch any other unexpected errors during initialization
-            logging.critical(f"FATAL: Unexpected error during Prompts DB Initialization for {self.db_path_str}: {e}", exc_info=True)
+            logging.opt(exception=True).critical(f"FATAL: Unexpected error during Prompts DB Initialization for {self.db_path_str}: {e}")
             # Attempt cleanup
             self.close_connection() # Important to call this
             # Re-raise as a DatabaseError
@@ -331,7 +331,7 @@ class PromptsDatabase:
                 logging.debug(
                     f"Opened/Reopened SQLite connection to {self.db_path_str} [Client: {self.client_id}, Thread: {threading.current_thread().name}]")
             except sqlite3.Error as e:
-                logging.error(f"Failed to connect to database at {self.db_path_str}: {e}", exc_info=True)
+                logging.opt(exception=True).error(f"Failed to connect to database at {self.db_path_str}: {e}")
                 self._local.conn = None
                 raise DatabaseError(f"Failed to connect to database '{self.db_path_str}': {e}") from e
         return self._local.conn
@@ -384,13 +384,13 @@ class PromptsDatabase:
             logger.info(f"Database backup successful from '{self.db_path_str}' to '{str(backup_db_path_obj)}'")
             return True
         except ValueError as ve:
-            logger.error(f"ValueError during database backup: {ve}", exc_info=True)
+            logger.opt(exception=True).error(f"ValueError during database backup: {ve}")
             return False
         except sqlite3.Error as e:
-            logger.error(f"SQLite error during database backup: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"SQLite error during database backup: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error during database backup: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error during database backup: {e}")
             return False
         finally:
             if backup_conn:
@@ -442,10 +442,10 @@ class PromptsDatabase:
                 logging.error(f"Sync Validation Failed: {e}")
                 raise e
             else:
-                logging.error(f"Integrity error: {query[:200]}... Error: {e}", exc_info=True)
+                logging.opt(exception=True).error(f"Integrity error: {query[:200]}... Error: {e}")
                 raise DatabaseError(f"Integrity constraint violation: {e}") from e
         except sqlite3.Error as e:
-            logging.error(f"Query failed: {query[:200]}... Error: {e}", exc_info=True)
+            logging.opt(exception=True).error(f"Query failed: {query[:200]}... Error: {e}")
             raise DatabaseError(f"Query execution failed: {e}") from e
 
     def execute_many(self, query: str, params_list: List[tuple], *, commit: bool = False) -> Optional[sqlite3.Cursor]:
@@ -463,13 +463,13 @@ class PromptsDatabase:
                 logging.debug("Committed Many.")
             return cursor
         except sqlite3.IntegrityError as e:
-            logging.error(f"Integrity error during Execute Many: {query[:150]}... Error: {e}", exc_info=True)
+            logging.opt(exception=True).error(f"Integrity error during Execute Many: {query[:150]}... Error: {e}")
             raise DatabaseError(f"Integrity constraint violation during batch: {e}") from e
         except sqlite3.Error as e:
-            logging.error(f"Execute Many failed: {query[:150]}... Error: {e}", exc_info=True)
+            logging.opt(exception=True).error(f"Execute Many failed: {query[:150]}... Error: {e}")
             raise DatabaseError(f"Execute Many failed: {e}") from e
         except TypeError as te:
-            logging.error(f"TypeError during Execute Many: {te}. Check params_list format.", exc_info=True)
+            logging.opt(exception=True).error(f"TypeError during Execute Many: {te}. Check params_list format.")
             raise TypeError(f"Parameter list format error: {te}") from te
 
     # --- Transaction Context ---
@@ -487,12 +487,12 @@ class PromptsDatabase:
                 logging.debug("Committed transaction.")
         except Exception as e:
             if not in_outer:
-                logging.error(f"Transaction failed, rolling back: {type(e).__name__} - {e}", exc_info=False)
+                logging.opt(exception=False).error(f"Transaction failed, rolling back: {type(e).__name__} - {e}")
                 try:
                     conn.rollback()
                     logging.debug("Rollback successful.")
                 except sqlite3.Error as rb_err:
-                    logging.error(f"Rollback FAILED: {rb_err}", exc_info=True)
+                    logging.opt(exception=True).error(f"Rollback FAILED: {rb_err}")
             raise e
 
     # --- Schema Initialization and Migration ---
@@ -555,10 +555,10 @@ class PromptsDatabase:
                 conn.commit()  # Commit FTS creation separately
                 logging.info("[Schema V1] FTS Tables created successfully.")
             except sqlite3.Error as fts_err:
-                logging.error(f"[Schema V1] Failed to create FTS tables: {fts_err}", exc_info=True)
+                logging.opt(exception=True).error(f"[Schema V1] Failed to create FTS tables: {fts_err}")
                 # This might not be fatal if FTS is optional or can be rebuilt.
         except sqlite3.Error as e:
-            logging.error(f"[Schema V1] Application failed: {e}", exc_info=True)
+            logging.opt(exception=True).error(f"[Schema V1] Application failed: {e}")
             raise DatabaseError(f"DB schema V1 setup failed: {e}") from e
 
     def _apply_migration_v1_to_v2(self, conn: sqlite3.Connection):
@@ -592,7 +592,7 @@ class PromptsDatabase:
 
             logging.info(f"Prompts migration to version 2 applied successfully for DB: {self.db_path_str}.")
         except sqlite3.Error as e:
-            logging.error(f"[Migration v1->v2] Failed during migration: {e}", exc_info=True)
+            logging.opt(exception=True).error(f"[Migration v1->v2] Failed during migration: {e}")
             raise DatabaseError(f"Migration v1->v2 failed: {e}") from e
 
     def _initialize_schema(self):
@@ -646,7 +646,7 @@ class PromptsDatabase:
 
             logging.info(f"Database schema initialized/migrated to version {target_version}.")
         except (DatabaseError, SchemaError, sqlite3.Error) as e:
-            logging.error(f"Schema initialization/migration failed: {e}", exc_info=True)
+            logging.opt(exception=True).error(f"Schema initialization/migration failed: {e}")
             raise DatabaseError(f"Schema initialization failed: {e}") from e
 
     # --- Internal Helpers ---
@@ -723,7 +723,7 @@ class PromptsDatabase:
                          """, (entity, entity_uuid, operation, current_time, client_id, version, payload_json))
             logging.debug(f"Logged sync: {entity} {entity_uuid} {operation} v{version} at {current_time}")
         except sqlite3.Error as e:
-            logging.error(f"Failed insert sync_log for {entity} {entity_uuid}: {e}", exc_info=True)
+            logging.opt(exception=True).error(f"Failed insert sync_log for {entity} {entity_uuid}: {e}")
             raise DatabaseError(f"Failed to log sync event: {e}") from e
 
     # --- FTS Helper Methods ---
@@ -735,7 +735,7 @@ class PromptsDatabase:
                 (prompt_id, name, author or "", details or "", system_prompt or "", user_prompt or ""))
             logging.debug(f"Updated FTS for Prompt ID {prompt_id}")
         except sqlite3.Error as e:
-            logging.error(f"Failed FTS update Prompt ID {prompt_id}: {e}", exc_info=True)
+            logging.opt(exception=True).error(f"Failed FTS update Prompt ID {prompt_id}: {e}")
             raise DatabaseError(f"Failed FTS update Prompt ID {prompt_id}: {e}") from e
 
     def _delete_fts_prompt(self, conn: sqlite3.Connection, prompt_id: int):
@@ -743,7 +743,7 @@ class PromptsDatabase:
             conn.execute("DELETE FROM prompts_fts WHERE rowid = ?", (prompt_id,))
             logging.debug(f"Deleted FTS for Prompt ID {prompt_id}")
         except sqlite3.Error as e:
-            logging.error(f"Failed FTS delete Prompt ID {prompt_id}: {e}", exc_info=True)
+            logging.opt(exception=True).error(f"Failed FTS delete Prompt ID {prompt_id}: {e}")
             raise DatabaseError(f"Failed FTS delete Prompt ID {prompt_id}: {e}") from e
 
     def _update_fts_prompt_keyword(self, conn: sqlite3.Connection, keyword_id: int, keyword: str):
@@ -752,7 +752,7 @@ class PromptsDatabase:
                          (keyword_id, keyword))
             logging.debug(f"Updated FTS for PromptKeyword ID {keyword_id}")
         except sqlite3.Error as e:
-            logging.error(f"Failed FTS update PromptKeyword ID {keyword_id}: {e}", exc_info=True)
+            logging.opt(exception=True).error(f"Failed FTS update PromptKeyword ID {keyword_id}: {e}")
             raise DatabaseError(f"Failed FTS update PromptKeyword ID {keyword_id}: {e}") from e
 
     def _delete_fts_prompt_keyword(self, conn: sqlite3.Connection, keyword_id: int):
@@ -760,7 +760,7 @@ class PromptsDatabase:
             conn.execute("DELETE FROM prompt_keywords_fts WHERE rowid = ?", (keyword_id,))
             logging.debug(f"Deleted FTS for PromptKeyword ID {keyword_id}")
         except sqlite3.Error as e:
-            logging.error(f"Failed FTS delete PromptKeyword ID {keyword_id}: {e}", exc_info=True)
+            logging.opt(exception=True).error(f"Failed FTS delete PromptKeyword ID {keyword_id}: {e}")
             raise DatabaseError(f"Failed FTS delete PromptKeyword ID {keyword_id}: {e}") from e
 
     # --- Public Mutating Methods ---
@@ -825,7 +825,7 @@ class PromptsDatabase:
                     self._update_fts_prompt_keyword(conn, kw_id, normalized_keyword)
                     return kw_id, new_uuid
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.error(f"Error in add_keyword (prompt) for '{keyword_text}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error in add_keyword (prompt) for '{keyword_text}': {e}")
             if isinstance(e, (InputError, ConflictError, DatabaseError)):
                 raise e
             else:
@@ -1054,7 +1054,7 @@ class PromptsDatabase:
                 "error_type": error_type
             })
             
-            logger.error(f"Error adding/updating prompt '{name}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error adding/updating prompt '{name}': {e}")
             if isinstance(e, (InputError, ConflictError, DatabaseError)): raise e
             else: raise DatabaseError(f"Failed to process prompt '{name}': {e}") from e
 
@@ -1122,7 +1122,7 @@ class PromptsDatabase:
             if ids_to_add or ids_to_remove:
                 logging.debug(f"Keywords updated for prompt {prompt_id}. Added: {len(ids_to_add)}, Removed: {len(ids_to_remove)}.")
         except (InputError, DatabaseError, sqlite3.Error) as e:
-            logger.error(f"Error updating keywords for prompt {prompt_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating keywords for prompt {prompt_id}: {e}")
             if isinstance(e, (InputError, DatabaseError)): raise e
             else: raise DatabaseError(f"Keyword update failed for prompt {prompt_id}: {e}") from e
 
@@ -1281,7 +1281,7 @@ class PromptsDatabase:
                 "error_type": error_type
             })
             
-            logger.error(f"Error updating prompt ID {prompt_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating prompt ID {prompt_id}: {e}")
             if isinstance(e, (InputError, ConflictError, DatabaseError)):
                 raise e
             raise DatabaseError(f"Failed to update prompt ID {prompt_id}: {e}") from e
@@ -1382,7 +1382,7 @@ class PromptsDatabase:
                 "error_type": error_type
             })
             
-            logger.error(f"Error soft deleting prompt '{prompt_id_or_name_or_uuid}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error soft deleting prompt '{prompt_id_or_name_or_uuid}': {e}")
             if isinstance(e, (ConflictError, DatabaseError)): raise e
             else: raise DatabaseError(f"Failed to soft delete prompt: {e}") from e
 
@@ -1438,7 +1438,7 @@ class PromptsDatabase:
                 logger.info(f"Soft deleted prompt keyword '{normalized_keyword}' (ID: {kw_id}, UUID: {kw_uuid}).")
                 return True
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.error(f"Error soft deleting prompt keyword '{keyword_text}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error soft deleting prompt keyword '{keyword_text}': {e}")
             if isinstance(e, (InputError, ConflictError, DatabaseError)): raise e
             else: raise DatabaseError(f"Failed to soft delete prompt keyword: {e}") from e
 
@@ -1682,7 +1682,7 @@ class PromptsDatabase:
                     cursor = self.execute_query("SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?", (search_query,))
                     matching_prompt_ids.update(row['rowid'] for row in cursor.fetchall())
                 except sqlite3.Error as e:
-                    logging.error(f"FTS search on prompts failed: {e}", exc_info=True)
+                    logging.opt(exception=True).error(f"FTS search on prompts failed: {e}")
                     raise DatabaseError(f"FTS search on prompts failed: {e}") from e
 
 
@@ -1702,7 +1702,7 @@ class PromptsDatabase:
                         )
                         matching_prompt_ids.update(row['prompt_id'] for row in link_cursor.fetchall())
                 except sqlite3.Error as e:
-                    logging.error(f"FTS search on keywords failed: {e}", exc_info=True)
+                    logging.opt(exception=True).error(f"FTS search on keywords failed: {e}")
                     raise DatabaseError(f"FTS search on keywords failed: {e}") from e
 
             if not matching_prompt_ids:
@@ -1767,7 +1767,7 @@ class PromptsDatabase:
                 "error_type": error_type
             })
             
-            logging.error(f"DB error during prompt search: {e}", exc_info=True)
+            logging.opt(exception=True).error(f"DB error during prompt search: {e}")
             raise DatabaseError(f"Failed to search prompts: {e}") from e
 
     # --- Sync Log Access Methods ---
@@ -2233,11 +2233,11 @@ def export_prompt_keywords_to_csv(db_instance: PromptsDatabase, file_path: Optio
 
     except (DatabaseError, sqlite3.Error) as e:
         error_msg = f"Database error exporting keywords: {e}"
-        logging.error(error_msg, exc_info=True)
+        logging.opt(exception=True).error(error_msg)
         return error_msg, "None"
     except Exception as e:
         error_msg = f"Error exporting keywords: {e}"
-        logging.error(error_msg, exc_info=True)
+        logging.opt(exception=True).error(error_msg)
         return error_msg, "None"
 
 
@@ -2264,7 +2264,7 @@ def view_prompt_keywords_markdown(db_instance: PromptsDatabase) -> str:
         return "No active keywords found."
     except (DatabaseError, sqlite3.Error) as e:
         error_msg = f"Error retrieving keywords for markdown view: {e}"
-        logging.error(error_msg, exc_info=True)
+        logging.opt(exception=True).error(error_msg)
         return error_msg
 
 
@@ -2431,9 +2431,9 @@ def export_prompts_formatted(db_instance: PromptsDatabase,
 
     except (DatabaseError, sqlite3.Error, ValueError) as e:
         error_msg = f"Error exporting prompts: {e}"
-        logging.error(error_msg, exc_info=True)
+        logging.opt(exception=True).error(error_msg)
         return error_msg, "None"
     except Exception as e: # Catch any other unexpected error
         error_msg = f"Unexpected error exporting prompts: {e}"
-        logging.error(error_msg, exc_info=True)
+        logging.opt(exception=True).error(error_msg)
         return error_msg, "None"

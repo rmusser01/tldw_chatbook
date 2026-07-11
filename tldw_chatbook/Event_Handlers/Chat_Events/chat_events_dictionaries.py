@@ -65,7 +65,7 @@ async def handle_dictionary_search_input(app: 'TldwCli', search_term: str) -> No
         loguru_logger.error(f"Error querying dictionary UI elements: {e}")
         app.notify(f"Error accessing dictionary UI: {e}", severity="error")
     except Exception as e:
-        loguru_logger.error(f"Exception during dictionary search: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Exception during dictionary search: {e}")
         app.notify(f"Error during dictionary search: {e}", severity="error")
 
 
@@ -112,7 +112,7 @@ async def handle_dictionary_add_button(app: 'TldwCli') -> None:
             app.notify("Failed to add dictionary to conversation", severity="error")
             
     except Exception as e:
-        loguru_logger.error(f"Error adding dictionary: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error adding dictionary: {e}")
         app.notify(f"Error adding dictionary: {e}", severity="error")
 
 
@@ -159,7 +159,7 @@ async def handle_dictionary_remove_button(app: 'TldwCli') -> None:
             app.notify("Failed to remove dictionary from conversation", severity="error")
             
     except Exception as e:
-        loguru_logger.error(f"Error removing dictionary: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error removing dictionary: {e}")
         app.notify(f"Error removing dictionary: {e}", severity="error")
 
 
@@ -215,7 +215,7 @@ async def refresh_active_dictionaries(app: 'TldwCli') -> None:
     except QueryError as e:
         loguru_logger.error(f"Error querying active dictionaries UI: {e}")
     except Exception as e:
-        loguru_logger.error(f"Error refreshing active dictionaries: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error refreshing active dictionaries: {e}")
 
 
 async def handle_dictionary_selection(app: 'TldwCli', list_view_id: str) -> None:
@@ -294,7 +294,7 @@ async def handle_dictionary_selection(app: 'TldwCli', list_view_id: str) -> None
     except QueryError as e:
         loguru_logger.error(f"Error handling dictionary selection: {e}")
     except Exception as e:
-        loguru_logger.error(f"Error displaying dictionary details: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error displaying dictionary details: {e}")
 
 
 async def handle_dictionary_enable_checkbox(app: 'TldwCli', enabled: bool) -> None:
@@ -313,7 +313,7 @@ async def handle_dictionary_enable_checkbox(app: 'TldwCli', enabled: bool) -> No
         app.notify(f"Dictionary processing {status}", severity="information")
         
     except Exception as e:
-        loguru_logger.error(f"Error updating dictionary setting: {e}", exc_info=True)
+        loguru_logger.opt(exception=True).error(f"Error updating dictionary setting: {e}")
         app.notify(f"Error updating dictionary setting: {e}", severity="error")
 
 
