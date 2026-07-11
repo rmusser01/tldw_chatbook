@@ -990,6 +990,32 @@ async def test_pool_creation_failure_fails_job_retryable_and_app_survives(
         await _wait_for_runner_idle(app, pilot)
 
 
+def test_top_up_abandons_pass_when_mark_parsing_rejects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(Whole-branch review, Minor 2) The defensive `mark_parsing`-returned-
+    ``None`` branch must TERMINATE the top-up pass: ``next_queued()``
+    always returns the OLDEST queued job, so a skip-and-``continue`` would
+    be handed the exact same unclaimable job straight back -- an infinite
+    loop on the UI thread. The branch is unreachable while UI-thread
+    atomicity holds (see the surrounding docstring); forced here by
+    stubbing ``mark_parsing``. The test completing at all (within the
+    suite timeout) is the core assertion."""
+    db = _make_db(tmp_path)
+    app = _IngestRunnerHarness(db)
+    app.library_ingest_jobs.submit(source_path="/tmp/whatever.txt")
+    monkeypatch.setattr(
+        app.library_ingest_jobs, "mark_parsing", lambda *args, **kwargs: None
+    )
+
+    app._top_up_ingest_parse_pool()  # must return, not loop forever
+
+    # The pass was abandoned before ever reaching pool creation, and the
+    # unclaimable job is left QUEUED (a later pass re-attempts it).
+    assert app._pool_create_count == 0
+    assert app.library_ingest_jobs.counts()["queued"] == 1
+
+
 # --- Task 2 review fix regression tests -------------------------------------
 #
 # The review found a check-then-exit race in the queue-runner's old exit

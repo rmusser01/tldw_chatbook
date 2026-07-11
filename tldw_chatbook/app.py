@@ -117,7 +117,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJobRegistry,
 )
 from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
-from tldw_chatbook.Local_Ingestion import detect_file_type, ingest_local_file
+from tldw_chatbook.Local_Ingestion import detect_file_type
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import classify_parse_failure, run_parse_job
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import persist_parsed_media
 from tldw_chatbook.Home.active_work_adapter import (
@@ -1518,13 +1518,19 @@ class LibraryIngestQueueMixin:
                 # impossible on the UI thread (this whole method is
                 # UI-thread-only, so nothing else can race the queue
                 # between the two calls), but a coordinator bug here must
-                # never crash the submission path. Log and move on rather
-                # than looping forever on the same unclaimable job.
+                # never crash the submission path. `break`, not `continue`
+                # (whole-branch review, Minor 2): `next_queued()` always
+                # returns the OLDEST queued job, so a `continue` would get
+                # the exact same unclaimable job handed straight back --
+                # an infinite loop on the UI thread. Breaking abandons
+                # only this top-up pass (logged); the next submission/
+                # retry/parse-completion re-attempts from scratch.
                 logger.error(
                     f"Library ingest coordinator: mark_parsing rejected "
-                    f"job {job.job_id} (expected QUEUED) -- skipping."
+                    f"job {job.job_id} (expected QUEUED) -- abandoning "
+                    f"this top-up pass."
                 )
-                continue
+                break
             options = self._ingest_job_options(claimed)
             job_id = claimed.job_id
             source_path = claimed.source_path
