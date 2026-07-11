@@ -662,14 +662,22 @@ def process_pdf(
                     combined_summaries_text = "\n\n---\n\n".join(chunk_summaries) # Use a clear separator
 
                     try:
-                        # Call perform_summarization again on the combined text
-                        final_summary = analyze_media_content(
-                            content=combined_summaries_text,
+                        # Call the same ``analyze`` entry point used for the
+                        # per-chunk pass above, on the combined summaries
+                        # text. NOTE: this previously called an undefined
+                        # ``analyze_media_content`` symbol (a NameError on
+                        # this -- until now unreached -- recursive-
+                        # summarization branch); ``analyze`` (imported
+                        # above) is the real analysis entry, with different
+                        # parameter names (``input_data``/
+                        # ``custom_prompt_arg``/``system_message``).
+                        final_summary = analyze(
                             api_name=api_name,
-                            api_key=api_key,
+                            input_data=combined_summaries_text,
                             # Use the original custom prompt, or a default recursive prompt if none provided
-                            custom_prompt=custom_prompt or "Provide a concise overall analysis of the preceding text sections.",
-                            system_prompt=system_prompt
+                            custom_prompt_arg=custom_prompt or "Provide a concise overall analysis of the preceding text sections.",
+                            api_key=api_key,
+                            system_message=system_prompt
                         )
                         if not final_summary or not final_summary.strip():
                              logger.warning(f"Recursive summarization for {filename} yielded empty result. Falling back to joined summaries.")
@@ -830,7 +838,7 @@ def process_pdf(
                  except OSError as rm_err:
                      logger.warning(f"OSError removing temporary directory (Attempt {attempt + 1}/{max_retries}) {temp_dir_for_pdf}: {rm_err}")
                      if attempt == max_retries - 1:
-                         logger.opt(exception=False).error(f"Final attempt failed to remove {temp_dir_for_pdf}: {rm_err}")
+                         logger.error(f"Final attempt failed to remove {temp_dir_for_pdf}: {rm_err}")
                          # --- Modify status handling ---
                          warning_msg = f"Failed to cleanup temp dir after {max_retries} attempts: {rm_err}"
                          result["warnings"].append(warning_msg)

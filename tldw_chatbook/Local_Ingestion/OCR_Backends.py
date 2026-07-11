@@ -1013,7 +1013,18 @@ Prefer using ☐ and ☑ for check boxes."""
             # Clear model from memory
             del self.model
             self.model = None
-            if hasattr(torch, 'cuda') and torch.cuda.is_available():
+            # ``torch`` was never imported in this module (this class only
+            # imports ``transformers`` lazily in 'model' mode -- see
+            # __init__/_initialize -- torch itself was referenced here
+            # unimported, a NameError on this, until now unreached, code
+            # path). Reaching 'model' mode implies transformers (and thus
+            # its torch dependency) already imported successfully, so this
+            # guarded import is expected to always succeed here.
+            try:
+                import torch
+            except ImportError:
+                torch = None
+            if torch is not None and hasattr(torch, 'cuda') and torch.cuda.is_available():
                 torch.cuda.empty_cache()
         self._initialized = False
 

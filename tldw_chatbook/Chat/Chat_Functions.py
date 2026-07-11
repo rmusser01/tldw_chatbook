@@ -848,7 +848,7 @@ def chat_api_call(
 
         # Log safely first
         try:
-            logger.opt(exception=False).error("{}. Details: {}", log_message_base, error_text[:500])
+            logger.error("{}. Details: {}", log_message_base, error_text[:500])
         except Exception as log_e:
             logger.error(f"Error during logging HTTPError details: {log_e}")
 
@@ -871,7 +871,7 @@ def chat_api_call(
                                message=f"Unexpected HTTP status {status_code} from {endpoint_lower}. Detail: {error_text[:200]}",
                                status_code=status_code)
     except requests.exceptions.RequestException as e:
-        logger.opt(exception=False).error(f"Network error connecting to {endpoint_lower}: {e}")
+        logger.error(f"Network error connecting to {endpoint_lower}: {e}")
         raise ChatProviderError(provider=endpoint_lower, message=f"Network error: {e}", status_code=504)
     except (ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError, ChatConfigurationError, ChatProviderError,
             ChatAPIError) as e_chat_direct:

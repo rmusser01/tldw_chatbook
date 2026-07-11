@@ -3712,10 +3712,10 @@ UPDATE db_schema_version
                 "error_type": "version_conflict"
             })
             
-            logger.opt(exception=False).warning(f"ConflictError during update_character_card for ID {character_id}.")  # exc_info=True if needed
+            logger.warning(f"ConflictError during update_character_card for ID {character_id}.")  # exc_info=True if needed
             raise
         except InputError:  # Should not happen if initial `if not card_data:` check is there.
-            logger.opt(exception=False).warning(f"InputError during update_character_card for ID {character_id}.")
+            logger.warning(f"InputError during update_character_card for ID {character_id}.")
             raise
         except Exception as e:  # Catch any other unexpected Python errors
             logger.opt(exception=True).error(

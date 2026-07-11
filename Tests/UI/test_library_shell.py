@@ -9356,10 +9356,18 @@ async def test_library_shell_export_submit_single_flight_and_notifies_on_success
     app.chachanotes_db.add_conversation({"title": "Conv"})
 
     gate = threading.Event()
+    export_destination = tmp_path / "out.zip"
     service = _FakeLibraryExportService(
         export_result={
             "success": True,
-            "message": "ok",
+            # task-158: the creator's own message -- its redundant
+            # "Chatbook created successfully at <path>" prefix is stripped
+            # by ``_build_library_export_success_message``, leaving just
+            # the detail below in the notification.
+            "message": (
+                f"Chatbook created successfully at {export_destination}. "
+                "Warning: 1 character dependency is missing"
+            ),
             "path": "",
             "dependency_info": {"auto_included": [1, 2, 3]},
         },
@@ -9448,12 +9456,16 @@ async def test_library_shell_export_submit_single_flight_and_notifies_on_success
         assert screen._library_export_error == ""
 
         assert len(notified) == 1
-        message, kwargs = notified[0]
+        notify_message, kwargs = notified[0]
         # Exact match (not just a prefix check): pins the REAL exported
         # path flowing all the way back into the notification, not a
-        # stale/wrong/empty value.
-        assert message == (
-            f"Exported chatbook to {tmp_path / 'out.zip'} (3 characters auto-included)"
+        # stale/wrong/empty value. Also pins task-158: the creator's own
+        # message detail (with its redundant "created successfully at
+        # <path>" prefix stripped) lands between the path and the
+        # existing auto-included suffix.
+        assert notify_message == (
+            f"Exported chatbook to {tmp_path / 'out.zip'}: "
+            "Warning: 1 character dependency is missing (3 characters auto-included)"
         )
         assert kwargs.get("severity") == "information"
 
@@ -9590,7 +9602,11 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
     service = _FakeLibraryExportService(
         export_result={
             "success": True,
-            "message": "ok",
+            # Empty: this test pins the run_id staleness guard, not
+            # task-158's creator-detail surfacing (see the dedicated
+            # success test above) -- an empty message keeps the notify
+            # text below exactly the bare "Exported chatbook to <path>".
+            "message": "",
             "path": "",
             "dependency_info": {},
         },
@@ -9849,7 +9865,11 @@ async def test_library_shell_export_registry_failure_warns_it_wont_appear_in_art
     service = _FakeLibraryExportService(
         export_result={
             "success": True,
-            "message": "ok",
+            # Empty: this test pins the registry-failure warning, not
+            # task-158's creator-detail surfacing -- an empty message
+            # keeps the primary notify text below exactly the bare
+            # "Exported chatbook to <path>".
+            "message": "",
             "path": "",
             "dependency_info": {},
         },

@@ -487,7 +487,7 @@ class PromptsDatabase:
                 logging.debug("Committed transaction.")
         except Exception as e:
             if not in_outer:
-                logging.opt(exception=False).error(f"Transaction failed, rolling back: {type(e).__name__} - {e}")
+                logging.error(f"Transaction failed, rolling back: {type(e).__name__} - {e}")
                 try:
                     conn.rollback()
                     logging.debug("Rollback successful.")

@@ -3044,7 +3044,7 @@ class MediaDatabase:
             return {'id': version_id, 'uuid': new_uuid, 'media_id': media_id, 'version_number': local_version_number}
         except (InputError, DatabaseError, sqlite3.Error) as e:
             if "foreign key constraint failed" in str(e).lower():
-                logger.opt(exception=False).error(f"Failed create document version: Media ID {media_id} not found.")
+                logger.error(f"Failed create document version: Media ID {media_id} not found.")
                 raise InputError(f"Cannot create document version: Media ID {media_id} not found.") from e
             logger.opt(exception=True).error(f"DB error creating document version media {media_id}: {e}")
             if isinstance(e, (InputError, DatabaseError)):

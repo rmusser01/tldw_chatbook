@@ -460,8 +460,13 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
                 'analysis': ''
             }
         
-        # Check if processing was successful
-        if not result or 'error' in result:
+        # Check if processing was successful. NOTE: some processors (e.g.
+        # ``process_pdf``) always initialize an ``'error'`` key (defaulting
+        # to ``None``) in their result dict, so ``'error' in result`` is
+        # ALWAYS ``True`` -- even on a clean success -- and previously
+        # raised ``FileIngestionError`` for every single PDF. Truthiness
+        # (``result.get('error')``) is the correct check.
+        if not result or result.get('error'):
             error_msg = result.get('error', 'Unknown error') if result else 'Processing returned no result'
             raise FileIngestionError(f"Failed to process {file_type} file: {error_msg}")
 

@@ -208,3 +208,44 @@ def test_export_via_service_wraps_export_chatbook_exception_as_failure():
     assert outcome["success"] is False
     assert "boom" in outcome["message"]
     assert outcome["registry_recorded"] is False
+
+
+# --- _build_library_export_success_message: task-158 counts surfacing -------
+
+
+def test_success_message_includes_creators_detail_stripped_of_redundant_prefix():
+    """task-158: the creator's own ``outcome["message"]`` (e.g. missing-
+    dependency warnings) was previously discarded entirely -- only the
+    bare path reached the notification. Its redundant "Chatbook created
+    successfully at <path>" prefix (the path is already the primary
+    notify line) must be stripped, leaving just the detail."""
+    message = LibraryScreen._build_library_export_success_message(
+        "/tmp/out.zip",
+        {"auto_included": [1, 2, 3]},
+        "Chatbook created successfully at /tmp/out.zip. Warning: 2 character "
+        "dependencies are missing",
+    )
+
+    assert message == (
+        "Exported chatbook to /tmp/out.zip: Warning: 2 character "
+        "dependencies are missing (3 characters auto-included)"
+    )
+
+
+def test_success_message_keeps_unrecognized_creator_message_verbatim():
+    """A creator message that doesn't match the known redundant prefix
+    (e.g. a different service implementation) is kept as-is rather than
+    guessed at or silently dropped."""
+    message = LibraryScreen._build_library_export_success_message(
+        "/tmp/out.zip", {}, "ok"
+    )
+
+    assert message == "Exported chatbook to /tmp/out.zip: ok"
+
+
+def test_success_message_omits_detail_segment_when_creator_message_is_empty():
+    message = LibraryScreen._build_library_export_success_message(
+        "/tmp/out.zip", {"auto_included": [1]}, ""
+    )
+
+    assert message == "Exported chatbook to /tmp/out.zip (1 characters auto-included)"

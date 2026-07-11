@@ -153,6 +153,23 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
         assert len(media_content_names) == 1
         assert zf.read(media_content_names[0]).decode("utf-8") == _MEDIA_TRANSCRIPT
 
+        # Task 155: ``_collect_media`` previously read ``media_type``/
+        # ``created_at``/``updated_at`` off the Media row dict, but the
+        # real ``MediaDatabase`` columns are ``type``/``ingestion_date``/
+        # ``last_modified`` -- every export silently lost the media type
+        # and both timestamps. Assert the exported metadata JSON carries
+        # the correct type and a real (non-None) timestamp.
+        media_metadata_names = [
+            name
+            for name in namelist
+            if name.startswith("content/media/metadata/") and name.endswith(".json")
+        ]
+        assert len(media_metadata_names) == 1
+        media_metadata = json.loads(zf.read(media_metadata_names[0]))
+        assert media_metadata["media_type"] == "video"
+        assert media_metadata["created_at"] is not None
+        assert media_metadata["updated_at"] is not None
+
     # Registry record was created (zip succeeded).
     listed = asyncio.run(service.list_chatbooks())
     assert any(record["file_path"] == str(export_path) for record in listed)
@@ -189,6 +206,8 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
     imported_media = import_media_db.get_media_by_url("https://example.com/roundtrip-media")
     assert imported_media is not None
     assert imported_media["content"] == _MEDIA_TRANSCRIPT
+    # The media type must survive the export -> import round-trip too.
+    assert imported_media["type"] == "video"
 
 
 def test_library_export_roundtrip_conversations_only_scope_excludes_media_and_notes(
