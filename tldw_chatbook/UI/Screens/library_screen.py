@@ -2784,19 +2784,19 @@ class LibraryScreen(BaseAppScreen):
         contract (``LibraryIngestJobRegistry._notify_listeners``), this
         fires synchronously on the UI thread after every successful
         ``submit``/``mark_parsing``/``mark_writing``/``mark_done``/
-        ``mark_failed``/``requeue`` (F3; today, via the temporary
-        ``mark_running`` alias -- see its docstring in
-        ``library_ingest_jobs.py``) -- from two different call shapes:
+        ``mark_failed``/``requeue`` -- from two different call shapes:
 
         - **Synchronously inside a message handler.** The "Start ingest"
           and "Retry" button handlers call ``submit_library_ingest_job``/
           ``retry_library_ingest_job`` directly, which mutate the registry
           (firing this listener) *before* the handler's own trailing
           ``self.refresh(recompose=True)`` runs.
-        - **Marshaled from the queue-runner's worker thread**, via
-          ``call_from_thread`` for ``mark_running``/``mark_done``/
-          ``mark_failed`` -- these land outside any message handler,
-          as their own turn of the UI event loop.
+        - **Marshaled from a background thread**, via ``call_from_thread``
+          for ``mark_parsing``/``mark_writing`` (the F3 parse-pool
+          coordinator, itself invoked from a pool callback thread) and
+          ``mark_done``/``mark_failed`` (the writer's worker thread) --
+          these land outside any message handler, as their own turn of the
+          UI event loop.
 
         Both shapes are safe to handle with a plain, synchronous
         ``self.refresh(recompose=True)`` call (no ``call_after_refresh``

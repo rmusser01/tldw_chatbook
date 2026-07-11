@@ -1492,7 +1492,8 @@ def test_local_notification_adapter_excludes_superseded_ingest_job_after_retry()
 
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/broken.pdf")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     registry.mark_failed(job.job_id, error="unsupported format")
     requeued = registry.requeue(job.job_id)
     assert requeued is not None
@@ -1517,7 +1518,8 @@ def test_local_notification_adapter_excludes_dismissed_ingest_job():
 
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/broken.pdf")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     registry.mark_failed(job.job_id, error="unsupported format")
     dismissed = registry.dismiss(job.job_id)
     assert dismissed is not None

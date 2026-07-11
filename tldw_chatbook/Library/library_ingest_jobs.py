@@ -138,9 +138,8 @@ class LibraryIngestJob:
             ``requeue`` (L3b AB wave, B1) -- hides it from ``jobs()``/
             ``counts()`` and makes ``mark_parsing``/``mark_writing``/
             ``mark_done``/``mark_failed``/``requeue``/``dismiss`` safe
-            no-ops against its ``job_id`` (and, while it still exists, the
-            deprecated ``mark_running`` alias too). Never set anywhere
-            except inside ``requeue``.
+            no-ops against its ``job_id``. Never set anywhere except inside
+            ``requeue``.
         dismissed: ``True`` once a ``FAILED`` job has been dismissed via
             ``dismiss`` (L3b AB wave, B2) -- same hiding/no-op effect as
             ``superseded``, but a distinct field so the two "this job is
@@ -330,19 +329,18 @@ class LibraryIngestJobRegistry:
             job_id: The job to transition.
             detected_type: The file type detected by the ingest seam, when
                 already known at submission time. Optional: the coordinator
-                (Task 4) may call this before the parse pool has even
-                started the job, so the type is frequently still unknown
-                here (``""``) and only becomes known once the parse result
-                comes back -- this parameter exists so a caller that *does*
-                already know the type (e.g. today's temporary ``mark_running``
-                alias, which detects synchronously before transitioning) can
-                still stamp it at this step.
+                (``app.py``'s ``LibraryIngestQueueMixin._top_up_ingest_parse_pool``)
+                calls this before the parse pool has even started the job --
+                real detection (and permanent-vs-retryable classification on
+                failure) happens inside the pool worker itself, so this is
+                only a cheap, best-effort cosmetic stamp for the ``PARSING``
+                queue row; a caller unable to determine the type up front
+                may simply pass ``""``.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
             unknown, hidden (``superseded``/``dismissed``), or the job is
-            not currently ``QUEUED`` -- unlike the old, unguarded
-            ``mark_running`` this replaces, this transition IS guarded: with
+            not currently ``QUEUED`` -- this transition IS guarded: with
             multiple jobs now able to be ``PARSING`` at once (F3), silently
             re-parsing an already-``PARSING``/``WRITING``/terminal job would
             be a coordinator bug worth surfacing rather than swallowing.
@@ -397,43 +395,6 @@ class LibraryIngestJobRegistry:
         self._notify_listeners()
         return replace(updated)
 
-    def mark_running(self, job_id: str, *, detected_type: str = "") -> LibraryIngestJob | None:
-        """DEPRECATED single-call alias: drives ``QUEUED`` straight to ``WRITING``.
-
-        # TEMPORARY Task-4 removes this method (and every caller of it) once
-        # the parse-pool coordinator lands and calls ``mark_parsing``/
-        # ``mark_writing`` for real, at their own real pipeline stages.
-
-        Exists only so ``app.py``'s still-serial queue-runner
-        (``_run_library_ingest_queue``, pre-Task-4) keeps working unchanged
-        against the new two-stage state machine: that runner detects the
-        file type and then does parse-and-persist as one uninterrupted
-        synchronous call, so from its point of view there is still only one
-        "the job is now active" transition. Internally this is
-        ``mark_parsing`` immediately followed by ``mark_writing`` -- both
-        real transitions (each fires the listener once, so callers of this
-        alias observe two notifications, not one), landing the job in
-        ``WRITING`` (not ``PARSING``) for the whole time the old runner is
-        actually doing its (parse + write) work, since that runner has no
-        separate parse-complete moment to call ``mark_writing`` at.
-
-        Args:
-            job_id: The job to transition.
-            detected_type: The file type detected by the ingest seam;
-                forwarded to ``mark_parsing`` (see its docstring), which
-                stamps it on the job before ``mark_writing`` transitions it
-                onward. ``mark_writing`` itself takes no ``detected_type``.
-
-        Returns:
-            The updated job (a copy) in state ``WRITING``, or ``None`` when
-            ``job_id`` is unknown, hidden, or (per ``mark_parsing``'s new
-            guard) not currently ``QUEUED``. Unknown ids never raise.
-        """
-        parsing = self.mark_parsing(job_id, detected_type=detected_type)
-        if parsing is None:
-            return None
-        return self.mark_writing(job_id)
-
     def mark_done(self, job_id: str, *, media_id: int) -> LibraryIngestJob | None:
         """Transition a job to ``DONE`` and stamp ``finished_at``/``finished_at_wall``.
 
@@ -448,12 +409,11 @@ class LibraryIngestJobRegistry:
 
         No state-machine guard: unlike ``mark_parsing``/``mark_writing``,
         this unconditionally overwrites whatever state a *visible* job was
-        in (it does not check that it was ``WRITING`` first) -- matching the
-        old, unguarded ``mark_running`` this module used to have. The writer
+        in (it does not check that it was ``WRITING`` first). The writer
         (the exclusive thread worker; see ``app.py``) is the sole intended
         caller and only ever reaches this after a preceding ``mark_writing``
-        on the same job (today, via the deprecated ``mark_running`` alias;
-        from Task 4 onward, via a real writer-claim call to ``mark_writing``).
+        on the same job (a real writer-claim call, see
+        ``LibraryIngestQueueMixin._claim_next_ingest_job_or_release``).
         """
         index = self._find_index(job_id)
         if index is None:

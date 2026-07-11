@@ -1340,7 +1340,8 @@ async def test_home_running_section_survives_markup_hostile_ingest_job_title():
     """
     app = _build_test_app()
     job = app.library_ingest_jobs.submit(source_path='/tmp/a [b="c].txt')
-    app.library_ingest_jobs.mark_running(job.job_id)
+    app.library_ingest_jobs.mark_parsing(job.job_id)
+    app.library_ingest_jobs.mark_writing(job.job_id)
     host = HomeHarness(app)
 
     async with host.run_test(size=HOME_TEST_SIZE) as pilot:

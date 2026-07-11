@@ -13,6 +13,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Markdown, Static, TextArea
 
 from tldw_chatbook.app import LibraryIngestQueueMixin
+from Tests.Library.test_library_ingest_runner import _FakeIngestParsePool
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
@@ -7485,8 +7486,16 @@ _INGEST_POLL_INTERVAL = 0.02
 
 class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
     """Runs a real LibraryScreen against a running app mixing the real
-    ingest queue-runner + registry + an optional real file-backed
-    MediaDatabase."""
+    ingest coordinator + writer + registry + an optional real file-backed
+    MediaDatabase.
+
+    Defaults to an auto-run ``_FakeIngestParsePool`` (F3) -- real
+    ``run_parse_job``/``persist_parsed_media``, fake pool -- so the ~20
+    ingest pilots below never spawn real OS processes. Pass
+    ``pool_factory``/``worker_count`` for pilots needing manual completion
+    control or a specific backpressure cap (mirrors
+    ``Tests/Library/test_library_ingest_runner.py``'s
+    ``_IngestRunnerHarness``)."""
 
     CSS_PATH = str(
         Path(__file__).resolve().parents[2]
@@ -7495,16 +7504,29 @@ class _LibraryIngestCanvasHarness(LibraryIngestQueueMixin, App):
         / "tldw_cli_modular.tcss"
     )
 
-    def __init__(self, media_db):
+    def __init__(self, media_db, *, pool_factory=None, worker_count=None):
         super().__init__()
         self.library_ingest_jobs = LibraryIngestJobRegistry()
         self.media_db = media_db
+        self._ingest_parse_pool = None
+        self._ingest_parsed_payloads = {}
+        self._ingest_shutdown = False
+        self._pool_factory = pool_factory or (lambda: _FakeIngestParsePool())
+        self._worker_count_override = worker_count
         self.notes_scope_service = StaticLibraryNotesScopeService([])
         self.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
         if media_db is not None:
             self.media_reading_scope_service = MediaReadingScopeService(
                 LocalMediaReadingService(media_db), None
             )
+
+    def _create_ingest_parse_pool(self):
+        return self._pool_factory()
+
+    def _ingest_parse_worker_count(self) -> int:
+        if self._worker_count_override is not None:
+            return self._worker_count_override
+        return super()._ingest_parse_worker_count()
 
     async def on_mount(self) -> None:
         await self.push_screen(LibraryScreen(self))
@@ -7633,7 +7655,8 @@ async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues
         await _wait_for_library_shell(screen, pilot)
 
         failing_job = harness.library_ingest_jobs.submit(source_path=str(source))
-        harness.library_ingest_jobs.mark_running(failing_job.job_id)
+        harness.library_ingest_jobs.mark_parsing(failing_job.job_id)
+        harness.library_ingest_jobs.mark_writing(failing_job.job_id)
         harness.library_ingest_jobs.mark_failed(
             failing_job.job_id, error="boom", permanent=False
         )
@@ -7666,9 +7689,10 @@ async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues
 
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_permanent_failure_has_no_retry_button(tmp_path):
-    """(M4, fix batch F1b) A missing-file failure is classified permanent
-    by the real queue-runner -- the canvas withholds Retry entirely (but
-    still offers Dismiss)."""
+    """(M4, fix batch F1b; F3 re-anchor) A missing-file failure is
+    classified permanent inside the real parse worker (``run_parse_job``,
+    driven here by the fake-pool seam) -- the canvas withholds Retry
+    entirely (but still offers Dismiss)."""
     db = MediaDatabase(tmp_path / "ingest-canvas.db", client_id="l3b-ingest-canvas")
     missing = tmp_path / "does-not-exist.txt"
     harness = _LibraryIngestCanvasHarness(db)
@@ -7709,7 +7733,8 @@ async def test_library_shell_ingest_canvas_failed_row_actions_share_one_line(tmp
         await _wait_for_library_shell(screen, pilot)
 
         job = harness.library_ingest_jobs.submit(source_path="/tmp/broken.pdf")
-        harness.library_ingest_jobs.mark_running(job.job_id)
+        harness.library_ingest_jobs.mark_parsing(job.job_id)
+        harness.library_ingest_jobs.mark_writing(job.job_id)
         harness.library_ingest_jobs.mark_failed(job.job_id, error="boom", permanent=False)
 
         await _open_library_ingest_canvas(screen, pilot)

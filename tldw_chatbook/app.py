@@ -21,6 +21,7 @@ import functools
 import inspect
 import logging
 import logging.handlers
+import multiprocessing
 import random
 import subprocess
 import sys
@@ -65,6 +66,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events import handl
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from .Widgets.AppFooterStatus import AppFooterStatus
 from .config import (
+    get_cli_setting,
     get_library_collections_db_path,
     get_media_db_path,
     get_notifications_db_path,
@@ -109,12 +111,14 @@ from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Library.library_ingest_jobs import (
     DEFAULT_CHUNK_SIZE,
+    IngestJobState,
     LibraryIngestJob,
     LibraryIngestJobRegistry,
 )
 from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
 from tldw_chatbook.Local_Ingestion import detect_file_type, ingest_local_file
-from tldw_chatbook.Local_Ingestion.ingest_parse_worker import classify_parse_failure
+from tldw_chatbook.Local_Ingestion.ingest_parse_worker import classify_parse_failure, run_parse_job
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import persist_parsed_media
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -1136,6 +1140,29 @@ class PlaceholderWindow(Container):
                     await result
 
 
+def _sanitize_library_ingest_error_text(message: str) -> str:
+    """Reduce a raw error message to a single-line, ``<=200``-char string.
+
+    Shared building block for both ingest-pipeline stages (F3): the write
+    stage has a real ``Exception`` (see ``_sanitize_library_ingest_error``,
+    below); the parse stage only has the already-``str()``-ed message a
+    pool worker's structured failure result carries across the process
+    boundary (``ingest_parse_worker.run_parse_job``'s ``"error"`` key) --
+    both need the exact same single-line/200-cap treatment before landing
+    in a job's ``LibraryIngestJob.error`` field.
+
+    Args:
+        message: The raw (possibly multi-line, possibly empty) message.
+
+    Returns:
+        The first line, stripped and capped at 200 characters. ``""`` when
+        ``message`` is empty or all-whitespace.
+    """
+    message = message.strip()
+    first_line = message.splitlines()[0].strip() if message else ""
+    return first_line[:200]
+
+
 def _sanitize_library_ingest_error(exc: Exception) -> str:
     """Reduce an ingest-time exception to a single-line, capped error string.
 
@@ -1147,37 +1174,59 @@ def _sanitize_library_ingest_error(exc: Exception) -> str:
         characters. Falls back to the exception's class name when
         ``str(exc)`` is empty.
     """
-    message = str(exc).strip()
-    first_line = message.splitlines()[0].strip() if message else ""
-    if not first_line:
-        first_line = exc.__class__.__name__
-    return first_line[:200]
+    sanitized = _sanitize_library_ingest_error_text(str(exc))
+    return sanitized if sanitized else exc.__class__.__name__[:200]
 
 
 class LibraryIngestQueueMixin:
-    """Library ingest job submission seam + serial queue-runner.
+    """Library ingest job submission seam + parallel-parse coordinator + writer.
 
     Mixed into :class:`TldwCli` (and headless test harnesses -- see
     ``Tests/Library/test_library_ingest_runner.py``) rather than being
-    defined directly on the App class, so the queue-runner can be exercised
-    without booting the full app. A host class is expected to provide:
+    defined directly on the App class, so the coordinator + writer can be
+    exercised without booting the full app. A host class is expected to
+    provide:
 
     - ``self.library_ingest_jobs``: a ``LibraryIngestJobRegistry`` instance
       constructed once (e.g. in ``__init__``/app wiring).
     - ``self.media_db``: an ``Optional[MediaDatabase]``.
+    - ``self._ingest_parse_pool``, ``self._ingest_parsed_payloads``,
+      ``self._ingest_shutdown``: the coordinator's own state, initialized
+      once (e.g. ``None``, ``{}``, ``False`` respectively) alongside
+      ``library_ingest_jobs`` -- see ``TldwCli.__init__``.
     - Textual's ``App``/``Widget`` worker machinery (``@work`` and
       ``call_from_thread``), since this mixin is always combined with one
       of those base classes.
 
-    The queue-runner worker (``_run_library_ingest_queue``) is the *only*
-    intended caller of the registry's ``mark_running``/``mark_done``/
-    ``mark_failed`` transition methods. Every job it dequeues is driven
-    either ``queued`` -> ``running`` -> ``done``/``failed``, *or* straight
-    from ``queued`` to ``failed`` when an error occurs before
-    ``mark_running`` is ever reached -- e.g. an unsupported/undetectable
-    file type raised by ``detect_file_type``, which runs before
-    ``mark_running`` is called. Either way, one job's failure is caught
-    locally so it never kills the loop or strands a later queued job.
+    F3 architecture -- two decoupled stages, not one serial loop:
+
+    - **Parse stage (this mixin's coordinator, UI thread).** A lazily
+      created spawn-context ``multiprocessing.Pool`` (see
+      ``_create_ingest_parse_pool``) fans file parsing out to worker
+      processes. ``_top_up_ingest_parse_pool`` keeps up to N jobs (the pool
+      size) ``PARSING`` at once -- called after every submission/retry and
+      after every parse completion. A pool completion is marshaled onto the
+      UI thread (``_on_ingest_parse_complete``); success stashes the parsed
+      payload and wakes the writer, failure goes straight to
+      ``mark_failed``.
+    - **Write stage (the writer, background thread, unchanged shape).**
+      Exactly one job is ever being written at a time (SQLite has one
+      writer). The writer's claim-or-release loop
+      (``_claim_next_ingest_job_or_release`` / ``_run_library_ingest_queue``)
+      now claims the OLDEST payload-ready job (by submission order) instead
+      of the oldest queued one, persists it via ``persist_parsed_media``,
+      and marks it ``DONE``/``FAILED``.
+
+    The coordinator (parse side) and the writer (write side) are the only
+    intended callers of the registry's ``mark_parsing``/``mark_writing``/
+    ``mark_done``/``mark_failed`` transition methods, respectively. Every
+    job is driven either ``queued`` -> ``parsing`` -> ``writing`` ->
+    ``done``/``failed``, or ``parsing`` -> ``failed`` directly when the pool
+    worker's parse itself fails (e.g. an unsupported/undetectable file type,
+    or a missing source file -- classified by ``classify_parse_failure``
+    inside the worker, where the real exception type is available). Either
+    way, one job's failure is isolated so it never strands a later queued
+    job or blocks the writer.
     """
 
     def submit_library_ingest_job(
@@ -1191,12 +1240,12 @@ class LibraryIngestQueueMixin:
         chunk_enabled: bool = False,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
     ) -> LibraryIngestJob:
-        """Submit a new Library ingest job and start the runner if idle.
+        """Submit a new Library ingest job and top up the parse pool.
 
         UI-thread only. Appends a ``QUEUED`` job to ``self.library_ingest_jobs``.
         When ``self.media_db`` is unavailable, the job is failed immediately
-        (with the exact copy ``"Media database is unavailable."``) and the
-        queue-runner is never started for it.
+        (with the exact copy ``"Media database is unavailable."``) and it
+        never reaches the parse pool.
 
         Args:
             source_path: The file path to ingest.
@@ -1225,11 +1274,11 @@ class LibraryIngestQueueMixin:
                 job.job_id, error="Media database is unavailable."
             )
             return failed if failed is not None else job
-        self._start_library_ingest_queue_if_idle()
+        self._top_up_ingest_parse_pool()
         return job
 
     def retry_library_ingest_job(self, job_id: str) -> Optional[LibraryIngestJob]:
-        """Requeue a previously failed job and start the runner if idle.
+        """Requeue a previously failed job and top up the parse pool.
 
         UI-thread only. A thin wrapper over
         ``LibraryIngestJobRegistry.requeue`` -- a no-op (returns ``None``)
@@ -1251,22 +1300,245 @@ class LibraryIngestQueueMixin:
                 requeued.job_id, error="Media database is unavailable."
             )
             return failed if failed is not None else requeued
-        self._start_library_ingest_queue_if_idle()
+        self._top_up_ingest_parse_pool()
         return requeued
 
+    # -- Parse-pool sizing + lifecycle (coordinator) -----------------------
+
+    def _ingest_parse_worker_count(self) -> int:
+        """Resolve the parse-pool size from config, with a safe default.
+
+        UI-thread only. Reads ``library.ingest_parse_workers`` via the
+        dotted 1-arg ``get_cli_setting`` form (``load_settings()`` doesn't
+        carry CLI ``[library.*]`` tables -- same bug-class guard as the
+        rail-state read). An invalid, missing, or non-positive value falls
+        back to the spec's default formula.
+
+        Returns:
+            The configured worker count when it int-coerces to a positive
+            value; otherwise ``min(3, max(1, cpu_count - 1))``, where
+            ``cpu_count`` is ``os.cpu_count()`` (guarded to ``2`` when that
+            returns ``None``, e.g. on some containerized/sandboxed hosts).
+        """
+        try:
+            configured = int(get_cli_setting("library.ingest_parse_workers"))
+        except (TypeError, ValueError):
+            configured = 0
+        if configured > 0:
+            return configured
+        cpu_count = os.cpu_count() or 2
+        return min(3, max(1, cpu_count - 1))
+
+    def _create_ingest_parse_pool(self):
+        """Create the Library ingest parse pool.
+
+        UI-thread only. Test seam: monkeypatched to an inline-synchronous
+        fake pool (see ``Tests/Library/test_library_ingest_runner.py``) so
+        pilots stay deterministic without spawning real OS processes. Real
+        callers get a spawn-context ``multiprocessing.Pool`` sized by
+        ``_ingest_parse_worker_count``.
+
+        Not a ``concurrent.futures.ProcessPoolExecutor`` -- see the F3
+        design spec's Architecture section: the executor's ``atexit`` hook
+        joins running tasks, so an in-flight long transcription would block
+        app exit for its full duration. ``Pool`` has a public
+        ``terminate()`` the quit path relies on instead.
+        """
+        return multiprocessing.get_context("spawn").Pool(
+            processes=self._ingest_parse_worker_count()
+        )
+
+    def _ensure_ingest_parse_pool(self):
+        """Return the current parse pool, lazily creating one if needed.
+
+        UI-thread only.
+        """
+        if self._ingest_parse_pool is None:
+            self._ingest_parse_pool = self._create_ingest_parse_pool()
+        return self._ingest_parse_pool
+
+    @staticmethod
+    def _ingest_job_options(job: LibraryIngestJob) -> Dict[str, Any]:
+        """Build ``run_parse_job``'s ``options`` dict from a job's fields.
+
+        Mechanical 1:1 translation documented in
+        ``ingest_parse_worker``'s module docstring -- the Library queue
+        never sets ``custom_prompt``/``system_prompt``/``api_name``/
+        ``api_key``/``metadata``, so they're simply absent (``None`` inside
+        the worker's ``options.get(...)`` reads).
+        """
+        return {
+            "title": job.title or None,
+            "author": job.author or None,
+            "keywords": list(job.keywords) or None,
+            "perform_analysis": job.perform_analysis,
+            "chunk_options": (
+                {
+                    "method": "sentences",
+                    "size": job.chunk_size,
+                    "overlap": 100,
+                }
+                if job.chunk_enabled
+                else None
+            ),
+        }
+
+    def _top_up_ingest_parse_pool(self) -> None:
+        """Submit ``QUEUED`` jobs to the parse pool up to the worker cap.
+
+        UI-thread only. Called after every submission/retry and after every
+        parse completion (ok or not) so the pool stays saturated at up to N
+        concurrent ``PARSING`` jobs -- this cap IS the backpressure: at most
+        N parsed payloads (plus the one currently being written) are ever
+        held in memory at once.
+
+        A no-op once ``self._ingest_shutdown`` is set (the app is closing;
+        no new parse work should be handed to a pool that's about to be
+        terminated).
+
+        For each job claimed off the queue, ``detect_file_type`` is called
+        here (cheap: a pure extension check, never touches the filesystem
+        beyond ``Path.suffix``) purely to stamp a cosmetic ``detected_type``
+        onto the ``PARSING`` row for the queue-row copy -- an unsupported
+        extension here is silently ignored (left ``""``) rather than
+        fast-failing the job: real classification (permanent vs. retryable)
+        happens inside the pool worker, where the authoritative exception
+        is available (see ``classify_parse_failure``), matching the F3
+        design spec's "permanent-vs-retryable classification happens inside
+        the worker" decision.
+        """
+        if self._ingest_shutdown:
+            return
+        worker_count = self._ingest_parse_worker_count()
+        while self.library_ingest_jobs.counts().get("parsing", 0) < worker_count:
+            job = self.library_ingest_jobs.next_queued()
+            if job is None:
+                return
+            try:
+                detected_type = detect_file_type(job.source_path) or ""
+            except Exception:
+                detected_type = ""
+            claimed = self.library_ingest_jobs.mark_parsing(
+                job.job_id, detected_type=detected_type
+            )
+            if claimed is None:
+                # Invariant violation (Task-3 reviewer's guard note): the
+                # job we just pulled off `next_queued()` was no longer
+                # QUEUED by the time we tried to claim it -- should be
+                # impossible on the UI thread (this whole method is
+                # UI-thread-only, so nothing else can race the queue
+                # between the two calls), but a coordinator bug here must
+                # never crash the submission path. Log and move on rather
+                # than looping forever on the same unclaimable job.
+                logger.error(
+                    f"Library ingest coordinator: mark_parsing rejected "
+                    f"job {job.job_id} (expected QUEUED) -- skipping."
+                )
+                continue
+            options = self._ingest_job_options(claimed)
+            job_id = claimed.job_id
+            source_path = claimed.source_path
+            pool = self._ensure_ingest_parse_pool()
+            try:
+                pool.apply_async(
+                    run_parse_job,
+                    (source_path, options),
+                    callback=lambda result, job_id=job_id: self.call_from_thread(
+                        self._on_ingest_parse_complete, job_id, result
+                    ),
+                    error_callback=lambda exc: self.call_from_thread(
+                        self._handle_broken_ingest_parse_pool, exc
+                    ),
+                )
+            except Exception as exc:
+                # The pool itself rejected the submission synchronously
+                # (e.g. it was already terminated/closed) -- every job
+                # currently PARSING was submitted to this same broken pool
+                # and can't be trusted to ever complete either.
+                self._handle_broken_ingest_parse_pool(exc)
+                return
+
+    def _on_ingest_parse_complete(self, job_id: str, result: Dict[str, Any]) -> None:
+        """Handle one pool completion (success or structured parse failure).
+
+        UI-thread only; invoked via ``call_from_thread`` from the pool's
+        result-handler thread (the ``apply_async`` ``callback``). No-ops
+        immediately once ``self._ingest_shutdown`` is set -- a completion
+        can still be marshaled onto the UI thread for a brief window after
+        the app starts closing (it may have already been in flight when
+        ``pool.terminate()`` was called), and this guard is what keeps that
+        race from touching a closing app's registry/pool state.
+
+        Args:
+            job_id: The job this result belongs to (bound at submission
+                time in ``_top_up_ingest_parse_pool``, not re-derived here).
+            result: ``run_parse_job``'s structured return value -- either
+                ``{"ok": True, "payload": {...}}`` or
+                ``{"ok": False, "error": str, "permanent": bool}``.
+        """
+        if self._ingest_shutdown:
+            return
+        if result.get("ok"):
+            self._ingest_parsed_payloads[job_id] = result["payload"]
+            self._start_library_ingest_queue_if_idle()
+        else:
+            error_text = _sanitize_library_ingest_error_text(
+                str(result.get("error") or "Library ingest parsing failed.")
+            )
+            self.library_ingest_jobs.mark_failed(
+                job_id,
+                error=error_text or "Library ingest parsing failed.",
+                permanent=bool(result.get("permanent", False)),
+            )
+        self._top_up_ingest_parse_pool()
+
+    def _handle_broken_ingest_parse_pool(self, exc: BaseException) -> None:
+        """Fail every in-flight ``PARSING`` job and drop the broken pool.
+
+        UI-thread only. Shared by the pool's ``error_callback`` (an async,
+        pool-level failure marshaled via ``call_from_thread`` -- e.g. a
+        worker process died) and a synchronous ``apply_async`` submission
+        failure in ``_top_up_ingest_parse_pool`` (the pool was already
+        broken when we tried to use it). Either way, every job currently
+        ``PARSING`` was submitted to the SAME pool object and its callback
+        may never fire, so none of them can be trusted to complete --
+        failing all of them (retryable) and dropping the pool reference is
+        the only sound recovery (see the F3 design spec's "Worker-process
+        death" section). The pool is rebuilt lazily by
+        ``_create_ingest_parse_pool`` the next time ``_top_up_ingest_parse_pool``
+        runs (i.e. on the next submission/retry).
+
+        No-ops once ``self._ingest_shutdown`` is set, same as
+        ``_on_ingest_parse_complete``.
+        """
+        if self._ingest_shutdown:
+            return
+        logger.opt(exception=exc).error(f"Library ingest parse pool failed: {exc}")
+        for job in self.library_ingest_jobs.jobs():
+            if job.state == IngestJobState.PARSING:
+                self._ingest_parsed_payloads.pop(job.job_id, None)
+                self.library_ingest_jobs.mark_failed(
+                    job.job_id,
+                    error="Library ingest parse pool failed unexpectedly; retry to resume.",
+                    permanent=False,
+                )
+        self._ingest_parse_pool = None
+
+    # -- Writer (claim-or-release loop, narrowed to the write stage) -------
+
     def _start_library_ingest_queue_if_idle(self) -> None:
-        """Start the queue-runner worker, unless one is already active.
+        """Start the writer worker, unless one is already active.
 
         UI-thread only. Sets ``runner_active = True`` synchronously, before
-        scheduling the worker, so a rapid double-submission can never
-        double-start the runner.
+        scheduling the worker, so a rapid double-wake can never
+        double-start the writer.
 
         If scheduling the ``@work`` worker itself raises synchronously
         (e.g. the app isn't in a state that accepts new workers), the
         ``runner_active`` flag is rolled back to ``False`` before
         re-raising -- otherwise a scheduling failure here would leave the
         registry permanently believing a runner is active when none was
-        ever started, silently stranding every future submission.
+        ever started, silently stranding every future payload.
         """
         if self.library_ingest_jobs.runner_active:
             return
@@ -1277,133 +1549,142 @@ class LibraryIngestQueueMixin:
             self.library_ingest_jobs.runner_active = False
             raise
 
-    def _claim_next_ingest_job_or_release(self) -> Optional[LibraryIngestJob]:
-        """Atomically claim the next queued job, or release the runner.
+    def _claim_next_ingest_job_or_release(
+        self,
+    ) -> Optional[tuple[LibraryIngestJob, Dict[str, Any]]]:
+        """Atomically claim the oldest payload-ready job, or release the writer.
 
         UI-thread only; must only ever be invoked via ``call_from_thread``
-        from the queue-runner worker thread (see
-        ``_run_library_ingest_queue``), never called directly from that
-        thread.
+        from the writer worker thread (see ``_run_library_ingest_queue``),
+        never called directly from that thread.
+
+        "Payload-ready" means the job's parsed payload is sitting in
+        ``self._ingest_parsed_payloads`` (stashed by
+        ``_on_ingest_parse_complete`` on a successful parse) -- claiming
+        means popping that payload out of the dict AND transitioning the
+        job ``PARSING`` -> ``WRITING`` via ``mark_writing``, both inside
+        this single call. Jobs are visited oldest-submission-first
+        (``self.library_ingest_jobs.jobs()`` is newest-first; this walks it
+        reversed) so writes happen in submission order among ready
+        payloads, even though a small file may finish parsing before an
+        older large one.
+
+        A successful claim also tops up the parse pool
+        (``_top_up_ingest_parse_pool``): a payload-ready job still counts
+        against the ``PARSING`` cap until this call's ``mark_writing``
+        transitions it out (there is no separate registry state for
+        "parsed but not yet claimed" -- see ``IngestJobState``), so a
+        completion's own top-up call (in ``_on_ingest_parse_complete``,
+        which always runs *before* the writer gets around to claiming) can
+        still see the cap as full. Topping up again here is what actually
+        frees that slot for a still-``QUEUED`` job once the claim lands.
 
         Atomicity contract: this is a single, plain synchronous UI-thread
-        call, so the "is there another queued job?" check and the "clear
+        call, so the "is there a payload-ready job?" check and the "clear
         ``runner_active``" decision happen in the same turn of the UI event
-        loop with no ``await``/yield between them. No other UI-thread code
-        -- in particular ``submit_library_ingest_job``/
-        ``retry_library_ingest_job``, which only start a fresh runner when
-        ``runner_active`` is ``False`` -- can run in between. This closes
-        the exit race the previous two-step implementation had: it used to
-        call ``next_queued()`` and, only in a *separate* later
-        ``call_from_thread`` (in the ``finally`` block), clear
-        ``runner_active``. A submission landing on the UI thread in the gap
-        between those two calls would append a ``QUEUED`` job while
-        ``runner_active`` was still (stale-)``True``, so it would never
-        start a new runner -- stranding the job until some unrelated later
-        submission happened to start one. Collapsing the check and the
-        ``runner_active`` mutation into one call removes that gap entirely.
-        Do not reintroduce a two-``call_from_thread`` exit path.
+        loop with no ``await``/yield between them -- exactly the discipline
+        the pre-F3 claim-or-release fix established (see the git history:
+        the previous two-step implementation had a submission land in the
+        gap between "check" and "clear ``runner_active``", stranding a job
+        behind a stale ``runner_active`` flag). Do not reintroduce a
+        two-``call_from_thread`` exit path.
 
         Returns:
-            The next ``QUEUED`` job (a registry copy), if one exists --
-            ``runner_active`` is left untouched (still ``True``) and the
-            runner must keep looping. ``None`` when the queue is genuinely
-            empty -- ``runner_active`` is cleared before returning, and the
-            runner must exit.
+            ``(job, payload)`` for the oldest payload-ready job, if one
+            exists -- ``runner_active`` is left untouched (still ``True``)
+            and the writer must keep looping. ``None`` when no job is
+            payload-ready -- ``runner_active`` is cleared before returning,
+            and the writer must exit.
         """
-        job = self.library_ingest_jobs.next_queued()
-        if job is not None:
-            return job
+        for job in reversed(self.library_ingest_jobs.jobs()):
+            payload = self._ingest_parsed_payloads.get(job.job_id)
+            if payload is None:
+                continue
+            del self._ingest_parsed_payloads[job.job_id]
+            claimed = self.library_ingest_jobs.mark_writing(job.job_id)
+            if claimed is None:
+                # Invariant violation (Task-3 reviewer's guard note): a
+                # payload existed for a job that wasn't PARSING when we
+                # tried to claim it -- should be impossible (a payload only
+                # ever enters the dict from a PARSING-state parse
+                # completion, and this is the only caller of
+                # `mark_writing`), but if it ever happens, the orphaned
+                # payload is discarded (already popped above) and we keep
+                # looking rather than crashing the writer loop.
+                logger.error(
+                    f"Library ingest writer: mark_writing rejected job "
+                    f"{job.job_id} despite a ready payload -- discarding "
+                    f"the orphaned payload and skipping."
+                )
+                continue
+            self._top_up_ingest_parse_pool()
+            return claimed, payload
         self.library_ingest_jobs.runner_active = False
         return None
 
     def _release_ingest_runner_after_crash(self) -> None:
-        """Safety-net cleanup for the queue-runner's ``finally`` block.
+        """Safety-net cleanup for the writer's ``finally`` block.
 
-        UI-thread only; invoked via ``call_from_thread`` from the
-        queue-runner worker's ``finally``, on every exit path (clean or
-        not).
+        UI-thread only; invoked via ``call_from_thread`` from the writer
+        worker's ``finally``, on every exit path (clean or not).
 
-        On the normal, clean-exit path this is a no-op: the runner already
+        On the normal, clean-exit path this is a no-op: the writer already
         exited because ``_claim_next_ingest_job_or_release`` returned
         ``None``, which already cleared ``runner_active``. It only does
         real work when the worker thread is unwinding from something that
         bypassed that atomic exit -- i.e. an exception escaped a job's own
-        isolation (see ``_run_library_ingest_queue``) or the marshaled
-        call itself raised. In that case: clear ``runner_active`` if it is
-        still set, and, since the crash may have left one or more jobs
-        ``QUEUED`` with nothing left to drain them, restart the runner
-        when the queue is non-empty at that moment. Restarting here is
-        safe: this method runs on the UI thread, and the dying worker
-        thread is already unwinding and will not touch the registry again.
+        isolation (see ``_run_library_ingest_queue``) or the marshaled call
+        itself raised. In that case: clear ``runner_active`` if it is still
+        set, and, since the crash may have left one or more parsed payloads
+        sitting unclaimed with nothing left to drain them, restart the
+        writer when a payload is still waiting at that moment. Restarting
+        here is safe: this method runs on the UI thread, and the dying
+        worker thread is already unwinding and will not touch the registry
+        again.
         """
         if self.library_ingest_jobs.runner_active:
             self.library_ingest_jobs.runner_active = False
-        if self.library_ingest_jobs.next_queued() is not None:
+        if self._ingest_parsed_payloads:
             self._start_library_ingest_queue_if_idle()
 
     @work(exclusive=True, thread=True, group="library_ingest_queue")
     def _run_library_ingest_queue(self) -> None:
-        """Serially drain the Library ingest queue on a background thread.
+        """Drain payload-ready Library ingest jobs on a background thread.
 
-        Runs until ``self.library_ingest_jobs`` has no more ``QUEUED`` jobs,
-        then clears ``runner_active`` (via
-        ``_claim_next_ingest_job_or_release``, atomically -- see that
-        method's docstring) and exits -- a later submission/retry starts a
-        fresh worker. Every registry touch is marshaled onto the UI thread
-        via ``call_from_thread`` because ``LibraryIngestJobRegistry`` does
-        no internal locking (see its module docstring). A single job's
-        exception (missing file, unsupported type, DB error, ...) is
+        This is the write stage only (F3): parsing already happened in the
+        pool, and this worker's whole job is persisting an already-parsed
+        payload via ``persist_parsed_media`` -- one ``add_media_with_keywords``
+        call at a time, since SQLite has exactly one writer.
+
+        Runs until no job is payload-ready, then clears ``runner_active``
+        (via ``_claim_next_ingest_job_or_release``, atomically -- see that
+        method's docstring) and exits -- a later parse completion wakes a
+        fresh worker (``_on_ingest_parse_complete`` ->
+        ``_start_library_ingest_queue_if_idle``). Every registry touch is
+        marshaled onto the UI thread via ``call_from_thread`` because
+        ``LibraryIngestJobRegistry`` does no internal locking (see its
+        module docstring). A single job's write failure (DB error, ...) is
         caught locally and turned into a ``mark_failed`` transition; it
         never aborts the loop.
 
         The outer ``try/finally`` is a separate safety net for failures
         *outside* that per-job isolation -- e.g. the marshaled claim call
         itself raising (a genuinely unexpected/"catastrophic" failure, not
-        a per-job ingest error). The local ``clean_exit`` flag is only set
-        right before the natural, queue-is-empty ``return``; it lets
-        ``finally`` tell that ordinary case apart from a crash. This
-        matters because on a clean exit, ``_claim_next_ingest_job_or_release``
-        has *already* atomically handled ``runner_active`` -- by the time
-        ``finally`` runs, an unrelated fresh submission may have legitimately
-        raced in and started a brand-new runner (correctly, since
-        ``runner_active`` was truthfully ``False`` at that point). Invoking
-        the crash-recovery callable unconditionally would risk that stale
-        ``finally`` clobbering the *new* runner's ``runner_active`` flag.
-        Skipping it on a clean exit avoids that. See
-        ``_release_ingest_runner_after_crash``.
+        a per-job write error). See ``_release_ingest_runner_after_crash``
+        for why the crash-recovery callable is skipped on a clean exit.
         """
         clean_exit = False
         try:
             while True:
-                job = self.call_from_thread(self._claim_next_ingest_job_or_release)
-                if job is None:
+                claim = self.call_from_thread(self._claim_next_ingest_job_or_release)
+                if claim is None:
                     clean_exit = True
                     return
+                job, payload = claim
                 try:
-                    detected_type = detect_file_type(job.source_path) or ""
-                    self.call_from_thread(
-                        self.library_ingest_jobs.mark_running,
-                        job.job_id,
-                        detected_type=detected_type,
+                    media_id, _media_uuid, _message = persist_parsed_media(
+                        payload, self.media_db
                     )
-                    result = ingest_local_file(
-                        file_path=Path(job.source_path),
-                        media_db=self.media_db,
-                        title=job.title or None,
-                        author=job.author or None,
-                        keywords=list(job.keywords) or None,
-                        perform_analysis=job.perform_analysis,
-                        chunk_options=(
-                            {
-                                "method": "sentences",
-                                "size": job.chunk_size,
-                                "overlap": 100,
-                            }
-                            if job.chunk_enabled
-                            else None
-                        ),
-                    )
-                    media_id = result["media_id"]
                     if media_id is None and self.media_db is not None:
                         # Re-ingesting an unchanged file takes the DB's
                         # update path, whose return carries no media id.
@@ -1413,9 +1694,7 @@ class LibraryIngestQueueMixin:
                         # already fails the job before this point when it's
                         # absent), but this guard is cheap insurance against
                         # an ``AttributeError`` on a stale/racy reference.
-                        existing = self.media_db.get_media_by_url(
-                            f"file://{Path(job.source_path).absolute()}"
-                        )
+                        existing = self.media_db.get_media_by_url(payload["url"])
                         if existing is not None:
                             media_id = existing.get("id")
                     self.call_from_thread(
@@ -1430,8 +1709,8 @@ class LibraryIngestQueueMixin:
                     # mark_failed so a debugging session isn't left with only
                     # the registry's sanitized, single-line error string.
                     logger.opt(exception=True).error(
-                        f"Library ingest job failed (job_id={job.job_id}, "
-                        f"source={job.source_path})."
+                        f"Library ingest job failed during write "
+                        f"(job_id={job.job_id}, source={job.source_path})."
                     )
                     self.call_from_thread(
                         self.library_ingest_jobs.mark_failed,
@@ -2505,6 +2784,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         )
         self.library_rag_search_service = LibraryLocalRagSearchService(self)
         self.library_ingest_jobs = LibraryIngestJobRegistry()
+        # F3 parallel-parse coordinator state (see LibraryIngestQueueMixin):
+        # the lazily-created parse-pool handle, the parse->write handoff
+        # (job_id -> parsed payload dict, populated by a pool completion and
+        # drained by the writer's claim), and the shutdown flag pool
+        # callbacks check before touching a closing app.
+        self._ingest_parse_pool = None
+        self._ingest_parsed_payloads: dict[str, dict] = {}
+        self._ingest_shutdown: bool = False
 
     def _wire_research_services(self) -> None:
         """Initialize source-aware research services if the broad parity wiring has not already done so."""
@@ -5313,7 +5600,33 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         logging.info("--- App Unmounting ---")
         self._ui_ready = False
         self._stop_ui_responsiveness_monitor()
-        
+
+        # F3: shut down the Library ingest parse pool. Flip the shutdown
+        # flag FIRST -- before touching the pool -- so any pool callback
+        # that was already marshaling onto the UI thread when we got here
+        # (see LibraryIngestQueueMixin._on_ingest_parse_complete /
+        # _handle_broken_ingest_parse_pool) no-ops instead of touching a
+        # closing app. `terminate()` kills every in-flight parse worker
+        # process immediately -- no waiting on a possibly-long
+        # transcription/OCR job -- and `join()` blocks until they're
+        # actually gone, so no parse worker outlives the app process. The
+        # writer (the exclusive `library_ingest_queue` thread worker) is
+        # NOT specially joined here -- it is swept up by the generic worker
+        # cancellation below, same as every other worker (see
+        # Library/library_ingest_jobs.py's module docstring: quitting joins
+        # the writer's in-flight DB write; parses in flight are not waited
+        # for symmetrically).
+        self._ingest_shutdown = True
+        ingest_pool = getattr(self, "_ingest_parse_pool", None)
+        if ingest_pool is not None:
+            try:
+                ingest_pool.terminate()
+                ingest_pool.join()
+            except Exception as e:
+                self.loguru_logger.error(f"Error terminating Library ingest parse pool: {e}")
+            finally:
+                self._ingest_parse_pool = None
+
         # Stop all background services and threads
         try:
             deferred_tasks = [

@@ -907,6 +907,45 @@ def test_triage_suppressed_next_hint_allows_resume_when_work_is_running():
     assert triage.canvas.next_action.action_id == "resume_active_work"
 
 
+def test_triage_next_hint_allows_resume_when_sibling_ingest_job_is_parsing():
+    """(F3 Task-3 reviewer's guard note) The generic ``"running"`` sibling
+    in ``test_triage_suppressed_next_hint_allows_resume_when_work_is_running``
+    above proves the H3 fallthrough works for *some* running-category
+    status -- this closes the gap for the Library ingest queue's own new
+    F3 sub-state specifically: a sibling ingest job that is ``PARSING``
+    (not yet ``WRITING``) must count as live work too, so
+    ``resume_active_work`` still fires instead of the suppression falling
+    all the way through to nothing. (The "nothing active" counterpart --
+    a selected FAILED ingest item with no active sibling at all -- is
+    already covered by
+    ``test_triage_suppressed_next_hint_skips_false_resume_claim_when_nothing_running``
+    above, which uses the same single-ingest-item shape.)"""
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:1",
+                title="report.xyz",
+                source="Library",
+                status="failed",
+                detail_route="library",
+            ),
+            HomeActiveWorkItem(
+                item_id="local:ingest:2",
+                title="chapter-two.pdf",
+                source="Library",
+                status="parsing",
+                detail_route="library",
+            ),
+        ),
+    )
+
+    triage = build_home_triage_state(state, selected_row_id="local:ingest:1", now=_NOW)
+
+    assert triage.canvas.next_action.action_id == "resume_active_work"
+
+
 def test_triage_next_hint_not_suppressed_when_routes_differ():
     """The suppression only fires when the Next hint's target route matches
     the selected failed item's own route -- a failed item routed elsewhere

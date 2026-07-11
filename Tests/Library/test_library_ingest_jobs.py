@@ -36,13 +36,13 @@ def test_next_queued_returns_fifo_order_and_skips_non_queued() -> None:
 
     assert registry.next_queued().job_id == job1.job_id
 
-    registry.mark_running(job1.job_id)
+    registry.mark_parsing(job1.job_id)
     assert registry.next_queued().job_id == job2.job_id
 
-    registry.mark_running(job2.job_id)
+    registry.mark_parsing(job2.job_id)
     assert registry.next_queued().job_id == job3.job_id
 
-    registry.mark_running(job3.job_id)
+    registry.mark_parsing(job3.job_id)
     assert registry.next_queued() is None
 
 
@@ -73,10 +73,9 @@ def test_mark_parsing_defaults_detected_type_to_empty_string() -> None:
 
 
 def test_mark_parsing_rejects_a_job_that_is_not_queued() -> None:
-    """(F3) Unlike the old, unguarded ``mark_running``, ``mark_parsing`` IS
-    guarded: with multiple jobs now able to be PARSING at once, silently
-    re-parsing an already-active or terminal job would be a coordinator bug
-    worth surfacing, not swallowing."""
+    """(F3) ``mark_parsing`` is guarded: with multiple jobs now able to be
+    PARSING at once, silently re-parsing an already-active or terminal job
+    would be a coordinator bug worth surfacing, not swallowing."""
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
     registry.mark_parsing(job.job_id)
@@ -137,7 +136,8 @@ def test_mark_writing_unknown_job_id_returns_none_without_raising() -> None:
 def test_mark_parsing_and_mark_writing_are_noop_for_a_superseded_job_id() -> None:
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     failed = registry.mark_failed(job.job_id, error="boom")
     registry.requeue(failed.job_id)
 
@@ -149,63 +149,25 @@ def test_mark_parsing_and_mark_writing_are_noop_for_a_superseded_job_id() -> Non
     assert calls == []
 
 
-# --- mark_running: DEPRECATED single-call alias -----------------------------
-# TEMPORARY Task-4 removes this whole section alongside the mark_running
-# alias itself once app.py's coordinator calls mark_parsing/mark_writing for
-# real (see library_ingest_jobs.py's mark_running docstring).
-
-
-def test_mark_running_alias_drives_queued_straight_to_writing() -> None:
-    registry = LibraryIngestJobRegistry()
-    job = registry.submit(source_path="/tmp/a.txt")
-
-    running = registry.mark_running(job.job_id, detected_type="plaintext")
-
-    assert running.state == IngestJobState.WRITING
-    assert running.detected_type == "plaintext"
-    assert running.started_at is not None
-    assert running.started_at >= job.submitted_at
-
-
-def test_mark_running_alias_fires_the_listener_twice() -> None:
-    """Internally mark_parsing then mark_writing -- two real transitions,
-    each firing the listener once."""
-    registry = LibraryIngestJobRegistry()
-    job = registry.submit(source_path="/tmp/a.txt")
-    calls: list[int] = []
-    registry.add_listener(lambda: calls.append(1))
-
-    registry.mark_running(job.job_id)
-
-    assert len(calls) == 2
-
-
-def test_mark_running_alias_rejects_a_job_that_is_not_queued() -> None:
-    """Inherits mark_parsing's QUEUED-only guard."""
-    registry = LibraryIngestJobRegistry()
-    job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
-
-    assert registry.mark_running(job.job_id) is None
-
-
 def test_mark_done_transitions_and_fills_media_id() -> None:
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    running = registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    writing = registry.mark_writing(job.job_id)
 
     done = registry.mark_done(job.job_id, media_id=42)
 
     assert done.state == IngestJobState.DONE
     assert done.media_id == 42
     assert done.finished_at is not None
-    assert done.finished_at >= running.started_at
+    assert done.finished_at >= writing.started_at
 
 
 def test_mark_failed_transitions_and_fills_error() -> None:
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
 
     failed = registry.mark_failed(job.job_id, error="file not found")
 
@@ -220,7 +182,8 @@ def test_mark_failed_permanent_defaults_false() -> None:
     behavior."""
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
 
     failed = registry.mark_failed(job.job_id, error="boom")
 
@@ -233,7 +196,8 @@ def test_mark_failed_permanent_true_is_stamped_on_the_job() -> None:
     ``mark_failed`` just stores whatever it's told."""
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
 
     failed = registry.mark_failed(
         job.job_id, error="Unsupported file type: .xyz.", permanent=True
@@ -249,7 +213,8 @@ def test_requeue_refuses_a_permanent_failed_job() -> None:
     direct call against a permanently-failed job_id must be a no-op."""
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     failed = registry.mark_failed(
         job.job_id, error="Unsupported file type: .xyz.", permanent=True
     )
@@ -265,7 +230,8 @@ def test_requeue_still_works_for_a_non_permanent_failed_job() -> None:
     regression from adding the ``permanent`` guard."""
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     failed = registry.mark_failed(job.job_id, error="boom", permanent=False)
 
     requeued = registry.requeue(failed.job_id)
@@ -283,14 +249,16 @@ def test_finished_at_wall_blank_until_a_terminal_transition() -> None:
     job = registry.submit(source_path="/tmp/a.txt")
     assert job.finished_at_wall == ""
 
-    running = registry.mark_running(job.job_id)
-    assert running.finished_at_wall == ""
+    registry.mark_parsing(job.job_id)
+    writing = registry.mark_writing(job.job_id)
+    assert writing.finished_at_wall == ""
 
 
 def test_mark_done_stamps_finished_at_wall_iso_utc() -> None:
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
 
     before = datetime.now(timezone.utc)
     done = registry.mark_done(job.job_id, media_id=42)
@@ -304,7 +272,8 @@ def test_mark_done_stamps_finished_at_wall_iso_utc() -> None:
 def test_mark_failed_stamps_finished_at_wall_iso_utc() -> None:
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
 
     before = datetime.now(timezone.utc)
     failed = registry.mark_failed(job.job_id, error="file not found")
@@ -318,7 +287,6 @@ def test_mark_failed_stamps_finished_at_wall_iso_utc() -> None:
 def test_unknown_job_id_returns_none_without_raising() -> None:
     registry = LibraryIngestJobRegistry()
 
-    assert registry.mark_running("ingest-job-999") is None
     assert registry.mark_parsing("ingest-job-999") is None
     assert registry.mark_writing("ingest-job-999") is None
     assert registry.mark_done("ingest-job-999", media_id=1) is None
@@ -333,11 +301,13 @@ def test_requeue_only_works_on_failed_jobs() -> None:
     assert registry.requeue(queued_job.job_id) is None
 
     running_job = registry.submit(source_path="/tmp/b.txt")
-    registry.mark_running(running_job.job_id)
+    registry.mark_parsing(running_job.job_id)
+    registry.mark_writing(running_job.job_id)
     assert registry.requeue(running_job.job_id) is None
 
     done_job = registry.submit(source_path="/tmp/c.txt")
-    registry.mark_running(done_job.job_id)
+    registry.mark_parsing(done_job.job_id)
+    registry.mark_writing(done_job.job_id)
     registry.mark_done(done_job.job_id, media_id=7)
     assert registry.requeue(done_job.job_id) is None
 
@@ -353,7 +323,8 @@ def test_requeue_failed_job_appends_fresh_queued_copy() -> None:
         chunk_enabled=True,
         chunk_size=750,
     )
-    registry.mark_running(original.job_id, detected_type="plaintext")
+    registry.mark_parsing(original.job_id, detected_type="plaintext")
+    registry.mark_writing(original.job_id)
     failed = registry.mark_failed(original.job_id, error="boom")
 
     time.sleep(0.001)
@@ -535,7 +506,8 @@ def test_requeue_supersedes_original_from_jobs_and_counts() -> None:
     the queue must show ONE row per retried file (the fresh copy), not two."""
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     failed = registry.mark_failed(job.job_id, error="boom")
 
     requeued = registry.requeue(failed.job_id)
@@ -555,7 +527,8 @@ def test_requeue_twice_on_same_original_is_a_noop_second_time() -> None:
     retries off the same dead job_id."""
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     failed = registry.mark_failed(job.job_id, error="boom")
 
     first = registry.requeue(failed.job_id)
@@ -567,19 +540,22 @@ def test_requeue_twice_on_same_original_is_a_noop_second_time() -> None:
 
 
 def test_mark_methods_are_noop_for_a_superseded_job_id() -> None:
-    """Once a failed job is superseded by retry, mark_running/mark_done/
-    mark_failed against its (now-hidden) job_id must be safe no-ops -- they
-    must not resurrect it into jobs()/counts() or fire the listener."""
+    """Once a failed job is superseded by retry, mark_parsing/mark_writing/
+    mark_done/mark_failed against its (now-hidden) job_id must be safe
+    no-ops -- they must not resurrect it into jobs()/counts() or fire the
+    listener."""
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     failed = registry.mark_failed(job.job_id, error="boom")
     registry.requeue(failed.job_id)
 
     calls: list[int] = []
     registry.add_listener(lambda: calls.append(1))
 
-    assert registry.mark_running(failed.job_id) is None
+    assert registry.mark_parsing(failed.job_id) is None
+    assert registry.mark_writing(failed.job_id) is None
     assert registry.mark_done(failed.job_id, media_id=1) is None
     assert registry.mark_failed(failed.job_id, error="still boom") is None
     assert calls == []
@@ -593,11 +569,13 @@ def test_dismiss_only_valid_for_failed_jobs() -> None:
     assert registry.dismiss(queued_job.job_id) is None
 
     running_job = registry.submit(source_path="/tmp/b.txt")
-    registry.mark_running(running_job.job_id)
+    registry.mark_parsing(running_job.job_id)
+    registry.mark_writing(running_job.job_id)
     assert registry.dismiss(running_job.job_id) is None
 
     done_job = registry.submit(source_path="/tmp/c.txt")
-    registry.mark_running(done_job.job_id)
+    registry.mark_parsing(done_job.job_id)
+    registry.mark_writing(done_job.job_id)
     registry.mark_done(done_job.job_id, media_id=7)
     assert registry.dismiss(done_job.job_id) is None
 
@@ -617,7 +595,8 @@ def test_dismiss_unknown_job_id_returns_none() -> None:
 def test_dismiss_failed_job_removes_from_jobs_and_counts() -> None:
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     failed = registry.mark_failed(job.job_id, error="boom")
 
     dismissed = registry.dismiss(failed.job_id)
@@ -631,7 +610,8 @@ def test_dismiss_failed_job_removes_from_jobs_and_counts() -> None:
 def test_dismiss_twice_is_a_noop_second_time() -> None:
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     failed = registry.mark_failed(job.job_id, error="boom")
     registry.dismiss(failed.job_id)
 
@@ -645,7 +625,8 @@ def test_dismiss_twice_is_a_noop_second_time() -> None:
 def test_dismiss_fires_listener_once_and_not_when_it_is_a_noop() -> None:
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     failed = registry.mark_failed(job.job_id, error="boom")
     queued_job = registry.submit(source_path="/tmp/b.txt")
 
@@ -671,10 +652,12 @@ def test_clear_finished_removes_all_done_and_failed_returns_count() -> None:
     registry.mark_parsing(writing_job.job_id)
     registry.mark_writing(writing_job.job_id)
     done_job = registry.submit(source_path="/tmp/done.txt")
-    registry.mark_running(done_job.job_id)
+    registry.mark_parsing(done_job.job_id)
+    registry.mark_writing(done_job.job_id)
     registry.mark_done(done_job.job_id, media_id=1)
     failed_job = registry.submit(source_path="/tmp/failed.txt")
-    registry.mark_running(failed_job.job_id)
+    registry.mark_parsing(failed_job.job_id)
+    registry.mark_writing(failed_job.job_id)
     registry.mark_failed(failed_job.job_id, error="boom")
 
     removed = registry.clear_finished()
@@ -706,7 +689,8 @@ def test_clear_finished_is_a_noop_when_nothing_to_clear() -> None:
 def test_clear_finished_fires_listener_once() -> None:
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
     registry.mark_done(job.job_id, media_id=1)
 
     calls: list[int] = []
