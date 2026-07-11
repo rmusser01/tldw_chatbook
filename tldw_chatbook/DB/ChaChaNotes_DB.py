@@ -6709,10 +6709,17 @@ UPDATE db_schema_version
 
         Returns:
             The full list of non-deleted note ids, in ascending id order.
+
+        Raises:
+            CharactersRAGDBError: For database errors.
         """
         query = "SELECT id FROM notes WHERE deleted = 0 ORDER BY id ASC"
-        cursor = self.execute_query(query)
-        return [row["id"] for row in cursor.fetchall()]
+        try:
+            cursor = self.execute_query(query)
+            return [row["id"] for row in cursor.fetchall()]
+        except CharactersRAGDBError as e:
+            logger.error(f"Database error listing all note ids: {e}")
+            raise
 
     def update_note(self, note_id: str, update_data: Dict[str, Any], expected_version: int) -> Optional[bool]:
         if not update_data:

@@ -815,8 +815,13 @@ class ChatbookImporter:
                 keywords_raw = media_data.get('metadata', {}).get('media_keywords', '')
                 if isinstance(keywords_raw, str):
                     keywords = [word.strip() for word in keywords_raw.split(',') if word.strip()]
+                elif isinstance(keywords_raw, (list, tuple)):
+                    keywords = [str(word).strip() for word in keywords_raw if str(word).strip()]
                 else:
-                    keywords = [str(word).strip() for word in (keywords_raw or []) if str(word).strip()]
+                    # Any other (non-str, non-sequence) shape -- e.g. a stray
+                    # int/dict from a malformed manifest -- yields no keywords
+                    # rather than crashing the whole import.
+                    keywords = []
 
                 # Add media to database. NOTE: this call previously used
                 # three parameter names that do not exist on

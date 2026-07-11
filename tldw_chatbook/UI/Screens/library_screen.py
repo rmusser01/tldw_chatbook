@@ -3128,7 +3128,10 @@ class LibraryScreen(BaseAppScreen):
         # never surface as a crash.
         try:
             self.app.call_from_thread(self._apply_library_export_counts, scope, counts)
-        except RuntimeError:
+        except Exception:
+            # A shutdown/detach mid-marshal can raise RuntimeError OR
+            # Textual's NoApp (which subclasses Exception, not RuntimeError)
+            # -- either way the worker thread must not crash on teardown.
             pass
 
     def _apply_library_export_counts(self, scope: ExportScope, counts: dict[str, int]) -> None:
@@ -3488,7 +3491,10 @@ class LibraryScreen(BaseAppScreen):
                 dependency_info,
                 registry_recorded,
             )
-        except RuntimeError:
+        except Exception:
+            # A shutdown/detach mid-marshal can raise RuntimeError OR
+            # Textual's NoApp (which subclasses Exception, not RuntimeError)
+            # -- either way the worker thread must not crash on teardown.
             pass
 
     def _marshal_library_export_failure(self, run_id: int, message: str) -> None:
@@ -3497,7 +3503,10 @@ class LibraryScreen(BaseAppScreen):
             self.app.call_from_thread(
                 self._apply_library_export_failure, run_id, message
             )
-        except RuntimeError:
+        except Exception:
+            # A shutdown/detach mid-marshal can raise RuntimeError OR
+            # Textual's NoApp (which subclasses Exception, not RuntimeError)
+            # -- either way the worker thread must not crash on teardown.
             pass
 
     def _apply_library_export_success(

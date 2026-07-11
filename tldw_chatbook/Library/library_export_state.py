@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from pathlib import PurePath
+from pathlib import Path
 from typing import Mapping
 
 from tldw_chatbook.Library.library_export_scope import ExportScope, export_scope_label
@@ -168,7 +168,7 @@ def build_library_export_form_state(
     empty_scope_line = EMPTY_SCOPE_COPY if not counts_loading and total == 0 else ""
     destination_clean = str(destination or "").strip()
     overwrite_line = (
-        f"Overwrites {PurePath(destination_clean).name}"
+        f"Overwrites {Path(destination_clean).name}"
         if destination_clean and destination_exists
         else ""
     )
@@ -221,7 +221,7 @@ def next_media_quality(current: str) -> str:
     return MEDIA_QUALITY_OPTIONS[(index + 1) % len(MEDIA_QUALITY_OPTIONS)]
 
 
-def normalize_export_destination(path: PurePath) -> PurePath:
+def normalize_export_destination(path: Path) -> Path:
     """Normalize a chosen destination path's suffix to ``.zip``.
 
     The chatbook creator silently coerces whatever suffix it's given, so
