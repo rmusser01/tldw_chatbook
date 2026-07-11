@@ -10,7 +10,7 @@ The Library ingest queue (`LibraryIngestJobRegistry` + `LibraryIngestQueueMixin`
 
 A two-stage pipeline replacing the parse half of the serial loop:
 
-1. **Parse stage — process pool.** A lazily-created `concurrent.futures.ProcessPoolExecutor` fans file parsing out to worker processes. All media types go through the pool (documents, ebooks, audio/video transcription alike). Workers never touch the media DB.
+1. **Parse stage — process pool.** A lazily-created spawn-context `multiprocessing.Pool` fans file parsing out to worker processes. All media types go through the pool (documents, ebooks, audio/video transcription alike). Workers never touch the media DB.
 2. **Write stage — the existing single writer.** Today's exclusive thread worker keeps its atomic claim-or-release loop but now only persists parsed payloads: one `add_media_with_keywords` call per job, always on the one writer thread. SQLite never sees a concurrent ingest writer.
 
 A UI-thread **coordinator** (in `LibraryIngestQueueMixin`) owns the pool, submits up to N queued jobs, receives completions (marshaled to the UI thread), stores payloads, and wakes the writer. The registry stays UI-thread-only.
@@ -30,7 +30,7 @@ Heavy optional dependencies (PDF, transcription models) import lazily inside wor
 ### Coordinator (UI thread, in `LibraryIngestQueueMixin`)
 - Owns the pool: created lazily on first submission; `max_workers` from config `library.ingest_parse_workers` (1-arg `get_cli_setting` fallback, same bug-class guard as rail state), default `min(3, max(1, os.cpu_count() - 1))`.
 - Submits queued jobs while fewer than N are `PARSING` (this cap IS the backpressure: at most N parsed payloads + 1 write in flight are ever held in memory).
-- Completions land via `add_done_callback` → `call_from_thread` → coordinator: store payload in a coordinator-side dict `job_id → payload` (payloads can be MBs; they never enter the frozen registry snapshots the UI renders), transition the job, wake the writer, submit the next queued job.
+- Completions land via the `apply_async` callback/error_callback (pool result-handler thread) → `call_from_thread` → coordinator: store payload in a coordinator-side dict `job_id → payload` (payloads can be MBs; they never enter the frozen registry snapshots the UI renders), transition the job, wake the writer, submit the next queued job.
 - Parse failure → `mark_failed(error, permanent)` straight from the structured result.
 
 ### Writer (existing worker, narrowed)
@@ -53,8 +53,8 @@ Queue rows gain the "parsing" state label (counts line e.g. "2 parsing · 1 writ
 - Registry: state-machine units for `PARSING`/`WRITING` transitions, retry/supersede interplay, invalid-transition guards.
 - Coordinator: fake-pool seam — an inline synchronous executor injected in tests so pilots stay deterministic (gated-fake pattern, bounded waits); tests for submit-cap/backpressure, completion marshaling, failure classification passthrough, broken-pool rebuild.
 - Writer: unchanged claim-or-release tests re-anchored to `WRITING`.
-- One real-`ProcessPoolExecutor` integration test: parse a small text file end-to-end through a real subprocess (marked, kept fast).
-- Shutdown: pool cancelled on exit; no writer strand.
+- One real spawn-`Pool` integration test: parse a small text file end-to-end through a real subprocess (marked, kept fast).
+- Shutdown: pool terminated on exit, late callbacks ignored; no writer strand.
 
 ## Out of scope (logged follow-ups)
 
