@@ -4438,14 +4438,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self._clear_prompt_fields()
             self.current_prompt_id = None  # Reset reactives
 
-    async def refresh_notes_tab_after_ingest(self) -> None:
-        """Refresh the Notes screen after notes are ingested from the Ingest tab."""
-        self.loguru_logger.info("Refreshing Notes data after ingestion.")
-        from .UI.Screens.notes_screen import NotesScreen
-
-        if isinstance(self.screen, NotesScreen):
-            await self.screen.refresh_current_scope()
-
     # ##################################################
     # --- Watcher for Search Tab Active Sub-View ---
     # ##################################################
@@ -5621,7 +5613,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                         self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
                     except QueryError:
                         pass
-            # NotesScreen owns its own auto-save lifecycle (on_unmount).
+            # Notes auto-save is owned by the Library notes editor; no tab-switch save here.
             try: self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
             except QueryError: logging.warning(f"Watcher: Could not find old button #tab-{old_tab}")
             try: self.query_one(f"#{old_tab}-window").display = False
@@ -6003,16 +5995,6 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.log.debug("New ingest window loaded")
         except Exception as e:
             self.log.debug(f"Could not initialize audio models: {e}")
-
-    async def save_current_note(self) -> bool:
-        """Save the currently selected note via the active Notes screen."""
-        from .UI.Screens.notes_screen import NotesScreen
-
-        if isinstance(self.screen, NotesScreen):
-            return await self.screen._save_current_note()
-        logging.warning("save_current_note called outside the Notes screen; nothing to save.")
-        return False
-
 
     #######################################################################
     # --- Notes UI Event Handlers (Chat Tab Sidebar) ---
@@ -6563,7 +6545,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                 "chat-character-first-message-edit"
             ]:
                 await chat_handlers.handle_chat_character_attribute_changed(self, event)
-        # Notes editor changes are now handled directly by NotesScreen
+        # Notes editor changes are handled inside the Library screen, not dispatched here.
 
     def _update_model_download_log(self, message: str) -> None:
         """Helper to write messages to the model download log widget."""
@@ -6576,7 +6558,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     async def on_input_changed(self, event: Input.Changed) -> None:
         input_id = event.input.id
         current_active_tab = self.current_tab
-        # --- Notes input events are now handled directly by NotesScreen ---
+        # --- Notes input events are handled inside the Library screen, not here ---
         # --- Chat Sidebar Conversation Search ---
         if input_id == "chat-conversation-search-bar" and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
@@ -6646,7 +6628,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.loguru_logger.debug("Dispatching to media_events.handle_media_list_item_selected")
             await media_events.handle_media_list_item_selected(self, event)
 
-        # Notes list view selection is now handled directly by NotesScreen
+        # Notes list view selection is handled inside the Library screen, not here.
 
         elif list_view_id == "ccp-prompts-listview" and current_active_tab == TAB_CCP:
             self.loguru_logger.debug("Dispatching to ccp_handlers.handle_ccp_prompts_list_view_selected")
@@ -6744,7 +6726,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             await ingest_events.handle_tldw_api_auth_method_changed(self, str(event.value))
         elif select_id == "tldw-api-media-type" and current_active_tab == TAB_INGEST:
             await ingest_events.handle_tldw_api_media_type_changed(self, str(event.value))
-        # Notes sort select is now handled directly by NotesScreen
+        # Notes sort select is handled inside the Library screen, not here.
         elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
             await self.handle_rag_preset_changed(event)
         elif select_id == "chat-rag-search-mode" and current_active_tab == TAB_CHAT:
@@ -7386,8 +7368,7 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
             self.notes_auto_save_timer = None
             loguru_logger.debug("Cancelled auto-save timer during app quit")
         
-        # Perform final save if on Notes tab with unsaved changes (respect auto-save setting)
-        # NotesScreen owns note autosave; no legacy quit-save path remains.
+        # Note autosave is owned by the Library notes editor; no legacy quit-save path remains.
         
         # Try to save caches but don't let it block quitting
         try:

@@ -439,8 +439,6 @@ async def handle_ingest_notes_import_now_button_pressed(app: 'TldwCli', event: B
             # For templates, we need to reload the templates in the notes event handler
             app.notify("Templates will be available after restarting the application.", severity="information", timeout=10)
         else:
-            #app.call_later(load_and_display_notes_handler, app)
-            app.call_later(app.refresh_notes_tab_after_ingest)
             try:
                 # Make sure to query the collapsible before creating the Toggled event instance
                 chat_notes_collapsible_widget = app.query_one("#chat-notes-collapsible", Collapsible)

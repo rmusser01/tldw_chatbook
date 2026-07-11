@@ -277,21 +277,6 @@ def mock_notes_service():
 
 
 @pytest.fixture
-def notes_screen_state():
-    """Create a test NotesScreenState."""
-    from tldw_chatbook.UI.Screens.notes_screen import NotesScreenState
-    
-    return NotesScreenState(
-        selected_note_id=1,
-        selected_note_version=1,
-        selected_note_title="Test Note",
-        selected_note_content="Test content",
-        has_unsaved_changes=False,
-        auto_save_enabled=True
-    )
-
-
-@pytest.fixture
 def mock_app_with_notes(mock_notes_service):
     """Create a mock app instance with notes service."""
     from unittest.mock import Mock

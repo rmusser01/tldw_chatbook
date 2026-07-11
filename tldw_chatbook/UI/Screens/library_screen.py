@@ -2938,9 +2938,9 @@ class LibraryScreen(BaseAppScreen):
     def _resolve_library_notes_sync_db(self) -> Any:
         """Resolve the per-user ChaChaNotes DB the sync service writes to.
 
-        Mirrors ``NotesSyncPane.on_mount`` (notes_workbench_panes.py) EXACTLY:
-        prefer the app's ``chachanotes_db``, falling back to the notes
-        service's own ``db`` attribute when that is unset.
+        Mirrors the retired standalone Notes screen's sync-pane resolution
+        EXACTLY: prefer the app's ``chachanotes_db``, falling back to the
+        notes service's own ``db`` attribute when that is unset.
         """
         notes_service = getattr(self.app_instance, "notes_service", None)
         return getattr(self.app_instance, "chachanotes_db", None) or getattr(
@@ -2950,9 +2950,9 @@ class LibraryScreen(BaseAppScreen):
     def _arm_library_notes_auto_sync_timer(self) -> None:
         """Start the 300s auto-sync repeating timer if not already running.
 
-        Scoped to this Library screen instance's lifetime (like the
-        standalone ``NotesSyncPane``'s timer) -- it is never persisted or
-        resumed across screen instances; only the ``auto_sync`` boolean
+        Scoped to this Library screen instance's lifetime (like the retired
+        standalone Notes screen's sync-pane timer) -- it is never persisted
+        or resumed across screen instances; only the ``auto_sync`` boolean
         preference is persisted, and is re-armed on the next sync-mode
         entry via ``_ensure_library_notes_sync_config_loaded``.
         """
@@ -3523,8 +3523,8 @@ class LibraryScreen(BaseAppScreen):
     async def _export_library_note(self, export_format: str) -> None:
         """Push the Export dialog for the open Library note.
 
-        Mirrors ``notes_screen._export_current_note``'s dialog flow -- a
-        ``FileSave`` prompt pre-filled with a sanitized default filename,
+        Mirrors the retired standalone Notes screen's export dialog flow --
+        a ``FileSave`` prompt pre-filled with a sanitized default filename,
         whose callback writes the built export content once a path is
         chosen. The export reads the *live* editor widgets (via
         ``_read_library_note_editor_fields``), never the DB, so unlike
@@ -3532,9 +3532,9 @@ class LibraryScreen(BaseAppScreen):
 
         Note: the real ``Third_Party.textual_fspicker.FileSave`` dialog
         only accepts ``location``/``title``/``default_file`` (not the
-        ``default_filename``/``context`` kwargs ``notes_screen.py`` passes
-        it, which would raise ``TypeError`` if that path ever actually
-        ran) -- this uses the dialog's real constructor shape.
+        ``default_filename``/``context`` kwargs the retired screen passed
+        it, which would have raised ``TypeError`` if that path ever
+        actually ran) -- this uses the dialog's real constructor shape.
 
         Args:
             export_format: ``"markdown"`` for the frontmatter export
@@ -3586,8 +3586,8 @@ class LibraryScreen(BaseAppScreen):
         destination, so there is no fixed base directory to constrain it
         to the way ``validate_path``/``safe_join_path`` require -- this is
         the same base-directory-free validator the rest of this codebase
-        already uses for user-chosen save/output paths (e.g.
-        ``notes_screen._import_note_from_path``, ``settings_screen``'s
+        already uses for user-chosen save/output paths (e.g. this screen's
+        note import path, ``settings_screen``'s
         storage-location fields). It rejects null bytes and other
         shell-metacharacter/traversal patterns; a rejected path is a quiet
         warning notice with no write and no crash, same as any other
@@ -3662,8 +3662,8 @@ class LibraryScreen(BaseAppScreen):
         Uses the app's ``copy_to_clipboard`` seam (the same
         ``getattr``-gated pattern every other Library handoff/action in
         this screen already uses) rather than importing ``pyperclip``
-        directly the way ``notes_screen._copy_current_note_to_clipboard``
-        does -- that makes this testable via a recorded fake the way the
+        directly the way the retired standalone Notes screen's copy action
+        did -- that makes this testable via a recorded fake the way the
         rest of this screen's actions are, and doesn't add a hard runtime
         dependency on a package that isn't always installed/working.
 
@@ -3700,8 +3700,8 @@ class LibraryScreen(BaseAppScreen):
 
         Mirrors ``_selected_media_handoff_payload``: reads the currently
         open note's live (possibly unsaved) editor fields rather than a
-        list-row selection, matching ``notes_screen._build_note_chat_handoff_payload``'s
-        local-note shape.
+        list-row selection, matching the local-note handoff shape the
+        retired standalone Notes screen staged.
 
         Returns:
             A ``ChatHandoffPayload`` staging the open note as Console
@@ -4195,11 +4195,11 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_notes_import(self, event: Button.Pressed) -> None:
         """Push a ``FileOpen`` dialog to import a local file as a new note.
 
-        Mirrors ``notes_screen.handle_import_button``'s dialog flow exactly
-        (the working ``FileOpen`` reference -- unlike ``FileSave``, whose
-        constructor only accepts ``location``/``title``/``default_file``,
+        Mirrors the retired standalone Notes screen's import dialog flow
+        exactly (the working ``FileOpen`` reference -- unlike ``FileSave``,
+        whose constructor only accepts ``location``/``title``/``default_file``,
         ``FileOpen`` here is invoked the same simple ``title=``-only way the
-        standalone screen already relies on). The callback resolves the
+        standalone screen already relied on). The callback resolves the
         chosen path (or ``None`` on cancel) through
         ``_import_library_note_from_path``, which validates, reads, parses,
         and hands off to the existing ``_create_library_note`` seam -- so a
@@ -4227,8 +4227,8 @@ class LibraryScreen(BaseAppScreen):
         a file that cannot be read/decoded, or one larger than
         ``LIBRARY_NOTE_CONTENT_MAX_CHARS`` -- is a quiet warning notice with
         no note created, matching every other Library note failure path in
-        this screen. The file read is offloaded to a thread (mirroring
-        ``notes_screen._import_note_from_path``) and is memory-bounded by a
+        this screen. The file read is offloaded to a thread (mirroring the
+        retired standalone Notes screen's import) and is memory-bounded by a
         pre-read ``st_size`` guard: UTF-8 chars are at most 4 bytes, so any
         file over ``4 * LIBRARY_NOTE_CONTENT_MAX_CHARS`` bytes is guaranteed
         over the char cap and is rejected without reading it at all (no
@@ -4411,8 +4411,9 @@ class LibraryScreen(BaseAppScreen):
         """Toggle auto-sync, persist it, and arm/cancel the repeating timer.
 
         The timer is scoped to this Library screen instance's lifetime --
-        the same scope the standalone ``NotesSyncPane``'s timer had -- not
-        persisted/resumed across screen instances; only the boolean
+        the same scope the retired standalone Notes screen's sync-pane
+        timer had -- not persisted/resumed across screen instances; only
+        the boolean
         preference persists, and is re-armed the next time sync mode is
         entered (``_ensure_library_notes_sync_config_loaded``).
 
@@ -4474,8 +4475,9 @@ class LibraryScreen(BaseAppScreen):
     async def _run_library_notes_sync(self, folder: Path) -> None:
         """Run one notes sync pass against ``folder`` and report the outcome.
 
-        Builds a fresh ``NotesSyncService`` per run (mirroring
-        ``NotesSyncPane.on_mount`` -- see ``_resolve_library_notes_sync_db``)
+        Builds a fresh ``NotesSyncService`` per run (mirroring the retired
+        standalone Notes screen's sync-pane setup -- see
+        ``_resolve_library_notes_sync_db``)
         and calls ``sync_folder`` offloaded onto a worker thread via
         ``_run_library_service_call(..., isolate_in_worker=True)``, since
         the sync engine walks the filesystem and touches the DB
@@ -5238,8 +5240,8 @@ class LibraryScreen(BaseAppScreen):
         odd template can never break the create view for the others.
 
         ``{date}``/``{time}``/``{datetime}`` placeholders are resolved
-        against the current time, mirroring the standalone Notes screen's
-        ``notes_screen._create_local_note_from_template`` substitution
+        against the current time, mirroring the retired standalone Notes
+        screen's template substitution
         (same placeholder names, same ``strftime`` formats). Unlike that
         flow -- which notifies and aborts the create on a malformed
         placeholder -- resolution here is per-key: an unknown
