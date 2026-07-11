@@ -1284,7 +1284,12 @@ class MediaViewerPanel(Container):
             self._update_analysis_navigation()
             
         except Exception as e:
-            logger.opt(exception=True).error(f"Error loading all analyses: {e}")
+            media_id = (
+                self.media_data.get("id") if isinstance(self.media_data, dict) else None
+            )
+            logger.opt(exception=True).error(
+                f"Error loading all analyses for media_id={media_id}: {e}"
+            )
             self.all_analyses = []
             self.current_analysis_index = 0
             self.current_analysis = None
