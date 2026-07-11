@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 from textual import on
 from textual.app import App
-from textual.widgets import Button
-from unittest.mock import MagicMock, patch
+from textual.widgets import Button, Input
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat import (
@@ -122,6 +122,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_screen import MediaScreen
+from tldw_chatbook.UI.Screens.search_screen import SearchScreen
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.runtime_policy.server_capabilities import ActiveServerCapabilityService
 from tldw_chatbook.runtime_policy import KeyringServerCredentialStore, RuntimeServerContextProvider
@@ -1053,3 +1054,286 @@ def test_primary_routed_screens_use_base_app_screen():
             offenders.append((route_id, screen_class))
 
     assert offenders == []
+
+
+# --- Cross-visit state persistence (real save_state/restore_state) --------
+#
+# Screens are never cached/reused (see
+# ``test_screen_navigation_always_constructs_fresh_instances`` above), so
+# continuity across a visit depends entirely on ``_screen_states``
+# (``save_state``/``restore_state``). These are round-trip pilots through the
+# REAL navigation path -- ``NavigateToScreen`` posted, drained via bounded
+# polling (the storm pilot's idiom above), real widgets mutated the way a
+# user would -- not direct calls into ``save_state``/``restore_state``.
+
+
+@pytest.mark.asyncio
+async def test_library_screen_round_trip_restores_rag_query_and_rail_selection():
+    """Select the Search/RAG rail row, type a query into the real Input
+    widget, hop to Home and back, and assert both the internal state and
+    the visible Input value survived on the freshly-composed instance.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.post_message(NavigateToScreen("library"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-search")
+            ):
+                break
+        assert type(app.screen).__name__ == "LibraryScreen"
+
+        app.screen.query_one("#library-row-browse-search").press()
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if app.screen.query("#library-rag-query-input"):
+                break
+
+        app.screen.query_one("#library-rag-query-input", Input).value = "roadmap notes"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen._library_rag_query == "roadmap notes"
+        assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+
+        app.post_message(NavigateToScreen("home"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "HomeScreen":
+                break
+        assert type(app.screen).__name__ == "HomeScreen"
+
+        app.post_message(NavigateToScreen("library"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-rag-query-input")
+            ):
+                break
+
+        restored_screen = app.screen
+        assert type(restored_screen).__name__ == "LibraryScreen"
+        assert restored_screen._library_rag_query == "roadmap notes"
+        assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        query_input = restored_screen.query_one("#library-rag-query-input", Input)
+        assert query_input.value == "roadmap notes"
+
+
+@pytest.mark.asyncio
+async def test_media_screen_round_trip_restores_type_filter_and_search_term():
+    """Regression lock for the bug this task fixes: nothing seeds
+    ``MediaWindow.active_media_type`` on a screen-navigated visit except a
+    live nav-panel click (the legacy ``watch_current_tab`` ->
+    ``activate_initial_view`` path is a no-op once ``_use_screen_navigation``
+    is set). Without restoring it first, a fresh ``MediaWindow`` instance
+    every visit meant the type/search/keyword filter silently reset on every
+    single navigation away and back.
+    """
+    app = _build_test_app()
+    # search_media hits the real MediaReadingScopeService -> media_db chain,
+    # and the test fixture's media_db is None -- stub just the DB-touching
+    # call (mirroring Tests/UI/test_media_window_v2_parity.py's pattern) so
+    # this exercises the real mount/restore path without a real database.
+    app.media_reading_scope_service.search_media = AsyncMock(
+        return_value={"items": [], "total": 0}
+    )
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.post_message(NavigateToScreen("media"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if (
+                type(app.screen).__name__ == "MediaScreen"
+                and app.screen.query("#media-nav-all-media")
+            ):
+                break
+        assert type(app.screen).__name__ == "MediaScreen"
+
+        # Pick a type the way a real user does (there is exactly one media
+        # type in this fixture: "All Media" -> slug "all-media").
+        app.screen.query_one("#media-nav-all-media").press()
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if app.screen.media_window.active_media_type:
+                break
+        assert app.screen.media_window.active_media_type == "all-media"
+
+        search_input = app.screen.query_one("#search-input", Input)
+        search_input.value = "quarterly report"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen.media_window.search_panel.search_term == "quarterly report"
+
+        app.post_message(NavigateToScreen("home"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "HomeScreen":
+                break
+        assert type(app.screen).__name__ == "HomeScreen"
+
+        app.post_message(NavigateToScreen("media"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if (
+                type(app.screen).__name__ == "MediaScreen"
+                and app.screen.query("#search-input")
+            ):
+                break
+
+        restored_screen = app.screen
+        assert type(restored_screen).__name__ == "MediaScreen"
+        assert restored_screen.media_window.active_media_type == "all-media"
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if restored_screen.media_window.search_panel.search_term == "quarterly report":
+                break
+        assert restored_screen.media_window.search_panel.search_term == "quarterly report"
+        restored_input = restored_screen.query_one("#search-input", Input)
+        assert restored_input.value == "quarterly report"
+
+
+@pytest.mark.asyncio
+async def test_search_screen_round_trip_restores_query_input():
+    """SearchScreen wraps ``SearchRAGWindow`` directly with no app-owned
+    runtime-state seam of its own (unlike Media's shared
+    ``MediaRuntimeState``), so its query input is entirely at the mercy of
+    ``_screen_states``.
+    """
+    app = _build_test_app()
+
+    async with app.run_test(size=(170, 48)) as pilot:
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ != "Screen":
+                break
+
+        app.post_message(NavigateToScreen("search"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if (
+                type(app.screen).__name__ == "SearchScreen"
+                and app.screen.query("#search-query-input")
+            ):
+                break
+        assert type(app.screen).__name__ == "SearchScreen"
+
+        query_input = app.screen.query_one("#search-query-input", Input)
+        query_input.value = "quantum encryption notes"
+        await pilot.pause()
+
+        app.post_message(NavigateToScreen("home"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if type(app.screen).__name__ == "HomeScreen":
+                break
+        assert type(app.screen).__name__ == "HomeScreen"
+
+        app.post_message(NavigateToScreen("search"))
+        for _ in range(150):
+            await pilot.pause(0.02)
+            if (
+                type(app.screen).__name__ == "SearchScreen"
+                and app.screen.query("#search-query-input")
+            ):
+                break
+
+        restored_screen = app.screen
+        assert type(restored_screen).__name__ == "SearchScreen"
+        restored_input = restored_screen.query_one("#search-query-input", Input)
+        assert restored_input.value == "quantum encryption notes"
+
+
+# --- Media/Search unit-style save_state/restore_state contracts -----------
+
+
+def test_media_screen_save_state_returns_expected_keys():
+    app = _build_test_app()
+    screen = MediaScreen(app)
+    list(screen.compose_content())  # populate screen.media_window
+    screen.media_window.active_media_type = "all-media"
+    screen.media_window.selected_media_id = "media-7"
+    screen.media_window.search_panel = SimpleNamespace(
+        search_term="alpha", keyword_filter="beta"
+    )
+
+    state = screen.save_state()
+
+    assert state["media_active_type"] == "all-media"
+    assert state["media_selected_id"] == "media-7"
+    assert state["media_search_term"] == "alpha"
+    assert state["media_keyword_filter"] == "beta"
+
+
+def test_media_screen_save_state_never_raises_when_window_unset():
+    app = _build_test_app()
+    screen = MediaScreen(app)  # compose_content never ran -- media_window is None
+
+    state = screen.save_state()
+
+    assert "media_active_type" not in state
+
+
+def test_media_screen_restore_state_stashes_pending_dict_for_on_mount():
+    """``restore_state`` runs on a fresh, not-yet-mounted instance -- the
+    MediaWindow it will compose does not exist yet, so it can only stash the
+    values for ``on_mount`` to apply once ``compose_content`` has run.
+    """
+    app = _build_test_app()
+    screen = MediaScreen(app)
+
+    screen.restore_state(
+        {
+            "media_active_type": "video",
+            "media_selected_id": "media-9",
+            "media_search_term": "q",
+            "media_keyword_filter": "kw",
+        }
+    )
+
+    assert screen._pending_media_restore == {
+        "active_media_type": "video",
+        "selected_media_id": "media-9",
+        "search_term": "q",
+        "keyword_filter": "kw",
+    }
+
+
+def test_search_screen_save_state_never_raises_when_window_unset():
+    app = _build_test_app()
+    screen = SearchScreen(app)  # compose_content never ran -- search_window is None
+
+    state = screen.save_state()
+
+    assert "search_query" not in state
+
+
+def test_search_screen_restore_state_stashes_pending_dict_for_on_mount():
+    app = _build_test_app()
+    screen = SearchScreen(app)
+
+    screen.restore_state(
+        {"search_query": "hello", "search_mode": "hybrid", "search_active_tab": "history-tab"}
+    )
+
+    assert screen._pending_search_restore == {
+        "query": "hello",
+        "mode": "hybrid",
+        "active_tab": "history-tab",
+    }

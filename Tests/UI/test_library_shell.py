@@ -35,6 +35,7 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
+    LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_CREATE_NOTE,
     LIBRARY_ROW_INGEST_MEDIA,
 )
@@ -8466,3 +8467,228 @@ async def test_library_shell_ingest_canvas_different_canvas_isolation(tmp_path):
         assert screen._library_selected_row_id != LIBRARY_ROW_INGEST_MEDIA
         assert not screen.query("#library-ingest-path")
         assert not list(screen.query(".library-ingest-row"))
+
+
+# --- Cross-visit state persistence (save_state/restore_state) -------------
+#
+# Screens are never cached/reused across a navigation (a fresh instance is
+# constructed every visit); continuity is entirely the app's
+# ``_screen_states`` dict, keyed by screen name and populated/consumed by
+# ``save_state``/``restore_state`` (see app.py's ``handle_screen_navigation``).
+# These tests exercise ``LibraryScreen``'s real overrides directly (unit
+# style) plus the on_mount interaction the restored viewer/editor state
+# depends on (pilot style, via ``LibraryHarness``).
+
+
+@pytest.mark.asyncio
+async def test_library_shell_save_state_captures_selection_and_rag_state():
+    """``save_state`` is the ``_screen_states`` producer -- assert it
+    actually carries the selection/view attrs the restore contract
+    promises, and never leaks a bulk fetched snapshot.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-browse-search").press()
+        await _wait_for_selector(screen, pilot, "#library-rag-query-input")
+        screen.query_one("#library-rag-query-input", Input).value = "roadmap"
+        await pilot.pause()
+        await pilot.pause()
+
+        state = screen.save_state()
+
+    assert state["library_selected_row_id"] == LIBRARY_ROW_BROWSE_SEARCH
+    assert state["library_rag_query"] == "roadmap"
+    assert state["library_rag_mode"] == "search"
+    assert state["library_rag_scope_deselected"] == set()
+    assert state["library_rag_results"] == ()
+    assert state["library_rag_selected_result_id"] == ""
+    # Bulk fetched snapshots must never leak into the persisted dict --
+    # screens re-fetch fresh on the next mount, and a restored id may be
+    # stale by then (see the stale-id tests below).
+    assert "local_source_records" not in state
+    assert "library_note_detail" not in state
+    assert "library_media_detail" not in state
+
+
+def test_library_shell_restore_state_sets_attrs_on_fresh_unmounted_instance():
+    """``restore_state`` runs on a freshly-constructed, not-yet-mounted
+    instance (see app.py's ``handle_screen_navigation``): construct one
+    exactly that way and assert every attr lands, mirroring the base
+    ``test_screen_state_preservation`` contract test but for Library's real
+    override.
+    """
+    app = _build_test_app()
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    original._selected_media_id = "media-42"
+    original._library_media_view = "viewer"
+    original._library_rag_query = "alpha"
+    original._library_rag_mode = "rag"
+    original._library_rag_scope_deselected = {"notes"}
+    state = original.save_state()
+
+    restored = LibraryScreen(app)
+    restored.restore_state(state)
+
+    assert restored._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+    assert restored._selected_media_id == "media-42"
+    assert restored._library_media_view == "viewer"
+    assert restored._library_rag_query == "alpha"
+    assert restored._library_rag_mode == "rag"
+    assert restored._library_rag_scope_deselected == {"notes"}
+
+    # The restore must not alias the saved dict's mutable set -- mutating
+    # the restored instance's copy must never bleed back into the saved
+    # state dict (a shallow-copied structure the app's runtime-policy
+    # reconciliation touches on every navigation).
+    restored._library_rag_scope_deselected.add("media")
+    assert state["library_rag_scope_deselected"] == {"notes"}
+
+
+def test_library_shell_restore_state_degrades_editor_view_without_matching_id():
+    """A corrupted/foreign saved-state dict (``library_notes_view`` says
+    "editor" but carries no note id) must not leave the screen pointed at a
+    permanent "Loading note..." placeholder -- fall back to the list view.
+    Same guard, mirrored for the media viewer.
+    """
+    app = _build_test_app()
+
+    notes_screen = LibraryScreen(app)
+    notes_screen.restore_state({"library_notes_view": "editor", "selected_note_id": ""})
+    assert notes_screen._library_notes_view == "list"
+    assert notes_screen._selected_note_id == ""
+
+    media_screen = LibraryScreen(app)
+    media_screen.restore_state({"library_media_view": "viewer", "selected_media_id": ""})
+    assert media_screen._library_media_view == "list"
+    assert media_screen._selected_media_id == ""
+
+
+def test_library_shell_restore_state_tolerates_garbage_values():
+    """``restore_state`` must never crash on a saved-state dict from a
+    different build/shape -- e.g. a non-dict ``library_rag_results``, or a
+    ``library_rag_mode`` outside the two known values.
+    """
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+
+    screen.restore_state(
+        {
+            "library_rag_mode": "not-a-real-mode",
+            "library_rag_results": "not-a-tuple",
+            "library_rag_scope_deselected": "not-a-set",
+            "library_rag_recovery_state": "not-a-dataclass",
+        }
+    )
+
+    assert screen._library_rag_mode == "search"
+    assert screen._library_rag_results == ()
+    assert screen._library_rag_scope_deselected == set()
+    assert screen._library_rag_recovery_state is None
+
+    # A completely non-dict payload (e.g. a runtime-policy mismatch that
+    # ``reconcile_saved_screen_state`` failed to catch) must be a no-op,
+    # not a crash.
+    screen.restore_state(None)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_restored_media_viewer_fetches_detail_on_mount():
+    """Mirrors the notes-editor nav-context deep link ``on_mount`` already
+    handled before this task: a restored ``_library_media_view == "viewer"``
+    with a ``_selected_media_id`` must kick the detail fetch itself, since
+    nothing else does for a restore (unlike a live row click, which calls
+    ``_refresh_library_media_detail`` directly from
+    ``handle_library_media_row``).
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {
+            "library_selected_row_id": LIBRARY_ROW_BROWSE_MEDIA,
+            "selected_media_id": "media-1",
+            "library_media_view": "viewer",
+        }
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_selector(screen, pilot, "#library-media-viewer")
+
+        assert screen._library_media_detail is not None
+        assert screen._library_media_detail.get("id") == "media-1"
+        assert screen._library_media_view == "viewer"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_restored_media_viewer_with_deleted_item_falls_back_to_list():
+    """Stale-id safety: the media record backing a restored viewer selection
+    was deleted while the user was elsewhere. The existing
+    ``_refresh_library_media_detail`` unavailable-notify fallback must fire
+    the same way it does for a live click on a since-deleted row.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, [], media=[])  # nothing resolves "media-ghost"
+    notified = []
+    app.notify = lambda message, **kwargs: notified.append(message)
+
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {
+            "library_selected_row_id": LIBRARY_ROW_BROWSE_MEDIA,
+            "selected_media_id": "media-ghost",
+            "library_media_view": "viewer",
+        }
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        for _ in range(120):
+            if screen._library_media_view == "list":
+                break
+            await pilot.pause(0.02)
+
+        assert screen._library_media_view == "list"
+        assert any("unavailable" in message.lower() for message in notified)
+
+
+@pytest.mark.asyncio
+async def test_library_shell_restored_notes_editor_with_deleted_note_falls_back_to_list():
+    """Same stale-id contract as the media viewer above, but for notes --
+    exercised through the pre-existing ``on_mount`` deep-link fetch (this
+    task's restore just feeds it the same inputs a ``note_id`` nav-context
+    deep link always could)."""
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    notified = []
+    app.notify = lambda message, **kwargs: notified.append(message)
+
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {
+            "library_selected_row_id": LIBRARY_ROW_BROWSE_NOTES,
+            "selected_note_id": "note-ghost",
+            "library_notes_view": "editor",
+        }
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        for _ in range(120):
+            if screen._library_notes_view == "list":
+                break
+            await pilot.pause(0.02)
+
+        assert screen._library_notes_view == "list"
+        assert notified  # _notify_library_note_missing_warning fired

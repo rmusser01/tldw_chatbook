@@ -635,6 +635,27 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_note_detail",
             )
+        if (
+            self._library_media_view == "viewer"
+            and self._selected_media_id
+            and self._library_media_detail is None
+        ):
+            # Cross-visit state restore (``restore_state``) sets the media
+            # viewer's selection/view attrs before mount the same way a
+            # note_id nav-context deep-link does above, but -- unlike that
+            # case -- nothing else pre-mount kicks off the detail fetch:
+            # ``handle_library_media_row`` (the only other caller of
+            # ``_refresh_library_media_detail``) only runs from a live row
+            # click. Without this, a restored viewer would render its
+            # "Loading media…" placeholder forever. Deleted-record safety
+            # mirrors the note case: ``_refresh_library_media_detail``
+            # notifies and falls back to the list view when the id no
+            # longer resolves.
+            self.run_worker(
+                self._refresh_library_media_detail(self._selected_media_id),
+                exclusive=True,
+                group="library_media_detail",
+            )
 
     def on_unmount(self) -> None:
         """Unregister the ingest registry listener registered in ``on_mount``.
@@ -660,6 +681,105 @@ class LibraryScreen(BaseAppScreen):
         registry = self._library_ingest_registry()
         if registry is not None:
             registry.remove_listener(self._handle_library_ingest_registry_changed)
+
+    def save_state(self) -> dict[str, Any]:
+        """Persist Library selection/view state for the next visit.
+
+        Only SELECTION and VIEW state is captured -- never bulk fetched
+        snapshots (``_local_source_records`` and friends re-fetch fresh on
+        the next mount's ``_refresh_local_source_snapshot``, and a restored
+        id may be stale by then) or note editor text (``flush_pending_work``
+        has already persisted any dirty edit to the DB before the app calls
+        this). The ingest form/queue, rail collapse preferences, and search
+        history are deliberately excluded here: they are already persisted
+        elsewhere (the app-owned ingest job registry and the CLI config,
+        respectively) and re-seeding them from this in-memory dict would
+        fight those owners. The RAG results tuple (and its paired retrieval
+        status / recovery state, set together by
+        ``_apply_library_rag_search_outcome``) are safe to carry verbatim
+        because their rows are frozen dataclasses -- copies are taken below
+        only to avoid aliasing a live mutable set with the stashed dict.
+        """
+        state = super().save_state()
+        state["library_selected_row_id"] = self._library_selected_row_id
+        state["selected_conversation_id"] = self._selected_conversation_id
+        state["selected_note_id"] = self._selected_note_id
+        state["library_notes_view"] = self._library_notes_view
+        state["selected_media_id"] = self._selected_media_id
+        state["library_media_view"] = self._library_media_view
+        state["library_rag_query"] = self._library_rag_query
+        state["library_rag_mode"] = self._library_rag_mode
+        state["library_rag_scope_deselected"] = set(self._library_rag_scope_deselected)
+        state["library_rag_results"] = tuple(self._library_rag_results)
+        state["library_rag_selected_result_id"] = self._library_rag_selected_result_id
+        state["library_rag_retrieval_status"] = self._library_rag_retrieval_status
+        state["library_rag_recovery_state"] = self._library_rag_recovery_state
+        return state
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """Restore Library selection/view state saved by ``save_state``.
+
+        The app calls this on a freshly-constructed, not-yet-mounted
+        instance BEFORE ``switch_screen`` mounts it, so these attrs are
+        exactly what ``on_mount`` and the first ``compose_content`` see.
+
+        Stale-id safety (the record was deleted or is otherwise gone by the
+        time the user comes back): the conversations and media LIST canvases
+        already fall back to the first displayed row when the restored id is
+        absent (``build_library_conversations_state`` /
+        ``build_library_media_state``); the notes-editor and media-viewer
+        deep-link fetches this triggers from ``on_mount`` notify the user and
+        fall back to the list view when the id no longer resolves
+        (``_refresh_library_note_detail`` / ``_refresh_library_media_detail``).
+        A restored ``editor``/``viewer`` view with no matching selected id
+        (should never happen, but a saved-state dict is not statically typed)
+        degrades to the list view below rather than rendering a permanent
+        loading placeholder.
+        """
+        super().restore_state(state)
+        if not isinstance(state, dict):
+            return
+
+        self._library_selected_row_id = str(state.get("library_selected_row_id") or "")
+        self._selected_conversation_id = str(state.get("selected_conversation_id") or "")
+
+        selected_note_id = str(state.get("selected_note_id") or "")
+        notes_view = str(state.get("library_notes_view") or "list")
+        if notes_view == "editor" and not selected_note_id:
+            notes_view = "list"
+        self._selected_note_id = selected_note_id
+        self._library_notes_view = notes_view
+
+        selected_media_id = str(state.get("selected_media_id") or "")
+        media_view = str(state.get("library_media_view") or "list")
+        if media_view == "viewer" and not selected_media_id:
+            media_view = "list"
+        self._selected_media_id = selected_media_id
+        self._library_media_view = media_view
+
+        self._library_rag_query = str(state.get("library_rag_query") or "")
+        rag_mode = state.get("library_rag_mode")
+        self._library_rag_mode = rag_mode if rag_mode in ("search", "rag") else "search"
+        scope_deselected = state.get("library_rag_scope_deselected")
+        self._library_rag_scope_deselected = (
+            set(scope_deselected)
+            if isinstance(scope_deselected, (set, frozenset, list, tuple))
+            else set()
+        )
+        rag_results = state.get("library_rag_results")
+        self._library_rag_results = (
+            tuple(rag_results) if isinstance(rag_results, (list, tuple)) else ()
+        )
+        self._library_rag_selected_result_id = str(
+            state.get("library_rag_selected_result_id") or ""
+        )
+        self._library_rag_retrieval_status = str(
+            state.get("library_rag_retrieval_status") or ""
+        )
+        recovery_state = state.get("library_rag_recovery_state")
+        self._library_rag_recovery_state = (
+            recovery_state if isinstance(recovery_state, DestinationRecoveryState) else None
+        )
 
     async def flush_pending_work(self) -> bool:
         """Persist pending note edits before the app navigates away.

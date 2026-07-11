@@ -1655,6 +1655,76 @@ class MediaWindow(Container):
                 from ..Utils.text import slugify
                 first_type = self.media_types[0]
                 self.activate_media_type(slugify(first_type), first_type)
+
+    def _display_name_for_type_slug(self, type_slug: str) -> str:
+        """Reverse a slug back to its display name for the search-panel summary."""
+        if type_slug == "all-media":
+            return "All Media"
+        from ..Utils.text import slugify
+        for media_type in self.media_types:
+            if slugify(media_type) == type_slug:
+                return media_type
+        return type_slug
+
+    def apply_restored_view_state(self, restore: Dict[str, Any]) -> None:
+        """Apply cross-visit view state restored by ``MediaScreen.restore_state``.
+
+        Called synchronously from ``MediaScreen.on_mount`` (this widget's
+        own ``on_mount`` has already run by then, since Textual mounts
+        children before their parent). Nothing else seeds
+        ``active_media_type`` for a screen-navigated Media visit -- the
+        legacy ``watch_current_tab`` -> ``activate_initial_view`` path is a
+        deliberate no-op once ``_use_screen_navigation`` is set (see its own
+        early return) -- so this is the only place a returning visit's
+        type/search/keyword/selection gets re-applied instead of landing back
+        on the untouched "pick a type" empty state every time.
+
+        Deliberately does not attempt to restore the viewer panel's detail
+        content or its active tab: unlike Library's separate list/viewer
+        canvas modes, this window always shows the list and viewer side by
+        side, and re-populating the viewer requires the same scoped
+        media-detail fetch a live row click triggers -- not wired here to
+        keep this restore path cheap and side-effect-free before the first
+        paint. A stale ``selected_media_id`` (the record was deleted while
+        the user was elsewhere) degrades gracefully: the re-run search below
+        simply will not return it, so nothing in the list matches it.
+
+        Args:
+            restore: The dict ``MediaScreen`` stashed from a previous visit's
+                ``save_state`` (see ``MediaScreen.restore_state``).
+        """
+        type_slug = str(restore.get("active_media_type") or "") or None
+        if type_slug is None:
+            # Nothing was active on the previous visit -- leave the window
+            # exactly as a genuinely first-ever visit would (no type
+            # selected; the nav panel is the entry point).
+            return
+
+        search_term = str(restore.get("search_term") or "")
+        keyword_filter = str(restore.get("keyword_filter") or "")
+        selected_media_id = str(restore.get("selected_media_id") or "") or None
+
+        self.active_media_type = type_slug
+        self.selected_media_id = selected_media_id
+        if self.runtime_state is not None:
+            self.runtime_state.active_media_type = type_slug
+            self.runtime_state.search_term = search_term
+            self.runtime_state.keyword_filter = keyword_filter
+            self.runtime_state.selected_record_id = selected_media_id
+
+        if hasattr(self, "nav_panel"):
+            self.nav_panel.selected_type = type_slug
+        if hasattr(self, "search_panel"):
+            self.search_panel.set_type_filter(
+                type_slug, self._display_name_for_type_slug(type_slug)
+            )
+            self.search_panel.search_term = search_term
+            self.search_panel.keyword_filter = keyword_filter
+        self._sync_saved_view_controls()
+
+        if hasattr(self, "list_panel"):
+            self.list_panel.current_page = 1
+        self._perform_search(type_slug, search_term, keyword_filter)
     
     def update_search_results(self, results: List[Dict[str, Any]], page: int, total_pages: int) -> None:
         """Update search results in the list panel."""
