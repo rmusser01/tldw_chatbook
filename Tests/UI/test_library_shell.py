@@ -4957,9 +4957,20 @@ async def test_library_flush_pending_work_saves_dirty_note_and_reports_conflicts
         assert service.save_calls, "flush_pending_work never persisted the dirty note"
         assert service.save_calls[-1]["content"] == "edited mid-tab-switch"
 
-        # An unresolved conflict must veto the navigation.
-        screen._library_note_autosave_state = "conflict"
+        # Unsaved edits surviving the flush must veto the navigation: a
+        # FAILED save leaves the edits only in this screen instance, so
+        # discarding it would lose them. Force a genuine save failure
+        # through the real seam and re-dirty the editor.
+        screen.query_one("#library-note-body", TextArea).text = "edit that must not be lost"
+        await pilot.pause()
+
+        async def _failing_save(**kwargs):
+            raise RuntimeError("simulated save failure")
+
+        service.save_note = _failing_save
         assert await screen.flush_pending_work() is False
+        assert screen._library_note_autosave_state == "error"
+        assert screen._library_note_dirty is True
 
 
 @pytest.mark.asyncio

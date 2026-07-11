@@ -791,12 +791,14 @@ class LibraryScreen(BaseAppScreen):
         tabs mid-edit.
 
         Returns:
-            False when the flush surfaced an unresolved save conflict (the
-            navigation is vetoed so the user can resolve the banner),
-            True otherwise.
+            False whenever unsaved edits survive the flush -- an unresolved
+            save conflict (the user must resolve the banner) or a failed
+            save (state "error"; the edits are still only in the editor).
+            Both veto the navigation so the screen instance holding the
+            edits is not discarded. True once nothing dirty remains.
         """
         await self._flush_library_note_save()
-        return self._library_note_autosave_state != "conflict"
+        return not self._library_note_dirty
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.

@@ -4242,6 +4242,14 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
         """Build a FRESH screen instance for every navigation.
 
+        Args:
+            screen_name: Routed screen id (used by callers for state keying;
+                unused here, kept for signature stability at the seam).
+            screen_class: The Screen subclass registered for the route.
+
+        Returns:
+            A newly constructed, never-mounted instance of ``screen_class``.
+
         Screens must never be cached and re-mounted: ``switch_screen``
         unmounts the outgoing screen, and re-mounting a previously-unmounted
         instance races its still-in-flight teardown under rapid tab
@@ -4317,9 +4325,21 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
                     )
                     return
             except Exception as e:
+                # Fail OPEN: a buggy flush must not permanently trap the
+                # user on this screen -- but the potential loss of pending
+                # work is surfaced, not silent.
                 logger.opt(exception=True).error(
-                    f"Error flushing outgoing screen before navigation: {e}"
+                    "Error flushing outgoing screen "
+                    f"{getattr(current_screen, 'screen_name', type(current_screen).__name__)!r} "
+                    f"before navigating to {screen_name!r}: {e}"
                 )
+                try:
+                    self.notify(
+                        "Couldn't save pending changes before switching screens.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
 
         # Save state of current screen before switching
         if current_screen and hasattr(current_screen, 'save_state'):
