@@ -215,7 +215,11 @@ def choose_next_best_action(
             builder to fall through to the next-best suggestion when the
             top one would just repeat the selected item's own recovery
             control (e.g. a failed item's canvas already offers Retry).
-            Empty by default, so every other caller is unaffected.
+            Honored by the ``review_failed_work`` and ``resume_active_work``
+            branches (the two the canvas builder needs to suppress: the
+            latter's "Live work is already running." copy is false when
+            nothing is actually running -- F1b whole-wave review). Empty by
+            default, so every other caller is unaffected.
     """
     if not state.model_ready:
         return HomeAction(
@@ -246,7 +250,7 @@ def choose_next_best_action(
             failed_item.detail_route if failed_item else state.active_detail_route,
             "Failed work needs recovery.",
         )
-    if _active_run_count(state):
+    if _active_run_count(state) and "resume_active_work" not in exclude:
         return HomeAction(
             "resume_active_work",
             "Resume active work",
@@ -929,8 +933,18 @@ def build_home_triage_state(
                 and _normalized_status(item) in _FAILED_STATUSES
                 and item.detail_route == next_action.target_route
             ):
+                excluded_actions = {"review_failed_work"}
+                if _running_run_count(state) == 0:
+                    # (F1b whole-wave review, live QA) The fallthrough
+                    # branch, resume_active_work, claims "Live work is
+                    # already running." -- but _active_run_count counts
+                    # failed/queued attention items too, so with nothing
+                    # actually RUNNING that copy is false (the Running rail
+                    # section says "Nothing running right now." right beside
+                    # it). Exclude it as well and keep falling through.
+                    excluded_actions.add("resume_active_work")
                 item_next_action = choose_next_best_action(
-                    state, exclude=frozenset({"review_failed_work"})
+                    state, exclude=frozenset(excluded_actions)
                 )
             status_line = f"{selected.glyph} {item.status} \u00b7 {item.source}"
             if selected.age_label:

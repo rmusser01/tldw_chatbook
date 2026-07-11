@@ -800,6 +800,66 @@ def test_triage_next_hint_still_suggests_recovery_when_nothing_selected():
     assert triage.canvas.next_action.action_id == "review_failed_work"
 
 
+def test_triage_suppressed_next_hint_skips_false_resume_claim_when_nothing_running():
+    """(F1b whole-wave review, live QA) With a failed item selected and
+    NOTHING running, the H3 suppression must not fall through to
+    ``resume_active_work`` -- its copy ("Live work is already running.") is
+    false then, and the Running rail section says "Nothing running right
+    now." directly beside it. ``_active_run_count`` counts failed/queued
+    attention items too, which is why the branch would otherwise win. The
+    recompute excludes it as well whenever ``running_run_count`` is 0."""
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:1",
+                title="report.xyz",
+                source="Library",
+                status="failed",
+                detail_route="library",
+            ),
+        ),
+    )
+
+    triage = build_home_triage_state(state, selected_row_id="local:ingest:1", now=_NOW)
+
+    assert triage.canvas.next_action.action_id not in {
+        "review_failed_work",
+        "resume_active_work",
+    }
+
+
+def test_triage_suppressed_next_hint_allows_resume_when_work_is_running():
+    """Counterpart to the false-claim guard above: when something genuinely
+    IS running, ``resume_active_work`` is an honest fallthrough and stays
+    allowed after ``review_failed_work`` is suppressed."""
+    state = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:1",
+                title="report.xyz",
+                source="Library",
+                status="failed",
+                detail_route="library",
+            ),
+            HomeActiveWorkItem(
+                item_id="watch:run-1",
+                title="Watchlist sweep",
+                source="Watchlists",
+                status="running",
+                detail_route="watchlists",
+            ),
+        ),
+    )
+
+    triage = build_home_triage_state(state, selected_row_id="local:ingest:1", now=_NOW)
+
+    assert triage.canvas.next_action.action_id == "resume_active_work"
+
+
 def test_triage_next_hint_not_suppressed_when_routes_differ():
     """The suppression only fires when the Next hint's target route matches
     the selected failed item's own route -- a failed item routed elsewhere

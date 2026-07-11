@@ -1312,6 +1312,65 @@ def test_local_notification_adapter_promotes_done_ingest_jobs_to_recent_work():
     assert "local:ingest:ingest-job-4" not in active_ids
 
 
+def test_local_notification_adapter_status_detail_matches_queue_short_reason():
+    """(F1b whole-wave review) Home's failure-reason line must show the same
+    short reason as the Library ingest queue row. W2 introduced
+    ``short_ingest_error`` there (drops the ``" Supported types: ..."`` tail
+    from ``job.error`` -- that list lives on the ingest form now), so the
+    adapter must apply the identical split rather than passing the raw error
+    through to be truncated mid-list at 140 chars on the Home canvas."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-5",
+            source_path="/tmp/report.xyz",
+            state=IngestJobState.FAILED,
+            error="Unsupported file type: .xyz. Supported types: PDF, TXT",
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = next(
+        i for i in dashboard_input.active_work_items
+        if i.item_id == "local:ingest:ingest-job-5"
+    )
+    assert item.status_detail == "Unsupported file type: .xyz."
+
+
+def test_local_notification_adapter_status_detail_is_not_markup_escaped():
+    """(F1b whole-wave review) The Home canvas renders its lines via
+    ``Static(..., markup=False)`` (``Widgets/Home/home_canvas.py``), so
+    Rich-markup-escaping ``status_detail`` is not only unnecessary, it is
+    visibly harmful: an error containing brackets would show literal
+    backslashes to the user. Only titles stay escaped -- those DO reach a
+    markup-parsing Button label in the rail."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-6",
+            source_path="/tmp/broken.pdf",
+            state=IngestJobState.FAILED,
+            error="failed near [bold]tag[/bold] marker",
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = next(
+        i for i in dashboard_input.active_work_items
+        if i.item_id == "local:ingest:ingest-job-6"
+    )
+    assert "\\" not in item.status_detail
+    assert item.status_detail == "failed near [bold]tag[/bold] marker"
+
+
 def test_local_notification_adapter_sorts_done_ingest_jobs_into_recent_by_finished_at_wall():
     jobs = (
         LibraryIngestJob(

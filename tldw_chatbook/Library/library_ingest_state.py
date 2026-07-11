@@ -58,6 +58,30 @@ SUPPORTED_TYPES_PREFIX = "Supported: "
 _SUPPORTED_TYPES_ERROR_MARKER = " Supported types:"
 
 
+def short_ingest_error(error: str) -> str:
+    """Return the short (queue-row) form of an ingest job's error message.
+
+    Drops the trailing ``" Supported types: ..."`` tail that
+    ``local_file_ingestion.py``'s "Unsupported file type" error carries --
+    that list lives on the ingest form as its own always-visible line (L4,
+    fix batch F1b) instead of being repeated on every failure surface. An
+    error without that exact marker passes through whole.
+
+    Single source of truth for BOTH failure-reason surfaces: the Library
+    ingest queue row (``_build_queue_row``) and Home's failed-item canvas
+    line (``active_work_adapter._local_ingest_job_items``) call this same
+    helper, so the two can never drift apart (F1b whole-wave review).
+
+    Args:
+        error: The raw ``LibraryIngestJob.error`` text.
+
+    Returns:
+        The error up to (excluding) the supported-types marker, right-
+        stripped; the whole error when the marker is absent.
+    """
+    return error.split(_SUPPORTED_TYPES_ERROR_MARKER)[0].rstrip()
+
+
 @lru_cache(maxsize=1)
 def _supported_types_line() -> str:
     """Build the ingest form's supported-extensions line.
@@ -329,7 +353,7 @@ def _build_queue_row(job: LibraryIngestJob, *, now: float) -> IngestQueueRow:
             media_id=job.media_id,
         )
     # FAILED -- the only remaining IngestJobState member.
-    short_error = job.error.split(_SUPPORTED_TYPES_ERROR_MARKER)[0].rstrip()
+    short_error = short_ingest_error(job.error)
     return IngestQueueRow(
         job_id=job.job_id,
         glyph=_GLYPH_FAILED,

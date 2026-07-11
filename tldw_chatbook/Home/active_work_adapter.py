@@ -15,6 +15,7 @@ from rich.markup import escape
 
 from tldw_chatbook.Chat.answer_citations import summarize_citation_artifact_metadata
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
+from tldw_chatbook.Library.library_ingest_state import short_ingest_error
 from tldw_chatbook.Notifications.notifications_scope_service import ServerEventScopeRequiredError
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
@@ -597,8 +598,17 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     detail_route="library",
                     console_available=False,
                     updated_at="",
+                    # Same short reason as the Library ingest queue row
+                    # (single source of truth: short_ingest_error drops the
+                    # " Supported types: ..." tail that now lives on the
+                    # ingest form instead). Deliberately NOT markup-escaped:
+                    # the Home canvas renders its lines via
+                    # Static(..., markup=False) (Widgets/Home/home_canvas.py),
+                    # so escaping would surface literal backslashes around
+                    # any brackets in the error. Titles stay escaped -- they
+                    # DO reach a markup-parsing Button label in the rail.
                     status_detail=(
-                        escape(job.error)
+                        short_ingest_error(job.error)
                         if job.state == IngestJobState.FAILED and job.error
                         else ""
                     ),
