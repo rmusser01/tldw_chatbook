@@ -7,6 +7,7 @@ allowing users to choose the best backend for their use case.
 """
 
 import abc
+import importlib.util
 import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Union
@@ -15,63 +16,39 @@ from enum import Enum
 from loguru import logger
 from tldw_chatbook.Utils.path_validation import validate_path
 
-# Import optional dependencies
-try:
-    from PIL import Image
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
-    Image = None
 
-try:
-    import pytesseract
-    TESSERACT_AVAILABLE = True
-except ImportError:
-    TESSERACT_AVAILABLE = False
+def _module_available(name: str) -> bool:
+    """Cheaply probe whether a top-level module is importable.
 
-try:
-    import easyocr
-    EASYOCR_AVAILABLE = True
-except ImportError:
-    EASYOCR_AVAILABLE = False
+    Uses ``importlib.util.find_spec`` instead of an actual import so that
+    unavailable (or, more importantly, *available but heavy*) optional OCR
+    backends can report their availability without paying the cost of
+    importing docling/torch/transformers/etc. Only pass top-level (non-dotted)
+    module names -- ``find_spec`` on a dotted name would import the parent
+    package to resolve the submodule's spec, defeating the purpose.
+    """
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError, ModuleNotFoundError):
+        # A partially-broken package (e.g. a stale .pth entry) can make
+        # find_spec raise instead of returning None; treat that the same
+        # as "not available".
+        return False
 
-try:
-    from docling.document_converter import DocumentConverter
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
-    DOCLING_AVAILABLE = True
-except ImportError:
-    DOCLING_AVAILABLE = False
 
-try:
-    import paddle
-    from paddleocr import PaddleOCR
-    PADDLEOCR_AVAILABLE = True
-except ImportError:
-    PADDLEOCR_AVAILABLE = False
-
-try:
-    import docext
-    DOCEXT_AVAILABLE = True
-except ImportError:
-    DOCEXT_AVAILABLE = False
-
-try:
-    from gradio_client import Client, handle_file
-    GRADIO_CLIENT_AVAILABLE = True
-except ImportError:
-    GRADIO_CLIENT_AVAILABLE = False
-
-try:
-    from transformers import AutoTokenizer, AutoProcessor, AutoModelForImageTextToText
-    TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    TRANSFORMERS_AVAILABLE = False
-
-try:
-    from openai import OpenAI
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
+# Availability flags: cheap probes only, no heavy imports happen here.
+# The actual `import` of each backend's dependency is deferred to the
+# functions that use it (initialize()/process_*()), so constructing the
+# OCRManager singleton below never pays for docling/torch/transformers.
+PIL_AVAILABLE = _module_available("PIL")
+TESSERACT_AVAILABLE = _module_available("pytesseract")
+EASYOCR_AVAILABLE = _module_available("easyocr")
+DOCLING_AVAILABLE = _module_available("docling")
+PADDLEOCR_AVAILABLE = _module_available("paddle") and _module_available("paddleocr")
+DOCEXT_AVAILABLE = _module_available("docext")
+GRADIO_CLIENT_AVAILABLE = _module_available("gradio_client")
+TRANSFORMERS_AVAILABLE = _module_available("transformers")
+OPENAI_AVAILABLE = _module_available("openai")
 
 
 class OCRBackendType(Enum):
@@ -187,6 +164,7 @@ class DoclingOCRBackend(OCRBackend):
         """Initialize Docling converter."""
         if not self._initialized:
             try:
+                from docling.document_converter import DocumentConverter
                 self.converter = DocumentConverter()
                 self._initialized = True
                 logger.info("Docling OCR backend initialized")
@@ -216,6 +194,7 @@ class DoclingOCRBackend(OCRBackend):
             self.initialize()
         
         try:
+            from docling.datamodel.pipeline_options import PdfPipelineOptions
             # Validate path to prevent directory traversal
             base_dir = kwargs.get('base_directory', os.getcwd())
             validated_path = validate_path(pdf_path, base_dir)
@@ -276,19 +255,21 @@ class TesseractOCRBackend(OCRBackend):
         """Check if Tesseract is available."""
         if not TESSERACT_AVAILABLE:
             return False
-        
+
         # Check if tesseract binary is available
         try:
+            import pytesseract
             pytesseract.get_tesseract_version()
             return True
         except (pytesseract.TesseractNotFoundError, OSError, FileNotFoundError) as e:
             logger.debug(f"Tesseract not available: {e}")
             return False
-    
+
     def initialize(self) -> None:
         """Initialize Tesseract (check for language data)."""
         if not self._initialized:
             try:
+                import pytesseract
                 # Get available languages
                 self.available_langs = pytesseract.get_languages()
                 self._initialized = True
@@ -325,11 +306,12 @@ class TesseractOCRBackend(OCRBackend):
                 "ar": "ara"
             }
             tesseract_lang = lang_map.get(language, language)
-            
+
             # Get OCR data
             import time
+            import pytesseract
             start_time = time.time()
-            
+
             # Get text with confidence scores
             data = pytesseract.image_to_data(
                 str(validated_path),
@@ -367,13 +349,14 @@ class TesseractOCRBackend(OCRBackend):
             
             # Get image size
             if PIL_AVAILABLE:
+                from PIL import Image
                 with Image.open(image_path) as img:
                     image_size = img.size
             else:
                 image_size = None
-            
+
             processing_time = time.time() - start_time
-            
+
             return OCRResult(
                 text=full_text,
                 confidence=avg_confidence,
@@ -434,6 +417,7 @@ class EasyOCRBackend(OCRBackend):
         """Initialize EasyOCR reader."""
         if not self._initialized:
             try:
+                import easyocr
                 # Default to English if no language specified
                 default_langs = self.config.get('languages', ['en'])
                 self.reader = easyocr.Reader(
@@ -445,17 +429,18 @@ class EasyOCRBackend(OCRBackend):
             except Exception as e:
                 logger.error(f"Failed to initialize EasyOCR: {e}")
                 raise
-    
-    def process_image(self, 
-                     image_path: Union[str, Path], 
+
+    def process_image(self,
+                     image_path: Union[str, Path],
                      language: str = "en",
                      **kwargs) -> OCRResult:
         """Process image with EasyOCR."""
+        import easyocr
         if not self._initialized or language not in self.reader.lang_list:
             # Reinitialize with requested language
             self.reader = easyocr.Reader([language], gpu=self.config.get('use_gpu', True))
             self._initialized = True
-        
+
         try:
             # Validate path to prevent directory traversal
             base_dir = kwargs.get('base_directory', os.getcwd())
@@ -492,13 +477,14 @@ class EasyOCRBackend(OCRBackend):
             
             # Get image size
             if PIL_AVAILABLE:
+                from PIL import Image
                 with Image.open(image_path) as img:
                     image_size = img.size
             else:
                 image_size = None
-            
+
             processing_time = time.time() - start_time
-            
+
             return OCRResult(
                 text=full_text,
                 confidence=avg_confidence,
@@ -541,6 +527,7 @@ class PaddleOCRBackend(OCRBackend):
         """Initialize PaddleOCR."""
         if not self._initialized:
             try:
+                from paddleocr import PaddleOCR
                 self.ocr = PaddleOCR(
                     use_angle_cls=True,
                     lang=self.config.get('lang', 'en'),
@@ -551,12 +538,13 @@ class PaddleOCRBackend(OCRBackend):
             except Exception as e:
                 logger.error(f"Failed to initialize PaddleOCR: {e}")
                 raise
-    
-    def process_image(self, 
-                     image_path: Union[str, Path], 
+
+    def process_image(self,
+                     image_path: Union[str, Path],
                      language: str = "en",
                      **kwargs) -> OCRResult:
         """Process image with PaddleOCR."""
+        from paddleocr import PaddleOCR
         if not self._initialized or self.ocr.lang != language:
             # Reinitialize with requested language
             self.ocr = PaddleOCR(
@@ -565,7 +553,7 @@ class PaddleOCRBackend(OCRBackend):
                 use_gpu=self.config.get('use_gpu', True)
             )
             self._initialized = True
-        
+
         try:
             # Validate path to prevent directory traversal
             base_dir = kwargs.get('base_directory', os.getcwd())
@@ -601,13 +589,14 @@ class PaddleOCRBackend(OCRBackend):
             
             # Get image size
             if PIL_AVAILABLE:
+                from PIL import Image
                 with Image.open(image_path) as img:
                     image_size = img.size
             else:
                 image_size = None
-            
+
             processing_time = time.time() - start_time
-            
+
             return OCRResult(
                 text=full_text,
                 confidence=avg_confidence,
@@ -673,6 +662,7 @@ class DocextOCRBackend(OCRBackend):
             try:
                 if self.mode == 'api':
                     # Initialize Gradio client
+                    from gradio_client import Client
                     # Note: Authentication is optional - only use if credentials are provided
                     auth = None
                     if self.username and self.password:
@@ -680,15 +670,16 @@ class DocextOCRBackend(OCRBackend):
                         logger.info("Using authentication for Docext API")
                     elif self.username or self.password:
                         logger.warning("Both username and password must be provided for authentication")
-                    
+
                     self.client = Client(self.api_url, auth=auth)
                     logger.info(f"Docext API client initialized at {self.api_url}")
-                    
+
                 elif self.mode == 'model':
                     # Initialize transformers model directly
                     if not TRANSFORMERS_AVAILABLE:
                         raise ImportError("transformers library not available for model mode")
-                    
+
+                    from transformers import AutoTokenizer, AutoProcessor, AutoModelForImageTextToText
                     self.model = AutoModelForImageTextToText.from_pretrained(
                         self.model_name,
                         torch_dtype="auto",
@@ -699,12 +690,13 @@ class DocextOCRBackend(OCRBackend):
                     self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
                     self.processor = AutoProcessor.from_pretrained(self.model_name)
                     logger.info(f"Docext model loaded: {self.model_name}")
-                    
+
                 elif self.mode == 'openai':
                     # Initialize OpenAI-compatible client
                     if not OPENAI_AVAILABLE:
                         raise ImportError("openai library not available for OpenAI mode")
-                    
+
+                    from openai import OpenAI
                     base_url = self.config.get('openai_base_url', 'http://localhost:8000/v1')
                     api_key = self.config.get('openai_api_key', '123')
                     self.client = OpenAI(api_key=api_key, base_url=base_url)
@@ -743,21 +735,23 @@ Prefer using ☐ and ☑ for check boxes."""
             
             if self.mode == 'api':
                 # Use Gradio API
+                from gradio_client import handle_file
                 result = self.client.predict(
                     images=[{"image": handle_file(str(image_path))}],
                     api_name="/process_markdown_streaming"
                 )
-                
+
                 # Extract text from result
                 if isinstance(result, list) and result:
                     text = result[0]
                 else:
                     text = str(result)
-                
+
             elif self.mode == 'model':
                 # Use transformers directly
+                from PIL import Image
                 prompt = kwargs.get('prompt', self._get_docext_prompt())
-                
+
                 image = Image.open(validated_path)
                 messages = [
                     {"role": "system", "content": "You are a helpful assistant."},
@@ -857,6 +851,7 @@ Prefer using ☐ and ☑ for check boxes."""
             image_size = None
             if PIL_AVAILABLE:
                 try:
+                    from PIL import Image
                     with Image.open(image_path) as img:
                         image_size = img.size
                 except (OSError, IOError, AttributeError) as e:

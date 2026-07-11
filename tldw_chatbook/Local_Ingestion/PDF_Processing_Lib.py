@@ -36,10 +36,13 @@ except ImportError as e:
 #
 # Import Local
 from ..config import get_cli_setting, get_ocr_backend_config
-from ..LLM_Calls.Summarization_General_Lib import analyze
 from ..Metrics.metrics_logger import log_counter, log_histogram
-from .OCR_Backends import ocr_manager
 from loguru import logger
+# NOTE: `analyze` (LLM_Calls.Summarization_General_Lib) and `ocr_manager`
+# (.OCR_Backends) are intentionally NOT imported at module level -- both
+# pull in heavy transitive dependencies (nltk; docling/torch/transformers)
+# that should only load when OCR or LLM analysis is actually invoked, not
+# just from parsing a PDF. See the call sites below for the deferred imports.
 
 
 #
@@ -239,12 +242,13 @@ def docext_parse_pdf(pdf_path: str, ocr_backend: str = "docext", language: str =
         Extracted text as markdown
     """
     try:
+        from .OCR_Backends import ocr_manager
         log_counter("pdf_text_extraction_attempt", labels={"file_path": pdf_path, "parser": "docext"})
         start_time = datetime.now()
-        
+
         # Get backend configuration
         backend_config = get_ocr_backend_config(ocr_backend)
-        
+
         # Get OCR backend
         backend = ocr_manager.get_backend(ocr_backend)
         if not backend._initialized:
@@ -433,6 +437,7 @@ def process_pdf(
                     raise ImportError("Docling parser selected, but library is not installed.")
                 content = docling_parse_pdf(path_for_processing, enable_ocr=enable_ocr, ocr_language=ocr_language)
             elif parser == "docext":
+                from .OCR_Backends import ocr_manager
                 # Check if docext backend is available
                 if not ocr_manager.get_available_backends():
                     raise ImportError("No OCR backends available. Install docext with: pip install docext")
@@ -591,6 +596,7 @@ def process_pdf(
         # Use path_for_processing for logger context if needed
         logger.debug(f"PROCESS_PDF: Checking condition -> perform_analysis={perform_analysis}, api_name='{api_name}', api_key='{api_key}', chunks_exist={bool(processed_chunks)}") # Keep this log
         if perform_analysis and api_name and api_key and processed_chunks:
+            from ..LLM_Calls.Summarization_General_Lib import analyze
             logger.info(f"Summarization enabled for {len(processed_chunks)} chunks of {filename} using API: {api_name}.")
             log_counter("pdf_summarization_attempt", value=len(processed_chunks), labels={"file_name": filename, "api_name": api_name})
 
