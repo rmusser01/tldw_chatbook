@@ -54,18 +54,21 @@ async def test_library_surfaces_study_workflow_entry_points() -> None:
         for row_id in ("create-study", "create-flashcards", "create-quizzes"):
             assert screen.query_one(f"#library-row-{row_id}")
 
+        # The button carries the verb-based handoff label (F1b L2) while the
+        # tooltip keeps naming the concrete Study destination the snapshot
+        # opens into (the mode's action_label).
         expected = {
             "study": ("library-open-study", "Study Dashboard"),
             "flashcards": ("library-open-flashcards", "Flashcards"),
             "quizzes": ("library-open-quizzes", "Quizzes"),
         }
-        for mode, (button_id, label) in expected.items():
+        for mode, (button_id, action_label) in expected.items():
             screen.query_one(f"#library-row-create-{mode}", Button).press()
             await _wait_for_selector(screen, pilot, f"#{button_id}")
             button = screen.query_one(f"#{button_id}", Button)
-            assert str(button.label) == label
+            assert str(button.label) == "Continue in Study"
             assert str(button.tooltip) == (
-                f"Open {label} with the current Library source snapshot, "
+                f"Open {action_label} with the current Library source snapshot, "
                 "or globally when none is available."
             )
 
