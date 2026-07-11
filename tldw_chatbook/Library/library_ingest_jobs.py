@@ -7,30 +7,44 @@ queue-runner and the Library canvas widget without pulling in UI code.
 Accepted v1 limits (binding; do not "fix" these without a follow-up task):
 
 - **In-memory only.** The registry has no persistence layer. All job history
-  -- queued, running, done, and failed jobs alike -- dies with the app
-  process. There is no restart/resume.
-- **Quitting waits for the in-flight file to finish; queued jobs are
-  lost.** The queue-runner worker (``_run_library_ingest_queue`` in
-  ``app.py``) runs on a background thread, and the app waits for that
-  thread to join before it finishes shutting down -- so a job that is
-  already ``RUNNING`` when the user quits completes its ingest and its
-  ``mark_done``/``mark_failed`` DB write normally; it is not silently
-  dropped mid-file. Any jobs still ``QUEUED`` behind it, however, are never
-  claimed -- the runner exits with the process, and nothing resumes them
-  or marks them ``FAILED`` on the next launch (matching the legacy
-  ``TAB_INGEST`` behavior this replaces).
-- **Serial queue.** Exactly one job runs at a time; ``next_queued()`` hands
-  jobs out one at a time in FIFO order. Parallel ingestion is a follow-up.
+  -- queued, parsing, writing, done, and failed jobs alike -- dies with the
+  app process. There is no restart/resume.
+- **Quitting joins the writer's in-flight DB write; parses in flight and
+  queued jobs are both lost.** (F3: the pipeline is now the two stages
+  described by ``IngestJobState``'s own docstring, and the two stages are
+  NOT waited for symmetrically on quit.) The write stage is still today's
+  exclusive thread
+  worker, and the app still waits for that thread to join before it
+  finishes shutting down -- so a job that is already ``WRITING`` when the
+  user quits completes its DB write and its ``mark_done``/``mark_failed``
+  call normally; it is not silently dropped mid-write. A job still
+  ``PARSING``, however, is NOT waited for: the parse-pool coordinator (owned
+  by ``app.py``'s ``LibraryIngestQueueMixin``) sets a shutdown flag and
+  calls the process pool's ``terminate()`` on quit, killing every in-flight
+  parse worker immediately rather than blocking app exit on a possibly-long
+  transcription or OCR job. An abandoned ``PARSING`` job is the same loss
+  class as a job still ``QUEUED`` behind it -- neither is claimed again, and
+  nothing resumes them or marks them ``FAILED`` on the next launch (matching
+  the legacy ``TAB_INGEST`` behavior this replaces). This registry module
+  has no shutdown hook of its own; it is documented here because the
+  pool/coordinator that owns the actual ``terminate()``/join sequencing
+  depends on this contract holding.
+- **Serial write, parallel parse.** Exactly one job is ever ``WRITING`` at a
+  time (SQLite has one writer); up to N jobs (a small worker-pool size) may
+  be ``PARSING`` concurrently. ``next_queued()`` still hands ``QUEUED`` jobs
+  out one at a time in FIFO order -- the coordinator is responsible for
+  calling it repeatedly to keep the parse pool topped up.
 
 Threading contract: ``LibraryIngestJobRegistry`` itself is deliberately
 **mutable** (it is the single source of truth for the ingest queue) but it
 does **no internal locking**. Every mutating method (``submit``,
-``mark_running``, ``mark_done``, ``mark_failed``, ``requeue``) -- and reads of
-``runner_active`` -- MUST only be called from the UI thread. A background
-queue-runner thread that needs to touch the registry must marshal every call
-through something like Textual's ``App.call_from_thread`` first. This module
-does not enforce that contract; it is documented here because callers
-(the Task 2 queue-runner) depend on it.
+``mark_parsing``, ``mark_writing``, ``mark_done``, ``mark_failed``,
+``requeue``) -- and reads of ``runner_active`` -- MUST only be called from
+the UI thread. A background queue-runner thread (or pool callback) that
+needs to touch the registry must marshal every call through something like
+Textual's ``App.call_from_thread`` first. This module does not enforce that
+contract; it is documented here because callers (the Task 2 queue-runner,
+and Task 4's parse-pool coordinator) depend on it.
 
 Individual ``LibraryIngestJob`` records are plain (non-frozen) dataclasses
 for construction convenience, but the registry never hands out a reference
@@ -63,10 +77,20 @@ DEFAULT_CHUNK_SIZE: int = 500
 
 
 class IngestJobState(str, Enum):
-    """Lifecycle states for a single-file Library ingest job."""
+    """Lifecycle states for a single-file Library ingest job.
+
+    ``QUEUED -> PARSING -> WRITING -> DONE`` / ``FAILED`` (F3). ``PARSING``
+    covers the parse-pool stage (``mark_parsing``, stamps ``started_at``);
+    ``WRITING`` covers the single-writer persistence stage (``mark_writing``)
+    -- this pair replaces the old single ``RUNNING`` state now that parsing
+    and writing are separate pipeline stages with different concurrency
+    (many workers may ``PARSING`` at once; exactly one job is ever
+    ``WRITING``, since SQLite has one writer).
+    """
 
     QUEUED = "queued"
-    RUNNING = "running"
+    PARSING = "parsing"
+    WRITING = "writing"
     DONE = "done"
     FAILED = "failed"
 
@@ -96,7 +120,9 @@ class LibraryIngestJob:
             failure.
         submitted_at: ``time.monotonic()`` timestamp taken at submission.
         started_at: ``time.monotonic()`` timestamp taken when the job
-            transitions to ``RUNNING``; ``None`` until then.
+            transitions to ``PARSING``; ``None`` until then. Left untouched
+            by the later ``PARSING`` -> ``WRITING`` transition, so it keeps
+            measuring the job's total active time (parse + write combined).
         finished_at: ``time.monotonic()`` timestamp taken when the job
             transitions to ``DONE`` or ``FAILED``; ``None`` until then.
         finished_at_wall: The wall-clock counterpart to ``finished_at``,
@@ -110,9 +136,11 @@ class LibraryIngestJob:
             terminal state.
         superseded: ``True`` once a ``FAILED`` job has been retried via
             ``requeue`` (L3b AB wave, B1) -- hides it from ``jobs()``/
-            ``counts()`` and makes ``mark_running``/``mark_done``/
-            ``mark_failed``/``requeue``/``dismiss`` safe no-ops against its
-            ``job_id``. Never set anywhere except inside ``requeue``.
+            ``counts()`` and makes ``mark_parsing``/``mark_writing``/
+            ``mark_done``/``mark_failed``/``requeue``/``dismiss`` safe
+            no-ops against its ``job_id`` (and, while it still exists, the
+            deprecated ``mark_running`` alias too). Never set anywhere
+            except inside ``requeue``.
         dismissed: ``True`` once a ``FAILED`` job has been dismissed via
             ``dismiss`` (L3b AB wave, B2) -- same hiding/no-op effect as
             ``superseded``, but a distinct field so the two "this job is
@@ -187,14 +215,15 @@ class LibraryIngestJobRegistry:
 
         Args:
             callback: A zero-argument callable. Invoked synchronously,
-                on the UI thread, after ``submit``/``mark_running``/
-                ``mark_done``/``mark_failed``/``requeue`` succeed.
+                on the UI thread, after ``submit``/``mark_parsing``/
+                ``mark_writing``/``mark_done``/``mark_failed``/``requeue``
+                succeed.
 
         Reentrancy contract: a listener must not mutate the registry (call
-        ``submit``/``mark_running``/``mark_done``/``mark_failed``/
-        ``requeue``) from inside its own callback. ``_notify_listeners``
-        iterates a snapshot of ``self._listeners``, so add/remove-ing a
-        *listener* mid-callback is safe -- but a mutating call would
+        ``submit``/``mark_parsing``/``mark_writing``/``mark_done``/
+        ``mark_failed``/``requeue``) from inside its own callback.
+        ``_notify_listeners`` iterates a snapshot of ``self._listeners``, so
+        add/remove-ing a *listener* mid-callback is safe -- but a mutating call would
         recursively re-enter ``_notify_listeners`` while the outer call is
         still iterating, and (for ``submit``/``requeue``) would append to
         ``self._jobs`` while an outer mutation's own state may still be in
@@ -294,28 +323,30 @@ class LibraryIngestJobRegistry:
                 return index
         return None
 
-    def mark_running(self, job_id: str, *, detected_type: str = "") -> LibraryIngestJob | None:
-        """Transition a job to ``RUNNING`` and stamp ``started_at``.
+    def mark_parsing(self, job_id: str, *, detected_type: str = "") -> LibraryIngestJob | None:
+        """Transition a ``QUEUED`` job to ``PARSING`` and stamp ``started_at``.
 
         Args:
             job_id: The job to transition.
-            detected_type: The file type detected by the ingest seam.
+            detected_type: The file type detected by the ingest seam, when
+                already known at submission time. Optional: the coordinator
+                (Task 4) may call this before the parse pool has even
+                started the job, so the type is frequently still unknown
+                here (``""``) and only becomes known once the parse result
+                comes back -- this parameter exists so a caller that *does*
+                already know the type (e.g. today's temporary ``mark_running``
+                alias, which detects synchronously before transitioning) can
+                still stamp it at this step.
 
         Returns:
             The updated job (a copy), or ``None`` when ``job_id`` is
-            unknown or hidden (``superseded``/``dismissed``). Unknown ids
-            never raise.
-
-        No state-machine guard beyond the hidden check above: this
-        unconditionally overwrites whatever state a *visible* job was in
-        (it does not check that it was ``QUEUED`` first). The queue-runner
-        (``_run_library_ingest_queue`` in ``app.py``) is the sole intended
-        caller of ``mark_running``/``mark_done``/``mark_failed``, and it
-        always drives a job either ``queued`` -> ``running`` ->
-        ``done``/``failed``, or straight ``queued`` -> ``failed`` as the
-        fast-fail path (an error, e.g. an undetectable file type, raised
-        before ``mark_running`` is ever reached). Calling this out of that
-        order is not rejected here.
+            unknown, hidden (``superseded``/``dismissed``), or the job is
+            not currently ``QUEUED`` -- unlike the old, unguarded
+            ``mark_running`` this replaces, this transition IS guarded: with
+            multiple jobs now able to be ``PARSING`` at once (F3), silently
+            re-parsing an already-``PARSING``/``WRITING``/terminal job would
+            be a coordinator bug worth surfacing rather than swallowing.
+            Unknown ids never raise.
         """
         index = self._find_index(job_id)
         if index is None:
@@ -323,15 +354,85 @@ class LibraryIngestJobRegistry:
         current = self._jobs[index]
         if current.superseded or current.dismissed:
             return None
+        if current.state != IngestJobState.QUEUED:
+            return None
         updated = replace(
             current,
-            state=IngestJobState.RUNNING,
+            state=IngestJobState.PARSING,
             detected_type=detected_type,
             started_at=time.monotonic(),
         )
         self._jobs[index] = updated
         self._notify_listeners()
         return replace(updated)
+
+    def mark_writing(self, job_id: str) -> LibraryIngestJob | None:
+        """Transition a ``PARSING`` job to ``WRITING``.
+
+        Args:
+            job_id: The job to transition.
+
+        Returns:
+            The updated job (a copy), or ``None`` when ``job_id`` is
+            unknown, hidden (``superseded``/``dismissed``), or the job is
+            not currently ``PARSING`` (guarded -- see ``mark_parsing``'s
+            docstring; the writer (Task 4) claims payload-ready jobs, and a
+            job that isn't ``PARSING`` here has no parsed payload to write).
+            ``started_at`` is left untouched: it was already stamped by
+            ``mark_parsing`` and keeps measuring the job's total active time
+            (parse + write combined), matching the elapsed-time math
+            ``library_ingest_state.py``'s queue rows already do for a
+            finished job. Unknown ids never raise.
+        """
+        index = self._find_index(job_id)
+        if index is None:
+            return None
+        current = self._jobs[index]
+        if current.superseded or current.dismissed:
+            return None
+        if current.state != IngestJobState.PARSING:
+            return None
+        updated = replace(current, state=IngestJobState.WRITING)
+        self._jobs[index] = updated
+        self._notify_listeners()
+        return replace(updated)
+
+    def mark_running(self, job_id: str, *, detected_type: str = "") -> LibraryIngestJob | None:
+        """DEPRECATED single-call alias: drives ``QUEUED`` straight to ``WRITING``.
+
+        # TEMPORARY Task-4 removes this method (and every caller of it) once
+        # the parse-pool coordinator lands and calls ``mark_parsing``/
+        # ``mark_writing`` for real, at their own real pipeline stages.
+
+        Exists only so ``app.py``'s still-serial queue-runner
+        (``_run_library_ingest_queue``, pre-Task-4) keeps working unchanged
+        against the new two-stage state machine: that runner detects the
+        file type and then does parse-and-persist as one uninterrupted
+        synchronous call, so from its point of view there is still only one
+        "the job is now active" transition. Internally this is
+        ``mark_parsing`` immediately followed by ``mark_writing`` -- both
+        real transitions (each fires the listener once, so callers of this
+        alias observe two notifications, not one), landing the job in
+        ``WRITING`` (not ``PARSING``) for the whole time the old runner is
+        actually doing its (parse + write) work, since that runner has no
+        separate parse-complete moment to call ``mark_writing`` at.
+
+        Args:
+            job_id: The job to transition.
+            detected_type: The file type detected by the ingest seam;
+                forwarded to ``mark_parsing`` (see its docstring), which
+                stamps it on the job before ``mark_writing`` transitions it
+                onward. ``mark_writing`` itself takes no ``detected_type``.
+
+        Returns:
+            The updated job (a copy) in state ``WRITING``, or ``None`` when
+            ``job_id`` is unknown, hidden, or (per ``mark_parsing``'s new
+            guard) not currently ``QUEUED``. Unknown ids never raise.
+        """
+        parsing = self.mark_parsing(job_id, detected_type=detected_type)
+        if parsing is None:
+            return None
+        return self.mark_writing(job_id)
 
     def mark_done(self, job_id: str, *, media_id: int) -> LibraryIngestJob | None:
         """Transition a job to ``DONE`` and stamp ``finished_at``/``finished_at_wall``.
@@ -345,10 +446,14 @@ class LibraryIngestJobRegistry:
             unknown or hidden (``superseded``/``dismissed``). Unknown ids
             never raise.
 
-        No state-machine guard beyond the hidden check above: see
-        ``mark_running``'s docstring. The queue-runner is the sole intended
-        caller and only ever reaches this after a preceding
-        ``mark_running`` on the same job.
+        No state-machine guard: unlike ``mark_parsing``/``mark_writing``,
+        this unconditionally overwrites whatever state a *visible* job was
+        in (it does not check that it was ``WRITING`` first) -- matching the
+        old, unguarded ``mark_running`` this module used to have. The writer
+        (the exclusive thread worker; see ``app.py``) is the sole intended
+        caller and only ever reaches this after a preceding ``mark_writing``
+        on the same job (today, via the deprecated ``mark_running`` alias;
+        from Task 4 onward, via a real writer-claim call to ``mark_writing``).
         """
         index = self._find_index(job_id)
         if index is None:
@@ -386,11 +491,14 @@ class LibraryIngestJobRegistry:
             unknown or hidden (``superseded``/``dismissed``). Unknown ids
             never raise.
 
-        No state-machine guard beyond the hidden check above: see
-        ``mark_running``'s docstring. The queue-runner is the sole intended
-        caller, and reaches this from either ``running`` (a mid-ingest
-        exception) or, as the fast-fail path, directly from ``queued`` (an
-        error before ``mark_running`` was ever called).
+        No state-machine guard: same unconditional overwrite as
+        ``mark_done`` (see its docstring) -- ``mark_failed`` is reachable
+        from either ``PARSING`` (F3: a parse-pool worker's parse failed) or
+        ``WRITING`` (a DB-write exception), or, as the fast-fail path,
+        directly from ``QUEUED`` (an error -- e.g. an unsupported/
+        undetectable file type -- raised before the job ever reached
+        ``PARSING``). One job's failure is always caught locally by its
+        caller so it never kills a loop or strands a later queued job.
         """
         index = self._find_index(job_id)
         if index is None:
@@ -425,10 +533,10 @@ class LibraryIngestJobRegistry:
         (L3b AB wave, B1) The original failed job is marked ``superseded``
         -- it stays in the registry's internal history (so its data is not
         lost) but is filtered out of ``jobs()``/``counts()`` from this
-        point on, and every further ``mark_running``/``mark_done``/
-        ``mark_failed``/``requeue``/``dismiss`` call against its ``job_id``
-        becomes a safe no-op. A brand-new job with a brand-new ``job_id``
-        and fresh timestamps is appended, copying only the form fields
+        point on, and every further ``mark_parsing``/``mark_writing``/
+        ``mark_done``/``mark_failed``/``requeue``/``dismiss`` call against
+        its ``job_id`` becomes a safe no-op. A brand-new job with a
+        brand-new ``job_id`` and fresh timestamps is appended, copying only the form fields
         (``source_path``/``title``/``author``/``keywords``/
         ``perform_analysis``/``chunk_enabled``/``chunk_size``) -- so the
         canvas queue shows exactly ONE row per retried file, not two.
@@ -479,8 +587,9 @@ class LibraryIngestJobRegistry:
         marked ``dismissed`` (kept in the registry's internal history, like
         ``requeue``'s ``superseded`` marking, but filtered out of every
         public read from this point on) and every further
-        ``mark_running``/``mark_done``/``mark_failed``/``requeue``/
-        ``dismiss`` call against its ``job_id`` becomes a safe no-op.
+        ``mark_parsing``/``mark_writing``/``mark_done``/``mark_failed``/
+        ``requeue``/``dismiss`` call against its ``job_id`` becomes a safe
+        no-op.
 
         Args:
             job_id: The failed job to dismiss.
@@ -510,7 +619,7 @@ class LibraryIngestJobRegistry:
         way to garbage-collect the ``superseded``/``dismissed`` jobs that
         accumulate there over a long session (the registry is in-memory-only
         with no other eviction; see the module docstring's accepted v1
-        limits). Queued/running jobs are never touched.
+        limits). Queued/parsing/writing jobs are never touched.
 
         Returns:
             The number of jobs actually removed (0 when there was nothing
@@ -554,8 +663,8 @@ class LibraryIngestJobRegistry:
 
         Returns:
             A dict keyed by every ``IngestJobState`` value (``"queued"``,
-            ``"running"``, ``"done"``, ``"failed"``), always present even
-            when zero.
+            ``"parsing"``, ``"writing"``, ``"done"``, ``"failed"``), always
+            present even when zero.
         """
         counts = {state.value: 0 for state in IngestJobState}
         for job in self._jobs:

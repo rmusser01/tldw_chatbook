@@ -94,7 +94,15 @@ HOME_FLASHCARDS_DUE_ROW_ID = "home-flashcards-due"
 HOME_FLASHCARDS_DUE_STATUS_CATEGORY = "due"
 
 APPROVAL_STATUSES = frozenset({"approval_required", "pending_approval", "pending"})
-RUNNING_STATUSES = frozenset({"running", "queued", "active", "scheduled"})
+# "parsing"/"writing" (F3): the Library ingest job registry's two active
+# sub-states (replacing its old single "running" state -- see
+# IngestJobState in library_ingest_jobs.py) map into this same shared
+# "running" bucket, same as every other subsystem's "queued"/"active" here --
+# this set is generic across every HomeActiveWorkItem source (workflows,
+# watchlists, ACP, Library ingest, ...), not ingest-specific.
+RUNNING_STATUSES = frozenset(
+    {"running", "queued", "active", "scheduled", "parsing", "writing"}
+)
 PAUSED_STATUSES = frozenset({"paused"})
 FAILED_STATUSES = frozenset({"failed", "error", "errored", "cancelled", "canceled"})
 

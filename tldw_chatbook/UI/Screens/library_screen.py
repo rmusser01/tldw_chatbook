@@ -2783,8 +2783,10 @@ class LibraryScreen(BaseAppScreen):
         ``on_mount``, removed in ``on_unmount``. Per the registry's own
         contract (``LibraryIngestJobRegistry._notify_listeners``), this
         fires synchronously on the UI thread after every successful
-        ``submit``/``mark_running``/``mark_done``/``mark_failed``/
-        ``requeue`` -- from two different call shapes:
+        ``submit``/``mark_parsing``/``mark_writing``/``mark_done``/
+        ``mark_failed``/``requeue`` (F3; today, via the temporary
+        ``mark_running`` alias -- see its docstring in
+        ``library_ingest_jobs.py``) -- from two different call shapes:
 
         - **Synchronously inside a message handler.** The "Start ingest"
           and "Retry" button handlers call ``submit_library_ingest_job``/

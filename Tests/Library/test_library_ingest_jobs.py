@@ -46,16 +46,147 @@ def test_next_queued_returns_fifo_order_and_skips_non_queued() -> None:
     assert registry.next_queued() is None
 
 
-def test_mark_running_transitions_and_stamps_started_at() -> None:
+# --- F3: mark_parsing / mark_writing (PARSING/WRITING replace RUNNING) -----
+
+
+def test_mark_parsing_transitions_and_stamps_started_at() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+
+    parsing = registry.mark_parsing(job.job_id, detected_type="plaintext")
+
+    assert parsing.state == IngestJobState.PARSING
+    assert parsing.detected_type == "plaintext"
+    assert parsing.started_at is not None
+    assert parsing.started_at >= job.submitted_at
+
+
+def test_mark_parsing_defaults_detected_type_to_empty_string() -> None:
+    """The coordinator (Task 4) frequently calls this before the parse pool
+    has even started the job, so the type is often still unknown."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+
+    parsing = registry.mark_parsing(job.job_id)
+
+    assert parsing.detected_type == ""
+
+
+def test_mark_parsing_rejects_a_job_that_is_not_queued() -> None:
+    """(F3) Unlike the old, unguarded ``mark_running``, ``mark_parsing`` IS
+    guarded: with multiple jobs now able to be PARSING at once, silently
+    re-parsing an already-active or terminal job would be a coordinator bug
+    worth surfacing, not swallowing."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_parsing(job.job_id)
+
+    assert registry.mark_parsing(job.job_id) is None  # already PARSING
+
+    registry.mark_writing(job.job_id)
+    assert registry.mark_parsing(job.job_id) is None  # already WRITING
+
+    registry.mark_done(job.job_id, media_id=1)
+    assert registry.mark_parsing(job.job_id) is None  # terminal
+
+
+def test_mark_parsing_unknown_job_id_returns_none_without_raising() -> None:
+    registry = LibraryIngestJobRegistry()
+
+    assert registry.mark_parsing("ingest-job-999") is None
+
+
+def test_mark_writing_transitions_from_parsing() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    parsing = registry.mark_parsing(job.job_id, detected_type="plaintext")
+
+    writing = registry.mark_writing(job.job_id)
+
+    assert writing.state == IngestJobState.WRITING
+    # started_at is untouched by the PARSING -> WRITING transition -- it
+    # keeps measuring the job's total active time (parse + write combined).
+    assert writing.started_at == parsing.started_at
+    # detected_type persists across the transition too.
+    assert writing.detected_type == "plaintext"
+
+
+def test_mark_writing_rejects_a_job_that_is_not_parsing() -> None:
+    registry = LibraryIngestJobRegistry()
+    queued_job = registry.submit(source_path="/tmp/a.txt")
+    assert registry.mark_writing(queued_job.job_id) is None  # still QUEUED
+
+    writing_job = registry.submit(source_path="/tmp/b.txt")
+    registry.mark_parsing(writing_job.job_id)
+    registry.mark_writing(writing_job.job_id)
+    assert registry.mark_writing(writing_job.job_id) is None  # already WRITING
+
+    done_job = registry.submit(source_path="/tmp/c.txt")
+    registry.mark_parsing(done_job.job_id)
+    registry.mark_writing(done_job.job_id)
+    registry.mark_done(done_job.job_id, media_id=1)
+    assert registry.mark_writing(done_job.job_id) is None  # terminal
+
+
+def test_mark_writing_unknown_job_id_returns_none_without_raising() -> None:
+    registry = LibraryIngestJobRegistry()
+
+    assert registry.mark_writing("ingest-job-999") is None
+
+
+def test_mark_parsing_and_mark_writing_are_noop_for_a_superseded_job_id() -> None:
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+    failed = registry.mark_failed(job.job_id, error="boom")
+    registry.requeue(failed.job_id)
+
+    calls: list[int] = []
+    registry.add_listener(lambda: calls.append(1))
+
+    assert registry.mark_parsing(failed.job_id) is None
+    assert registry.mark_writing(failed.job_id) is None
+    assert calls == []
+
+
+# --- mark_running: DEPRECATED single-call alias -----------------------------
+# TEMPORARY Task-4 removes this whole section alongside the mark_running
+# alias itself once app.py's coordinator calls mark_parsing/mark_writing for
+# real (see library_ingest_jobs.py's mark_running docstring).
+
+
+def test_mark_running_alias_drives_queued_straight_to_writing() -> None:
     registry = LibraryIngestJobRegistry()
     job = registry.submit(source_path="/tmp/a.txt")
 
     running = registry.mark_running(job.job_id, detected_type="plaintext")
 
-    assert running.state == IngestJobState.RUNNING
+    assert running.state == IngestJobState.WRITING
     assert running.detected_type == "plaintext"
     assert running.started_at is not None
     assert running.started_at >= job.submitted_at
+
+
+def test_mark_running_alias_fires_the_listener_twice() -> None:
+    """Internally mark_parsing then mark_writing -- two real transitions,
+    each firing the listener once."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    calls: list[int] = []
+    registry.add_listener(lambda: calls.append(1))
+
+    registry.mark_running(job.job_id)
+
+    assert len(calls) == 2
+
+
+def test_mark_running_alias_rejects_a_job_that_is_not_queued() -> None:
+    """Inherits mark_parsing's QUEUED-only guard."""
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/a.txt")
+    registry.mark_running(job.job_id)
+
+    assert registry.mark_running(job.job_id) is None
 
 
 def test_mark_done_transitions_and_fills_media_id() -> None:
@@ -188,6 +319,8 @@ def test_unknown_job_id_returns_none_without_raising() -> None:
     registry = LibraryIngestJobRegistry()
 
     assert registry.mark_running("ingest-job-999") is None
+    assert registry.mark_parsing("ingest-job-999") is None
+    assert registry.mark_writing("ingest-job-999") is None
     assert registry.mark_done("ingest-job-999", media_id=1) is None
     assert registry.mark_failed("ingest-job-999", error="x") is None
     assert registry.requeue("ingest-job-999") is None
@@ -276,17 +409,28 @@ def test_counts_returns_per_state_counts() -> None:
     job1 = registry.submit(source_path="/tmp/a.txt")
     job2 = registry.submit(source_path="/tmp/b.txt")
     job3 = registry.submit(source_path="/tmp/c.txt")
-    registry.submit(source_path="/tmp/d.txt")
+    job4 = registry.submit(source_path="/tmp/d.txt")
+    registry.submit(source_path="/tmp/e.txt")
 
-    registry.mark_running(job1.job_id)
+    registry.mark_parsing(job1.job_id)
+    registry.mark_writing(job1.job_id)
     registry.mark_done(job1.job_id, media_id=1)
-    registry.mark_running(job2.job_id)
+    registry.mark_parsing(job2.job_id)
+    registry.mark_writing(job2.job_id)
     registry.mark_failed(job2.job_id, error="nope")
-    registry.mark_running(job3.job_id)
+    registry.mark_parsing(job3.job_id)
+    registry.mark_writing(job3.job_id)
+    registry.mark_parsing(job4.job_id)
 
     counts = registry.counts()
 
-    assert counts == {"queued": 1, "running": 1, "done": 1, "failed": 1}
+    assert counts == {
+        "queued": 1,
+        "parsing": 1,
+        "writing": 1,
+        "done": 1,
+        "failed": 1,
+    }
 
 
 def test_listener_fires_once_per_successful_mutation() -> None:
@@ -297,22 +441,25 @@ def test_listener_fires_once_per_successful_mutation() -> None:
     job = registry.submit(source_path="/tmp/a.txt")
     assert len(calls) == 1
 
-    registry.mark_running(job.job_id)
+    registry.mark_parsing(job.job_id)
     assert len(calls) == 2
 
-    registry.mark_done(job.job_id, media_id=1)
+    registry.mark_writing(job.job_id)
     assert len(calls) == 3
+
+    registry.mark_done(job.job_id, media_id=1)
+    assert len(calls) == 4
 
     # Unknown id -- no mutation, listener must not fire.
-    registry.mark_running("ingest-job-999")
-    assert len(calls) == 3
+    registry.mark_parsing("ingest-job-999")
+    assert len(calls) == 4
 
     failed_job = registry.submit(source_path="/tmp/b.txt")
-    assert len(calls) == 4
-    registry.mark_failed(failed_job.job_id, error="boom")
     assert len(calls) == 5
-    registry.requeue(failed_job.job_id)
+    registry.mark_failed(failed_job.job_id, error="boom")
     assert len(calls) == 6
+    registry.requeue(failed_job.job_id)
+    assert len(calls) == 7
 
 
 def test_listener_exception_is_swallowed_and_other_listeners_still_run() -> None:
@@ -514,10 +661,15 @@ def test_dismiss_fires_listener_once_and_not_when_it_is_a_noop() -> None:
 
 
 def test_clear_finished_removes_all_done_and_failed_returns_count() -> None:
+    """(F3 re-anchor) Both new active states, PARSING and WRITING, must
+    survive clear_finished untouched -- not just one of them."""
     registry = LibraryIngestJobRegistry()
     queued_job = registry.submit(source_path="/tmp/queued.txt")
-    running_job = registry.submit(source_path="/tmp/running.txt")
-    registry.mark_running(running_job.job_id)
+    parsing_job = registry.submit(source_path="/tmp/parsing.txt")
+    registry.mark_parsing(parsing_job.job_id)
+    writing_job = registry.submit(source_path="/tmp/writing.txt")
+    registry.mark_parsing(writing_job.job_id)
+    registry.mark_writing(writing_job.job_id)
     done_job = registry.submit(source_path="/tmp/done.txt")
     registry.mark_running(done_job.job_id)
     registry.mark_done(done_job.job_id, media_id=1)
@@ -529,12 +681,13 @@ def test_clear_finished_removes_all_done_and_failed_returns_count() -> None:
 
     assert removed == 2
     job_ids = [j.job_id for j in registry.jobs()]
-    assert set(job_ids) == {queued_job.job_id, running_job.job_id}
+    assert set(job_ids) == {queued_job.job_id, parsing_job.job_id, writing_job.job_id}
     counts = registry.counts()
     assert counts["done"] == 0
     assert counts["failed"] == 0
     assert counts["queued"] == 1
-    assert counts["running"] == 1
+    assert counts["parsing"] == 1
+    assert counts["writing"] == 1
 
 
 def test_clear_finished_is_a_noop_when_nothing_to_clear() -> None:

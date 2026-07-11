@@ -1,9 +1,11 @@
 from tldw_chatbook.Home.dashboard_state import (
     HOME_FLASHCARDS_DUE_ROW_ID,
+    RUNNING_RUN_STATUS,
     HomeActiveWorkItem,
     HomeDashboardInput,
     build_home_controls,
     build_home_triage_state,
+    categorize_run_status,
     choose_home_selected_item,
     choose_next_best_action,
     summarize_home_dashboard,
@@ -306,6 +308,51 @@ def test_dashboard_item_statuses_gate_matching_controls():
     assert "home-open-details" in control_ids
     assert "home-pause" not in control_ids
     assert "home-open-in-console" not in control_ids
+
+
+# --- F3: Library ingest jobs' "parsing"/"writing" status literals map into
+# the shared Running category, same as any other subsystem's "running". ----
+
+
+def test_categorize_run_status_maps_parsing_and_writing_into_running():
+    """(F3) The Library ingest job registry's PARSING/WRITING states
+    (replacing the old single RUNNING state) report their own literal
+    status strings through HomeActiveWorkItem.status -- this generic,
+    subsystem-agnostic categorizer must still bucket them as "running" so
+    they land in Home's Running rail/feed and count toward
+    running_run_count, exactly like every other subsystem's "running"/
+    "queued"/"active"/"scheduled" items already do."""
+    assert categorize_run_status("parsing") == RUNNING_RUN_STATUS
+    assert categorize_run_status("writing") == RUNNING_RUN_STATUS
+
+
+def test_dashboard_counts_parsing_and_writing_ingest_items_as_running():
+    dashboard_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:1",
+                title="report.pdf",
+                source="Library",
+                status="parsing",
+                detail_route="library",
+            ),
+            HomeActiveWorkItem(
+                item_id="local:ingest:2",
+                title="notes.txt",
+                source="Library",
+                status="writing",
+                detail_route="library",
+            ),
+        ),
+    )
+
+    triage = build_home_triage_state(dashboard_input)
+
+    running_section = next(s for s in triage.sections if s.section_id == "running")
+    assert running_section.count == 2
+    assert {row.title for row in running_section.rows} == {"report.pdf", "notes.txt"}
 
 
 from datetime import datetime, timezone

@@ -107,10 +107,16 @@ async def test_two_submissions_run_serially_fifo(tmp_path: Path) -> None:
         job2 = app.submit_library_ingest_job(source_path=str(source2))
         assert job1.job_id != job2.job_id
 
-        max_running_seen = 0
+        # (F3 re-anchor) The app's queue-runner still drives every job
+        # through the temporary mark_running alias (Task 3), which lands a
+        # job straight in WRITING (see library_ingest_jobs.py's mark_running
+        # docstring) -- there is no observable PARSING moment under the
+        # still-serial runner, so "writing" is the counts() key that stands
+        # in for the old "running" here.
+        max_writing_seen = 0
         for _ in range(_POLL_ATTEMPTS):
             counts = app.library_ingest_jobs.counts()
-            max_running_seen = max(max_running_seen, counts["running"])
+            max_writing_seen = max(max_writing_seen, counts["writing"])
             jobs_by_id = {j.job_id: j for j in app.library_ingest_jobs.jobs()}
             if (
                 jobs_by_id[job1.job_id].state == IngestJobState.DONE
@@ -123,7 +129,7 @@ async def test_two_submissions_run_serially_fifo(tmp_path: Path) -> None:
                 f"jobs never both completed: {app.library_ingest_jobs.jobs()}"
             )
 
-        assert max_running_seen <= 1, "two jobs were RUNNING simultaneously"
+        assert max_writing_seen <= 1, "two jobs were WRITING (running) simultaneously"
 
         await _wait_for_runner_idle(app, pilot)
 
@@ -276,8 +282,9 @@ async def test_listener_fires_on_every_state_change(tmp_path: Path) -> None:
         await _wait_for_job_state(app, pilot, job.job_id, IngestJobState.DONE)
         await _wait_for_runner_idle(app, pilot)
 
-        # submit -> mark_running -> mark_done == 3 notifications.
-        assert len(calls) == 3
+        # (F3 re-anchor) submit -> mark_running(alias: mark_parsing +
+        # mark_writing, two notifications) -> mark_done == 4 notifications.
+        assert len(calls) == 4
 
 
 # --- Task 2 review fix regression tests -------------------------------------
