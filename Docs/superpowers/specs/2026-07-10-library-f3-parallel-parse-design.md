@@ -15,15 +15,17 @@ A two-stage pipeline replacing the parse half of the serial loop:
 
 A UI-thread **coordinator** (in `LibraryIngestQueueMixin`) owns the pool, submits up to N queued jobs, receives completions (marshaled to the UI thread), stores payloads, and wakes the writer. The registry stays UI-thread-only.
 
+The pool is a `multiprocessing.get_context("spawn").Pool`, NOT a `concurrent.futures.ProcessPoolExecutor`: the executor's atexit hook joins running tasks, so an in-flight long transcription would block app exit for its full duration; `Pool` has a public `terminate()` for the quit path. Jobs are submitted with `apply_async(callback=..., error_callback=...)`; callbacks run on the pool's parent-side result-handler thread and marshal into the UI thread via `call_from_thread`.
+
 ## Components
 
 ### Parse function (spawn-safe, top-level)
-`parse_local_file_for_ingest(path, options) -> dict` in `Local_Ingestion/local_file_ingestion.py`, extracted from the pre-DB half of `ingest_local_file` (everything before the `add_media_with_keywords` call). Returns a picklable payload (content, title, media type, metadata, keywords, analysis inputs). The worker wrapper catches ALL exceptions and returns a structured result `{ok: bool, payload | error: str, permanent: bool}` — never raises across the process boundary (no exception-pickling surprises), and permanent-vs-retryable classification (F1b M4: unsupported type, missing file) happens inside the worker where the real exception type is available. `ingest_local_file` becomes parse + persist composed, so `batch_ingest_files`, `quick_ingest`, and the server path are unchanged.
+`parse_local_file_for_ingest(path, options) -> dict`, extracted from the pre-DB half of `ingest_local_file` (everything before the `add_media_with_keywords` call). The pool's entry point lives in a NEW dedicated light module `Local_Ingestion/ingest_parse_worker.py` whose module scope imports nothing heavy — every parsing import (including `local_file_ingestion` itself) is deferred into the function body. Measured cost of importing `local_file_ingestion` is ~6.8s / ~6,000 modules: each worker process pays that once, on its FIRST parse (documented, amortized across the worker's lifetime), while pool spawn itself stays fast. When `perform_analysis` is enabled, analysis (LLM summarization) runs inside the per-type processors — i.e., IN the worker process, which therefore makes network calls using API keys loaded from the same config file; this is existing behavior relocated, not new capability. Returns a picklable payload (content, title, media type, metadata, keywords, analysis inputs). The worker wrapper catches ALL exceptions and returns a structured result `{ok: bool, payload | error: str, permanent: bool}` — never raises across the process boundary (no exception-pickling surprises), and permanent-vs-retryable classification (F1b M4: unsupported type, missing file) happens inside the worker where the real exception type is available. `ingest_local_file` becomes parse + persist composed, so `batch_ingest_files`, `quick_ingest`, and the server path are unchanged.
 
 Heavy optional dependencies (PDF, transcription models) import lazily inside worker processes and are reused for that worker's lifetime. Spawn-start-method safe: plain module-level function, plain-data args.
 
 ### Registry states
-`QUEUED → PARSING → WRITING → DONE / FAILED`. `RUNNING` is renamed `WRITING`; `PARSING` is new. New transitions `mark_parsing(job_id)` and `mark_writing(job_id)` follow the existing frozen-dataclass replace pattern; `mark_failed(error, permanent)`, retry/supersede/dismiss, `finished_at_wall`, and the listener contract are unchanged. Queue rows render "parsing" / "writing"; the Home adapter maps both into the Running feed.
+`QUEUED → PARSING → WRITING → DONE / FAILED`. `RUNNING` is renamed `WRITING`; `PARSING` is new. The `"running"` status literal is consumed by the Home adapter (`_HOME_INGEST_JOB_ACTIVE_STATES`), dashboard status categories, queue-row copy, and many test asserts — the implementation plan must sweep every consumer of the literal, not just the enum. New transitions `mark_parsing(job_id)` and `mark_writing(job_id)` follow the existing frozen-dataclass replace pattern; `mark_failed(error, permanent)`, retry/supersede/dismiss, `finished_at_wall`, and the listener contract are unchanged. Queue rows render "parsing" / "writing"; the Home adapter maps both into the Running feed.
 
 ### Coordinator (UI thread, in `LibraryIngestQueueMixin`)
 - Owns the pool: created lazily on first submission; `max_workers` from config `library.ingest_parse_workers` (1-arg `get_cli_setting` fallback, same bug-class guard as rail state), default `min(3, max(1, os.cpu_count() - 1))`.
@@ -35,8 +37,8 @@ Heavy optional dependencies (PDF, transcription models) import lazily inside wor
 The exclusive thread worker's loop claims the oldest payload-ready job in submission order (atomic claim-or-release via `call_from_thread`, exactly today's discipline — a fast small file may finish parsing before an older large one, but writes still happen in submission order among ready payloads), performs the DB write, resolves media_id (including the existing `get_media_by_url` re-ingest fallback), and marks DONE/FAILED. Write failures are retryable by default.
 
 ### Shutdown / failure containment
-- App exit: `pool.shutdown(cancel_futures=True)`. The registry is in-memory (no persistence — a logged, separate follow-up), so cancelled parses need no recovery.
-- Worker-process death (e.g. OOM during transcription): the affected job(s) fail with a broken-pool error message (retryable); the coordinator drops the broken pool and lazily rebuilds on the next submission.
+- App exit: the writer thread joins as today (the in-flight DB write completes — quit-contract parity), then `pool.terminate()` kills parse workers immediately. Abandoned in-flight parses are the same loss class as QUEUED jobs that are never claimed, which the existing contract already accepts (the registry is in-memory; persistence is a logged, separate follow-up). The coordinator sets a shutdown flag first and ignores any late pool callbacks after it (no `call_from_thread` into a closing app).
+- Worker-process death (e.g. OOM during transcription): ALL in-flight parse jobs fail with a broken-pool error message (retryable — the pool cannot attribute the death to one job); the coordinator drops the broken pool and lazily rebuilds on the next submission. Retry recovers the innocent casualties.
 
 ## Config
 
@@ -56,4 +58,4 @@ Queue rows gain the "parsing" state label (counts line e.g. "2 parsing · 1 writ
 
 ## Out of scope (logged follow-ups)
 
-Persistent job history across restarts; URL/web ingest; a heavy-lane cap for concurrent transcriptions (revisit if RAM pressure shows up in practice); exposing worker count in the Settings UI.
+Persistent job history across restarts; URL/web ingest; a heavy-lane cap for concurrent transcriptions (revisit if RAM pressure shows up in practice); exposing worker count in the Settings UI; pre-chunking in parse workers (today `add_media_with_keywords` is called with `chunks=None`, leaving chunk status "pending" for downstream processing — the writer stage is already light, and pre-chunking would change behavior).
