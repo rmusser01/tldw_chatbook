@@ -672,6 +672,25 @@ def test_current_generation_sentinel_failure_retires_idle_pool(tmp_path: Path) -
     assert pool.terminated is True
 
 
+def test_ensure_pool_initializes_generation_state_for_existing_host(tmp_path: Path) -> None:
+    db = _make_db(tmp_path)
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(db, pool_factory=lambda: pool, worker_count=1)
+    del app._ingest_parse_pool_generation
+    del app._ingest_parse_jobs_by_generation
+    del app._ingest_parse_pool_stop_event
+
+    assert app._ensure_ingest_parse_pool() is pool
+    assert app._ingest_parse_pool_generation == 1
+    assert app._ingest_parse_jobs_by_generation == {1: set()}
+    assert isinstance(app._ingest_parse_pool_stop_event, threading.Event)
+
+    teardown = app._shutdown_ingest_parse_pool()
+    assert teardown is not None
+    teardown.join(timeout=_FAKE_POOL_JOIN_TIMEOUT)
+    assert not teardown.is_alive()
+
+
 @pytest.mark.asyncio
 async def test_submit_cap_backpressure_second_job_stays_queued_until_first_completes(
     tmp_path: Path,

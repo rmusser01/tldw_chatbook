@@ -1445,9 +1445,12 @@ class LibraryIngestQueueMixin:
                 self._terminate_ingest_parse_pool_off_thread(pool)
                 raise
 
-            generation = self._ingest_parse_pool_generation + 1
+            generation = getattr(self, "_ingest_parse_pool_generation", 0) + 1
             stop_event = threading.Event()
             self._ingest_parse_pool_generation = generation
+            self._ingest_parse_jobs_by_generation = getattr(
+                self, "_ingest_parse_jobs_by_generation", {}
+            )
             self._ingest_parse_jobs_by_generation[generation] = set()
             self._ingest_parse_pool_stop_event = stop_event
             self._ingest_parse_pool = pool
