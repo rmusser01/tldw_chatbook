@@ -23,6 +23,10 @@ that a spawned process can run ``run_parse_job``.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import textwrap
 import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -37,6 +41,8 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     LibraryIngestJob,
     LibraryIngestJobRegistry,
 )
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Bounded polling: never wait unboundedly for a background worker.
 _POLL_ATTEMPTS = 300
@@ -739,6 +745,248 @@ async def test_broken_pool_spares_payload_ready_job_and_writer_drains_it(
         assert db.get_media_by_id(done_a.media_id) is not None
 
         assert app._ingest_parse_pool is None
+        await _wait_for_runner_idle(app, pilot)
+
+
+# --- Live-QA crash fix: Textual's fileno-less stderr vs. the resource tracker
+#
+# Served-TUI QA found the app dying on the FIRST ingest submission: under
+# Textual (app mode / textual-serve), `sys.stderr` is replaced by a capture
+# object whose `fileno()` returns -1 WITHOUT raising. CPython 3.12's
+# `multiprocessing.resource_tracker._launch` appends `sys.stderr.fileno()`
+# to the fds it passes to `util.spawnv_passfds` (its `except Exception`
+# guard never fires because -1 is returned, not raised), and
+# `spawnv_passfds` rejects the list with `ValueError: bad value(s) in
+# fds_to_keep` -- so the very first `get_context("spawn").Pool(...)` (which
+# ensure-runs the process-global resource tracker) exploded, propagated up
+# the top-up path on the UI thread, and crashed the app.
+
+
+def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:
+    """Run `code` in a FRESH interpreter (mirrors the Task 2 import-weight
+    helper). Fresh matters here: the multiprocessing resource tracker is
+    process-global and starts exactly once, so only a brand-new process is
+    guaranteed to exercise its launch path (an earlier in-process test that
+    touched multiprocessing would have already started it, silently turning
+    the repro into a no-op)."""
+    data_home = tmp_path / "data"
+    config_home = tmp_path / "config"
+    home = tmp_path / "home"
+    for path in (data_home, config_home, home):
+        path.mkdir(parents=True, exist_ok=True)
+
+    env = {
+        **os.environ,
+        "TLDW_TEST_MODE": "1",
+        "XDG_DATA_HOME": str(data_home),
+        "XDG_CONFIG_HOME": str(config_home),
+        "HOME": str(home),
+        "PYTHONPATH": str(_REPO_ROOT),
+    }
+    env.pop("PYTEST_CURRENT_TEST", None)
+
+    return subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(code)],
+        cwd=_REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=180,
+    )
+
+
+class _TextualLikeStderr:
+    """Mimics Textual's stderr capture object: ``fileno()`` returns -1
+    WITHOUT raising (the exact shape that defeats the resource tracker's
+    ``except Exception`` guard)."""
+
+    def fileno(self) -> int:
+        return -1
+
+    def write(self, *args: Any, **kwargs: Any) -> int:
+        return 0
+
+    def flush(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return False
+
+
+@pytest.mark.integration
+def test_create_pool_survives_filenoless_stderr_real_spawn(tmp_path: Path) -> None:
+    """Real repro, fresh interpreter: with ``sys.stderr`` swapped for a
+    Textual-shaped capture object (fileno() == -1) BEFORE any
+    multiprocessing use, the real ``_create_ingest_parse_pool`` must still
+    construct a working spawn Pool (this is where the resource tracker
+    launches) and round-trip a trivial ``apply_async``. RED pre-fix: the
+    subprocess died with ``ValueError: bad value(s) in fds_to_keep``."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+        import sys
+
+
+        class _TextualLikeStderr:
+            def fileno(self):
+                return -1
+
+            def write(self, *args, **kwargs):
+                return 0
+
+            def flush(self):
+                pass
+
+            def isatty(self):
+                return False
+
+
+        if __name__ == "__main__":
+            sys.stderr = _TextualLikeStderr()
+
+            from tldw_chatbook.app import LibraryIngestQueueMixin
+
+            mixin = LibraryIngestQueueMixin()
+            # Instance shadow: one worker keeps the spawn cost bounded.
+            mixin._ingest_parse_worker_count = lambda: 1
+
+            pool = mixin._create_ingest_parse_pool()
+            try:
+                result = pool.apply_async(pow, (2, 3)).get(timeout=120)
+                assert result == 8, result
+            finally:
+                pool.terminate()
+                pool.join()
+            print("POOL_OK")
+        """,
+    )
+    assert result.returncode == 0, (
+        f"pool creation under fileno-less stderr failed:\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+    )
+    assert "POOL_OK" in result.stdout
+
+
+def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In-process anchor for the helper's swap behavior (the raw repro only
+    triggers in a fresh interpreter -- see ``_run_isolated_python``'s
+    docstring): with ``sys.stderr``'s fileno() invalid, the real mixin
+    ``_create_ingest_parse_pool`` must have a valid, fd-backed stderr in
+    effect AT POOL-CONSTRUCTION TIME (the resource tracker snapshots
+    ``sys.stderr.fileno()`` during construction). Pool construction itself
+    is faked (recording, not spawning) so this stays fast and
+    deterministic."""
+    import tldw_chatbook.app as app_module
+
+    recorded: dict[str, int] = {}
+
+    class _RecordingPool:
+        def __init__(self, processes=None):
+            try:
+                recorded["fd_during_construction"] = sys.stderr.fileno()
+            except Exception:
+                recorded["fd_during_construction"] = -1
+
+    class _RecordingContext:
+        def Pool(self, processes=None):
+            return _RecordingPool(processes)
+
+    class _RecordingMultiprocessing:
+        @staticmethod
+        def get_context(method: str):
+            assert method == "spawn"
+            return _RecordingContext()
+
+    monkeypatch.setattr(app_module, "multiprocessing", _RecordingMultiprocessing())
+    monkeypatch.setattr(sys, "stderr", _TextualLikeStderr())
+
+    mixin = LibraryIngestQueueMixin()
+    mixin._ingest_parse_worker_count = lambda: 1  # instance shadow: skip config read
+    pool = mixin._create_ingest_parse_pool()
+
+    assert isinstance(pool, _RecordingPool)
+    assert recorded["fd_during_construction"] >= 0
+
+
+def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Control: with a valid ``sys.stderr`` fileno, no redirect happens --
+    the stream object seen during construction is the ambient one."""
+    import tldw_chatbook.app as app_module
+
+    recorded: dict[str, Any] = {}
+
+    class _RecordingPool:
+        def __init__(self, processes=None):
+            recorded["stderr_during_construction"] = sys.stderr
+
+    class _RecordingContext:
+        def Pool(self, processes=None):
+            return _RecordingPool(processes)
+
+    class _RecordingMultiprocessing:
+        @staticmethod
+        def get_context(method: str):
+            assert method == "spawn"
+            return _RecordingContext()
+
+    monkeypatch.setattr(app_module, "multiprocessing", _RecordingMultiprocessing())
+
+    ambient_stderr = sys.stderr
+    assert ambient_stderr.fileno() >= 0  # pytest's capture stream is fd-backed
+
+    mixin = LibraryIngestQueueMixin()
+    mixin._ingest_parse_worker_count = lambda: 1
+    mixin._create_ingest_parse_pool()
+
+    assert recorded["stderr_during_construction"] is ambient_stderr
+
+
+@pytest.mark.asyncio
+async def test_pool_creation_failure_fails_job_retryable_and_app_survives(
+    tmp_path: Path,
+) -> None:
+    """(Containment) Pool creation raising must never crash the app: the
+    triggering job lands FAILED retryable with the pool message, no
+    exception escapes ``submit_library_ingest_job``, ``_ingest_parse_pool``
+    stays ``None``, and a subsequent submit retries pool creation (and
+    succeeds once the pool can be built again)."""
+    db = _make_db(tmp_path)
+    source1 = _write_text_file(tmp_path, "note-1.txt", "First body.")
+    source2 = _write_text_file(tmp_path, "note-2.txt", "Second body.")
+
+    boom = {"raise": True}
+
+    def _flaky_factory():
+        if boom["raise"]:
+            raise RuntimeError("spawn machinery exploded")
+        return _FakeIngestParsePool()
+
+    app = _IngestRunnerHarness(db, pool_factory=_flaky_factory)
+
+    async with app.run_test() as pilot:
+        # Must not raise, despite pool creation exploding underneath.
+        job1 = app.submit_library_ingest_job(source_path=str(source1))
+
+        failed = await _wait_for_job_state(app, pilot, job1.job_id, IngestJobState.FAILED)
+        assert failed.permanent is False
+        assert failed.error.startswith("Parse pool could not start:")
+        assert "spawn machinery exploded" in failed.error
+        assert app._ingest_parse_pool is None
+        assert app._pool_create_count == 1
+
+        # The failure is retryable through the normal seam, and the next
+        # submission retries pool creation from scratch.
+        boom["raise"] = False
+        job2 = app.submit_library_ingest_job(source_path=str(source2))
+        done2 = await _wait_for_job_state(app, pilot, job2.job_id, IngestJobState.DONE)
+        assert done2.media_id is not None
+        assert app._pool_create_count == 2
+
         await _wait_for_runner_idle(app, pilot)
 
 

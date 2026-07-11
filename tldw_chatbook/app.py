@@ -17,6 +17,7 @@ if 'TEXTUAL_LOG' not in os.environ:
 
 # Imports
 import concurrent.futures
+import contextlib
 import functools
 import inspect
 import logging
@@ -1178,6 +1179,62 @@ def _sanitize_library_ingest_error(exc: Exception) -> str:
     return sanitized if sanitized else exc.__class__.__name__[:200]
 
 
+def _stream_fileno(stream: Any) -> int:
+    """Best-effort file descriptor for a possibly-fake stream object.
+
+    Args:
+        stream: Anything shaped like a text stream (may be Textual's
+            stderr capture object, a pytest capture stream, ``None``, ...).
+
+    Returns:
+        The stream's OS-level fd when ``fileno()`` returns a real one;
+        ``-1`` when the stream is missing/``None``, ``fileno()`` raises,
+        or -- the case that actually bit in production -- ``fileno()``
+        returns a non-fd sentinel like ``-1`` without raising (Textual's
+        capture object does exactly that).
+    """
+    try:
+        fd = stream.fileno()
+    except Exception:
+        return -1
+    return fd if isinstance(fd, int) and fd >= 0 else -1
+
+
+# Keep-alive singleton for `_ingest_pool_real_stderr`'s devnull fallback.
+# Module-level on purpose: the multiprocessing resource tracker inherits this
+# fd ONCE at its (process-global, once-per-process) launch and keeps writing
+# to it for the rest of the process's life -- if the handle were a local that
+# got garbage-collected, the OS could reuse the fd number and the tracker's
+# error output would silently corrupt an unrelated file.
+_INGEST_POOL_STDERR_FALLBACK = None
+
+
+def _ingest_pool_real_stderr():
+    """Return a stream with a REAL file descriptor to stand in for stderr.
+
+    Used by ``LibraryIngestQueueMixin._create_ingest_parse_pool`` when
+    ``sys.stderr`` has no usable fd (Textual app mode / textual-serve
+    replace it with a capture object whose ``fileno()`` returns ``-1``
+    without raising -- see that method's docstring for the crash this
+    caused). Preference order:
+
+    1. ``sys.__stderr__`` -- the process's ORIGINAL stderr, still fd-backed
+       even after Textual swaps ``sys.stderr`` (Textual redirects the
+       high-level name, not the OS-level fd).
+    2. A process-lifetime ``os.devnull`` handle (see
+       ``_INGEST_POOL_STDERR_FALLBACK``'s comment for why it must stay
+       referenced) -- ``sys.__stderr__`` can itself be ``None``/fd-less in
+       exotic embed/frozen environments.
+    """
+    real = sys.__stderr__
+    if real is not None and _stream_fileno(real) >= 0:
+        return real
+    global _INGEST_POOL_STDERR_FALLBACK
+    if _INGEST_POOL_STDERR_FALLBACK is None:
+        _INGEST_POOL_STDERR_FALLBACK = open(os.devnull, "w")
+    return _INGEST_POOL_STDERR_FALLBACK
+
+
 class LibraryIngestQueueMixin:
     """Library ingest job submission seam + parallel-parse coordinator + writer.
 
@@ -1355,10 +1412,31 @@ class LibraryIngestQueueMixin:
         joins running tasks, so an in-flight long transcription would block
         app exit for its full duration. ``Pool`` has a public
         ``terminate()`` the quit path relies on instead.
+
+        Textual stderr workaround (live-QA crash fix): under Textual (app
+        mode / textual-serve), ``sys.stderr`` is replaced by a capture
+        object whose ``fileno()`` returns ``-1`` WITHOUT raising. CPython
+        3.12's ``multiprocessing.resource_tracker._launch`` appends
+        ``sys.stderr.fileno()`` to the fds it hands
+        ``util.spawnv_passfds`` (its ``except Exception`` guard never
+        fires, since ``-1`` is returned rather than raised), and
+        ``spawnv_passfds`` rejects the list with ``ValueError: bad
+        value(s) in fds_to_keep`` -- so the very first Pool construction
+        (which ensure-runs the process-global resource tracker) crashed
+        the app on its first ingest submission. When ``sys.stderr`` has no
+        usable fd, the Pool is constructed under
+        ``contextlib.redirect_stderr`` pointing at a genuinely fd-backed
+        stream (``_ingest_pool_real_stderr``: ``sys.__stderr__``, else a
+        kept-alive devnull handle). The tracker launches at most once per
+        process, so covering construction is sufficient -- and applying
+        the redirect on every (re)construction is harmless.
         """
-        return multiprocessing.get_context("spawn").Pool(
-            processes=self._ingest_parse_worker_count()
-        )
+        ctx = multiprocessing.get_context("spawn")
+        processes = self._ingest_parse_worker_count()
+        if _stream_fileno(sys.stderr) >= 0:
+            return ctx.Pool(processes=processes)
+        with contextlib.redirect_stderr(_ingest_pool_real_stderr()):
+            return ctx.Pool(processes=processes)
 
     def _ensure_ingest_parse_pool(self):
         """Return the current parse pool, lazily creating one if needed.
@@ -1450,7 +1528,37 @@ class LibraryIngestQueueMixin:
             options = self._ingest_job_options(claimed)
             job_id = claimed.job_id
             source_path = claimed.source_path
-            pool = self._ensure_ingest_parse_pool()
+            try:
+                pool = self._ensure_ingest_parse_pool()
+            except Exception as exc:
+                # CONTAINMENT (live-QA crash fix): pool CREATION itself
+                # failed -- e.g. the spawn machinery raising at
+                # construction time (the fileno-less-stderr resource-
+                # tracker crash `_create_ingest_parse_pool` now works
+                # around, or any environment-specific successor). This is
+                # a UI-thread call reached synchronously from
+                # submit/retry, so letting it propagate would crash the
+                # app on the user's submission. Same containment
+                # philosophy as `_handle_broken_ingest_parse_pool`, but
+                # scoped to just the triggering job: no pool ever existed
+                # here, so no OTHER job's parse was riding on it -- fail
+                # this one retryable, keep the pool slot empty (the next
+                # submit/retry attempts creation from scratch), and
+                # return cleanly.
+                logger.opt(exception=True).error(
+                    f"Library ingest parse pool could not be created "
+                    f"(job_id={job_id}, source={source_path})."
+                )
+                self._ingest_parse_pool = None
+                self.library_ingest_jobs.mark_failed(
+                    job_id,
+                    error=_sanitize_library_ingest_error_text(
+                        f"Parse pool could not start: {exc}"
+                    )
+                    or "Parse pool could not start.",
+                    permanent=False,
+                )
+                return
             try:
                 pool.apply_async(
                     run_parse_job,
