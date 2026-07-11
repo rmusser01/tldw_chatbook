@@ -493,6 +493,61 @@ async def test_screen_navigation_always_constructs_fresh_instances(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_navigation_flushes_outgoing_screen_and_honors_veto(monkeypatch):
+    """Navigating away must flush the outgoing screen's pending work first.
+
+    Screens are no longer cached, so anything not persisted before the
+    switch is destroyed with the old instance (e.g. a Library note edit
+    whose debounced autosave has not fired yet). The app awaits the
+    outgoing screen's ``flush_pending_work()`` and aborts the switch when
+    it returns False (unresolved save conflict needs the user).
+    """
+    app = _build_test_app()
+
+    class FakeTargetScreen:
+        screen_name = "chat"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    def fake_resolve(target):
+        return "chat", "chat", FakeTargetScreen
+
+    switched_screens = []
+
+    async def fake_switch_screen(screen):
+        switched_screens.append(screen)
+
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
+    monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
+
+    flush_results = {"value": False}
+    flush_calls = []
+
+    class FakeOutgoingScreen:
+        screen_name = "library"
+
+        async def flush_pending_work(self):
+            flush_calls.append(True)
+            return flush_results["value"]
+
+    outgoing = FakeOutgoingScreen()
+    # The handler only touches self.screen for the outgoing flush/save-state
+    # steps, so it is callable without a running app once switch_screen is
+    # stubbed -- patching the screen property this way would break the live
+    # compositor under run_test.
+    monkeypatch.setattr(type(app), "screen", property(lambda self: outgoing))
+
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+    assert flush_calls, "outgoing screen's flush_pending_work was never awaited"
+    assert switched_screens == [], "veto (False) must abort the switch"
+
+    flush_results["value"] = True
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+    assert len(switched_screens) == 1, "flush returning True must allow the switch"
+
+
+@pytest.mark.asyncio
 async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
     """Live-repro regression lock for the rapid-tab-switch freeze.
 

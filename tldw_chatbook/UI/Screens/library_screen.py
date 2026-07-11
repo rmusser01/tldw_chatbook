@@ -608,8 +608,8 @@ class LibraryScreen(BaseAppScreen):
             counts_fn = getattr(registry, "counts", None)
             if callable(counts_fn):
                 # Seed from whatever the registry already knows so a
-                # re-mounted (cached) screen instance doesn't treat jobs
-                # that finished during a previous mount as a brand-new
+                # freshly composed screen doesn't treat jobs that finished
+                # during a previous Library visit as a brand-new
                 # done-transition and fire a redundant snapshot refresh.
                 self._library_ingest_last_done_count = counts_fn().get("done", 0)
             registry.add_listener(self._handle_library_ingest_registry_changed)
@@ -640,14 +640,11 @@ class LibraryScreen(BaseAppScreen):
         """Unregister the ingest registry listener registered in ``on_mount``.
 
         ``on_unmount`` (not ``on_screen_suspend``) is the correct pairing:
-        a Library screen fetched from ``switch_screen``'s replace can come
-        back later as the *same cached Python instance*
-        (``_get_or_create_navigation_screen``), which re-runs ``on_mount``
-        on every re-entry -- so listener add/remove must be symmetric with
-        that same mount/unmount cycle, not the temporary suspend/resume
-        pair a screen gets while merely covered by another screen on the
-        stack (suspend does not tear down and re-mount this screen, so
-        pairing removal with it would silently stop live updates while
+        listener add/remove must be symmetric with the mount/unmount
+        cycle, not the temporary suspend/resume pair a screen gets while
+        merely covered by another screen on the stack (suspend does not
+        tear down this screen, so pairing removal with it would silently
+        stop live updates while
         still fully composed and, per the plan brief, still able to
         resume). The registry itself is a plain in-memory object owned by
         the app, not this screen, and can keep firing mutations long after
@@ -663,6 +660,23 @@ class LibraryScreen(BaseAppScreen):
         registry = self._library_ingest_registry()
         if registry is not None:
             registry.remove_listener(self._handle_library_ingest_registry_changed)
+
+    async def flush_pending_work(self) -> bool:
+        """Persist pending note edits before the app navigates away.
+
+        The app awaits this from ``handle_screen_navigation`` before
+        discarding this screen instance -- without it, a note edit whose
+        debounced autosave has not fired yet (the timer re-arms on every
+        keystroke) would be destroyed with the screen when the user switches
+        tabs mid-edit.
+
+        Returns:
+            False when the flush surfaced an unresolved save conflict (the
+            navigation is vetoed so the user can resolve the banner),
+            True otherwise.
+        """
+        await self._flush_library_note_save()
+        return self._library_note_autosave_state != "conflict"
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Apply route context supplied by shell navigation.
@@ -685,10 +699,9 @@ class LibraryScreen(BaseAppScreen):
         if not isinstance(context, Mapping):
             return
         if self.is_mounted and self._library_note_dirty:
-            # A cached, already-mounted Library screen can still hold a dirty
-            # note editor: _get_or_create_navigation_screen hands back the same
-            # instance, so a palette "new note"/note_id deep link fired mid-edit
-            # runs this on a live editor. Applying it synchronously would
+            # Defense in depth for direct callers: navigation always
+            # composes a fresh (unmounted) screen, but a future palette
+            # shortcut could invoke this on a live, mounted editor mid-edit. Applying it synchronously would
             # recompose the canvas out from under the pending debounced
             # autosave, destroying the #library-note-body it reads and dropping
             # the last edits. Flush first (awaited, off this sync nav path),
@@ -761,8 +774,8 @@ class LibraryScreen(BaseAppScreen):
             # flush of a dirty editor is handled upstream by
             # apply_navigation_context's mounted dirty-editor branch; here we
             # only apply the selection the recompose reads. Reset the note
-            # editor state FIRST (a cached, already-mounted screen re-entered
-            # via this deep link can still hold a previously opened note's
+            # editor state FIRST (a mounted screen re-entered via this
+            # deep link can still hold a previously opened note's
             # id/detail/version) then re-assert the create-note target state
             # AFTER, since the reset flips _library_notes_view back to
             # "list" -- same reset-then-set ordering as

@@ -4296,8 +4296,32 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         screen_name, current_tab_value, screen_class = self._resolve_screen_navigation_target(requested_screen)
         logger.info(f"Navigating to screen: {requested_screen}")
 
-        # Save state of current screen before switching
         current_screen = self.screen
+
+        # Screens are never reused across navigations, so anything the
+        # outgoing screen has not persisted is destroyed with its instance.
+        # Give it one awaited chance to flush pending work (e.g. a Library
+        # note edit whose debounced autosave has not fired); False vetoes
+        # the switch, leaving the screen (and e.g. its save-conflict banner)
+        # in place for the user.
+        flush = getattr(current_screen, "flush_pending_work", None)
+        if callable(flush):
+            try:
+                flush_result = flush()
+                if inspect.isawaitable(flush_result):
+                    flush_result = await flush_result
+                if flush_result is False:
+                    logger.info(
+                        f"Navigation to {screen_name} vetoed by the outgoing "
+                        "screen's pending-work flush"
+                    )
+                    return
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Error flushing outgoing screen before navigation: {e}"
+                )
+
+        # Save state of current screen before switching
         if current_screen and hasattr(current_screen, 'save_state'):
             try:
                 state = current_screen.save_state()

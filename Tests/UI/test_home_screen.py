@@ -1399,16 +1399,11 @@ def test_app_detail_hook_navigates_library_with_ingest_context_for_handled_inges
     assert posted.screen_context == {LIBRARY_NAV_CONTEXT_INGEST: True}
 
 
-def test_app_detail_hook_invalidates_cached_library_screen_for_ingest_detail():
-    """Home's ``Open details`` deep link must drop any cached Library screen
-    before navigating (mirrors ``open_notes_workspace``).
-
-    Library is a CACHEABLE route: without invalidation the deep link switches
-    to an already-mounted-then-unmounted cached instance that advances the
-    screen stack but never repaints (the live symptom -- the terminal keeps
-    rendering Home even though the app is "on" Library). The flashcards deep
-    link never hit this because Study is not a cacheable route and always
-    builds a fresh screen. This is the RED regression guard for that fix.
+def test_app_detail_hook_navigates_library_for_ingest_detail():
+    """Home's ``Open details`` deep link posts a Library navigation with the
+    ingest nav-context (screen instance caching was removed entirely after
+    the rapid-tab-switch freeze, so every navigation now composes a fresh,
+    cleanly repainted Library screen -- no invalidation step remains).
     """
     app = _build_test_app()
     adapter = RecordingHomeActiveWorkAdapter(

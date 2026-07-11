@@ -4930,6 +4930,38 @@ async def test_library_shell_note_autosave_fires_after_debounce(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_library_flush_pending_work_saves_dirty_note_and_reports_conflicts():
+    """``flush_pending_work`` (the app's nav-away hook) must persist a dirty
+    note before the screen instance is discarded, and must return False when
+    the flush surfaces an unresolved save conflict so the app vetoes the
+    navigation instead of destroying the editor (and the user's edits) with
+    the outgoing screen.
+    """
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_note_editor(screen, pilot)
+
+        screen.query_one("#library-note-body", TextArea).text = "edited mid-tab-switch"
+        await pilot.pause()
+
+        allowed = await screen.flush_pending_work()
+
+        service = app.notes_scope_service
+        assert allowed is True
+        assert service.save_calls, "flush_pending_work never persisted the dirty note"
+        assert service.save_calls[-1]["content"] == "edited mid-tab-switch"
+
+        # An unresolved conflict must veto the navigation.
+        screen._library_note_autosave_state = "conflict"
+        assert await screen.flush_pending_work() is False
+
+
+@pytest.mark.asyncio
 async def test_library_shell_note_flush_on_back_saves_before_view_switches():
     """Editing the body then immediately pressing Back must flush (await)
     the pending save before the canvas leaves the editor -- proven by
@@ -5024,9 +5056,9 @@ async def test_library_shell_note_flush_on_notes_create_deeplink_saves_before_sw
     and rail-switch exits honour.
 
     ``apply_navigation_context`` is the retired Notes tab's re-pointed entry;
-    unlike its before-mount callers, ``_get_or_create_navigation_screen``
-    hands back the *cached* screen, so a palette "new note" fired mid-edit
-    runs it on a mounted, dirty editor. Without the flush the recompose to
+    navigation composes fresh screens, but this defense-in-depth branch
+    covers any direct caller that runs it on a mounted, dirty editor
+    mid-edit. Without the flush the recompose to
     the create view destroys the ``#library-note-body`` the debounced
     autosave would have read, silently dropping the last edits. Proven by
     the (deliberately slow) save being in flight while the selected row is
