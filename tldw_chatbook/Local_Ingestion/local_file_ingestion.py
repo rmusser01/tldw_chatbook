@@ -112,16 +112,24 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
     ``media_db`` -- audio/video extraction is routed through
     ``LocalAudioProcessor``/``LocalVideoProcessor`` with ``media_db=None``
     specifically so this holds for those types too, which otherwise support
-    an internal "write while parsing" path. That also removes a pre-existing
-    quirk in the old single-function ``ingest_local_file``: for audio/video,
-    passing a real ``media_db`` into those processors made them write (and
-    immediately discard the id of) an extra, unused media row *in addition*
-    to the row this pipeline's own DB write creates. Since this function
-    never receives a real ``media_db``, that phantom duplicate write no
-    longer happens for any caller -- ``ingest_local_file``'s composed
-    behavior is a strict improvement here, not just unchanged (nothing
-    downstream ever read that discarded duplicate, so no observable
-    behavior depended on it existing).
+    an internal "write while parsing" path. That also FIXES a live
+    pre-split bug in the old single-function ``ingest_local_file`` (the
+    exact mechanism verified empirically against the real DB methods): for
+    audio/video, the processor's internal ``_store_in_database`` step wrote
+    ONE degraded media row first -- bare-path URL (its ``input_ref``, not
+    ``file://``-prefixed), processor-metadata title, no keywords. The
+    pipeline's own ``add_media_with_keywords`` call (``url="file://..."``)
+    then hit the CONTENT-HASH dedup fallback, matched that degraded row,
+    took the "already exists, overwrite not enabled" branch, and returned
+    ``(None, None, ...)`` -- so every real audio/video local ingest
+    returned ``media_id=None``, and even ``app.py``'s
+    ``get_media_by_url("file://...")`` recovery missed, because the
+    surviving row's URL was the bare path. With the processors never
+    handed a DB, the degraded row is never written, the pipeline's write
+    is the first (and only) insert, and a real ``media_id`` comes back.
+    Regression-locked by
+    ``Tests/Local_Ingestion/test_ingest_parse_worker.py``'s
+    ``test_ingest_local_file_audio_returns_real_media_id``.
 
     This makes the function safe to run inside a spawned worker process
     (see ``ingest_parse_worker.run_parse_job``): its return value is plain,
@@ -303,11 +311,13 @@ def parse_local_file_for_ingest(file_path: Union[str, Path], options: Dict[str, 
             
         elif file_type == 'audio':
             # Initialize audio processor. media_db is intentionally None:
-            # this function performs no database I/O (see docstring) --
-            # passing a real media_db here would make the processor write
-            # (and immediately discard the id of) an extra, unused media
-            # row of its own, on top of the row persist_parsed_media's
-            # caller creates from this function's return value.
+            # this function performs no database I/O (see docstring). A
+            # real media_db here would make the processor write a degraded
+            # row of its own first (bare-path URL, no keywords), which the
+            # pipeline's later add_media_with_keywords call then matches
+            # via content-hash dedup and no-ops against -- returning
+            # media_id=None for every audio ingest (see the docstring's
+            # bug-mechanism paragraph and the regression test named there).
             audio_processor = LocalAudioProcessor(None)
 
             # Process single audio file

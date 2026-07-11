@@ -165,6 +165,130 @@ def test_ingest_local_file_missing_file_raises(tmp_path: Path) -> None:
         ingest_local_file(file_path=missing, media_db=db, perform_analysis=False)
 
 
+# --- audio media_id regression lock (F3 media_db=None fix) -------------------
+
+
+class _StubAudioProcessor:
+    """Shape-accurate stand-in for ``LocalAudioProcessor``.
+
+    Returns a single-result dict shaped exactly like
+    ``LocalAudioProcessor.process_audio_files``/``_process_single_audio``
+    build it, and -- critically -- mirrors the real class's internal
+    ``_store_in_database`` step with the same ``if self.media_db and
+    result["content"]`` gate and the same degraded write parameters
+    (``url=result["input_ref"]``, a BARE path; title from the processor's
+    own metadata; no keywords). That gate is what turns this stub into a
+    regression tripwire: if the parse stage ever hands the processor a
+    real ``media_db`` again, the degraded row gets written first and the
+    pipeline's own ``add_media_with_keywords`` call collapses into the
+    content-hash-dedup no-op -- exactly the old bug.
+    """
+
+    last_media_db: object = "UNSET"  # recorded at construction for assertion
+
+    def __init__(self, media_db=None):
+        type(self).last_media_db = media_db
+        self.media_db = media_db
+
+    def process_audio_files(self, *, inputs, custom_title=None, author=None, **kwargs):
+        import time as _time
+
+        input_item = inputs[0]
+        content = "Transcribed words from the stub."
+        result = {
+            "status": "Success",
+            "input_ref": input_item,  # bare path for local files, like the real class
+            "processing_source": input_item,
+            "media_type": "audio",
+            "metadata": {"title": custom_title, "author": author},
+            "content": content,
+            "segments": [{"start": 0.0, "end": 1.0, "text": content}],
+            "chunks": [],
+            "analysis": "",
+            "analysis_details": {},
+            "error": None,
+            "warnings": [],
+        }
+        # Mirror LocalAudioProcessor._store_in_database and its gate.
+        if self.media_db and result["content"]:
+            media_id, _, _ = self.media_db.add_media_with_keywords(
+                url=result.get("input_ref", ""),
+                title=result["metadata"].get("title", "Untitled"),
+                media_type=result.get("media_type", "audio"),
+                content=result.get("content", ""),
+                author=result["metadata"].get("author", "Unknown"),
+                ingestion_date=_time.strftime("%Y-%m-%d %H:%M:%S"),
+                analysis_content=result.get("analysis"),
+            )
+            result["db_id"] = media_id
+            result["db_message"] = "Stored successfully"
+        return {
+            "processed_count": 1,
+            "errors_count": 0,
+            "errors": [],
+            "results": [result],
+        }
+
+
+def test_ingest_local_file_audio_returns_real_media_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression lock for the F3 ``media_db=None`` fix (audio/video).
+
+    Pre-split, ``ingest_local_file`` constructed
+    ``LocalAudioProcessor(media_db)`` with the REAL database, whose
+    internal ``_store_in_database`` wrote one degraded row first
+    (bare-path URL, processor-metadata title, no keywords); the pipeline's
+    own ``add_media_with_keywords`` call (``url="file://..."``) then hit
+    the content-hash dedup fallback, matched that degraded row, took the
+    "already exists, overwrite not enabled" branch, and returned
+    ``(None, None, ...)`` -- so every real audio/video local ingest
+    returned ``media_id=None``, and even ``app.py``'s
+    ``get_media_by_url("file://...")`` recovery missed (the surviving
+    row's URL was the bare path). Verified RED: temporarily rewiring the
+    real ``media_db`` into the parse-stage processor construction makes
+    this test fail with ``media_id=None`` (see f3-task-2-report.md).
+    """
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion as lfi
+
+    source = tmp_path / "voice-memo.mp3"
+    source.write_bytes(b"\x00fake-mp3-bytes")
+
+    _StubAudioProcessor.last_media_db = "UNSET"
+    monkeypatch.setattr(lfi, "LocalAudioProcessor", _StubAudioProcessor)
+    db = MediaDatabase(":memory:", client_id="audio-media-id-lock")
+
+    result = ingest_local_file(
+        file_path=source,
+        media_db=db,
+        title="Audio note",
+        author="tester",
+        keywords=["voices"],
+        perform_analysis=False,
+    )
+
+    # The parse stage must never hand the processor a database.
+    assert _StubAudioProcessor.last_media_db is None
+
+    # The old bug's signature was media_id=None; it must be a real row id.
+    media_id = result["media_id"]
+    assert isinstance(media_id, int)
+
+    row = db.get_media_by_id(media_id)
+    assert row is not None
+    assert row["title"] == "Audio note"
+    assert row["author"] == "tester"
+    assert row["type"] == "audio"
+    assert row["url"] == f"file://{source.absolute()}"
+
+    from tldw_chatbook.DB.Client_Media_DB_v2 import fetch_keywords_for_media
+
+    assert fetch_keywords_for_media(db, media_id) == ["voices"]
+
+    # app.py's re-ingest recovery path must also resolve now.
+    assert db.get_media_by_url(f"file://{source.absolute()}") is not None
+
+
 # --- classify_parse_failure ---------------------------------------------------
 
 
