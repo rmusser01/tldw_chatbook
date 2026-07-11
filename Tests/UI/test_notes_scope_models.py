@@ -36,9 +36,8 @@ class TestNotesScreenState:
         assert state.server_notes_error is None
         assert state.workspace_error is None
 
-    def test_state_supports_optional_workspace_details_subview(self):
-        if hasattr(WorkspaceSubview, "DETAILS"):
-            assert WorkspaceSubview.DETAILS.value == "details"
+    def test_state_supports_workspace_details_subview(self):
+        assert WorkspaceSubview.DETAILS.value == "details"
 
     def test_state_supports_existing_local_fields(self):
         state = NotesScreenState(
