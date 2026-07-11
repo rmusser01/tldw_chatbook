@@ -670,9 +670,9 @@ def load_settings(force_reload: bool = False) -> Dict:
     except FileNotFoundError:
         logger.warning(f"Primary TOML Config file not found at {primary_config_toml_path}. Proceeding without it.")
     except tomllib.TOMLDecodeError as e:
-        logger.error(f"Error decoding primary TOML config file {primary_config_toml_path}: {e}. Proceeding with potentially empty base config.", exc_info=True)
+        logger.opt(exception=True).error(f"Error decoding primary TOML config file {primary_config_toml_path}: {e}. Proceeding with potentially empty base config.")
     except Exception as e:
-        logger.error(f"An unexpected error occurred while loading primary TOML {primary_config_toml_path}: {e}. Proceeding with potentially empty base config.", exc_info=True)
+        logger.opt(exception=True).error(f"An unexpected error occurred while loading primary TOML {primary_config_toml_path}: {e}. Proceeding with potentially empty base config.")
 
     # 2. Load the user-specific CLI config file (as potential overrides or additions).
     # Tests and embedded runtimes can override this path with TLDW_CONFIG_PATH.
@@ -684,10 +684,10 @@ def load_settings(force_reload: bool = False) -> Dict:
                 user_override_config_data = tomllib.load(f)
             logger.info(f"Successfully loaded user-specific CLI TOML config from: {str(user_cli_config_toml_path)}")
         except tomllib.TOMLDecodeError as e:
-            logger.error(f"Error decoding user-specific CLI TOML config file {user_cli_config_toml_path}: {e}. User overrides will not be applied from this file.", exc_info=True)
+            logger.opt(exception=True).error(f"Error decoding user-specific CLI TOML config file {user_cli_config_toml_path}: {e}. User overrides will not be applied from this file.")
             user_override_config_data = {} # Ensure it's empty if decode fails, to prevent merging bad data
         except Exception as e:
-            logger.error(f"An unexpected error occurred while loading user-specific CLI TOML {user_cli_config_toml_path}: {e}. User overrides will not be applied from this file.", exc_info=True)
+            logger.opt(exception=True).error(f"An unexpected error occurred while loading user-specific CLI TOML {user_cli_config_toml_path}: {e}. User overrides will not be applied from this file.")
             user_override_config_data = {} # Ensure it's empty on other errors
     else:
         logger.info(f"User-specific CLI TOML config file not found at {user_cli_config_toml_path}. No user overrides will be applied from this file.")
@@ -2816,10 +2816,10 @@ def load_cli_config_and_ensure_existence(force_reload: bool = False) -> Dict[str
             # Decrypt config if encryption is enabled
             loaded_config = decrypt_config_section(loaded_config)
         except tomllib.TOMLDecodeError as e:
-            logger.error(f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load.", exc_info=True)
+            logger.opt(exception=True).error(f"Error decoding CLI TOML config file {config_path}: {e}. Using internal defaults + any previous successful load.")
             # `loaded_config` remains the programmatic defaults in this case.
         except Exception as e:
-            logger.error(f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load.", exc_info=True)
+            logger.opt(exception=True).error(f"An unexpected error occurred while loading CLI config {config_path}: {e}. Using internal defaults + any previous successful load.")
             # `loaded_config` remains the programmatic defaults.
 
     _CONFIG_CACHE = loaded_config
@@ -2957,7 +2957,7 @@ def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]])
                 # Consider creating a backup of the corrupt file for the user.
                 return False
             except Exception as e:
-                logger.error(f"Unexpected error reading {config_path}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Unexpected error reading {config_path}: {e}")
                 return False
 
         try:
@@ -2990,7 +2990,7 @@ def save_settings_to_cli_config(section_values: Mapping[str, Mapping[Any, Any]])
 
             return True
         except (IOError, OSError, toml.TomlDecodeError) as e:
-            logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to write updated config to {config_path}: {e}")
             return False
 
 
@@ -3019,7 +3019,7 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
             logger.error(f"Corrupted config file at {config_path}. Cannot delete from it. Error: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error reading {config_path}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error reading {config_path}: {e}")
             return False
 
         current_level: Any = config_data
@@ -3055,7 +3055,7 @@ def delete_settings_from_cli_config(section: str, keys: List[str]) -> bool:
 
             return True
         except (IOError, OSError, toml.TomlDecodeError) as e:
-            logger.error(f"Failed to write updated config to {config_path}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to write updated config to {config_path}: {e}")
             return False
 
 
@@ -3653,7 +3653,7 @@ def get_cli_log_file_path() -> Path:
     try:
         log_file_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        logger.error(f"Could not create log directory {log_file_path.parent}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Could not create log directory {log_file_path.parent}: {e}")
     return log_file_path
 
 
@@ -3680,7 +3680,7 @@ def get_model_cache_dir() -> Path:
     try:
         cache_path.mkdir(parents=True, exist_ok=True)
     except OSError as e:
-        logger.error(f"Could not create model cache directory {cache_path}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Could not create model cache directory {cache_path}: {e}")
     
     return cache_path
 
@@ -3701,7 +3701,7 @@ def initialize_all_databases():
         chachanotes_db = CharactersRAGDB(db_path=chachanotes_path, client_id=CLI_APP_CLIENT_ID)
         logger.success(f"ChaChaNotes_DB initialized successfully at {chachanotes_path}")
     except Exception as e:
-        logger.error(f"Failed to initialize ChaChaNotes_DB at {chachanotes_path}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to initialize ChaChaNotes_DB at {chachanotes_path}: {e}")
         chachanotes_db = None
     # Prompts DB
     prompts_path = get_prompts_db_path()
@@ -3710,7 +3710,7 @@ def initialize_all_databases():
         prompts_db = PromptsDatabase(db_path=prompts_path, client_id=CLI_APP_CLIENT_ID)
         logger.success(f"Prompts_DB initialized successfully at {prompts_path}")
     except Exception as e:
-        logger.error(f"Failed to initialize Prompts_DB at {prompts_path}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to initialize Prompts_DB at {prompts_path}: {e}")
         prompts_db = None
     # Media DB
     media_path = get_media_db_path()
@@ -3719,7 +3719,7 @@ def initialize_all_databases():
         media_db = MediaDatabase(db_path=media_path, client_id=CLI_APP_CLIENT_ID)
         logger.success(f"Media_DB_v2 initialized successfully at {media_path}")
     except Exception as e:
-        logger.error(f"Failed to initialize Media_DB_v2 at {media_path}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed to initialize Media_DB_v2 at {media_path}: {e}")
         media_db = None
     logger.info("CLI database initialization complete.")
 
@@ -3743,7 +3743,7 @@ def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
             )
             logger.success(f"ChaChaNotes_DB lazy-initialized successfully at {chachanotes_path}")
         except Exception as e:
-            logger.error(f"Failed to lazy-initialize ChaChaNotes_DB at {chachanotes_path}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to lazy-initialize ChaChaNotes_DB at {chachanotes_path}: {e}")
             chachanotes_db = None
     return chachanotes_db
 
@@ -3766,7 +3766,7 @@ def get_prompts_db_lazy() -> Optional[PromptsDatabase]:
             )
             logger.success(f"Prompts_DB lazy-initialized successfully at {prompts_path}")
         except Exception as e:
-            logger.error(f"Failed to lazy-initialize Prompts_DB at {prompts_path}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to lazy-initialize Prompts_DB at {prompts_path}: {e}")
             prompts_db = None
     return prompts_db
 
@@ -3781,7 +3781,7 @@ def get_media_db_lazy() -> Optional[MediaDatabase]:
             media_db = MediaDatabase(db_path=media_path, client_id=CLI_APP_CLIENT_ID)
             logger.success(f"Media_DB_v2 lazy-initialized successfully at {media_path}")
         except Exception as e:
-            logger.error(f"Failed to lazy-initialize Media_DB_v2 at {media_path}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to lazy-initialize Media_DB_v2 at {media_path}: {e}")
             media_db = None
     return media_db
 
@@ -3822,7 +3822,7 @@ try:
     default_api_endpoint = settings.get('llm_api_settings', {}).get('default_api', 'openai')
     logger.info(f"Default API Endpoint (from config.py global scope): {default_api_endpoint}")
 except Exception as e:
-    logger.error(f"Critical error setting default_api_endpoint in config.py global scope: {str(e)}", exc_info=True)
+    logger.opt(exception=True).error(f"Critical error setting default_api_endpoint in config.py global scope: {str(e)}")
     default_api_endpoint = "openai"  # Fallback
 
 # --- Optional: Export individual variables if needed (generally prefer using settings dict) ---

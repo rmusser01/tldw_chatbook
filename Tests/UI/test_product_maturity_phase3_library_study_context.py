@@ -157,24 +157,45 @@ async def test_library_empty_state_preserves_plain_study_section_routing() -> No
 
 
 @pytest.mark.parametrize(
-    ("row_id", "mode_label", "action_label"),
+    ("row_id", "header_label", "purpose_copy", "action_label"),
     [
-        ("create-study", "Study", "Study Dashboard"),
-        ("create-flashcards", "Flashcards", "Flashcards"),
-        ("create-quizzes", "Quizzes", "Quizzes"),
+        (
+            "create-study",
+            "Study decks",
+            "Plan study decks from Library sources.",
+            "Study Dashboard",
+        ),
+        (
+            "create-flashcards",
+            "Flashcards",
+            "Generate or review cards from Library sources.",
+            "Flashcards",
+        ),
+        (
+            "create-quizzes",
+            "Quizzes",
+            "Generate or resume quizzes from Library sources.",
+            "Quizzes",
+        ),
     ],
 )
 @pytest.mark.asyncio
 async def test_library_study_related_modes_explain_handoff_context_and_wip(
     row_id: str,
-    mode_label: str,
+    header_label: str,
+    purpose_copy: str,
     action_label: str,
 ) -> None:
-    """Verify each study-related Library rail row exposes source handoff state.
+    """Verify each study-related Library rail row exposes source handoff
+    state via the UX-wave-D1 consolidated canvas: one header (the row's own
+    title), one purpose line, the carries-forward line, one ownership line,
+    and the ready snapshot line -- no duplicated mode/purpose lines,
+    "Primary action:" line, "X handoff" sub-header, or WIP roadmap callout.
 
     Args:
         row_id: Rail row id (under ``#library-row-{row_id}``) for the mode.
-        mode_label: Visible destination label expected in the handoff title.
+        header_label: Visible canvas header (the row's own title).
+        purpose_copy: Visible single-sentence purpose line for the mode.
         action_label: Visible primary action label expected for the mode.
     """
 
@@ -192,22 +213,20 @@ async def test_library_study_related_modes_explain_handoff_context_and_wip(
         canvas = screen.query_one("#library-canvas")
         assert canvas.query("#library-study-handoff-detail")
 
+        title = screen.query_one("#library-active-mode-title", Static)
+        assert str(title.renderable) == header_label
+
         visible = _visible_text(screen)
-        assert f"{mode_label} handoff" in visible
-        assert f"Primary action: {action_label}" in visible
+        assert f"{header_label} handoff" not in visible
+        assert "Primary action:" not in visible
+        assert "WIP:" not in visible
+        assert purpose_copy in visible
         assert "Carries forward: Research Note, Transcript A, Planning Chat" in visible
-        assert (
-            "Library prepares source context only; Study owns sessions, "
-            "generation, review, and attempts."
-        ) in visible
-        assert (
-            "WIP: provider-backed generation and collection-scoped study "
-            "remain owned by later Study slices."
-        ) in visible
-        assert (
-            f"Source snapshot is ready; open {action_label} to continue "
-            "with this Library context."
-        ) in visible
+        assert "Generation and review run in Study." in visible
+        assert "Source snapshot is ready." in visible
+
+        open_button = screen.query_one(f"#{row_id.replace('create-', 'library-open-')}", Button)
+        assert open_button.has_class("console-action-primary")
 
 
 @pytest.mark.asyncio
@@ -229,11 +248,18 @@ async def test_library_quizzes_mode_empty_state_explains_global_recovery_without
         await _wait_for_selector(screen, pilot, "#library-study-handoff-recovery")
         visible = _visible_text(screen)
 
-        assert "No Library source snapshot will be carried forward." in visible
+        # D1: with no Library sources at all, the carries-forward line is
+        # omitted entirely (no widget), not stated as a negative.
+        assert not screen.query("#library-study-handoff-context")
+        assert "No Library source snapshot will be carried forward." not in visible
         assert (
             "Import sources or create notes first, or open Quizzes globally "
             "without Library context."
         ) in visible
+        # D2: the blocked state keeps the warning-callout treatment.
+        recovery = screen.query_one("#library-study-handoff-recovery", Static)
+        assert recovery.has_class("ds-recovery-callout")
+        assert recovery.has_class("is-blocked")
 
         # The in-canvas handoff button drives the Study handoff (no source
         # snapshot -> plain section routing).

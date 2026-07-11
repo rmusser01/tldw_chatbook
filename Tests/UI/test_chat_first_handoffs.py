@@ -102,6 +102,51 @@ def test_open_chat_with_handoff_refuses_when_tabs_disabled():
     app.notify.assert_called_once()
 
 
+def test_open_chat_with_handoff_blocked_message_defaults_to_use_in_chat():
+    """Legacy callers (MediaWindow_v2, search_rag_window, SearchWindow, the
+    standalone Notes tab, Study/Skills/Watchlists/Personas screens) don't
+    pass ``action_label`` and must keep seeing today's exact wording -- the
+    shared ``open_chat_with_handoff`` blocked-tabs gate is reachable from
+    many destinations whose own button still reads "Use in Chat" (UX wave
+    M2 investigation: this message is one shared string, not per-caller).
+    """
+    app = Mock()
+    app.pending_chat_handoff = None
+    app.post_message = Mock()
+    app.notify = Mock()
+    payload = ChatHandoffPayload(source="notes", item_type="note", title="Note", body="Body")
+
+    from tldw_chatbook.app import TldwCli
+
+    with patch("tldw_chatbook.app.get_cli_setting", return_value=False):
+        TldwCli.open_chat_with_handoff(app, payload)
+
+    app.notify.assert_called_once()
+    assert app.notify.call_args.args[0] == "Use in Chat requires chat tabs to be enabled."
+
+
+def test_open_chat_with_handoff_blocked_message_honors_caller_action_label():
+    """The Library screen's four handoff call sites (notes/media/
+    conversations/hub) pass ``action_label="Use in Console"`` since every
+    Library "Use in"-style button already reads "Use in Console" -- the
+    blocked-tabs notify must match the button the user actually pressed
+    instead of always saying "Chat" (UX wave M2).
+    """
+    app = Mock()
+    app.pending_chat_handoff = None
+    app.post_message = Mock()
+    app.notify = Mock()
+    payload = ChatHandoffPayload(source="library", item_type="media", title="Media", body="Body")
+
+    from tldw_chatbook.app import TldwCli
+
+    with patch("tldw_chatbook.app.get_cli_setting", return_value=False):
+        TldwCli.open_chat_with_handoff(app, payload, action_label="Use in Console")
+
+    app.notify.assert_called_once()
+    assert app.notify.call_args.args[0] == "Use in Console requires chat tabs to be enabled."
+
+
 @pytest.mark.asyncio
 async def test_chat_screen_consumes_pending_handoff_into_fresh_ephemeral_tab():
     payload = ChatHandoffPayload(

@@ -59,7 +59,7 @@ class CCPMessageManager:
             logger.debug("Cleared all conversation messages")
             
         except Exception as e:
-            logger.error(f"Error clearing messages: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error clearing messages: {e}")
     
     @work(thread=True)
     async def load_conversation_messages(self, conversation_id: ConversationId) -> None:
@@ -89,7 +89,7 @@ class CCPMessageManager:
                 self.window.call_from_thread(self.clear_messages)
                 
         except Exception as e:
-            logger.error(f"Error loading conversation messages: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error loading conversation messages: {e}")
     
     def _display_messages(self) -> None:
         """Display the loaded messages in the UI."""
@@ -111,7 +111,7 @@ class CCPMessageManager:
             logger.debug(f"Displayed {len(self.message_widgets)} message widgets")
             
         except Exception as e:
-            logger.error(f"Error displaying messages: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error displaying messages: {e}")
     
     def _create_message_widget(self, message_data: Dict[str, Any]) -> Optional[Any]:
         """Create a message widget from message data.
@@ -164,7 +164,7 @@ class CCPMessageManager:
                 )
                 
         except Exception as e:
-            logger.error(f"Error creating message widget: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error creating message widget: {e}")
             return None
     
     def add_message(self, message_data: Dict[str, Any]) -> None:
@@ -188,7 +188,7 @@ class CCPMessageManager:
                 logger.debug(f"Added message from {message_data.get('role', 'unknown')}")
             
         except Exception as e:
-            logger.error(f"Error adding message: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error adding message: {e}")
     
     def update_message(self, message_id: int, new_content: str) -> None:
         """Update an existing message's content.
@@ -213,7 +213,7 @@ class CCPMessageManager:
                     break
                     
         except Exception as e:
-            logger.error(f"Error updating message {message_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating message {message_id}: {e}")
     
     def remove_message(self, message_id: int) -> None:
         """Remove a message from the display.
@@ -237,7 +237,7 @@ class CCPMessageManager:
             ]
             
         except Exception as e:
-            logger.error(f"Error removing message {message_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error removing message {message_id}: {e}")
     
     def highlight_message(self, message_id: int) -> None:
         """Highlight a specific message.
@@ -257,7 +257,7 @@ class CCPMessageManager:
                         widget.remove_class("highlighted")
                         
         except Exception as e:
-            logger.error(f"Error highlighting message {message_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error highlighting message {message_id}: {e}")
     
     def get_message_count(self) -> int:
         """Get the current number of messages displayed.
@@ -283,7 +283,7 @@ class CCPMessageManager:
                 last_widget.scroll_visible()
                 logger.debug("Scrolled to bottom of messages")
         except Exception as e:
-            logger.error(f"Error scrolling to bottom: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error scrolling to bottom: {e}")
     
     def scroll_to_top(self) -> None:
         """Scroll to the top of the messages view."""
@@ -292,4 +292,4 @@ class CCPMessageManager:
             messages_view.scroll_home()
             logger.debug("Scrolled to top of messages")
         except Exception as e:
-            logger.error(f"Error scrolling to top: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error scrolling to top: {e}")

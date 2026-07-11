@@ -4,6 +4,7 @@ Unified transcription service for tldw_chatbook.
 Supports multiple transcription backends including faster-whisper, Qwen2Audio, etc.
 """
 
+import importlib.util
 import os
 import subprocess
 import tempfile
@@ -78,16 +79,67 @@ else:
     if sys.platform != 'darwin':
         parakeet_from_pretrained = None
 
+# torch/transformers are heavy optional dependencies (torch alone pulls in
+# ~500 transitive modules). Probe availability cheaply via find_spec instead
+# of importing eagerly; the real `import torch`/`from transformers import
+# ...` is deferred to _ensure_torch_import()/_ensure_qwen2audio_imports(),
+# called only from the methods that actually need Qwen2Audio, NeMo
+# parakeet/canary (which are torch-based), or device info.
+torch = None
+AutoProcessor = None
+Qwen2AudioForConditionalGeneration = None
 try:
-    import torch
-    from transformers import AutoProcessor, Qwen2AudioForConditionalGeneration
-    QWEN2AUDIO_AVAILABLE = True
-except ImportError:
-    torch = None
-    AutoProcessor = None
-    Qwen2AudioForConditionalGeneration = None
+    QWEN2AUDIO_AVAILABLE = (
+        importlib.util.find_spec("torch") is not None
+        and importlib.util.find_spec("transformers") is not None
+    )
+except (ImportError, ValueError, ModuleNotFoundError):
     QWEN2AUDIO_AVAILABLE = False
+if not QWEN2AUDIO_AVAILABLE:
     logger.warning("Qwen2Audio not available. Install transformers and torch for Qwen2Audio support.")
+
+
+def _ensure_torch_import() -> None:
+    """Import torch on first actual use.
+
+    Used by device queries (get_device_info) and the torch-based transcribe
+    paths (Qwen2Audio, NeMo parakeet/canary). No-ops if torch isn't
+    installed, matching the previous eager-import fallback (torch stays
+    None).
+    """
+    global torch
+    if torch is not None:
+        return
+    try:
+        import torch as _torch
+        torch = _torch
+    except ImportError:
+        pass
+
+
+def _ensure_qwen2audio_imports() -> None:
+    """Import transformers' Qwen2Audio classes (and torch) on first actual
+    use, not just from importing this module.
+
+    Raises:
+        TranscriptionError: If the transformers/torch dependencies are not
+            installed. Both callers are actual transcription attempts, so a
+            clear failure here beats proceeding with ``None`` classes and
+            crashing later with an opaque ``TypeError``.
+    """
+    global AutoProcessor, Qwen2AudioForConditionalGeneration
+    _ensure_torch_import()
+    if AutoProcessor is not None:
+        return
+    try:
+        from transformers import AutoProcessor as _AutoProcessor, Qwen2AudioForConditionalGeneration as _Qwen2AudioForConditionalGeneration
+        AutoProcessor = _AutoProcessor
+        Qwen2AudioForConditionalGeneration = _Qwen2AudioForConditionalGeneration
+    except ImportError as e:
+        raise TranscriptionError(
+            "Qwen2Audio dependencies not installed. "
+            "Install with: pip install transformers torch"
+        ) from e
 
 try:
     import soundfile as sf
@@ -496,7 +548,7 @@ class TranscriptionService:
                         logger.info(f"Identified {result['num_speakers']} speakers")
                         
                 except Exception as e:
-                    logger.error(f"Diarization failed: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"Diarization failed: {e}")
                     result['diarization_performed'] = False
                     result['diarization_error'] = str(e)
                     # Continue with transcription result even if diarization fails
@@ -794,7 +846,7 @@ class TranscriptionService:
                         except Exception as e:
                             logger.warning(f"Progress callback error after model loading: {e}")
                 except Exception as e:
-                    logger.error(f"Failed to load Whisper model: {str(e)}", exc_info=True)
+                    logger.opt(exception=True).error(f"Failed to load Whisper model: {str(e)}")
                     # Provide more helpful error message
                     error_msg = f"Failed to load model {model}: {str(e)}"
                     
@@ -879,7 +931,7 @@ class TranscriptionService:
                 segments_generator, info = whisper_model.transcribe(audio_path, **options)
                 logger.info(f"whisper_model.transcribe() returned successfully, got generator and info")
             except Exception as e:
-                logger.error(f"whisper_model.transcribe() failed: {type(e).__name__}: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error(f"whisper_model.transcribe() failed: {type(e).__name__}: {str(e)}")
                 raise TranscriptionError(f"Whisper transcription failed: {str(e)}") from e
             
             logger.debug(f"Whisper transcription started, processing segments...")
@@ -1034,7 +1086,7 @@ class TranscriptionService:
             return result
             
         except Exception as e:
-            logger.error(f"Faster-whisper transcription failed: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Faster-whisper transcription failed: {str(e)}")
             raise TranscriptionError(
                 f"Transcription failed: {str(e)}"
             ) from e
@@ -1053,7 +1105,8 @@ class TranscriptionService:
                 "Qwen2Audio dependencies not installed. "
                 "Install with: pip install transformers torch"
             )
-        
+        _ensure_qwen2audio_imports()
+
         logger.info("Starting Qwen2Audio transcription")
         transcribe_start = time.time()
         
@@ -1084,7 +1137,7 @@ class TranscriptionService:
                 model_load_time = time.time() - model_load_start
                 logger.info(f"Qwen2Audio model loaded successfully in {model_load_time:.2f} seconds")
             except Exception as e:
-                logger.error(f"Failed to load Qwen2Audio model: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error(f"Failed to load Qwen2Audio model: {str(e)}")
                 raise TranscriptionError(
                     f"Failed to load Qwen2Audio: {str(e)}"
                 ) from e
@@ -1167,7 +1220,7 @@ class TranscriptionService:
             }
             
         except Exception as e:
-            logger.error(f"Qwen2Audio transcription failed: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Qwen2Audio transcription failed: {str(e)}")
             raise TranscriptionError(
                 f"Qwen2Audio transcription failed: {str(e)}"
             ) from e
@@ -1188,7 +1241,8 @@ class TranscriptionService:
                 "NeMo toolkit not installed. "
                 "Install with: pip install nemo-toolkit[asr]"
             )
-        
+        _ensure_torch_import()
+
         model = model or 'nvidia/parakeet-tdt-1.1b'
         logger.info(f"Starting Parakeet transcription with model: {model}")
         transcribe_start = time.time()
@@ -1228,7 +1282,7 @@ class TranscriptionService:
                 logger.debug(f"Model device: {self._parakeet_model.device}")
                 
             except Exception as e:
-                logger.error(f"Failed to load Parakeet model: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error(f"Failed to load Parakeet model: {str(e)}")
                 raise TranscriptionError(
                     f"Failed to load Parakeet model: {str(e)}"
                 ) from e
@@ -1290,7 +1344,7 @@ class TranscriptionService:
                 raise TranscriptionError("No transcription produced")
                 
         except Exception as e:
-            logger.error(f"Parakeet transcription failed: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Parakeet transcription failed: {str(e)}")
             raise TranscriptionError(
                 f"Parakeet transcription failed: {str(e)}"
             ) from e
@@ -1329,7 +1383,8 @@ class TranscriptionService:
                 "NeMo toolkit not installed. "
                 "Install with: pip install nemo-toolkit[asr]"
             )
-        
+        _ensure_torch_import()
+
         # Import additional NeMo modules needed for Canary
         try:
             from nemo.collections.asr.models import EncDecMultiTaskModel
@@ -1368,7 +1423,7 @@ class TranscriptionService:
                 logger.debug(f"Model device: {self._canary_model.device}")
                 
             except Exception as e:
-                logger.error(f"Failed to load Canary model: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error(f"Failed to load Canary model: {str(e)}")
                 raise TranscriptionError(
                     f"Failed to load Canary model: {str(e)}"
                 ) from e
@@ -1491,7 +1546,7 @@ class TranscriptionService:
             return result
             
         except Exception as e:
-            logger.error(f"Canary transcription failed: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Canary transcription failed: {str(e)}")
             raise TranscriptionError(
                 f"Canary transcription failed: {str(e)}"
             ) from e
@@ -1567,7 +1622,7 @@ class TranscriptionService:
                         logger.info(f"Lightning Whisper MLX model loaded successfully in {model_load_time:.2f} seconds")
 
                     except Exception as e:
-                        logger.error(f"Failed to load Lightning Whisper MLX model: {str(e)}", exc_info=True)
+                        logger.opt(exception=True).error(f"Failed to load Lightning Whisper MLX model: {str(e)}")
                         raise TranscriptionError(
                             f"Failed to load Lightning Whisper MLX model: {str(e)}"
                         ) from e
@@ -1689,7 +1744,7 @@ class TranscriptionService:
             return result
             
         except Exception as e:
-            logger.error(f"Lightning Whisper MLX transcription failed: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Lightning Whisper MLX transcription failed: {str(e)}")
             raise TranscriptionError(
                 f"Lightning Whisper MLX transcription failed: {str(e)}"
             ) from e
@@ -1839,7 +1894,7 @@ class TranscriptionService:
                     logger.info(f"Parakeet MLX model loaded successfully in {model_load_time:.2f} seconds")
                     
                 except Exception as e:
-                    logger.error(f"Failed to load Parakeet MLX model: {str(e)}", exc_info=True)
+                    logger.opt(exception=True).error(f"Failed to load Parakeet MLX model: {str(e)}")
                     raise TranscriptionError(
                         f"Failed to load Parakeet MLX model: {str(e)}"
                     ) from e
@@ -2121,7 +2176,7 @@ class TranscriptionService:
             
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Parakeet MLX transcription failed: {error_msg}", exc_info=True)
+            logger.opt(exception=True).error(f"Parakeet MLX transcription failed: {error_msg}")
             
             # Check if this is a memory allocation error
             if "metal::malloc" in error_msg.lower() or "buffer size" in error_msg.lower():
@@ -2352,7 +2407,7 @@ class TranscriptionService:
             raise TranscriptionError(error_msg)
         except Exception as e:
             error_msg = f"Remote whisper transcription failed: {str(e)}"
-            logger.error(error_msg, exc_info=True)
+            logger.opt(exception=True).error(error_msg)
             raise TranscriptionError(error_msg) from e
     
     def get_available_providers(self) -> List[str]:
@@ -2612,7 +2667,8 @@ class TranscriptionService:
     ) -> Dict[str, Any]:
         """Transcribe audio buffer directly with Qwen2Audio."""
         logger.info("Using Qwen2Audio for direct buffer transcription")
-        
+        _ensure_qwen2audio_imports()
+
         if not NUMPY_AVAILABLE:
             raise TranscriptionError("NumPy is required for buffer transcription")
         
@@ -2830,7 +2886,8 @@ class TranscriptionService:
     def get_device_info(self) -> Dict[str, Any]:
         """Get information about available compute devices."""
         logger.debug("Getting compute device information...")
-        
+        _ensure_torch_import()
+
         info = {
             'cpu': True,
             'cuda': False,

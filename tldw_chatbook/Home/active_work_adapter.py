@@ -8,12 +8,14 @@ from enum import StrEnum
 from html import escape as html_escape
 from pathlib import Path
 from threading import RLock
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
 from loguru import logger
 from rich.markup import escape
 
 from tldw_chatbook.Chat.answer_citations import summarize_citation_artifact_metadata
+from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
+from tldw_chatbook.Library.library_ingest_state import short_ingest_error
 from tldw_chatbook.Notifications.notifications_scope_service import ServerEventScopeRequiredError
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
@@ -44,6 +46,20 @@ _HOME_WATCHLIST_RUN_STATUSES = frozenset(
 )
 _HOME_RECENT_WORK_STATUSES = frozenset(
     {"completed", "complete", "succeeded", "success", "done", "finished"}
+)
+# Library ingest job states that mirror into Home's active-work feed.
+# DONE jobs stay out of active work in v1 -- see _local_ingest_job_items.
+# F3: RUNNING split into PARSING/WRITING -- both are still "active" and both
+# land in Home's Running feed (dashboard_state.py's RUNNING_STATUSES set is
+# the piece that actually buckets the "parsing"/"writing" status strings
+# into that feed's category; see its own comment).
+_HOME_INGEST_JOB_ACTIVE_STATES = frozenset(
+    {
+        IngestJobState.QUEUED,
+        IngestJobState.PARSING,
+        IngestJobState.WRITING,
+        IngestJobState.FAILED,
+    }
 )
 _HOME_RECENT_WORK_LIMIT = 8
 _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS = 1000
@@ -188,14 +204,42 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         chatbook_service: Any | None = None,
         server_event_service: Any | None = None,
         runtime_policy: Any | None = None,
+        flashcards_due_provider: Callable[[], int | None] | None = None,
+        ingest_jobs_provider: Callable[[], tuple[LibraryIngestJob, ...]] | None = None,
     ) -> None:
         super().__init__(runtime_policy=runtime_policy)
         self.notification_service = notification_service
         self.watchlist_service = watchlist_service
         self.chatbook_service = chatbook_service
         self.server_event_service = server_event_service
+        self.flashcards_due_provider = flashcards_due_provider
+        self.ingest_jobs_provider = ingest_jobs_provider
         self._chatbook_artifact_snapshot: tuple[Mapping[str, Any], ...] = ()
         self._chatbook_artifact_snapshot_lock = RLock()
+        self._flashcards_due_count: int = 0
+
+    def refresh_flashcards_due_snapshot(self) -> None:
+        """Refresh the cached due-flashcards count off the Home compose path.
+
+        Mirrors ``refresh_chatbook_artifact_snapshot``'s cache pattern: the
+        provider is called on a background worker and the result is cached
+        so ``build_dashboard_input`` stays synchronous. A missing provider,
+        a ``None`` result, or any exception all degrade to a count of 0 so
+        the Home rail simply omits the flashcards-due row rather than
+        raising.
+        """
+        if not callable(self.flashcards_due_provider):
+            self._flashcards_due_count = 0
+            return
+        try:
+            count = self.flashcards_due_provider()
+            if count is None:
+                self._flashcards_due_count = 0
+                return
+            self._flashcards_due_count = max(0, int(count))
+        except Exception as e:
+            logger.debug(f"Failed to fetch due-flashcards count for Home: {e}")
+            self._flashcards_due_count = 0
 
     def refresh_chatbook_artifact_snapshot(self, *, limit: int = 20) -> None:
         """Refresh cached local Chatbook artifacts off the Home compose path."""
@@ -239,9 +283,11 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 [
                     *self._local_watchlist_run_items(runs),
                     *self._local_chatbook_artifact_items(),
+                    *self._local_ingest_job_items(),
                 ]
             ),
             recent_work_items=self._local_recent_work_items(runs),
+            flashcards_due_count=self._flashcards_due_count,
         )
 
     def handle_control(
@@ -309,6 +355,19 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                         action_label="Open Chatbook artifact",
                     ),
                 )
+        if action is HomeControlAction.OPEN_DETAILS and _is_local_ingest_job_id(target_id):
+            # Library ingest jobs are ephemeral, in-memory registry entries
+            # (see library_ingest_jobs.py) -- routing back to the Library
+            # ingest canvas does not require the job to still be present in
+            # the provider snapshot (it may have already finished or been
+            # requeued by the time the control is pressed).
+            return HomeControlResult(
+                action=action,
+                status=HomeControlResultStatus.HANDLED,
+                message="Opening Library ingest job details.",
+                target_route=target_route or "library",
+                target_id=target_id,
+            )
         return super().handle_control(
             action,
             target_id=target_id,
@@ -421,10 +480,18 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
             item_id = self._local_watchlist_run_item_id(run)
             if not item_id:
                 continue
-            title = str(
-                _mapping_value(run, "title")
-                or _mapping_value(run, "source_title")
-                or (f"Watchlist run {run_id}" if run_id is not None else "Watchlist run")
+            # Same Button-label markup hazard as _local_ingest_job_items
+            # above: "title"/"source_title" are user-typed subscription
+            # names (local_watchlists_service stores them verbatim from
+            # subscriptions.name), not system-generated text, so they can
+            # contain Rich markup syntax and must be escaped before
+            # reaching HomeRail's Button label.
+            title = escape(
+                str(
+                    _mapping_value(run, "title")
+                    or _mapping_value(run, "source_title")
+                    or (f"Watchlist run {run_id}" if run_id is not None else "Watchlist run")
+                )
             )
             items.append(
                 HomeActiveWorkItem(
@@ -475,6 +542,7 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                     updated_at=_item_updated_at(record),
                 )
             )
+        recents.extend(self._local_ingest_recent_items())
         recents.sort(key=lambda item: item.updated_at, reverse=True)
         return tuple(recents[:_HOME_RECENT_WORK_LIMIT])
 
@@ -496,6 +564,114 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
                 )
             )
         return items
+
+    def _local_ingest_job_items(self) -> list[HomeActiveWorkItem]:
+        """Mirror parsing/writing/queued/failed Library ingest jobs into active work.
+
+        The registry (``tldw_chatbook.Library.library_ingest_jobs``) is an
+        in-memory, UI-thread-only object owned by the app -- ``jobs()`` is a
+        synchronous, non-blocking snapshot read (no DB, no I/O), so unlike
+        ``flashcards_due_provider``/``chatbook_service`` there is no
+        in-memory-SQLite thread hazard to guard against: the provider is
+        called directly, every ``build_dashboard_input``/Home compose, with
+        no caching layer.
+
+        DONE jobs are excluded from *this* method's active-work items: a
+        finished ingest has nothing actionable left in Needs Attention or
+        Running once it terminates. They are not dropped from Home
+        entirely, though -- ``_local_ingest_recent_items`` (H1, fix batch
+        F1b) mirrors DONE jobs into ``recent_work_items`` instead, stamped
+        with the real wall-clock ``LibraryIngestJob.finished_at_wall`` so
+        they sort correctly among the other Recent rows.
+
+        ``updated_at`` is always ``""`` here: unlike ``finished_at_wall`` (a
+        wall-clock ISO timestamp stamped by ``mark_done``/``mark_failed``
+        specifically so terminal jobs can be sorted/displayed by real time),
+        ``LibraryIngestJob.started_at``/``finished_at``/``submitted_at``
+        remain ``time.monotonic()`` floats with no fixed epoch -- and none
+        of QUEUED/PARSING/WRITING/FAILED (the four states this method
+        emits) have a wall-clock timestamp to report through ``updated_at``.
+        Passing ""
+        renders no age label (mirrors the L3a flashcards-due row), rather
+        than a misleading -- or crashing -- age.
+        """
+        items: list[HomeActiveWorkItem] = []
+        for job in self._ingest_jobs_snapshot():
+            if job.state not in _HOME_INGEST_JOB_ACTIVE_STATES:
+                continue
+            items.append(
+                HomeActiveWorkItem(
+                    item_id=f"local:ingest:{job.job_id}",
+                    title=_ingest_job_title(job),
+                    source="Library",
+                    status=job.state.value,
+                    detail_route="library",
+                    console_available=False,
+                    updated_at="",
+                    # Same short reason as the Library ingest queue row
+                    # (single source of truth: short_ingest_error drops the
+                    # " Supported types: ..." tail that now lives on the
+                    # ingest form instead). Deliberately NOT markup-escaped:
+                    # the Home canvas renders its lines via
+                    # Static(..., markup=False) (Widgets/Home/home_canvas.py),
+                    # so escaping would surface literal backslashes around
+                    # any brackets in the error. Titles stay escaped -- they
+                    # DO reach a markup-parsing Button label in the rail.
+                    status_detail=(
+                        short_ingest_error(job.error)
+                        if job.state == IngestJobState.FAILED and job.error
+                        else ""
+                    ),
+                    # M4 (fix batch F1b): a permanent (validation-class)
+                    # failure fails the same way on every retry -- Home
+                    # withholds home-retry for it the same way the ingest
+                    # canvas withholds its own Retry button
+                    # (IngestQueueRow.can_retry). Non-FAILED jobs keep the
+                    # default True; it's meaningless for them either way.
+                    retry_available=(
+                        not job.permanent if job.state == IngestJobState.FAILED else True
+                    ),
+                )
+            )
+        return items
+
+    def _local_ingest_recent_items(self) -> list[HomeActiveWorkItem]:
+        """Mirror DONE Library ingest jobs into Home's Recent feed (H1).
+
+        A finished ingest has nothing actionable left in Needs Attention or
+        Running (see ``_local_ingest_job_items``'s docstring), but it
+        should not vanish from Home entirely -- it belongs in Recent like
+        every other terminal local work item, sorted by
+        ``LibraryIngestJob.finished_at_wall`` (a real wall-clock ISO
+        timestamp, unlike the ``time.monotonic()`` ``finished_at``).
+        """
+        items: list[HomeActiveWorkItem] = []
+        for job in self._ingest_jobs_snapshot():
+            if job.state is not IngestJobState.DONE:
+                continue
+            items.append(
+                HomeActiveWorkItem(
+                    item_id=f"local:ingest:{job.job_id}",
+                    title=_ingest_job_title(job),
+                    source="Library",
+                    status="done",
+                    detail_route="library",
+                    console_available=False,
+                    updated_at=job.finished_at_wall,
+                )
+            )
+        return items
+
+    def _ingest_jobs_snapshot(self) -> tuple[LibraryIngestJob, ...]:
+        """Fetch and validate the Library ingest job registry snapshot."""
+        if not callable(self.ingest_jobs_provider):
+            return ()
+        try:
+            jobs = self.ingest_jobs_provider()
+        except Exception as e:
+            logger.warning(f"Failed to fetch local Library ingest jobs for Home: {e}")
+            return ()
+        return tuple(job for job in jobs or () if isinstance(job, LibraryIngestJob))
 
     def _local_watchlist_run_by_id(self, target_id: str) -> Any | None:
         if self.watchlist_service is None:
@@ -543,11 +719,17 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
 
     @staticmethod
     def _watchlist_run_title(run: Any) -> str:
-        return str(
-            _mapping_value(run, "title")
-            or _mapping_value(run, "source_title")
-            or f"Watchlist run {_mapping_value(run, 'run_id') or ''}".strip()
-            or "Watchlist run"
+        # Escaped for the same reason as _local_watchlist_run_items above:
+        # this feeds both a HomeRail Button label (recent_work_items) and
+        # app.notify()/HomeConsoleLaunch text in handle_control(), and
+        # notify() also parses Rich markup by default.
+        return escape(
+            str(
+                _mapping_value(run, "title")
+                or _mapping_value(run, "source_title")
+                or f"Watchlist run {_mapping_value(run, 'run_id') or ''}".strip()
+                or "Watchlist run"
+            )
         )
 
     @staticmethod
@@ -589,6 +771,21 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         return payload
 
 
+def _ingest_job_title(job: LibraryIngestJob) -> str:
+    """Return an escaped display title for a Library ingest job.
+
+    The basename is a user-controlled filename (arbitrary source path
+    picked in the Library ingest form) and flows straight into a Textual
+    Button label in HomeRail.compose() -- Button labels parse Rich markup,
+    so an unescaped title containing bracket syntax (e.g.
+    "weird [/bracket].txt") raises MarkupError and breaks Home's mount
+    entirely for as long as the job stays visible. Escape defensively, the
+    same way ``_chatbook_title``/``_safe_payload_text`` already do for
+    Chatbook artifact titles.
+    """
+    return escape(Path(str(job.source_path)).name or str(job.source_path))
+
+
 def _item_updated_at(record: Any) -> str:
     """Return the freshest ISO-ish timestamp text a record exposes, or blank."""
     for key in ("updated_at", "completed_at", "created_at"):
@@ -624,6 +821,10 @@ def _is_local_watchlist_run_id(value: str | None) -> bool:
 
 def _is_local_chatbook_id(value: str | None) -> bool:
     return bool(value and str(value).startswith("local:chatbook:"))
+
+
+def _is_local_ingest_job_id(value: str | None) -> bool:
+    return bool(value and str(value).startswith("local:ingest:"))
 
 
 def _runtime_server_status_fields(runtime_policy: Any | None) -> dict[str, object]:

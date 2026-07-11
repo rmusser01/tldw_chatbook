@@ -4247,6 +4247,16 @@ class LocalMediaReadingService:
                 "type": str(payload.get("type") or payload.get("media_type") or ""),
                 "url": f"local://media/{media_id}",
             }
+            # Carry the same temporal field the full-detail viewer path
+            # (get_media_by_id -> SELECT *) exposes, so the browse-list
+            # card and row secondary can show "Updated: <age>" instead of
+            # silently having no timestamp to work with (list metadata
+            # parity -- UX wave M3). Only present when the source query
+            # selected it (e.g. get_paginated_files); omitted otherwise
+            # (e.g. list_media_trash) rather than injecting an empty key.
+            last_modified = payload.get("last_modified")
+            if last_modified:
+                item["last_modified"] = str(last_modified)
             items.append(item)
         keywords_map: dict[int, list[str]] = {}
         keywords_available: bool | None = None

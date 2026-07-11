@@ -1037,7 +1037,7 @@ class EmbeddingsManagementWindow(Widget):
             await self._update_model_info(self.selected_model)
             
         except Exception as e:
-            logger.error(f"Async download failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Async download failed: {e}")
             download_status = self.query_one("#embeddings-model-download-status", Static)
             download_status.update(f"Download Failed: {str(e)}")
             self.notify(f"Download failed: {str(e)}", severity="error")
@@ -1077,7 +1077,7 @@ class EmbeddingsManagementWindow(Widget):
                 )
             
         except Exception as e:
-            logger.error(f"Failed to download model: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to download model: {e}")
             # Post message to update UI
             self.post_message(DownloadStatusMessage(f"Download Failed: {str(e)}"))
         finally:

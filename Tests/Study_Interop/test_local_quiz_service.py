@@ -13,6 +13,10 @@ class FakeDB:
         self.calls.append(("list_quizzes", q, limit, offset))
         return {"items": [{"id": "quiz-local-1", "name": "Renal Review", "total_questions": 1}], "count": 1}
 
+    def count_quizzes(self):
+        self.calls.append(("count_quizzes",))
+        return 4
+
     def create_quiz(self, **payload):
         self.calls.append(("create_quiz", payload))
         return "quiz-local-1"
@@ -145,6 +149,16 @@ def test_local_quiz_service_lists_and_creates_quizzes():
         ("create_quiz", {"name": "Renal Review", "description": "Kidney basics", "workspace_id": None, "time_limit_seconds": 300, "passing_score": 70}),
         ("get_quiz", "quiz-local-1"),
     ]
+
+
+def test_local_quiz_service_counts_quizzes():
+    db = FakeDB()
+    service = LocalQuizService(db=db)
+
+    count = service.count_quizzes()
+
+    assert count == 4
+    assert db.calls == [("count_quizzes",)]
 
 
 def test_local_quiz_service_normalizes_blank_question_search_to_list_query():

@@ -17,10 +17,12 @@ if 'TEXTUAL_LOG' not in os.environ:
 
 # Imports
 import concurrent.futures
+import contextlib
 import functools
 import inspect
 import logging
 import logging.handlers
+import multiprocessing
 import random
 import subprocess
 import sys
@@ -34,7 +36,8 @@ from textual.widget import Widget
 import asyncio
 from PIL import Image
 from loguru import logger as loguru_logger, logger
-from textual import on
+from rich.markup import escape as escape_markup
+from textual import on, work
 from textual.app import App, ComposeResult
 from textual.widgets import (
     Static, Button, Input, RichLog, TextArea, Select, ListView, Checkbox, Collapsible, ListItem, Label, Switch, Markdown
@@ -64,6 +67,7 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_streaming_events import handl
 from tldw_chatbook.Event_Handlers.worker_events import StreamingChunk, StreamDone
 from .Widgets.AppFooterStatus import AppFooterStatus
 from .config import (
+    get_cli_setting,
     get_library_collections_db_path,
     get_media_db_path,
     get_notifications_db_path,
@@ -81,6 +85,7 @@ from tldw_chatbook.Constants import ALL_TABS, TAB_CCP, TAB_CHAT, TAB_HOME, TAB_L
     TAB_SCHEDULES, TAB_WORKFLOWS, TAB_MCP, TAB_ACP, TAB_SKILLS, TAB_SETTINGS, LLAMA_CPP_SERVER_ARGS_HELP_TEXT, \
     LLAMAFILE_SERVER_ARGS_HELP_TEXT, TAB_CODING, TAB_STTS, TAB_STUDY, TAB_WRITING, TAB_RESEARCH, TAB_SUBSCRIPTIONS, TAB_CHATBOOKS, \
     LIBRARY_NAV_CONTEXT_MODE, LIBRARY_NAV_CONTEXT_NOTE_ID, LIBRARY_NAV_CONTEXT_NOTES_CREATE, \
+    LIBRARY_NAV_CONTEXT_INGEST, \
     get_tab_display_label
 from tldw_chatbook.Chat.chat_conversation_scope_service import ChatConversationScopeService
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
@@ -105,6 +110,16 @@ from tldw_chatbook.Chat import (
 )
 from tldw_chatbook.Chatbooks import LocalChatbookService, ServerChatbookService
 from tldw_chatbook.Library import LocalLibraryCollectionsService
+from tldw_chatbook.Library.library_ingest_jobs import (
+    DEFAULT_CHUNK_SIZE,
+    IngestJobState,
+    LibraryIngestJob,
+    LibraryIngestJobRegistry,
+)
+from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
+from tldw_chatbook.Local_Ingestion import detect_file_type
+from tldw_chatbook.Local_Ingestion.ingest_parse_worker import classify_parse_failure, run_parse_job
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import persist_parsed_media
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -351,14 +366,6 @@ SEARCH_NAV_RAG_MANAGEMENT = "search-nav-rag-management"
 SEARCH_NAV_WEB_SEARCH = "search-nav-web-search"
 SEARCH_NAV_EMBEDDINGS_CREATE = "search-nav-embeddings-create"
 SEARCH_NAV_EMBEDDINGS_MANAGE = "search-nav-embeddings-manage"
-
-CACHEABLE_SCREEN_ROUTES = {
-    TAB_CHAT,
-    TAB_LIBRARY,
-    TAB_MEDIA,
-    TAB_SEARCH,
-    TAB_SETTINGS,
-}
 
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
@@ -1095,7 +1102,7 @@ class PlaceholderWindow(Container):
             logger.info(f"Window {self.window_id} initialized in {duration:.3f} seconds")
             
         except Exception as e:
-            logger.error(f"Failed to initialize window {self.window_id}: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to initialize window {self.window_id}: {str(e)}")
             # Clear any existing children before showing error
             for child in list(self.children):
                 child.remove()
@@ -1126,8 +1133,813 @@ class PlaceholderWindow(Container):
                     await result
 
 
+def _sanitize_library_ingest_error_text(message: str) -> str:
+    """Reduce a raw error message to a single-line, ``<=200``-char string.
+
+    Shared building block for both ingest-pipeline stages (F3): the write
+    stage has a real ``Exception`` (see ``_sanitize_library_ingest_error``,
+    below); the parse stage only has the already-``str()``-ed message a
+    pool worker's structured failure result carries across the process
+    boundary (``ingest_parse_worker.run_parse_job``'s ``"error"`` key) --
+    both need the exact same single-line/200-cap treatment before landing
+    in a job's ``LibraryIngestJob.error`` field.
+
+    Args:
+        message: The raw (possibly multi-line, possibly empty) message.
+
+    Returns:
+        The first line, stripped and capped at 200 characters. ``""`` when
+        ``message`` is empty or all-whitespace.
+    """
+    message = message.strip()
+    first_line = message.splitlines()[0].strip() if message else ""
+    return first_line[:200]
+
+
+def _sanitize_library_ingest_error(exc: Exception) -> str:
+    """Reduce an ingest-time exception to a single-line, capped error string.
+
+    Args:
+        exc: The exception raised by the ingest seam.
+
+    Returns:
+        The first line of ``str(exc)``, stripped and capped at 200
+        characters. Falls back to the exception's class name when
+        ``str(exc)`` is empty.
+    """
+    sanitized = _sanitize_library_ingest_error_text(str(exc))
+    return sanitized if sanitized else exc.__class__.__name__[:200]
+
+
+def _stream_fileno(stream: Any) -> int:
+    """Best-effort file descriptor for a possibly-fake stream object.
+
+    Args:
+        stream: Anything shaped like a text stream (may be Textual's
+            stderr capture object, a pytest capture stream, ``None``, ...).
+
+    Returns:
+        The stream's OS-level fd when ``fileno()`` returns a real one;
+        ``-1`` when the stream is missing/``None``, ``fileno()`` raises,
+        or -- the case that actually bit in production -- ``fileno()``
+        returns a non-fd sentinel like ``-1`` without raising (Textual's
+        capture object does exactly that).
+    """
+    try:
+        fd = stream.fileno()
+    except Exception:
+        return -1
+    return fd if isinstance(fd, int) and fd >= 0 else -1
+
+
+# Keep-alive singleton for `_ingest_pool_real_stderr`'s devnull fallback.
+# Module-level on purpose: the multiprocessing resource tracker inherits this
+# fd ONCE at its (process-global, once-per-process) launch and keeps writing
+# to it for the rest of the process's life -- if the handle were a local that
+# got garbage-collected, the OS could reuse the fd number and the tracker's
+# error output would silently corrupt an unrelated file.
+_INGEST_POOL_STDERR_FALLBACK = None
+
+
+def _ingest_pool_real_stderr():
+    """Return a stream with a REAL file descriptor to stand in for stderr.
+
+    Used by ``LibraryIngestQueueMixin._create_ingest_parse_pool`` when
+    ``sys.stderr`` has no usable fd (Textual app mode / textual-serve
+    replace it with a capture object whose ``fileno()`` returns ``-1``
+    without raising -- see that method's docstring for the crash this
+    caused). Preference order:
+
+    1. ``sys.__stderr__`` -- the process's ORIGINAL stderr, still fd-backed
+       even after Textual swaps ``sys.stderr`` (Textual redirects the
+       high-level name, not the OS-level fd).
+    2. A process-lifetime ``os.devnull`` handle (see
+       ``_INGEST_POOL_STDERR_FALLBACK``'s comment for why it must stay
+       referenced) -- ``sys.__stderr__`` can itself be ``None``/fd-less in
+       exotic embed/frozen environments.
+    """
+    real = sys.__stderr__
+    if real is not None and _stream_fileno(real) >= 0:
+        return real
+    global _INGEST_POOL_STDERR_FALLBACK
+    if _INGEST_POOL_STDERR_FALLBACK is None:
+        _INGEST_POOL_STDERR_FALLBACK = open(os.devnull, "w")
+    return _INGEST_POOL_STDERR_FALLBACK
+
+
+class LibraryIngestQueueMixin:
+    """Library ingest job submission seam + parallel-parse coordinator + writer.
+
+    Mixed into :class:`TldwCli` (and headless test harnesses -- see
+    ``Tests/Library/test_library_ingest_runner.py``) rather than being
+    defined directly on the App class, so the coordinator + writer can be
+    exercised without booting the full app. A host class is expected to
+    provide:
+
+    - ``self.library_ingest_jobs``: a ``LibraryIngestJobRegistry`` instance
+      constructed once (e.g. in ``__init__``/app wiring).
+    - ``self.media_db``: an ``Optional[MediaDatabase]``.
+    - ``self._ingest_parse_pool``, ``self._ingest_parsed_payloads``,
+      ``self._ingest_shutdown``: the coordinator's own state, initialized
+      once (e.g. ``None``, ``{}``, ``False`` respectively) alongside
+      ``library_ingest_jobs`` -- see ``TldwCli.__init__``.
+    - Textual's ``App``/``Widget`` worker machinery (``@work`` and
+      ``call_from_thread``), since this mixin is always combined with one
+      of those base classes.
+
+    F3 architecture -- two decoupled stages, not one serial loop:
+
+    - **Parse stage (this mixin's coordinator, UI thread).** A lazily
+      created spawn-context ``multiprocessing.Pool`` (see
+      ``_create_ingest_parse_pool``) fans file parsing out to worker
+      processes. ``_top_up_ingest_parse_pool`` keeps up to N jobs (the pool
+      size) ``PARSING`` at once -- called after every submission/retry and
+      after every parse completion. A pool completion is marshaled onto the
+      UI thread (``_on_ingest_parse_complete``); success stashes the parsed
+      payload and wakes the writer, failure goes straight to
+      ``mark_failed``.
+    - **Write stage (the writer, background thread, unchanged shape).**
+      Exactly one job is ever being written at a time (SQLite has one
+      writer). The writer's claim-or-release loop
+      (``_claim_next_ingest_job_or_release`` / ``_run_library_ingest_queue``)
+      now claims the OLDEST payload-ready job (by submission order) instead
+      of the oldest queued one, persists it via ``persist_parsed_media``,
+      and marks it ``DONE``/``FAILED``.
+
+    The coordinator (parse side) and the writer (write side) are the only
+    intended callers of the registry's ``mark_parsing``/``mark_writing``/
+    ``mark_done``/``mark_failed`` transition methods, respectively. Every
+    job is driven either ``queued`` -> ``parsing`` -> ``writing`` ->
+    ``done``/``failed``, or ``parsing`` -> ``failed`` directly when the pool
+    worker's parse itself fails (e.g. an unsupported/undetectable file type,
+    or a missing source file -- classified by ``classify_parse_failure``
+    inside the worker, where the real exception type is available). Either
+    way, one job's failure is isolated so it never strands a later queued
+    job or blocks the writer.
+
+    Shutdown (quit path) order, in ``_shutdown_ingest_parse_pool`` (called
+    from ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + pool
+    reference detached, synchronously -- pool callbacks short-circuit on
+    the result-handler thread before ever marshaling; (2)
+    ``pool.terminate()`` + ``pool.join()`` on a detached daemon thread,
+    never the event-loop thread (deadlock rationale in that method's
+    docstring); (3) the writer thread is swept afterward by ``on_unmount``'s
+    generic worker cancellation, its in-flight DB write completing as
+    before. Steps 2 and 3 run concurrently -- safe because the two stages
+    share no resources (parse workers never touch ``media_db``; the writer
+    never touches the pool).
+    """
+
+    def submit_library_ingest_job(
+        self,
+        *,
+        source_path: str,
+        title: str = "",
+        author: str = "",
+        keywords: tuple[str, ...] = (),
+        perform_analysis: bool = False,
+        chunk_enabled: bool = False,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+    ) -> LibraryIngestJob:
+        """Submit a new Library ingest job and top up the parse pool.
+
+        UI-thread only. Appends a ``QUEUED`` job to ``self.library_ingest_jobs``.
+        When ``self.media_db`` is unavailable, the job is failed immediately
+        (with the exact copy ``"Media database is unavailable."``) and it
+        never reaches the parse pool.
+
+        Args:
+            source_path: The file path to ingest.
+            title: Optional title form field.
+            author: Optional author form field.
+            keywords: Keywords form field.
+            perform_analysis: Whether to run post-ingest analysis.
+            chunk_enabled: Whether to chunk the ingested content.
+            chunk_size: Requested chunk size when ``chunk_enabled``.
+
+        Returns:
+            The newly created job: ``QUEUED`` normally, or immediately
+            ``FAILED`` when ``media_db`` is unavailable.
+        """
+        job = self.library_ingest_jobs.submit(
+            source_path=source_path,
+            title=title,
+            author=author,
+            keywords=keywords,
+            perform_analysis=perform_analysis,
+            chunk_enabled=chunk_enabled,
+            chunk_size=chunk_size,
+        )
+        if self.media_db is None:
+            failed = self.library_ingest_jobs.mark_failed(
+                job.job_id, error="Media database is unavailable."
+            )
+            return failed if failed is not None else job
+        self._top_up_ingest_parse_pool()
+        return job
+
+    def retry_library_ingest_job(self, job_id: str) -> Optional[LibraryIngestJob]:
+        """Requeue a previously failed job and top up the parse pool.
+
+        UI-thread only. A thin wrapper over
+        ``LibraryIngestJobRegistry.requeue`` -- a no-op (returns ``None``)
+        when ``job_id`` is unknown or the job is not currently ``FAILED``.
+
+        Args:
+            job_id: The failed job to requeue.
+
+        Returns:
+            The newly appended ``QUEUED`` job (or immediately ``FAILED``
+            when ``media_db`` is unavailable), or ``None`` when nothing was
+            requeued.
+        """
+        requeued = self.library_ingest_jobs.requeue(job_id)
+        if requeued is None:
+            return None
+        if self.media_db is None:
+            failed = self.library_ingest_jobs.mark_failed(
+                requeued.job_id, error="Media database is unavailable."
+            )
+            return failed if failed is not None else requeued
+        self._top_up_ingest_parse_pool()
+        return requeued
+
+    # -- Parse-pool sizing + lifecycle (coordinator) -----------------------
+
+    def _ingest_parse_worker_count(self) -> int:
+        """Resolve the parse-pool size from config, with a safe default.
+
+        UI-thread only. Reads ``library.ingest_parse_workers`` via the
+        dotted 1-arg ``get_cli_setting`` form (``load_settings()`` doesn't
+        carry CLI ``[library.*]`` tables -- same bug-class guard as the
+        rail-state read). An invalid, missing, or non-positive value falls
+        back to the spec's default formula.
+
+        Returns:
+            The configured worker count when it int-coerces to a positive
+            value; otherwise ``min(3, max(1, cpu_count - 1))``, where
+            ``cpu_count`` is ``os.cpu_count()`` (guarded to ``2`` when that
+            returns ``None``, e.g. on some containerized/sandboxed hosts).
+        """
+        try:
+            configured = int(get_cli_setting("library.ingest_parse_workers"))
+        except (TypeError, ValueError):
+            configured = 0
+        if configured > 0:
+            return configured
+        cpu_count = os.cpu_count() or 2
+        return min(3, max(1, cpu_count - 1))
+
+    def _create_ingest_parse_pool(self):
+        """Create the Library ingest parse pool.
+
+        UI-thread only. Test seam: monkeypatched to an inline-synchronous
+        fake pool (see ``Tests/Library/test_library_ingest_runner.py``) so
+        pilots stay deterministic without spawning real OS processes. Real
+        callers get a spawn-context ``multiprocessing.Pool`` sized by
+        ``_ingest_parse_worker_count``.
+
+        Not a ``concurrent.futures.ProcessPoolExecutor`` -- see the F3
+        design spec's Architecture section: the executor's ``atexit`` hook
+        joins running tasks, so an in-flight long transcription would block
+        app exit for its full duration. ``Pool`` has a public
+        ``terminate()`` the quit path relies on instead.
+
+        Textual stderr workaround (live-QA crash fix): under Textual (app
+        mode / textual-serve), ``sys.stderr`` is replaced by a capture
+        object whose ``fileno()`` returns ``-1`` WITHOUT raising. CPython
+        3.12's ``multiprocessing.resource_tracker._launch`` appends
+        ``sys.stderr.fileno()`` to the fds it hands
+        ``util.spawnv_passfds`` (its ``except Exception`` guard never
+        fires, since ``-1`` is returned rather than raised), and
+        ``spawnv_passfds`` rejects the list with ``ValueError: bad
+        value(s) in fds_to_keep`` -- so the very first Pool construction
+        (which ensure-runs the process-global resource tracker) crashed
+        the app on its first ingest submission. When ``sys.stderr`` has no
+        usable fd, the Pool is constructed under
+        ``contextlib.redirect_stderr`` pointing at a genuinely fd-backed
+        stream (``_ingest_pool_real_stderr``: ``sys.__stderr__``, else a
+        kept-alive devnull handle). The tracker launches at most once per
+        process, so covering construction is sufficient -- and applying
+        the redirect on every (re)construction is harmless.
+        """
+        ctx = multiprocessing.get_context("spawn")
+        processes = self._ingest_parse_worker_count()
+        if _stream_fileno(sys.stderr) >= 0:
+            return ctx.Pool(processes=processes)
+        with contextlib.redirect_stderr(_ingest_pool_real_stderr()):
+            return ctx.Pool(processes=processes)
+
+    def _ensure_ingest_parse_pool(self):
+        """Return the current parse pool, lazily creating one if needed.
+
+        UI-thread only.
+        """
+        if self._ingest_parse_pool is None:
+            self._ingest_parse_pool = self._create_ingest_parse_pool()
+        return self._ingest_parse_pool
+
+    @staticmethod
+    def _ingest_job_options(job: LibraryIngestJob) -> Dict[str, Any]:
+        """Build ``run_parse_job``'s ``options`` dict from a job's fields.
+
+        Mechanical 1:1 translation documented in
+        ``ingest_parse_worker``'s module docstring -- the Library queue
+        never sets ``custom_prompt``/``system_prompt``/``api_name``/
+        ``api_key``/``metadata``, so they're simply absent (``None`` inside
+        the worker's ``options.get(...)`` reads).
+        """
+        return {
+            "title": job.title or None,
+            "author": job.author or None,
+            "keywords": list(job.keywords) or None,
+            "perform_analysis": job.perform_analysis,
+            "chunk_options": (
+                {
+                    "method": "sentences",
+                    "size": job.chunk_size,
+                    "overlap": 100,
+                }
+                if job.chunk_enabled
+                else None
+            ),
+        }
+
+    def _top_up_ingest_parse_pool(self) -> None:
+        """Submit ``QUEUED`` jobs to the parse pool up to the worker cap.
+
+        UI-thread only. Called after every submission/retry and after every
+        parse completion (ok or not) so the pool stays saturated at up to N
+        concurrent ``PARSING`` jobs -- this cap IS the backpressure: at most
+        N parsed payloads (plus the one currently being written) are ever
+        held in memory at once.
+
+        A no-op once ``self._ingest_shutdown`` is set (the app is closing;
+        no new parse work should be handed to a pool that's about to be
+        terminated).
+
+        For each job claimed off the queue, ``detect_file_type`` is called
+        here (cheap: a pure extension check, never touches the filesystem
+        beyond ``Path.suffix``) purely to stamp a cosmetic ``detected_type``
+        onto the ``PARSING`` row for the queue-row copy -- an unsupported
+        extension here is silently ignored (left ``""``) rather than
+        fast-failing the job: real classification (permanent vs. retryable)
+        happens inside the pool worker, where the authoritative exception
+        is available (see ``classify_parse_failure``), matching the F3
+        design spec's "permanent-vs-retryable classification happens inside
+        the worker" decision.
+        """
+        if self._ingest_shutdown:
+            return
+        worker_count = self._ingest_parse_worker_count()
+        while self.library_ingest_jobs.counts().get("parsing", 0) < worker_count:
+            job = self.library_ingest_jobs.next_queued()
+            if job is None:
+                return
+            try:
+                detected_type = detect_file_type(job.source_path) or ""
+            except Exception:
+                detected_type = ""
+            claimed = self.library_ingest_jobs.mark_parsing(
+                job.job_id, detected_type=detected_type
+            )
+            if claimed is None:
+                # Invariant violation (Task-3 reviewer's guard note): the
+                # job we just pulled off `next_queued()` was no longer
+                # QUEUED by the time we tried to claim it -- should be
+                # impossible on the UI thread (this whole method is
+                # UI-thread-only, so nothing else can race the queue
+                # between the two calls), but a coordinator bug here must
+                # never crash the submission path. `break`, not `continue`
+                # (whole-branch review, Minor 2): `next_queued()` always
+                # returns the OLDEST queued job, so a `continue` would get
+                # the exact same unclaimable job handed straight back --
+                # an infinite loop on the UI thread. Breaking abandons
+                # only this top-up pass (logged); the next submission/
+                # retry/parse-completion re-attempts from scratch.
+                logger.error(
+                    f"Library ingest coordinator: mark_parsing rejected "
+                    f"job {job.job_id} (expected QUEUED) -- abandoning "
+                    f"this top-up pass."
+                )
+                break
+            options = self._ingest_job_options(claimed)
+            job_id = claimed.job_id
+            source_path = claimed.source_path
+            try:
+                pool = self._ensure_ingest_parse_pool()
+            except Exception as exc:
+                # CONTAINMENT (live-QA crash fix): pool CREATION itself
+                # failed -- e.g. the spawn machinery raising at
+                # construction time (the fileno-less-stderr resource-
+                # tracker crash `_create_ingest_parse_pool` now works
+                # around, or any environment-specific successor). This is
+                # a UI-thread call reached synchronously from
+                # submit/retry, so letting it propagate would crash the
+                # app on the user's submission. Same containment
+                # philosophy as `_handle_broken_ingest_parse_pool`, but
+                # scoped to just the triggering job: no pool ever existed
+                # here, so no OTHER job's parse was riding on it -- fail
+                # this one retryable, keep the pool slot empty (the next
+                # submit/retry attempts creation from scratch), and
+                # return cleanly.
+                logger.opt(exception=True).error(
+                    f"Library ingest parse pool could not be created "
+                    f"(job_id={job_id}, source={source_path})."
+                )
+                self._ingest_parse_pool = None
+                self.library_ingest_jobs.mark_failed(
+                    job_id,
+                    error=_sanitize_library_ingest_error_text(
+                        f"Parse pool could not start: {exc}"
+                    )
+                    or "Parse pool could not start.",
+                    permanent=False,
+                )
+                return
+            try:
+                pool.apply_async(
+                    run_parse_job,
+                    (source_path, options),
+                    callback=functools.partial(self._ingest_pool_callback, job_id),
+                    error_callback=self._ingest_pool_error_callback,
+                )
+            except Exception as exc:
+                # The pool itself rejected the submission synchronously
+                # (e.g. it was already terminated/closed) -- every job
+                # currently PARSING was submitted to this same broken pool
+                # and can't be trusted to ever complete either.
+                self._handle_broken_ingest_parse_pool(exc)
+                return
+
+    def _ingest_pool_callback(self, job_id: str, result: Dict[str, Any]) -> None:
+        """``apply_async`` ``callback``: runs on the pool's result-handler thread.
+
+        Checks ``_ingest_shutdown`` BEFORE marshaling (quit-deadlock
+        guard, Task 4 review): Textual's ``call_from_thread`` blocks the
+        calling thread on the marshaled call's result and only guards
+        against the loop being ``None``, not against it shutting down --
+        and CPython's ``Pool._terminate_pool`` does an unbounded
+        ``result_handler.join()``, with ``_handle_results`` able to run
+        callbacks before it observes TERMINATE. So if a parse completed
+        right as the user quit, this thread could park inside
+        ``call_from_thread`` while the quit path parked waiting on THIS
+        thread inside ``pool.terminate()`` -- mutual deadlock, app hangs
+        on quit. Checking the flag here (on this thread, before any
+        marshaling) narrows that window; running terminate/join off the
+        loop thread entirely (``_shutdown_ingest_parse_pool``) closes it
+        -- with both layers, a callback that slips past this check parks
+        only until the still-free loop drains it (and the marshaled body
+        then no-ops via the same flag inside
+        ``_on_ingest_parse_complete``).
+
+        Args:
+            job_id: Bound at submission time via ``functools.partial`` in
+                ``_top_up_ingest_parse_pool``.
+            result: ``run_parse_job``'s structured return value.
+        """
+        if self._ingest_shutdown:
+            return
+        self.call_from_thread(self._on_ingest_parse_complete, job_id, result)
+
+    def _ingest_pool_error_callback(self, exc: BaseException) -> None:
+        """``apply_async`` ``error_callback``: same thread + shutdown
+        contract as ``_ingest_pool_callback`` (see its docstring)."""
+        if self._ingest_shutdown:
+            return
+        self.call_from_thread(self._handle_broken_ingest_parse_pool, exc)
+
+    def _on_ingest_parse_complete(self, job_id: str, result: Dict[str, Any]) -> None:
+        """Handle one pool completion (success or structured parse failure).
+
+        UI-thread only; invoked via ``call_from_thread`` from the pool's
+        result-handler thread (the ``apply_async`` ``callback``). No-ops
+        immediately once ``self._ingest_shutdown`` is set -- a completion
+        can still be marshaled onto the UI thread for a brief window after
+        the app starts closing (it may have already been in flight when
+        ``pool.terminate()`` was called), and this guard is what keeps that
+        race from touching a closing app's registry/pool state.
+
+        Args:
+            job_id: The job this result belongs to (bound at submission
+                time in ``_top_up_ingest_parse_pool``, not re-derived here).
+            result: ``run_parse_job``'s structured return value -- either
+                ``{"ok": True, "payload": {...}}`` or
+                ``{"ok": False, "error": str, "permanent": bool}``.
+        """
+        if self._ingest_shutdown:
+            return
+        if result.get("ok"):
+            self._ingest_parsed_payloads[job_id] = result["payload"]
+            self._start_library_ingest_queue_if_idle()
+        else:
+            error_text = _sanitize_library_ingest_error_text(
+                str(result.get("error") or "Library ingest parsing failed.")
+            )
+            self.library_ingest_jobs.mark_failed(
+                job_id,
+                error=error_text or "Library ingest parsing failed.",
+                permanent=bool(result.get("permanent", False)),
+            )
+        self._top_up_ingest_parse_pool()
+
+    def _handle_broken_ingest_parse_pool(self, exc: BaseException) -> None:
+        """Fail every still-mid-parse ``PARSING`` job and drop the broken pool.
+
+        UI-thread only. Shared by the pool's ``error_callback`` (an async,
+        pool-level failure marshaled via ``call_from_thread`` -- e.g. a
+        worker process died) and a synchronous ``apply_async`` submission
+        failure in ``_top_up_ingest_parse_pool`` (the pool was already
+        broken when we tried to use it). Either way, a job whose parse is
+        still genuinely in flight on the SAME pool object may never see
+        its callback fire, so it can't be trusted to complete -- failing
+        those (retryable) and dropping the pool reference is the only
+        sound recovery (see the F3 design spec's "Worker-process death"
+        section). The pool is rebuilt lazily by
+        ``_create_ingest_parse_pool`` the next time ``_top_up_ingest_parse_pool``
+        runs (i.e. on the next submission/retry).
+
+        Payload-ready jobs are SPARED (Task 4 review fix): a job whose
+        parse already completed sits ``PARSING`` with its payload in
+        ``_ingest_parsed_payloads`` until the writer claims it -- it needs
+        nothing further from the pool, so failing it here would throw a
+        finished parse away just because an unrelated worker died. Such
+        jobs are skipped (left ``PARSING`` for the writer), and the writer
+        is woken at the end so they drain even if it had already released.
+
+        No-ops once ``self._ingest_shutdown`` is set, same as
+        ``_on_ingest_parse_complete``.
+        """
+        if self._ingest_shutdown:
+            return
+        logger.opt(exception=exc).error(f"Library ingest parse pool failed: {exc}")
+        for job in self.library_ingest_jobs.jobs():
+            if job.state != IngestJobState.PARSING:
+                continue
+            if job.job_id in self._ingest_parsed_payloads:
+                # Parse already finished -- the payload is waiting for the
+                # writer; the broken pool can't hurt this job anymore.
+                continue
+            self.library_ingest_jobs.mark_failed(
+                job.job_id,
+                error="Library ingest parse pool failed unexpectedly; retry to resume.",
+                permanent=False,
+            )
+        self._ingest_parse_pool = None
+        if self._ingest_parsed_payloads:
+            self._start_library_ingest_queue_if_idle()
+
+    def _shutdown_ingest_parse_pool(self) -> Optional[threading.Thread]:
+        """Quit-path teardown: flag up, pool detached, terminate off-loop.
+
+        Called from ``TldwCli.on_unmount`` (i.e. on the app's event-loop
+        thread). Synchronously: sets ``_ingest_shutdown = True`` FIRST (so
+        pool callbacks -- ``_ingest_pool_callback``/
+        ``_ingest_pool_error_callback``, running on the pool's
+        result-handler thread -- short-circuit before marshaling from this
+        point on) and drops the ``_ingest_parse_pool`` reference (nothing
+        can submit to it anymore). The actual ``pool.terminate()`` +
+        ``pool.join()`` then run on a detached daemon thread, NEVER on the
+        caller's (loop) thread: CPython's ``Pool._terminate_pool`` does an
+        unbounded ``result_handler.join()``, and if that result-handler
+        thread is at that moment parked inside a ``call_from_thread`` it
+        entered just before the flag went up, joining it from the loop
+        thread would deadlock (the loop can't drain the marshaled call it
+        is itself waiting behind). Off-loop, the loop stays free: the
+        in-flight marshaled call runs, no-ops via the flag, the
+        result-handler thread unblocks, and the join completes. The daemon
+        thread is deliberately not joined by the caller -- worst case it
+        outlives the app briefly and dies with the process.
+
+        Returns:
+            The teardown thread (so tests can bound-join it and assert
+            thread identity), or ``None`` when no pool was ever created --
+            the shutdown flag is still set in that case.
+        """
+        self._ingest_shutdown = True
+        pool = getattr(self, "_ingest_parse_pool", None)
+        self._ingest_parse_pool = None
+        if pool is None:
+            return None
+
+        def _terminate_pool() -> None:
+            try:
+                pool.terminate()
+                pool.join()
+            except Exception:
+                logger.opt(exception=True).error(
+                    "Error terminating the Library ingest parse pool."
+                )
+
+        thread = threading.Thread(
+            target=_terminate_pool,
+            name="library-ingest-pool-terminate",
+            daemon=True,
+        )
+        thread.start()
+        return thread
+
+    # -- Writer (claim-or-release loop, narrowed to the write stage) -------
+
+    def _start_library_ingest_queue_if_idle(self) -> None:
+        """Start the writer worker, unless one is already active.
+
+        UI-thread only. Sets ``runner_active = True`` synchronously, before
+        scheduling the worker, so a rapid double-wake can never
+        double-start the writer.
+
+        If scheduling the ``@work`` worker itself raises synchronously
+        (e.g. the app isn't in a state that accepts new workers), the
+        ``runner_active`` flag is rolled back to ``False`` before
+        re-raising -- otherwise a scheduling failure here would leave the
+        registry permanently believing a runner is active when none was
+        ever started, silently stranding every future payload.
+        """
+        if self.library_ingest_jobs.runner_active:
+            return
+        self.library_ingest_jobs.runner_active = True
+        try:
+            self._run_library_ingest_queue()
+        except Exception:
+            self.library_ingest_jobs.runner_active = False
+            raise
+
+    def _claim_next_ingest_job_or_release(
+        self,
+    ) -> Optional[tuple[LibraryIngestJob, Dict[str, Any]]]:
+        """Atomically claim the oldest payload-ready job, or release the writer.
+
+        UI-thread only; must only ever be invoked via ``call_from_thread``
+        from the writer worker thread (see ``_run_library_ingest_queue``),
+        never called directly from that thread.
+
+        "Payload-ready" means the job's parsed payload is sitting in
+        ``self._ingest_parsed_payloads`` (stashed by
+        ``_on_ingest_parse_complete`` on a successful parse) -- claiming
+        means popping that payload out of the dict AND transitioning the
+        job ``PARSING`` -> ``WRITING`` via ``mark_writing``, both inside
+        this single call. Jobs are visited oldest-submission-first
+        (``self.library_ingest_jobs.jobs()`` is newest-first; this walks it
+        reversed) so writes happen in submission order among ready
+        payloads, even though a small file may finish parsing before an
+        older large one.
+
+        A successful claim also tops up the parse pool
+        (``_top_up_ingest_parse_pool``): a payload-ready job still counts
+        against the ``PARSING`` cap until this call's ``mark_writing``
+        transitions it out (there is no separate registry state for
+        "parsed but not yet claimed" -- see ``IngestJobState``), so a
+        completion's own top-up call (in ``_on_ingest_parse_complete``,
+        which always runs *before* the writer gets around to claiming) can
+        still see the cap as full. Topping up again here is what actually
+        frees that slot for a still-``QUEUED`` job once the claim lands.
+
+        Atomicity contract: this is a single, plain synchronous UI-thread
+        call, so the "is there a payload-ready job?" check and the "clear
+        ``runner_active``" decision happen in the same turn of the UI event
+        loop with no ``await``/yield between them -- exactly the discipline
+        the pre-F3 claim-or-release fix established (see the git history:
+        the previous two-step implementation had a submission land in the
+        gap between "check" and "clear ``runner_active``", stranding a job
+        behind a stale ``runner_active`` flag). Do not reintroduce a
+        two-``call_from_thread`` exit path.
+
+        Returns:
+            ``(job, payload)`` for the oldest payload-ready job, if one
+            exists -- ``runner_active`` is left untouched (still ``True``)
+            and the writer must keep looping. ``None`` when no job is
+            payload-ready -- ``runner_active`` is cleared before returning,
+            and the writer must exit.
+        """
+        for job in reversed(self.library_ingest_jobs.jobs()):
+            payload = self._ingest_parsed_payloads.get(job.job_id)
+            if payload is None:
+                continue
+            del self._ingest_parsed_payloads[job.job_id]
+            claimed = self.library_ingest_jobs.mark_writing(job.job_id)
+            if claimed is None:
+                # Invariant violation (Task-3 reviewer's guard note): a
+                # payload existed for a job that wasn't PARSING when we
+                # tried to claim it -- should be impossible (a payload only
+                # ever enters the dict from a PARSING-state parse
+                # completion, and this is the only caller of
+                # `mark_writing`), but if it ever happens, the orphaned
+                # payload is discarded (already popped above) and we keep
+                # looking rather than crashing the writer loop.
+                logger.error(
+                    f"Library ingest writer: mark_writing rejected job "
+                    f"{job.job_id} despite a ready payload -- discarding "
+                    f"the orphaned payload and skipping."
+                )
+                continue
+            self._top_up_ingest_parse_pool()
+            return claimed, payload
+        self.library_ingest_jobs.runner_active = False
+        return None
+
+    def _release_ingest_runner_after_crash(self) -> None:
+        """Safety-net cleanup for the writer's ``finally`` block.
+
+        UI-thread only; invoked via ``call_from_thread`` from the writer
+        worker's ``finally``, on every exit path (clean or not).
+
+        On the normal, clean-exit path this is a no-op: the writer already
+        exited because ``_claim_next_ingest_job_or_release`` returned
+        ``None``, which already cleared ``runner_active``. It only does
+        real work when the worker thread is unwinding from something that
+        bypassed that atomic exit -- i.e. an exception escaped a job's own
+        isolation (see ``_run_library_ingest_queue``) or the marshaled call
+        itself raised. In that case: clear ``runner_active`` if it is still
+        set, and, since the crash may have left one or more parsed payloads
+        sitting unclaimed with nothing left to drain them, restart the
+        writer when a payload is still waiting at that moment. Restarting
+        here is safe: this method runs on the UI thread, and the dying
+        worker thread is already unwinding and will not touch the registry
+        again.
+        """
+        if self.library_ingest_jobs.runner_active:
+            self.library_ingest_jobs.runner_active = False
+        if self._ingest_parsed_payloads:
+            self._start_library_ingest_queue_if_idle()
+
+    @work(exclusive=True, thread=True, group="library_ingest_queue")
+    def _run_library_ingest_queue(self) -> None:
+        """Drain payload-ready Library ingest jobs on a background thread.
+
+        This is the write stage only (F3): parsing already happened in the
+        pool, and this worker's whole job is persisting an already-parsed
+        payload via ``persist_parsed_media`` -- one ``add_media_with_keywords``
+        call at a time, since SQLite has exactly one writer.
+
+        Runs until no job is payload-ready, then clears ``runner_active``
+        (via ``_claim_next_ingest_job_or_release``, atomically -- see that
+        method's docstring) and exits -- a later parse completion wakes a
+        fresh worker (``_on_ingest_parse_complete`` ->
+        ``_start_library_ingest_queue_if_idle``). Every registry touch is
+        marshaled onto the UI thread via ``call_from_thread`` because
+        ``LibraryIngestJobRegistry`` does no internal locking (see its
+        module docstring). A single job's write failure (DB error, ...) is
+        caught locally and turned into a ``mark_failed`` transition; it
+        never aborts the loop.
+
+        The outer ``try/finally`` is a separate safety net for failures
+        *outside* that per-job isolation -- e.g. the marshaled claim call
+        itself raising (a genuinely unexpected/"catastrophic" failure, not
+        a per-job write error). See ``_release_ingest_runner_after_crash``
+        for why the crash-recovery callable is skipped on a clean exit.
+        """
+        clean_exit = False
+        try:
+            while True:
+                claim = self.call_from_thread(self._claim_next_ingest_job_or_release)
+                if claim is None:
+                    clean_exit = True
+                    return
+                job, payload = claim
+                try:
+                    media_id, _media_uuid, _message = persist_parsed_media(
+                        payload, self.media_db
+                    )
+                    if media_id is None and self.media_db is not None:
+                        # Re-ingesting an unchanged file takes the DB's
+                        # update path, whose return carries no media id.
+                        # Resolve it by canonical URL so the done row keeps
+                        # its "Open in Library" action. ``self.media_db`` is
+                        # unreachable-``None`` here in practice (submit
+                        # already fails the job before this point when it's
+                        # absent), but this guard is cheap insurance against
+                        # an ``AttributeError`` on a stale/racy reference.
+                        existing = self.media_db.get_media_by_url(payload["url"])
+                        if existing is not None:
+                            media_id = existing.get("id")
+                    self.call_from_thread(
+                        self.library_ingest_jobs.mark_done,
+                        job.job_id,
+                        media_id=media_id,
+                    )
+                except Exception as exc:
+                    # loguru's traceback capture is `.opt(exception=True)`,
+                    # NOT the stdlib `exc_info=True` kwarg (a silent no-op
+                    # under loguru) -- log the full traceback here before
+                    # mark_failed so a debugging session isn't left with only
+                    # the registry's sanitized, single-line error string.
+                    logger.opt(exception=True).error(
+                        f"Library ingest job failed during write "
+                        f"(job_id={job.job_id}, source={job.source_path})."
+                    )
+                    self.call_from_thread(
+                        self.library_ingest_jobs.mark_failed,
+                        job.job_id,
+                        error=_sanitize_library_ingest_error(exc),
+                        permanent=classify_parse_failure(exc),
+                    )
+        finally:
+            if not clean_exit:
+                self.call_from_thread(self._release_ingest_runner_after_crash)
+
+
 # --- Main App ---
-class TldwCli(App[None]):  # Specify return type for run() if needed, None is common
+class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
     # Keep legacy identifier for tests while retaining product name
     TITLE = "tldw CLI • tldw chatbook"
@@ -1368,7 +2180,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         
         # Tab switching optimization
         self._initialized_tabs = set()  # Track which tabs have been initialized
-        self._screen_cache: dict[str, Any] = {}
         
         # Reduce logging in production
         if not os.environ.get("TLDW_DEBUG"):
@@ -1478,7 +2289,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     task_duration = time.perf_counter() - task_start
                     logger.info(f"Parallel init task '{task_name}' completed in {task_duration:.3f}s")
                 except Exception as e:
-                    logger.error(f"Parallel init task '{task_name}' failed: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"Parallel init task '{task_name}' failed: {e}")
         
         # Log total parallel phase time
         parallel_duration = time.perf_counter() - phase_start
@@ -1686,13 +2497,28 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             subview: The retired Notes tab's workspace subview. Accepted for
                 backward compatibility; no longer applied.
         """
-        self.invalidate_screen_cache()
         self.post_message(NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_MODE: "notes"}))
 
-    def open_chat_with_handoff(self, payload: ChatHandoffPayload) -> None:
+    def open_chat_with_handoff(
+        self,
+        payload: ChatHandoffPayload,
+        *,
+        action_label: str = "Use in Chat",
+    ) -> None:
+        """Stage a handoff payload for Chat and navigate there.
+
+        Args:
+            payload: The handoff payload to stage as pending Chat context.
+            action_label: The calling surface's own action label (e.g. "Use
+                in Chat" for the legacy MediaWindow_v2/search_rag_window
+                surfaces, "Use in Console" for Library) so the blocked-gate
+                notify below reads honestly for whichever button the user
+                actually pressed, instead of always saying "Chat" even from
+                a destination whose own button says "Console" (M2).
+        """
         if not get_cli_setting("chat_defaults", "enable_tabs", True):
             self.notify(
-                "Use in Chat requires chat tabs to be enabled.",
+                f"{action_label} requires chat tabs to be enabled.",
                 severity="warning",
             )
             return
@@ -1809,8 +2635,69 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         return self._handle_home_control_action(HomeControlAction.RESUME, target_id=target_id)
 
     def retry_active_home_item(self, *, target_id: str | None = None) -> HomeControlResult:
-        """Retry the active Home item through the configured adapter."""
+        """Retry the active Home item through the configured adapter.
+
+        Library ingest job targets (``local:ingest:<job_id>``) are requeued
+        directly through ``retry_library_ingest_job`` -- the real requeue
+        seam over ``self.library_ingest_jobs`` -- instead of falling through
+        to ``_handle_home_control_action``/the adapter, which has no
+        visibility into the in-memory ingest job registry and always
+        degrades to the honest "not connected to an active run service yet"
+        fallback for this target shape. Non-ingest targets (approvals,
+        watchlist runs, schedules) are unaffected and still route through
+        the adapter exactly as before.
+        """
+        if target_id is not None and str(target_id).startswith("local:ingest:"):
+            job_id = str(target_id)[len("local:ingest:"):]
+            requeued = self.retry_library_ingest_job(job_id)
+            if requeued is None:
+                # Unknown job id, or the job is no longer FAILED (e.g. it
+                # was already retried/finished by the time the button was
+                # pressed) -- ``requeue`` is a documented no-op in that case.
+                result = HomeControlResult(
+                    action=HomeControlAction.RETRY,
+                    status=HomeControlResultStatus.UNAVAILABLE,
+                    message="This ingest job can no longer be retried.",
+                    severity="warning",
+                    recovery_route="library",
+                    target_id=target_id,
+                )
+            else:
+                # The basename is a user-controlled filename (arbitrary
+                # source path picked in the Library ingest form) that flows
+                # straight into a Home toast, which parses Rich markup --
+                # same hazard class as the open-details title fix. Escape
+                # defensively.
+                basename = escape_markup(
+                    Path(str(requeued.source_path)).name or str(requeued.source_path)
+                )
+                result = HomeControlResult(
+                    action=HomeControlAction.RETRY,
+                    status=HomeControlResultStatus.HANDLED,
+                    message=f"Retry queued for {basename}.",
+                    recovery_route="library",
+                    target_id=f"local:ingest:{requeued.job_id}",
+                    target_route="library",
+                )
+            self.notify(result.message, severity=result.severity)
+            return result
         return self._handle_home_control_action(HomeControlAction.RETRY, target_id=target_id)
+
+    def open_home_flashcards_review(self) -> None:
+        """Open the Study screen directly on the flashcards review surface."""
+        self.open_study_screen(initial_section="flashcards")
+
+    def _local_flashcards_due_count(self) -> int | None:
+        """Count due flashcards for the Home mirror; None when the DB is absent."""
+        db = getattr(self, "chachanotes_db", None)
+        counter = getattr(db, "count_due_flashcards", None)
+        if not callable(counter):
+            return None
+        try:
+            return int(counter())
+        except Exception:
+            logger.opt(exception=True).debug("Home flashcards-due count failed.")
+            return None
 
     def open_active_home_item_details(
         self,
@@ -1827,7 +2714,21 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         if result.status is HomeControlResultStatus.HANDLED and result.target_route:
             if result.target_route == "subscriptions":
                 self._stage_subscription_watchlist_run_context(result.target_id or target_id)
-            self.post_message(NavigateToScreen(result.target_route))
+                self.post_message(NavigateToScreen(result.target_route))
+            elif result.target_route == "library" and str(
+                result.target_id or target_id or ""
+            ).startswith("local:ingest:"):
+                # Home's ingest-jobs Running/Needs Attention rows one-hop
+                # back to the Library ingest canvas via the nav-context
+                # contract instead of a bare route (mirrors the
+                # subscriptions staging special-case above). Navigation
+                # always composes a fresh Library screen, so the deep link
+                # lands on a cleanly mounted, repainted ingest canvas.
+                self.post_message(
+                    NavigateToScreen("library", {LIBRARY_NAV_CONTEXT_INGEST: True})
+                )
+            else:
+                self.post_message(NavigateToScreen(result.target_route))
         return result
 
     def _stage_subscription_watchlist_run_context(self, target_id: str | None) -> None:
@@ -1918,7 +2819,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         try:
             self.local_writing_service = LocalWritingService(get_writing_db_path())
         except Exception:
-            logger.warning("Local writing service unavailable during app wiring", exc_info=True)
+            logger.opt(exception=True).warning("Local writing service unavailable during app wiring")
             self.local_writing_service = None
         try:
             self.server_writing_service = ServerWritingService.from_config(
@@ -1947,9 +2848,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
             self.library_collections_service = self.local_library_collections_service
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Local Library Collections service unavailable during app wiring",
-                exc_info=True,
             )
             self.local_library_collections_db = None
             self.local_library_collections_service = None
@@ -1966,9 +2866,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
             self.workspace_registry_service.ensure_default_workspace()
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Local workspace registry service unavailable during app wiring",
-                exc_info=True,
             )
             self.local_workspace_db = None
             self.workspace_registry_service = None
@@ -2007,7 +2906,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.evaluation_orchestrator = EvaluationOrchestrator(client_id="tldw_cli_app")
             self.local_evaluation_service = LocalEvaluationsService(self.evaluation_orchestrator.db)
         except Exception:
-            logger.warning("Local evaluation service unavailable during app wiring", exc_info=True)
+            logger.opt(exception=True).warning("Local evaluation service unavailable during app wiring")
             self.evaluation_orchestrator = None
 
         try:
@@ -2085,6 +2984,16 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             server_service=self.server_quiz_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+        self.library_rag_search_service = LibraryLocalRagSearchService(self)
+        self.library_ingest_jobs = LibraryIngestJobRegistry()
+        # F3 parallel-parse coordinator state (see LibraryIngestQueueMixin):
+        # the lazily-created parse-pool handle, the parse->write handoff
+        # (job_id -> parsed payload dict, populated by a pool completion and
+        # drained by the writer's claim), and the shutdown flag pool
+        # callbacks check before touching a closing app.
+        self._ingest_parse_pool = None
+        self._ingest_parsed_payloads: dict[str, dict] = {}
+        self._ingest_shutdown: bool = False
 
     def _wire_research_services(self) -> None:
         """Initialize source-aware research services if the broad parity wiring has not already done so."""
@@ -2098,7 +3007,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 notification_app=self,
             )
         except Exception:
-            logger.warning("Local research service unavailable during app wiring", exc_info=True)
+            logger.opt(exception=True).warning("Local research service unavailable during app wiring")
             self.local_research_service = None
         try:
             self.server_research_service = ServerResearchService.from_config(
@@ -2166,10 +3075,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 CLI_APP_CLIENT_ID,
             )
         except Exception as exc:
-            logger.error(
+            logger.opt(exception=True).error(
                 "Failed to initialize client notifications DB; using in-memory store: {}",
                 exc,
-                exc_info=True,
             )
             self.client_notifications_db = ClientNotificationsDB(
                 ":memory:",
@@ -2197,6 +3105,12 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             chatbook_service=self.local_chatbook_service,
             server_event_service=self.notifications_scope_service,
             runtime_policy=self.runtime_policy,
+            flashcards_due_provider=self._local_flashcards_due_count,
+            # self.library_ingest_jobs is a plain in-memory registry (no DB,
+            # no I/O) assigned later in __init__ (_wire_study_services); this
+            # lambda closes over self so it resolves lazily on first Home
+            # compose rather than at wiring time here.
+            ingest_jobs_provider=lambda: self.library_ingest_jobs.jobs(),
         )
         try:
             self.server_claims_service = ServerClaimsService.from_config(
@@ -2332,7 +3246,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 notification_app=self,
             )
         except Exception:
-            logger.warning("Local research service unavailable during app wiring", exc_info=True)
+            logger.opt(exception=True).warning("Local research service unavailable during app wiring")
             self.local_research_service = None
         try:
             self.server_research_service = ServerResearchService.from_config(
@@ -2726,10 +3640,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 local_notifications_db=self.client_notifications_db,
             )
         except Exception as exc:
-            logger.error(
+            logger.opt(exception=True).error(
                 "Failed to initialize server parity state repositories; using in-memory stores: {}",
                 exc,
-                exc_info=True,
             )
             self.server_parity_state = ServerParityStateRepositories(
                 local_notifications_db=self.client_notifications_db,
@@ -2835,11 +3748,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 )
                 if callable(invalidate_for_server_switch):
                     invalidate_for_server_switch(previous_server_id, updated_state.active_server_id)
-                self.invalidate_screen_cache()
             else:
                 self.current_runtime_backend = normalized_backend
                 self.runtime_backend = normalized_backend
-                self.invalidate_screen_cache()
 
         resolved_backend = normalized_backend
         runtime_state = getattr(getattr(self, "runtime_policy", None), "state", None)
@@ -2871,7 +3782,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             )
             logger.info(f"NotesInteropService successfully initialized for user '{user_name_for_notes}'.")
         except Exception as e:
-            logger.error(f"Failed to initialize NotesInteropService: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to initialize NotesInteropService: {e}")
             self.notes_service = None
     
     def _init_providers_models(self) -> None:
@@ -2880,7 +3791,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.providers_models = get_cli_providers_and_models()
             logger.info(f"Successfully retrieved providers_models. Count: {len(self.providers_models)}. Keys: {list(self.providers_models.keys())}")
         except Exception as e:
-            logger.error(f"Failed to get providers and models: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to get providers and models: {e}")
             self.providers_models = {}
     
     def _init_prompts_service(self) -> None:
@@ -2894,7 +3805,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             logger.info(f"Prompts Interop Service initialized with DB: {prompts_db_path}")
         except Exception as e:
             self.prompts_service_initialized = False
-            logger.error(f"Failed to initialize Prompts Interop Service: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to initialize Prompts Interop Service: {e}")
     
     def _init_media_db(self) -> None:
         """Initialize media database - for parallel execution."""
@@ -2917,7 +3828,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             else:
                 self._media_types_for_ui = ["Error: Media DB not loaded"]
         except Exception as e:
-            logger.error(f"Failed to initialize media DB: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to initialize media DB: {e}")
             self.media_db = None
             self._media_types_for_ui = ["Error: Exception fetching media types"]
     
@@ -3328,40 +4239,29 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         """Normalize navigation aliases to a routed screen id and canonical current_tab value."""
         return resolve_screen_target(target)
 
-    def invalidate_screen_cache(self, routes: set[str] | None = None) -> None:
-        """Clear cached destination screens after context changes."""
-        cache = getattr(self, "_screen_cache", None)
-        if not cache:
-            return
-        if routes is None:
-            cache.clear()
-            logger.debug("Cleared all cached destination screens")
-            return
-        for route in routes:
-            cache.pop(route, None)
-        logger.debug(f"Cleared cached destination screens: {sorted(routes)}")
+    def _create_navigation_screen(self, screen_name: str, screen_class: type):
+        """Build a FRESH screen instance for every navigation.
 
-    def _get_or_create_navigation_screen(self, screen_name: str, screen_class: type):
-        """Return a cached screen for allowlisted routes, otherwise build a fresh screen."""
-        if screen_name not in CACHEABLE_SCREEN_ROUTES:
-            return screen_class(self)
+        Args:
+            screen_name: Routed screen id (used by callers for state keying;
+                unused here, kept for signature stability at the seam).
+            screen_class: The Screen subclass registered for the route.
 
-        cache = getattr(self, "_screen_cache", None)
-        if cache is None:
-            cache = self._screen_cache = {}
+        Returns:
+            A newly constructed, never-mounted instance of ``screen_class``.
 
-        cached_screen = cache.get(screen_name)
-        if cached_screen is not None:
-            try:
-                if cached_screen is self.screen:
-                    return screen_class(self)
-            except Exception:
-                pass
-            return cached_screen
-
-        new_screen = screen_class(self)
-        cache[screen_name] = new_screen
-        return new_screen
+        Screens must never be cached and re-mounted: ``switch_screen``
+        unmounts the outgoing screen, and re-mounting a previously-unmounted
+        instance races its still-in-flight teardown under rapid tab
+        switching -- child message pumps end up permanently stopped while
+        the widgets stay attached (``mounted=True``), the compositor keeps
+        presenting a stale frame, and every subsequent click is hit-tested
+        into the dead tree and silently swallowed: a total, exception-free
+        UI freeze (root-caused 2026-07-11). UX continuity across visits is
+        the job of ``_screen_states`` (``save_state``/``restore_state``),
+        not instance reuse.
+        """
+        return screen_class(self)
 
     def _valid_startup_route_ids(self) -> set[str]:
         """Return route ids allowed in startup config during the shell migration."""
@@ -3404,8 +4304,44 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         screen_name, current_tab_value, screen_class = self._resolve_screen_navigation_target(requested_screen)
         logger.info(f"Navigating to screen: {requested_screen}")
 
-        # Save state of current screen before switching
         current_screen = self.screen
+
+        # Screens are never reused across navigations, so anything the
+        # outgoing screen has not persisted is destroyed with its instance.
+        # Give it one awaited chance to flush pending work (e.g. a Library
+        # note edit whose debounced autosave has not fired); False vetoes
+        # the switch, leaving the screen (and e.g. its save-conflict banner)
+        # in place for the user.
+        flush = getattr(current_screen, "flush_pending_work", None)
+        if callable(flush):
+            try:
+                flush_result = flush()
+                if inspect.isawaitable(flush_result):
+                    flush_result = await flush_result
+                if flush_result is False:
+                    logger.info(
+                        f"Navigation to {screen_name} vetoed by the outgoing "
+                        "screen's pending-work flush"
+                    )
+                    return
+            except Exception as e:
+                # Fail OPEN: a buggy flush must not permanently trap the
+                # user on this screen -- but the potential loss of pending
+                # work is surfaced, not silent.
+                logger.opt(exception=True).error(
+                    "Error flushing outgoing screen "
+                    f"{getattr(current_screen, 'screen_name', type(current_screen).__name__)!r} "
+                    f"before navigating to {screen_name!r}: {e}"
+                )
+                try:
+                    self.notify(
+                        "Couldn't save pending changes before switching screens.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
+
+        # Save state of current screen before switching
         if current_screen and hasattr(current_screen, 'save_state'):
             try:
                 state = current_screen.save_state()
@@ -3421,7 +4357,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 logger.error(f"Error saving screen state: {e}")
         
         if screen_class:
-            new_screen = self._get_or_create_navigation_screen(screen_name, screen_class)
+            new_screen = self._create_navigation_screen(screen_name, screen_class)
             
             # Restore state if available
             if hasattr(self, '_screen_states') and screen_name in self._screen_states:
@@ -3766,7 +4702,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                             self.current_ccp_character_image = None
                         loguru_logger.debug("Character card widgets populated.")
                     except QueryError as qe:
-                        loguru_logger.error(f"QueryError populating character card: {qe}", exc_info=True)
+                        loguru_logger.opt(exception=True).error(f"QueryError populating character card: {qe}")
                 else:
                     loguru_logger.info("No character details available to populate card view.")
                     try:
@@ -3790,7 +4726,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.current_ccp_character_image = None
                         loguru_logger.debug("Character card widgets cleared.")
                     except QueryError as qe:
-                        loguru_logger.error(f"QueryError clearing character card: {qe}", exc_info=True)
+                        loguru_logger.opt(exception=True).error(f"QueryError clearing character card: {qe}")
 
             elif new_view == "dictionary_view":
                 # Center Pane: Show Dictionary Display
@@ -3855,7 +4791,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except QueryError:
             loguru_logger.error("CCP right pane (#conv-char-right-pane) not found for collapse toggle.")
         except Exception as e:
-            loguru_logger.error(f"Error toggling CCP right pane: {e}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error toggling CCP right pane: {e}")
 
     # ###################################################################
     # --- Helper methods for Local LLM Inference logging ---
@@ -3982,18 +4918,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self._clear_prompt_fields()  # Clear editor if load fails
                 self.current_prompt_id = None  # Reset reactives
         except Exception as e:
-            loguru_logger.error(f"Error loading prompt for editing: {e}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error loading prompt for editing: {e}")
             self.notify(f"Error loading prompt: {type(e).__name__}", severity="error")
             self._clear_prompt_fields()
             self.current_prompt_id = None  # Reset reactives
-
-    async def refresh_notes_tab_after_ingest(self) -> None:
-        """Refresh the Notes screen after notes are ingested from the Ingest tab."""
-        self.loguru_logger.info("Refreshing Notes data after ingestion.")
-        from .UI.Screens.notes_screen import NotesScreen
-
-        if isinstance(self.screen, NotesScreen):
-            await self.screen.refresh_current_scope()
 
     # ##################################################
     # --- Watcher for Search Tab Active Sub-View ---
@@ -4032,9 +4960,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.info(f"Switched search sub-tab view to: {new_sub_tab}")
 
         except QueryError as e:
-            self.loguru_logger.error(f"UI component not found during Search sub-tab switch: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"UI component not found during Search sub-tab switch: {e}")
         except Exception as e_watch:
-            self.loguru_logger.error(f"Unexpected error in watch_search_active_sub_tab: {e_watch}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error in watch_search_active_sub_tab: {e_watch}")
 
         # ############################################
         # --- Media Loaded Item Watcher ---
@@ -4079,7 +5007,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     f"watch_current_loaded_media_item: Could not find Markdown details display '#{details_display_widget_id}' for slug '{type_slug}' to update."
                 )
             except Exception as e:
-                self.loguru_logger.error(f"Error in watch_current_loaded_media_item: {e}", exc_info=True)
+                self.loguru_logger.opt(exception=True).error(f"Error in watch_current_loaded_media_item: {e}")
 
     # ############################################
     # --- Ingest Tab Watcher ---
@@ -4171,9 +5099,9 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
 
 
         except QueryError as e:
-            self.loguru_logger.error(f"UI component not found during Tools & Settings view switch: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"UI component not found during Tools & Settings view switch: {e}")
         except Exception as e_watch:
-            self.loguru_logger.error(f"Unexpected error in watch_tools_settings_active_view: {e_watch}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error in watch_tools_settings_active_view: {e_watch}")
 
     # --- LLM Tab Watcher ---
     def watch_llm_active_view(self, old_view: Optional[str], new_view: Optional[str]) -> None:
@@ -4216,7 +5144,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     except QueryError:
                         self.loguru_logger.debug(f"Help display widget #llamacpp-args-help-display not found in {new_view} during view switch - may not be mounted yet.")
                     except Exception as e_help_populate:
-                        self.loguru_logger.error(f"Error ensuring Llama.cpp help text in {new_view}: {e_help_populate}", exc_info=True)
+                        self.loguru_logger.opt(exception=True).error(f"Error ensuring Llama.cpp help text in {new_view}: {e_help_populate}")
                 elif new_view == "llm-view-llamafile":
                     try:
                         help_widget = view_to_show.query_one("#llamafile-args-help-display", RichLog)
@@ -4234,8 +5162,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 #             help_widget.write(LLAMAFILE_ARGS_HELP_TEXT)
                 #     except QueryError: pass
             except QueryError as e:
-                self.loguru_logger.error(f"UI component '{new_view}' not found in #llm-content-pane: {e}",
-                                         exc_info=True)
+                self.loguru_logger.opt(exception=True).error(f"UI component '{new_view}' not found in #llm-content-pane: {e}")
     
     def watch_current_chat_is_ephemeral(self, is_ephemeral: bool) -> None:
         self.loguru_logger.debug(f"Chat ephemeral state changed to: {is_ephemeral}")
@@ -4277,7 +5204,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except QueryError as e:
             self.loguru_logger.warning(f"UI component not found while watching ephemeral state: {e}. Tab might not be fully composed or active.")
         except Exception as e_watch:
-            self.loguru_logger.error(f"Unexpected error in watch_current_chat_is_ephemeral: {e_watch}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error in watch_current_chat_is_ephemeral: {e_watch}")
 
     # --- Add explicit methods to update reactives from Select changes ---
     def update_chat_provider_reactive(self, new_value: Optional[str]) -> None:
@@ -4504,7 +5431,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await self._post_mount_setup()
             self.hide_inactive_windows()
         except Exception as e:
-            logger.error(f"No-splash post-mount setup failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"No-splash post-mount setup failed: {e}")
 
     async def _post_mount_setup(self) -> None:
         """Operations to perform after the main UI is expected to be fully mounted."""
@@ -4535,7 +5462,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.error(
                 f"_post_mount_setup: Failed to find chat provider select: #{TAB_CHAT}-api-provider")
         except Exception as e:
-            self.loguru_logger.error(f"_post_mount_setup: Error binding chat provider select: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"_post_mount_setup: Error binding chat provider select: {e}")
 
         # try:
         #     ccp_select = self.query_one(f"#{TAB_CCP}-api-provider", Select)
@@ -4693,9 +5620,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             try:
                 completed.result()
             except Exception as exc:
-                self.loguru_logger.error(
+                self.loguru_logger.opt(exception=True).error(
                     f"Deferred startup task failed: {name}: {exc}",
-                    exc_info=True,
                 )
 
         task.add_done_callback(on_done)
@@ -4751,9 +5677,8 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except QueryError:
             self.loguru_logger.error("Failed to find AppFooterStatus widget for DB size display.")
         except Exception as e_db_size:
-            self.loguru_logger.error(
+            self.loguru_logger.opt(exception=True).error(
                 f"Error setting up DB size indicator with AppFooterStatus: {e_db_size}",
-                exc_info=True,
             )
 
     def _start_deferred_audio_service_initialization(self) -> None:
@@ -4900,7 +5825,37 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         logging.info("--- App Unmounting ---")
         self._ui_ready = False
         self._stop_ui_responsiveness_monitor()
-        
+
+        # F3: shut down the Library ingest parse pool. Final shutdown
+        # order, explicit (Task 4 review):
+        #   1. `_ingest_shutdown = True` + pool reference detached
+        #      (synchronous, inside `_shutdown_ingest_parse_pool`) -- pool
+        #      callbacks short-circuit on their own thread before
+        #      marshaling from this point on.
+        #   2. `pool.terminate()` + `pool.join()` on a detached daemon
+        #      thread, NEVER this (loop) thread -- terminating inline here
+        #      could deadlock against a result-handler thread parked inside
+        #      `call_from_thread` (see `_shutdown_ingest_parse_pool`'s
+        #      docstring). `terminate()` kills every in-flight parse worker
+        #      process immediately -- no waiting on a possibly-long
+        #      transcription/OCR job.
+        #   3. The writer (the exclusive `library_ingest_queue` thread
+        #      worker) is swept up by the generic worker cancellation
+        #      below, same as every other worker.
+        # The spec words the quit contract writer-then-pool; here pool
+        # teardown is *initiated* first but runs concurrently with the
+        # writer sweep, which is equivalent and safe because the two stages
+        # share no resources: parse workers never touch `media_db`, the
+        # writer never touches the pool, and any late parse completion
+        # no-ops via the flag from step 1. The writer's in-flight DB write
+        # still completes (see Library/library_ingest_jobs.py's module
+        # docstring: quitting joins the writer's in-flight DB write; parses
+        # in flight are not waited for symmetrically).
+        try:
+            self._shutdown_ingest_parse_pool()
+        except Exception as e:
+            self.loguru_logger.error(f"Error shutting down Library ingest parse pool: {e}")
+
         # Stop all background services and threads
         try:
             deferred_tasks = [
@@ -5173,7 +6128,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                         self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
                     except QueryError:
                         pass
-            # NotesScreen owns its own auto-save lifecycle (on_unmount).
+            # Notes auto-save is owned by the Library notes editor; no tab-switch save here.
             try: self.query_one(f"#tab-{old_tab}", Button).remove_class("-active")
             except QueryError: logging.warning(f"Watcher: Could not find old button #tab-{old_tab}")
             try: self.query_one(f"#{old_tab}-window").display = False
@@ -5556,16 +6511,6 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except Exception as e:
             self.log.debug(f"Could not initialize audio models: {e}")
 
-    async def save_current_note(self) -> bool:
-        """Save the currently selected note via the active Notes screen."""
-        from .UI.Screens.notes_screen import NotesScreen
-
-        if isinstance(self.screen, NotesScreen):
-            return await self.screen._save_current_note()
-        logging.warning("save_current_note called outside the Notes screen; nothing to save.")
-        return False
-
-
     #######################################################################
     # --- Notes UI Event Handlers (Chat Tab Sidebar) ---
     #######################################################################
@@ -5626,10 +6571,10 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.loguru_logger.error("notes_service.add_note did not return a new_note_id.")
 
         except CharactersRAGDBError as e: # Specific DB error
-            self.loguru_logger.error(f"Database error creating new note: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Database error creating new note: {e}")
             self.notify(f"DB error creating note: {e}", severity="error")
         except Exception as e: # Catch-all for other unexpected errors
-            self.loguru_logger.error(f"Unexpected error creating new note: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error creating new note: {e}")
             self.notify(f"Error creating note: {type(e).__name__}", severity="error")
 
     @on(Button.Pressed, "#chat-notes-search-button")
@@ -5682,13 +6627,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.loguru_logger.info(msg)
 
         except CharactersRAGDBError as e:
-            self.loguru_logger.error(f"Database error searching notes: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Database error searching notes: {e}")
             self.notify(f"DB error searching notes: {e}", severity="error")
         except QueryError as e_query:
-            self.loguru_logger.error(f"UI element not found during notes search: {e_query}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"UI element not found during notes search: {e_query}")
             self.notify("UI error during notes search.", severity="error")
         except Exception as e:
-            self.loguru_logger.error(f"Unexpected error searching notes: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error searching notes: {e}")
             self.notify(f"Error searching notes: {type(e).__name__}", severity="error")
 
     @on(Button.Pressed, "#chat-notes-load-button")
@@ -5748,13 +6693,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 self.current_chat_note_version = None
 
         except CharactersRAGDBError as e_db:
-            self.loguru_logger.error(f"Database error loading note: {e_db}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Database error loading note: {e_db}")
             self.notify(f"DB error loading note: {e_db}", severity="error")
         except QueryError as e_query:
-            self.loguru_logger.error(f"UI element not found during note load: {e_query}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"UI element not found during note load: {e_query}")
             self.notify("UI error during note load.", severity="error")
         except Exception as e:
-            self.loguru_logger.error(f"Unexpected error loading note: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error loading note: {e}")
             self.notify(f"Error loading note: {type(e).__name__}", severity="error")
 
     @on(Button.Pressed, "#chat-notes-save-button")
@@ -5813,7 +6758,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 except QueryError as e_lv_update:
                     self.loguru_logger.error(f"Error querying Label within ListView item to update title: {e_lv_update}")
                 except Exception as e_item_update: # Catch other errors during list item update
-                    self.loguru_logger.error(f"Unexpected error updating list item title: {e_item_update}", exc_info=True)
+                    self.loguru_logger.opt(exception=True).error(f"Unexpected error updating list item title: {e_item_update}")
             else:
                 # This case might not be hit if service raises exceptions for all failures
                 self.notify("Failed to save note. Reason unknown.", severity="error")
@@ -5823,13 +6768,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.warning(f"Save conflict for note {self.current_chat_note_id}. Expected version: {self.current_chat_note_version}")
             self.notify("Save conflict: Note was modified elsewhere. Please reload and reapply changes.", severity="error", timeout=10)
         except CharactersRAGDBError as e_db:
-            self.loguru_logger.error(f"Database error saving note {self.current_chat_note_id}: {e_db}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Database error saving note {self.current_chat_note_id}: {e_db}")
             self.notify(f"DB error saving note: {e_db}", severity="error")
         except QueryError as e_query:
-            self.loguru_logger.error(f"UI element not found during note save: {e_query}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"UI element not found during note save: {e_query}")
             self.notify("UI error during note save.", severity="error")
         except Exception as e:
-            self.loguru_logger.error(f"Unexpected error saving note {self.current_chat_note_id}: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error saving note {self.current_chat_note_id}: {e}")
             self.notify(f"Error saving note: {type(e).__name__}", severity="error")
 
     @on(Button.Pressed, "#chat-notes-copy-button")
@@ -5870,7 +6815,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.error(f"UI element not found during note copy: {e}")
             self.notify("UI error during note copy.", severity="error")
         except Exception as e:
-            self.loguru_logger.error(f"Unexpected error copying note: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Unexpected error copying note: {e}")
             self.notify(f"Error copying note: {type(e).__name__}", severity="error")
 
     @on(Collapsible.Toggled, "#chat-notes-collapsible")
@@ -5928,13 +6873,13 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     self.loguru_logger.info("No notes found for user after refresh.")
 
             except CharactersRAGDBError as e: # Specific DB error
-                self.loguru_logger.error(f"Database error listing notes: {e}", exc_info=True)
+                self.loguru_logger.opt(exception=True).error(f"Database error listing notes: {e}")
                 self.notify(f"DB error listing notes: {e}", severity="error")
             except QueryError as e_query: # If UI elements are not found
-                 self.loguru_logger.error(f"UI element not found in notes toggle: {e_query}", exc_info=True)
+                 self.loguru_logger.opt(exception=True).error(f"UI element not found in notes toggle: {e_query}")
                  self.notify("UI error while refreshing notes.", severity="error")
             except Exception as e: # Catch-all for other unexpected errors
-                self.loguru_logger.error(f"Unexpected error listing notes: {e}", exc_info=True)
+                self.loguru_logger.opt(exception=True).error(f"Unexpected error listing notes: {e}")
                 self.notify(f"Error listing notes: {type(e).__name__}", severity="error")
         else:
             self.loguru_logger.info("Notes collapsible closed in chat sidebar.")
@@ -5971,7 +6916,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                     self._chat_character_filter_populated = True
                     self.loguru_logger.info("Character filter populated successfully.")
                 except Exception as e:
-                    self.loguru_logger.error(f"Failed to populate character filter: {e}", exc_info=True)
+                    self.loguru_logger.opt(exception=True).error(f"Failed to populate character filter: {e}")
             else:
                 self.loguru_logger.debug("Character filter already populated, skipping.")
         else:
@@ -6061,7 +7006,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
         except QueryError:
             self.loguru_logger.error(f"Could not find window component for tab '{self.current_tab}'")
         except Exception as e:
-            self.loguru_logger.error(f"Error delegating button press to window component: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Error delegating button press to window component: {e}")
 
         # 3. Use the handler map for buttons not handled by window components
         current_tab_handlers = self.button_handler_map.get(self.current_tab, {})
@@ -6091,7 +7036,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                             f"Handler for button '{button_id}' did not return an awaitable object."
                         )
                 except Exception as e:
-                    self.loguru_logger.error(f"Error executing handler for button '{button_id}': {e}", exc_info=True)
+                    self.loguru_logger.opt(exception=True).error(f"Error executing handler for button '{button_id}': {e}")
                     self.notify(f"Error handling button action: {str(e)[:100]}", severity="error")
             else:
                 self.loguru_logger.error(f"Handler for button '{button_id}' is not callable: {handler}")
@@ -6115,7 +7060,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 "chat-character-first-message-edit"
             ]:
                 await chat_handlers.handle_chat_character_attribute_changed(self, event)
-        # Notes editor changes are now handled directly by NotesScreen
+        # Notes editor changes are handled inside the Library screen, not dispatched here.
 
     def _update_model_download_log(self, message: str) -> None:
         """Helper to write messages to the model download log widget."""
@@ -6128,7 +7073,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
     async def on_input_changed(self, event: Input.Changed) -> None:
         input_id = event.input.id
         current_active_tab = self.current_tab
-        # --- Notes input events are now handled directly by NotesScreen ---
+        # --- Notes input events are handled inside the Library screen, not here ---
         # --- Chat Sidebar Conversation Search ---
         if input_id == "chat-conversation-search-bar" and current_active_tab == TAB_CHAT:
             await chat_handlers.handle_chat_conversation_search_bar_changed(self, event.value)
@@ -6198,7 +7143,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.debug("Dispatching to media_events.handle_media_list_item_selected")
             await media_events.handle_media_list_item_selected(self, event)
 
-        # Notes list view selection is now handled directly by NotesScreen
+        # Notes list view selection is handled inside the Library screen, not here.
 
         elif list_view_id == "ccp-prompts-listview" and current_active_tab == TAB_CCP:
             self.loguru_logger.debug("Dispatching to ccp_handlers.handle_ccp_prompts_list_view_selected")
@@ -6296,7 +7241,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             await ingest_events.handle_tldw_api_auth_method_changed(self, str(event.value))
         elif select_id == "tldw-api-media-type" and current_active_tab == TAB_INGEST:
             await ingest_events.handle_tldw_api_media_type_changed(self, str(event.value))
-        # Notes sort select is now handled directly by NotesScreen
+        # Notes sort select is handled inside the Library screen, not here.
         elif select_id == "chat-rag-preset" and current_active_tab == TAB_CHAT:
             await self.handle_rag_preset_changed(event)
         elif select_id == "chat-rag-search-mode" and current_active_tab == TAB_CHAT:
@@ -6439,7 +7384,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             save_setting_to_cli_config("chat_defaults", "strip_thinking_tags", new_value)
             self.notify(f"Thinking tag stripping {'enabled' if new_value else 'disabled'}.", timeout=2)
         except Exception as e:
-            self.loguru_logger.error(f"Failed to save 'strip_thinking_tags' setting: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Failed to save 'strip_thinking_tags' setting: {e}")
             self.notify("Error saving thinking tag setting.", severity="error", timeout=4)
     #####################################################################
     # --- End of Chat Event Handlers for Streaming & thinking tags ---
@@ -6469,7 +7414,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             save_setting_to_cli_config("chat_defaults", "advanced_mode", event.value)
             
         except Exception as e:
-            loguru_logger.error(f"Error toggling settings mode: {e}", exc_info=True)
+            loguru_logger.opt(exception=True).error(f"Error toggling settings mode: {e}")
             self.notify("Error switching modes", severity="error", timeout=4)
     
     async def handle_settings_mode_toggle(self, event: Switch.Changed) -> None:
@@ -6798,7 +7743,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.loguru_logger.info(f"Scheduled media cleanup every {cleanup_interval_hours} hours")
             
         except Exception as e:
-            self.loguru_logger.error(f"Error scheduling media cleanup: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Error scheduling media cleanup: {e}")
     
     async def perform_media_cleanup(self) -> None:
         """Perform media cleanup based on configuration settings."""
@@ -6845,7 +7790,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
                 )
             
         except Exception as e:
-            self.loguru_logger.error(f"Error during media cleanup: {e}", exc_info=True)
+            self.loguru_logger.opt(exception=True).error(f"Error during media cleanup: {e}")
             self.notify(
                 f"Error during media cleanup: {str(e)}",
                 severity="error",
@@ -6938,8 +7883,7 @@ class TldwCli(App[None]):  # Specify return type for run() if needed, None is co
             self.notes_auto_save_timer = None
             loguru_logger.debug("Cancelled auto-save timer during app quit")
         
-        # Perform final save if on Notes tab with unsaved changes (respect auto-save setting)
-        # NotesScreen owns note autosave; no legacy quit-save path remains.
+        # Note autosave is owned by the Library notes editor; no legacy quit-save path remains.
         
         # Try to save caches but don't let it block quitting
         try:

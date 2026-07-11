@@ -1791,13 +1791,13 @@ class MediaDatabase:
                     self._update_fts_keyword(conn, kw_id, keyword)
                     return kw_id, new_uuid
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.error(f"Error in add_keyword for '{keyword}': {e}", exc_info=isinstance(e, (DatabaseError, sqlite3.Error)))
+            logger.opt(exception=isinstance(e, (DatabaseError, sqlite3.Error))).error(f"Error in add_keyword for '{keyword}': {e}")
             if isinstance(e, (InputError, ConflictError, DatabaseError)):
                 raise e
             else:
                 raise DatabaseError(f"Failed to add/update keyword: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error in add_keyword for '{keyword}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error in add_keyword for '{keyword}': {e}")
             raise DatabaseError(f"Unexpected error adding/updating keyword: {e}") from e
 
     def fetch_media_for_keywords(self, keywords: List[str], include_trash: bool = False) -> Dict[
@@ -1935,12 +1935,12 @@ class MediaDatabase:
             return results_by_keyword
 
         except sqlite3.Error as e:
-            logger.error(f"SQLite error fetching media for keywords from DB {self.db_path_str}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"SQLite error fetching media for keywords from DB {self.db_path_str}: {e}")
             raise DatabaseError(f"Failed to fetch media for keywords due to SQLite error: {e}") from e
         except DatabaseError:  # Re-raise DatabaseError if execute_query raised it
             raise
         except Exception as e:
-            logger.error(f"Unexpected error fetching media for keywords from DB {self.db_path_str}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error fetching media for keywords from DB {self.db_path_str}: {e}")
             raise DatabaseError(f"An unexpected error occurred while fetching media for keywords: {e}") from e
 
     def get_sync_log_entries(self, since_change_id: int = 0, limit: Optional[int] = None) -> List[Dict]:
@@ -2073,7 +2073,7 @@ class MediaDatabase:
             result["last_modified"] = row["last_modified"]
             return result
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to decode reading progress for media_id={media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to decode reading progress for media_id={media_id}: {e}")
             raise DatabaseError(f"Failed to decode reading progress for media_id {media_id}: {e}") from e
         except (DatabaseError, sqlite3.Error) as e:
             logger.error(f"Error fetching reading progress for media_id={media_id} from DB '{self.db_path_str}': {e}")
@@ -2336,7 +2336,7 @@ class MediaDatabase:
                 "error_type": error_type,
                 "cascade": str(cascade)
             })
-            logger.error(f"Error soft deleting media ID {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error soft deleting media ID {media_id}: {e}")
             if isinstance(e, (ConflictError, DatabaseError)):
                 raise e
             else:
@@ -2354,7 +2354,7 @@ class MediaDatabase:
                 "error_type": "unexpected",
                 "cascade": str(cascade)
             })
-            logger.error(f"Unexpected error soft deleting media ID {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error soft deleting media ID {media_id}: {e}")
             raise DatabaseError(f"Unexpected error during soft delete: {e}") from e
 
     def undelete_media(self, media_id: int, cascade: bool = True) -> bool:
@@ -2435,7 +2435,7 @@ class MediaDatabase:
                                 self._log_sync_event(conn, table, item['uuid'], 'undelete', new_item_version, undelete_item_payload)
 
         except (ConflictError, DatabaseError, InputError, Exception) as e:
-            logger.error(f"Error undeleting Media ID {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error undeleting Media ID {media_id}: {e}")
             if isinstance(e, ConflictError):
                 raise e
             else:
@@ -2542,7 +2542,7 @@ class MediaDatabase:
                             logger.warning(f"Failed to delete media ID {media_id} - may have been deleted already")
                             
                     except Exception as e:
-                        logger.error(f"Error hard deleting media ID {media_id}: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Error hard deleting media ID {media_id}: {e}")
                         # Continue with other deletions rather than failing entirely
                         continue
                 
@@ -2550,7 +2550,7 @@ class MediaDatabase:
                 return deleted_count
                 
         except Exception as e:
-            logger.error(f"Error during hard deletion process: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error during hard deletion process: {e}")
             raise DatabaseError(f"Failed to perform hard deletion: {e}") from e
 
     def get_deletion_candidates(self, days_old: int = 30) -> List[Dict[str, Any]]:
@@ -2578,7 +2578,7 @@ class MediaDatabase:
             )
             return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
-            logger.error(f"Error getting deletion candidates: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error getting deletion candidates: {e}")
             raise DatabaseError(f"Failed to get deletion candidates: {e}") from e
 
     def add_media_with_keywords(
@@ -3044,15 +3044,15 @@ class MediaDatabase:
             return {'id': version_id, 'uuid': new_uuid, 'media_id': media_id, 'version_number': local_version_number}
         except (InputError, DatabaseError, sqlite3.Error) as e:
             if "foreign key constraint failed" in str(e).lower():
-                logger.error(f"Failed create document version: Media ID {media_id} not found.", exc_info=False)
+                logger.opt(exception=False).error(f"Failed create document version: Media ID {media_id} not found.")
                 raise InputError(f"Cannot create document version: Media ID {media_id} not found.") from e
-            logger.error(f"DB error creating document version media {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"DB error creating document version media {media_id}: {e}")
             if isinstance(e, (InputError, DatabaseError)):
                 raise e
             else:
                 raise DatabaseError(f"Failed create document version: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error creating document version media {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error creating document version media {media_id}: {e}")
             raise DatabaseError(f"Unexpected error creating document version: {e}") from e
 
     def update_keywords_for_media(self, media_id: int, keywords: List[str]):
@@ -3136,13 +3136,13 @@ class MediaDatabase:
                 logger.debug(f"No keyword changes media {media_id}.")
             return True
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.error(f"Error updating keywords media {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error updating keywords media {media_id}: {e}")
             if isinstance(e, (InputError, ConflictError, DatabaseError)):
                 raise e
             else:
                 raise DatabaseError(f"Keyword update failed: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected keywords error media {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected keywords error media {media_id}: {e}")
             raise DatabaseError(f"Unexpected keyword update error: {e}") from e
 
     def update_media_metadata(self, media_id: int, title: str = None, media_type: str = None,
@@ -3393,13 +3393,13 @@ class MediaDatabase:
                     logger.info(f"Unlinked keyword '{keyword}' from {deleted_link_count} items.")
             return True
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.error(f"Error soft delete keyword '{keyword}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error soft delete keyword '{keyword}': {e}")
             if isinstance(e, (InputError, ConflictError, DatabaseError)):
                 raise e
             else:
                 raise DatabaseError(f"Failed soft delete keyword: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected soft delete keyword error '{keyword}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected soft delete keyword error '{keyword}': {e}")
             raise DatabaseError(f"Unexpected soft delete keyword error: {e}") from e
 
     def rename_keyword(self, keyword_id: int, new_keyword: str) -> bool:
@@ -3476,10 +3476,10 @@ class MediaDatabase:
             logger.error(f"Error renaming keyword ID {keyword_id}: {e}")
             raise
         except sqlite3.Error as e:
-            logger.error(f"SQLite error renaming keyword ID {keyword_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"SQLite error renaming keyword ID {keyword_id}: {e}")
             raise DatabaseError(f"Failed to rename keyword: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error renaming keyword ID {keyword_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error renaming keyword ID {keyword_id}: {e}")
             raise DatabaseError(f"Unexpected rename error: {e}") from e
 
     def merge_keywords(self, source_keyword_ids: List[int], target_keyword: str, create_if_not_exists: bool = True) -> bool:
@@ -3578,10 +3578,10 @@ class MediaDatabase:
             logger.error(f"Error merging keywords: {e}")
             raise
         except sqlite3.Error as e:
-            logger.error(f"SQLite error merging keywords: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"SQLite error merging keywords: {e}")
             raise DatabaseError(f"Failed to merge keywords: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error merging keywords: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error merging keywords: {e}")
             raise DatabaseError(f"Unexpected merge error: {e}") from e
 
     def get_keyword_usage_stats(self) -> List[Dict[str, Any]]:
@@ -3617,10 +3617,10 @@ class MediaDatabase:
             return results
             
         except sqlite3.Error as e:
-            logger.error(f"SQLite error getting keyword usage stats: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"SQLite error getting keyword usage stats: {e}")
             raise DatabaseError(f"Failed to get keyword usage stats: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error getting keyword usage stats: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error getting keyword usage stats: {e}")
             raise DatabaseError(f"Unexpected stats error: {e}") from e
 
     def soft_delete_document_version(self, version_uuid: str) -> bool:
@@ -3677,13 +3677,13 @@ class MediaDatabase:
                 logger.info(f"Soft deleted DocVersion UUID {version_uuid}. New ver: {new_sync_version}")
                 return True
         except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.error(f"Error soft delete DocVersion UUID {version_uuid}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error soft delete DocVersion UUID {version_uuid}: {e}")
             if isinstance(e, (InputError, ConflictError, DatabaseError)):
                 raise e
             else:
                 raise DatabaseError(f"Failed soft delete doc version: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected soft delete DocVersion error UUID {version_uuid}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected soft delete DocVersion error UUID {version_uuid}: {e}")
             raise DatabaseError(f"Unexpected version soft delete error: {e}") from e
 
     def mark_as_trash(self, media_id: int) -> bool:
@@ -3734,13 +3734,13 @@ class MediaDatabase:
                 logger.info(f"Media {media_id} marked as trash. New ver: {new_version}")
                 return True
         except (ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.error(f"Error marking media {media_id} as trash: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error marking media {media_id} as trash: {e}")
             if isinstance(e, (ConflictError, DatabaseError)):
                 raise e
             else:
                 raise DatabaseError(f"Failed mark as trash: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error marking media {media_id} trash: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error marking media {media_id} trash: {e}")
             raise DatabaseError(f"Unexpected mark trash error: {e}") from e
 
     def restore_from_trash(self, media_id: int) -> bool:
@@ -3791,13 +3791,13 @@ class MediaDatabase:
                 logger.info(f"Media {media_id} restored from trash. New ver: {new_version}")
                 return True
         except (ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.error(f"Error restoring media {media_id} trash: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error restoring media {media_id} trash: {e}")
             if isinstance(e, (ConflictError, DatabaseError)):
                 raise e
             else:
                 raise DatabaseError(f"Failed restore trash: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error restoring media {media_id} trash: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error restoring media {media_id} trash: {e}")
             raise DatabaseError(f"Unexpected restore trash error: {e}") from e
 
     def rollback_to_version(self, media_id: int, target_version_number: int) -> Dict[str, Any]:
@@ -3897,13 +3897,13 @@ class MediaDatabase:
                     'new_document_version_uuid': new_doc_version_uuid,
                     'new_media_version': new_media_version}
         except (InputError, ValueError, ConflictError, DatabaseError, sqlite3.Error, TypeError) as e:
-            logger.error(f"Rollback error media {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Rollback error media {media_id}: {e}")
             if isinstance(e, (InputError, ValueError, ConflictError, DatabaseError, TypeError)):
                 raise e
             else:
                 raise DatabaseError(f"DB error during rollback: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected rollback error media {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected rollback error media {media_id}: {e}")
             raise DatabaseError(f"Unexpected rollback error: {e}") from e
 
     def get_all_document_versions(
@@ -4124,13 +4124,13 @@ class MediaDatabase:
             duration = time.time() - start_time
             logger.info(f"Finished processing {processed_count} unvectorized chunks media {media_id}. Duration: {duration:.4f}s")
         except (InputError, DatabaseError, sqlite3.Error) as e:
-            logger.error(f"Error processing unvectorized chunks media {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error processing unvectorized chunks media {media_id}: {e}")
             if isinstance(e, (InputError, DatabaseError)):
                 raise e
             else:
                 raise DatabaseError(f"Failed process chunks: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected chunk processing error media {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected chunk processing error media {media_id}: {e}")
             raise DatabaseError(f"Unexpected chunk error: {e}") from e
 
     # --- Read Methods (Ensure they filter by deleted=0) ---
@@ -4293,7 +4293,7 @@ class MediaDatabase:
                 "status": "error",
                 "error_type": "database_error"
             })
-            logger.error(f"Error fetching media by ID {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error fetching media by ID {media_id}: {e}")
             raise DatabaseError(f"Failed to fetch media by ID: {e}") from e
         except Exception as e:
             # Log error metrics
@@ -4309,7 +4309,7 @@ class MediaDatabase:
                 "status": "error",
                 "error_type": "unexpected_error"
             })
-            logger.error(f"Unexpected error fetching media by ID {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error fetching media by ID {media_id}: {e}")
             raise DatabaseError(f"Unexpected error fetching media by ID: {e}") from e
 
     # Add similar get_media_by_uuid, get_media_by_url, get_media_by_hash, get_media_by_title
@@ -4387,10 +4387,10 @@ class MediaDatabase:
             result = cursor.fetchone()
             return dict(result) if result else None
         except sqlite3.Error as e:
-            logger.error(f"Error fetching media by URL '{url}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error fetching media by URL '{url}': {e}")
             raise DatabaseError(f"Failed to fetch media by URL: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error fetching media by URL '{url}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error fetching media by URL '{url}': {e}")
             raise DatabaseError(f"Unexpected error fetching media by URL: {e}") from e
 
     def get_media_by_hash(self, content_hash: str, include_deleted=False, include_trash=False) -> Optional[Dict]:
@@ -4431,10 +4431,10 @@ class MediaDatabase:
             result = cursor.fetchone()
             return dict(result) if result else None
         except sqlite3.Error as e:
-            logger.error(f"Error fetching media by hash '{content_hash[:10]}...': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error fetching media by hash '{content_hash[:10]}...': {e}")
             raise DatabaseError(f"Failed to fetch media by hash: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error fetching media by hash '{content_hash[:10]}...': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error fetching media by hash '{content_hash[:10]}...': {e}")
             raise DatabaseError(f"Unexpected error fetching media by hash: {e}") from e
 
     def get_media_by_title(self, title: str, include_deleted=False, include_trash=False) -> Optional[Dict]:
@@ -4476,10 +4476,10 @@ class MediaDatabase:
             result = cursor.fetchone()
             return dict(result) if result else None
         except sqlite3.Error as e:
-            logger.error(f"Error fetching media by title '{title}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error fetching media by title '{title}': {e}")
             raise DatabaseError(f"Failed to fetch media by title: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error fetching media by title '{title}': {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error fetching media by title '{title}': {e}")
             raise DatabaseError(f"Unexpected error fetching media by title: {e}") from e
 
     def get_all_active_media_for_selection_dropdown(self, limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
@@ -4548,7 +4548,8 @@ class MediaDatabase:
         Returns:
             A tuple containing:
                 - results (List[sqlite3.Row]): List of Row objects for the current page.
-                                               Each row contains 'id', 'title', 'type'.
+                                               Each row contains 'id', 'title', 'type',
+                                               'last_modified'.
                 - total_pages (int): Total number of pages for active items.
                 - current_page (int): The requested page number.
                 - total_items (int): The total number of active items matching the criteria.
@@ -4583,7 +4584,7 @@ class MediaDatabase:
             if total_items > 0:
                 # Order by most recently modified, then ID for stable pagination
                 items_query = """
-                              SELECT id, title, type
+                              SELECT id, title, type, last_modified
                               FROM Media
                               WHERE deleted = 0
                                 AND is_trash = 0
@@ -4654,13 +4655,13 @@ class MediaDatabase:
             logger.info(f"Database backup successful from '{self.db_path_str}' to '{backup_file_path}'")
             return True
         except sqlite3.Error as e:
-            logger.error(f"SQLite error during database backup: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"SQLite error during database backup: {e}")
             return False
         except ValueError as ve: # Catch specific ValueError for path mismatch
-            logger.error(f"ValueError during database backup: {ve}", exc_info=True)
+            logger.opt(exception=True).error(f"ValueError during database backup: {ve}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error during database backup: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error during database backup: {e}")
             return False
         finally:
             if backup_conn:
@@ -4709,11 +4710,10 @@ class MediaDatabase:
             logger.info(f"Found {len(results)} distinct media types: {results}")
             return results
         except sqlite3.Error as e:
-            logger.error(f"Error fetching distinct media types from DB {self.db_path_str}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error fetching distinct media types from DB {self.db_path_str}: {e}")
             raise DatabaseError(f"Failed to fetch distinct media types: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error fetching distinct media types from DB {self.db_path_str}: {e}",
-                         exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error fetching distinct media types from DB {self.db_path_str}: {e}")
             raise DatabaseError(f"An unexpected error occurred while fetching distinct media types: {e}") from e
 
     def add_media_chunk(self, media_id: int, chunk_text: str, start_index: int, end_index: int, chunk_id: str) -> Optional[Dict]:
@@ -4802,13 +4802,13 @@ class MediaDatabase:
                 return {'id': chunk_pk_id, 'uuid': new_uuid}
 
         except sqlite3.IntegrityError as ie:
-            logger.error(f"Integrity error adding chunk for media {media_id}: {ie}", exc_info=True)
+            logger.opt(exception=True).error(f"Integrity error adding chunk for media {media_id}: {ie}")
             raise DatabaseError(f"Failed to add chunk due to constraint violation: {ie}") from ie
         except (InputError, DatabaseError) as e:
-            logger.error(f"Error adding chunk for media {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error adding chunk for media {media_id}: {e}")
             raise e
         except Exception as e:
-            logger.error(f"Unexpected error adding chunk for media {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error adding chunk for media {media_id}: {e}")
             raise DatabaseError(f"An unexpected error occurred while adding media chunk: {e}") from e
 
     def add_media_chunks_in_batches(self, media_id: int, chunks_to_add: List[Dict[str, Any]],
@@ -5029,13 +5029,13 @@ class MediaDatabase:
             return inserted_count
 
         except sqlite3.IntegrityError as ie:
-            logger.error(f"Integrity error batch inserting chunks for media {media_id}: {ie}", exc_info=True)
+            logger.opt(exception=True).error(f"Integrity error batch inserting chunks for media {media_id}: {ie}")
             raise DatabaseError(f"Failed to batch insert chunks due to constraint violation: {ie}") from ie
         except (InputError, DatabaseError, KeyError) as e:
-            logger.error(f"Error batch inserting chunks for media {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error batch inserting chunks for media {media_id}: {e}")
             raise e
         except Exception as e:
-            logger.error(f"Unexpected error batch inserting chunks for media {media_id}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error batch inserting chunks for media {media_id}: {e}")
             raise DatabaseError(f"An unexpected error occurred during batch chunk insertion: {e}") from e
 
     def process_chunks(self, media_id: int, chunks: List[Dict[str, Any]], batch_size: int = 100):
@@ -5235,7 +5235,7 @@ class MediaDatabase:
             cursor = self.execute_query(query, tuple(params))
             return [dict(row) for row in cursor.fetchall() if row['content']]  # Ensure content exists
         except Exception as e:
-            logger.error(f"Error fetching all active media for embedding: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error fetching all active media for embedding: {e}")
             raise DatabaseError(f"Failed to fetch all active media: {e}") from e
 
     # Method 2: Get specific media items by their DB IDs
@@ -5253,7 +5253,7 @@ class MediaDatabase:
             cursor = self.execute_query(query, tuple(media_db_ids))
             return [dict(row) for row in cursor.fetchall() if row['content']]
         except Exception as e:
-            logger.error(f"Error fetching media by IDs for embedding: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error fetching media by IDs for embedding: {e}")
             raise DatabaseError(f"Failed to fetch media by IDs: {e}") from e
 
     # Method 3: Search media items by keyword (simplified for embedding - gets content)
@@ -5328,7 +5328,7 @@ class MediaDatabase:
 
             return keywords_by_media
         except sqlite3.Error as e:
-            logger.error(f"Error fetching keywords for media batch: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error fetching keywords for media batch: {e}")
             raise DatabaseError(f"Failed to fetch keywords for media batch: {e}") from e
 
     # ============================= End of Chat UI Functions for Search ===================================================
@@ -5417,10 +5417,10 @@ def get_document_version(db_instance: MediaDatabase, media_id: int, version_numb
             return None
         return dict(result)
     except (DatabaseError, sqlite3.Error) as e:
-        logger.error(f"Error retrieving {log_msg} DB '{db_instance.db_path_str}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error retrieving {log_msg} DB '{db_instance.db_path_str}': {e}")
         raise DatabaseError(f"DB error retrieving version: {e}") from e
     except Exception as e:
-        logger.error(f"Unexpected error retrieving {log_msg} DB '{db_instance.db_path_str}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error retrieving {log_msg} DB '{db_instance.db_path_str}': {e}")
         raise DatabaseError(f"Unexpected error retrieving version: {e}") from e
 
 
@@ -5465,7 +5465,7 @@ def check_database_integrity(db_path): # Standalone check is fine
         else: logger.error(f"Integrity check FAILED for {db_path}: {result}")
         return False
     except sqlite3.Error as e:
-        logger.error(f"Error during integrity check for {db_path}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error during integrity check for {db_path}: {e}")
         return False
     finally:
         if conn:
@@ -5602,16 +5602,16 @@ def empty_trash(db_instance: MediaDatabase, days_threshold: int) -> Tuple[int, i
                 except DatabaseError as e:
                     logger.error(f"DB error processing item ID {media_id} during trash emptying: {e}")
                 except Exception as e:
-                    logger.error(f"Unexpected error processing item ID {media_id} during trash emptying: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"Unexpected error processing item ID {media_id} during trash emptying: {e}")
         cursor_remain = db_instance.execute_query("SELECT COUNT(*) FROM Media WHERE is_trash = 1 AND deleted = 0")
         remaining_count = cursor_remain.fetchone()[0]
         logger.info(f"Trash emptying complete. Processed (sync deleted): {processed_count}. Remaining in UI trash: {remaining_count}.")
         return processed_count, remaining_count
     except (DatabaseError, sqlite3.Error) as e:
-        logger.error(f"Error emptying trash DB '{db_instance.db_path_str}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error emptying trash DB '{db_instance.db_path_str}': {e}")
         return 0, -1
     except Exception as e:
-        logger.error(f"Unexpected error emptying trash DB '{db_instance.db_path_str}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error emptying trash DB '{db_instance.db_path_str}': {e}")
         return 0, -1
 
 # Deprecated check
@@ -6022,14 +6022,14 @@ def soft_delete_transcript(db_instance: MediaDatabase, transcript_uuid: str) -> 
             logger.info(f"Soft deleted Transcript UUID {transcript_uuid}. New ver: {new_version}")
             return True
     except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-        logger.error(f"Error soft delete Transcript UUID {transcript_uuid}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error soft delete Transcript UUID {transcript_uuid}: {e}")
         # Re-raise specific errors, wrap general DB errors
         if isinstance(e, (InputError, ConflictError, DatabaseError)):
             raise e
         else:
             raise DatabaseError(f"Failed soft delete transcript: {e}") from e
     except Exception as e:
-        logger.error(f"Unexpected soft delete Transcript error UUID {transcript_uuid}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected soft delete Transcript error UUID {transcript_uuid}: {e}")
         raise DatabaseError(f"Unexpected transcript soft delete error: {e}") from e
 
 
@@ -6086,13 +6086,13 @@ def clear_specific_analysis(db_instance: MediaDatabase, version_uuid: str) -> bo
             logger.info(f"Cleared analysis for DocVersion UUID {version_uuid}. New ver: {new_version}")
             return True
     except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-        logger.error(f"Error clearing analysis UUID {version_uuid}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error clearing analysis UUID {version_uuid}: {e}")
         if isinstance(e, (InputError, ConflictError, DatabaseError)):
             raise e
         else:
             raise DatabaseError(f"Failed clear analysis: {e}") from e
     except Exception as e:
-        logger.error(f"Unexpected error clearing analysis UUID {version_uuid}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error clearing analysis UUID {version_uuid}: {e}")
         raise DatabaseError(f"Unexpected clear analysis error: {e}") from e
 
 
@@ -6148,13 +6148,13 @@ def clear_specific_prompt(db_instance: MediaDatabase, version_uuid: str) -> bool
             logger.info(f"Cleared prompt for DocVersion UUID {version_uuid}. New ver: {new_version}")
             return True
     except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-        logger.error(f"Error clearing prompt UUID {version_uuid}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error clearing prompt UUID {version_uuid}: {e}")
         if isinstance(e, (InputError, ConflictError, DatabaseError)):
             raise e
         else:
             raise DatabaseError(f"Failed clear prompt: {e}") from e
     except Exception as e:
-        logger.error(f"Unexpected error clearing prompt UUID {version_uuid}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Unexpected error clearing prompt UUID {version_uuid}: {e}")
         raise DatabaseError(f"Unexpected clear prompt error: {e}") from e
 
 
@@ -6265,10 +6265,10 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
             logger.error(f"Permanent delete failed unexpectedly Media {media_id}.")
             return False
     except sqlite3.Error as e:
-        logger.error(f"Error permanently deleting Media {media_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error permanently deleting Media {media_id}: {e}")
         raise DatabaseError(f"Failed permanently delete item: {e}") from e
     except Exception as e:
-        (logger.error(f"Unexpected error permanently deleting Media {media_id}: {e}", exc_info=True))
+        (logger.opt(exception=True).error(f"Unexpected error permanently deleting Media {media_id}: {e}"))
         raise DatabaseError(f"Unexpected permanent delete error: {e}") from e
 
 
@@ -6302,7 +6302,7 @@ def fetch_keywords_for_media(db_instance: MediaDatabase, media_id: int) -> List[
         cursor = db_instance.execute_query(query, (media_id,))
         return [row['keyword'] for row in cursor.fetchall()]
     except (DatabaseError, sqlite3.Error) as e:
-        logger.error(f"Error fetching keywords media_id {media_id} '{db_instance.db_path_str}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error fetching keywords media_id {media_id} '{db_instance.db_path_str}': {e}")
         raise DatabaseError(f"Failed fetch keywords {media_id}") from e
 
 
@@ -6349,7 +6349,7 @@ def fetch_keywords_for_media_batch(db_instance: MediaDatabase, media_ids: List[i
                 keywords_map[row['media_id']].append(row['keyword'])
         return keywords_map
     except (DatabaseError, sqlite3.Error) as e:
-        logger.error(f"Failed fetch keywords batch '{db_instance.db_path_str}': {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Failed fetch keywords batch '{db_instance.db_path_str}': {e}")
         raise DatabaseError("Failed fetch keywords batch") from e
 
 

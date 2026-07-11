@@ -48,6 +48,9 @@ LIBRARY_NAV_CONTEXT_MODE = "mode"
 LIBRARY_NAV_CONTEXT_CONVERSATION_ID = "conversation_id"
 LIBRARY_NAV_CONTEXT_NOTE_ID = "note_id"
 LIBRARY_NAV_CONTEXT_NOTES_CREATE = "notes_create"
+# Home's ingest-jobs "Open details" control (L3b Task 6) re-points here to
+# land the Library shell on the in-canvas Ingest > Import media view.
+LIBRARY_NAV_CONTEXT_INGEST = "ingest_media"
 LIBRARY_MODE_CONVERSATIONS = "conversations"
 
 ALL_TABS = [TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH, TAB_INGEST,

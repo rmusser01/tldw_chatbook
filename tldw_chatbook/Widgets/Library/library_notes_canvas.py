@@ -344,8 +344,8 @@ class LibraryNotesCanvas(Vertical):
 
         Every control here is a plain, stacked, full-width Button/Input/
         Static -- the render-safe shape already proven by list/editor/create
-        mode in this canvas. Notably absent: ``Select`` (the standalone
-        ``NotesSyncPane``'s Direction/Conflict dropdowns) and ``Switch``
+        mode in this canvas. Notably absent: ``Select`` (the retired
+        standalone Notes screen's Direction/Conflict dropdowns) and ``Switch``
         (its auto-sync toggle) -- neither renders reliably in this canvas,
         so both become cycling/toggle Buttons instead, matching the
         pattern the media type filter and notes sort control already use.

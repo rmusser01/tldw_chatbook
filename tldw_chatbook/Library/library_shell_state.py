@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from tldw_chatbook.Constants import TAB_INGEST
-
 LIBRARY_CANVAS_LANDING_COPY = "Search, pick a content type, or ingest something new."
 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
 LIBRARY_ROW_BROWSE_MEDIA = "browse-media"
 LIBRARY_ROW_BROWSE_NOTES = "browse-notes"
+LIBRARY_ROW_BROWSE_SEARCH = "browse-search"
+LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
+LIBRARY_ROW_INGEST_MEDIA = "ingest-import-media"
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,8 @@ class LibraryRailRow:
     target_id: str
     count: int | None = None
     count_known: bool = True
+    count_display: str = ""
+    count_emphasis: str = ""
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,9 @@ class LibraryShellInput:
     runtime_source: str = "local"
     server_label: str | None = None
     details_lines: tuple[str, ...] = ()
+    study_decks_count: int | None = None
+    flashcards_due_count: int | None = None
+    quizzes_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -110,19 +116,19 @@ def build_library_shell_state(
             count_known=state.notes_known,
         ),
         LibraryRailRow(
-            row_id="browse-collections",
+            row_id=LIBRARY_ROW_BROWSE_COLLECTIONS,
             section_id="browse",
             title="Collections",
-            target_kind="mode",
+            target_kind="canvas",
             target_id="collections",
             count=state.collections_count,
             count_known=state.collections_known,
         ),
         LibraryRailRow(
-            row_id="browse-search",
+            row_id=LIBRARY_ROW_BROWSE_SEARCH,
             section_id="browse",
             title="Search / RAG",
-            target_kind="mode",
+            target_kind="canvas",
             target_id="search",
             count=None,
             count_known=True,
@@ -143,47 +149,52 @@ def build_library_shell_state(
             row_id="create-study",
             section_id="create",
             title="Study decks",
-            target_kind="mode",
+            target_kind="handoff",
             target_id="study",
-            count=None,
+            count=state.study_decks_count,
             count_known=True,
         ),
         LibraryRailRow(
             row_id="create-flashcards",
             section_id="create",
             title="Flashcards",
-            target_kind="mode",
+            target_kind="handoff",
             target_id="flashcards",
             count=None,
             count_known=True,
+            count_display=(
+                f" due: {state.flashcards_due_count}"
+                if state.flashcards_due_count is not None
+                else ""
+            ),
+            count_emphasis=(
+                (
+                    "bright"
+                    if state.flashcards_due_count > 0
+                    else "dim"
+                )
+                if state.flashcards_due_count is not None
+                else ""
+            ),
         ),
         LibraryRailRow(
             row_id="create-quizzes",
             section_id="create",
             title="Quizzes",
-            target_kind="mode",
+            target_kind="handoff",
             target_id="quizzes",
-            count=None,
+            count=state.quizzes_count,
             count_known=True,
         ),
     )
 
     ingest_rows = (
         LibraryRailRow(
-            row_id="ingest-import-media",
+            row_id=LIBRARY_ROW_INGEST_MEDIA,
             section_id="ingest",
             title="Import media",
-            target_kind="screen",
-            target_id=TAB_INGEST,
-            count=None,
-            count_known=True,
-        ),
-        LibraryRailRow(
-            row_id="ingest-import-export",
-            section_id="ingest",
-            title="Import / Export",
-            target_kind="mode",
-            target_id="import-export",
+            target_kind="canvas",
+            target_id="ingest-media",
             count=None,
             count_known=True,
         ),
@@ -217,9 +228,10 @@ def build_library_shell_state(
         canvas_kind = selected_row.target_id
         canvas_target = ""
         canvas_empty_copy = LIBRARY_CANVAS_LANDING_COPY
-    elif selected_row.target_kind == "mode":
-        # Mode rows resolve to mode canvas
-        canvas_kind = "mode"
+    elif selected_row.target_kind == "handoff":
+        # Handoff rows (study/flashcards/quizzes) resolve to the handoff
+        # canvas: a Library-owned trio plus the Study handoff detail widget.
+        canvas_kind = "handoff"
         canvas_target = selected_row.target_id
         canvas_empty_copy = LIBRARY_CANVAS_LANDING_COPY
     else:

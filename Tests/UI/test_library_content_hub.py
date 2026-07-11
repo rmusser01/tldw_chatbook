@@ -140,7 +140,14 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
     (``LibrarySearchRagInspectorPanel``, never mounted by the new canvas) and
     has no successor here; that Console-handoff decision is now covered by
     the in-panel per-result "Use in Console" button (see the sibling
-    selected-evidence test below)."""
+    selected-evidence test below).
+
+    Re-anchored for the L3a UX wave (A1/A3/A4/B1/B2/B3): the idle canvas is
+    now one quiet line instead of the ~9-line redundant blocked dump, ASCII
+    section rules and the pipe-drawn scope table are gone in favor of
+    Console-parity headings and real per-source toggles, and the carry-
+    through jargon line (B3) is retired.
+    """
     app = _build_test_app()
     _seed_library_content(app)
     host = DestinationHarness(app, "library")
@@ -153,46 +160,57 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
 
         visible = _visible_text(screen)
 
-        assert "Retrieval Query" in visible
-        assert screen.query_one("#library-rag-query-section-rule", Static)
+        # A1: exactly one quiet line for the empty-query gate; no callout,
+        # no summary Static, no "Run disabled:" reason, no recovery dump.
         assert screen.query_one("#library-rag-query-input")
         assert screen.query_one("#library-rag-run-query", Button).disabled is True
-        assert "Blocked: enter a question or search query." in visible
-        assert screen.query_one("#library-rag-query-blocked-callout", Static)
-        assert "Blocked | Enter a question before running retrieval." in visible
-        assert screen.query_one("#library-rag-run-disabled-reason", Static)
-        assert "Run disabled: enter a question or search query." in visible
+        assert screen.query_one("#library-rag-query-quiet-line", Static)
+        assert "Enter a question or search query." in visible
+        assert not screen.query("#library-rag-query-blocked-callout")
+        assert not screen.query("#library-rag-query-recovery")
+        assert not screen.query("#library-rag-run-disabled-reason")
+        assert "Blocked: enter a question or search query." not in visible
+        assert "Blocked | Enter a question before running retrieval." not in visible
+        assert "Run disabled: enter a question or search query." not in visible
 
-        assert "Scope Controls" in visible
-        assert screen.query_one("#library-rag-scope-section-rule", Static)
-        scope_header = str(screen.query_one("#library-rag-scope-table-header", Static).renderable)
-        assert "Scope" in scope_header
-        assert "Count" in scope_header
-        assert "Eligibility" in scope_header
-        assert "Next action" in scope_header
-        for selector in (
-            "#library-rag-scope-row-all",
-            "#library-rag-scope-row-workspace",
-            "#library-rag-scope-row-notes",
-            "#library-rag-scope-row-media",
-            "#library-rag-scope-row-conversations",
-            "#library-rag-scope-row-collections",
-            "#library-rag-scope-row-import-export",
-        ):
-            assert screen.query_one(selector, Static)
+        # A4: the retired-workbench shortcuts line is gone.
+        assert not screen.query("#library-rag-query-shortcuts")
+        assert "Tab: move panes" not in visible
 
-        assert "All Library" in visible
-        assert "Browse/search" in visible
-        assert "Add source" in visible
-        assert "Workspace eligible" in visible
-        assert "Collections" in visible
-        assert "Import/Export recovery" in visible
-        assert screen.query_one("#library-rag-results-section-rule", Static)
-        assert "Evidence Results" in visible
+        # B1: Console-parity section headers, no ASCII rules or duplicated
+        # plain sub-headers.
+        assert not screen.query(".library-rag-section-rule")
+        assert "Retrieval Query" not in visible
+        assert "Scope Controls" not in visible
+        assert "Evidence Results" not in visible
+        assert screen.query_one("#library-rag-scope-heading", Static)
+        assert "Sources" in visible
+
+        # B2: real per-source toggles replace the pipe-drawn scope table;
+        # workspaces/collections/import-export rows are gone.
+        assert not screen.query("#library-rag-scope-table-header")
+        for source_type in ("notes", "media", "conversations"):
+            toggle = screen.query_one(f"#library-rag-scope-toggle-{source_type}", Button)
+            assert str(toggle.label).startswith("✓")
+            assert toggle.disabled is False
+        assert not screen.query("#library-rag-scope-row-all")
+        assert not screen.query("#library-rag-scope-row-workspace")
+        assert not screen.query("#library-rag-scope-row-collections")
+        assert not screen.query("#library-rag-scope-row-import-export")
+        assert "Workspace eligible" not in visible
+        assert "Import/Export recovery" not in visible
+
+        # A3: top-k surfaces on the Evidence heading, the single mode
+        # surface is the toggle button, not a separate status line.
+        assert "Evidence · top 5 per source" in visible
+        assert not screen.query("#library-rag-query-status")
         assert "No evidence yet. Run Search/RAG to populate results." in visible
         assert screen.query_one("#library-rag-evidence-empty-guidance", Static)
         assert "Add or import sources, run a query, then select evidence for Console." in visible
-        assert "Citation/snippet carry-through: reserved for selected evidence." in visible
+
+        # B3: the carry-through jargon line is retired outright.
+        assert not screen.query("#library-rag-attribution-placeholder")
+        assert "Citation/snippet carry-through" not in visible
         assert "tldw_server" not in visible
 
 
@@ -243,10 +261,10 @@ async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_co
         # selection, evidence, and Console eligibility directly.
         assert screen.query_one("#library-rag-result-0").has_class("is-selected")
         assert str(screen.query_one("#library-rag-select-result-0", Button).label) == "Selected evidence"
-        assert (
-            "Citation/snippet carry-through placeholder: selected evidence preserves "
-            "source, chunk, snippet, and citations."
-        ) in visible
+        # B3: the carry-through jargon line is retired outright -- selecting
+        # evidence needs no permanent caption.
+        assert not screen.query("#library-rag-attribution-placeholder")
+        assert "Citation/snippet carry-through" not in visible
         assert "Useful answer evidence from the selected note." in visible
         assert "Citations: Research Note #7" in visible
         assert screen.query_one("#library-rag-use-selected-in-console", Button).disabled is False
@@ -309,7 +327,7 @@ async def test_library_navigation_context_opens_requested_conversation() -> None
         )
 
         visible = _visible_text(screen)
-        assert getattr(screen, "_active_mode") == "conversations"
+        assert getattr(screen, "_library_selected_row_id") == "browse-conversations"
         assert getattr(screen, "_selected_conversation_id") == "chat-2"
         assert "Design Review" in visible
         assert "Planning Chat" in visible
@@ -329,7 +347,7 @@ async def test_library_navigation_context_opens_requested_valid_mode() -> None:
         screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_MODE: "search"})
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
-        assert getattr(screen, "_active_mode") == "search"
+        assert getattr(screen, "_library_selected_row_id") == "browse-search"
         assert str(screen.query_one("#library-header-line").renderable) == "Library | Local"
         assert screen.query_one("#library-row-browse-search", Button).has_class(
             "library-rail-row-selected"
@@ -359,42 +377,6 @@ async def test_library_conversations_empty_state_is_honest_and_blocks_actions() 
         assert status == "No saved conversations yet. Save a Console chat and it appears here."
         assert not screen.query(".library-conversation-row")
         assert screen.query_one("#library-conversation-preview").display is False
-
-
-@pytest.mark.asyncio
-async def test_library_import_export_opens_native_workflow_with_clear_boundaries() -> None:
-    """The Import/Export mode canvas (``_import_export_workflow_rows``) still
-    explains ownership boundaries. The dedicated "Open Ingest"/"Open Media"/
-    "Export Library sources" action buttons lived only in the retired
-    ``#library-action-region`` (3-pane) and have no rail successor yet; the
-    generic Ingest rail row (``#library-row-ingest-import-media``) already
-    covers screen-level Ingest navigation."""
-    app = _build_test_app()
-    _seed_library_content(app)
-    seen_routes: list[str] = []
-    host = DestinationHarness(app, "library", seen_routes)
-
-    async with host.run_test(size=(180, 50)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_library_shell_ready(screen, pilot)
-        screen.query_one("#library-row-ingest-import-export", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-import-export-workflow-title")
-
-        visible = _visible_text(screen)
-        assert getattr(screen, "_active_mode") == "import-export"
-        assert seen_routes == []
-        assert "Library Import/Export Workflow" in visible
-        assert "Library owns source acquisition framing; Ingest and Media own deeper file handling." in visible
-        assert "Import source material" in visible
-        assert "Imported material returns here as notes, media, conversations, or indexed sources." in visible
-        assert "Full Media ingestion and review stays in Media." in visible
-        assert "Artifact export stays in Artifacts." in visible
-        assert "Generic file management stays outside Library." in visible
-        assert "Export is not wired here yet." in visible
-        assert "Return path: come back to Library after import to see new hub inventory." in visible
-        assert screen.query_one("#library-row-ingest-import-export", Button).has_class(
-            "library-rail-row-selected"
-        )
 
 
 @pytest.mark.asyncio

@@ -518,7 +518,7 @@ class StudyQuizzesController:
                 hard_delete=False,
             )
         except Exception:
-            logger.error("Failed to delete quiz", exc_info=True)
+            logger.opt(exception=True).error("Failed to delete quiz")
             self._notify("Failed to delete quiz.", severity="error")
             return
 
@@ -566,7 +566,7 @@ class StudyQuizzesController:
                 hard_delete=False,
             )
         except Exception:
-            logger.error("Failed to delete quiz question", exc_info=True)
+            logger.opt(exception=True).error("Failed to delete quiz question")
             self._notify("Failed to delete question.", severity="error")
             return
 
@@ -608,7 +608,7 @@ class StudyQuizzesController:
                 passing_score=None,
             )
         except Exception:
-            logger.error("Failed to create quiz", exc_info=True)
+            logger.opt(exception=True).error("Failed to create quiz")
             self._notify("Failed to create quiz.", severity="error")
             return
 
@@ -664,7 +664,7 @@ class StudyQuizzesController:
                 source_citations=None,
             )
         except Exception:
-            logger.error("Failed to create quiz question", exc_info=True)
+            logger.opt(exception=True).error("Failed to create quiz question")
             self._notify("Failed to create quiz question.", severity="error")
             return
 
@@ -700,7 +700,7 @@ class StudyQuizzesController:
                 quiz_id=quiz_id,
             )
         except Exception:
-            logger.error("Failed to start quiz attempt", exc_info=True)
+            logger.opt(exception=True).error("Failed to start quiz attempt")
             self._notify("Failed to start quiz attempt.", severity="error")
             return
 
@@ -773,7 +773,7 @@ class StudyQuizzesController:
                 answers=list(self.current_attempt_answers),
             )
         except Exception:
-            logger.error("Failed to submit quiz attempt", exc_info=True)
+            logger.opt(exception=True).error("Failed to submit quiz attempt")
             self._notify("Failed to submit quiz attempt.", severity="error")
             return
 
@@ -820,7 +820,7 @@ class StudyQuizzesController:
                 include_answers=True,
             )
         except Exception:
-            logger.error("Failed to load quiz attempt history", exc_info=True)
+            logger.opt(exception=True).error("Failed to load quiz attempt history")
             self._notify("Failed to load attempt history.", severity="error")
             return
 

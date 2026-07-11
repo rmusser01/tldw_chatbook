@@ -73,7 +73,7 @@ class ClientSyncEngine:
                 # Ensure the initial save happens if the file doesn't exist
                 self._save_sync_state()
         except (json.JSONDecodeError, IOError, KeyError) as e:
-            logger.error(f"Error loading sync state from {self.state_file}: {e}. Starting from scratch.", exc_info=True)
+            logger.opt(exception=True).error(f"Error loading sync state from {self.state_file}: {e}. Starting from scratch.")
             self.last_local_log_id_sent = 0
             self.last_server_log_id_processed = 0
             # Attempt to save a clean initial state
@@ -93,7 +93,7 @@ class ClientSyncEngine:
                 json.dump(state, f, indent=4)
             logger.debug(f"Saved sync state to {self.state_file}: {state}")
         except IOError as e:
-            logger.error(f"Error saving sync state to {self.state_file}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error saving sync state to {self.state_file}: {e}")
 
     # --- Core Sync Logic ---
 
@@ -109,7 +109,7 @@ class ClientSyncEngine:
             logger.error(f"Network error during push phase: {e}")
             network_error = True # Don't proceed to pull if push failed due to network
         except Exception as e:
-            logger.error(f"Unexpected error during push phase: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error during push phase: {e}")
             # Decide if we should attempt pull phase even if push had non-network error
 
         if not network_error:
@@ -120,7 +120,7 @@ class ClientSyncEngine:
             except requests.exceptions.RequestException as e:
                 logger.error(f"Network error during pull phase: {e}")
             except Exception as e:
-                logger.error(f"Unexpected error during pull/apply phase: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Unexpected error during pull/apply phase: {e}")
         else:
             logger.warning("Skipping pull phase due to earlier network error during push.")
 
@@ -135,7 +135,7 @@ class ClientSyncEngine:
                 limit=SYNC_BATCH_SIZE
             )
         except DatabaseError as e:
-            logger.error(f"Failed to get local sync log entries: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to get local sync log entries: {e}")
             return # Don't proceed if we can't read the log
 
         if not local_changes:
@@ -261,7 +261,7 @@ class ClientSyncEngine:
                               raise cf_err # Re-raise to trigger transaction rollback
 
                     except (DatabaseError, sqlite3.Error, json.JSONDecodeError, KeyError, InputError) as item_error:
-                        logger.error(f"Failed to apply change ID {change['change_id']} ({change['entity']} {change['operation']}): {item_error}", exc_info=True)
+                        logger.opt(exception=True).error(f"Failed to apply change ID {change['change_id']} ({change['entity']} {change['operation']}): {item_error}")
                         all_applied_or_skipped = False
                         raise item_error # Re-raise to trigger transaction rollback
 
@@ -272,7 +272,7 @@ class ClientSyncEngine:
             logger.error(f"Transaction rolled back while applying remote changes batch: {e}")
             all_applied_or_skipped = False
         except Exception as e:
-             logger.error(f"Unexpected error during remote changes batch application: {e}", exc_info=True)
+             logger.opt(exception=True).error(f"Unexpected error during remote changes batch application: {e}")
              all_applied_or_skipped = False
 
         return all_applied_or_skipped
@@ -389,7 +389,7 @@ class ClientSyncEngine:
                 return True # Resolved by skipping remote change
 
         except Exception as e:
-            logger.error(f"Error during LWW conflict resolution for {entity} {entity_uuid}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error during LWW conflict resolution for {entity} {entity_uuid}: {e}")
             return False # Resolution failed
 
     def _execute_change_sql(self, cursor: sqlite3.Cursor, entity: str, operation: str, payload: Dict, uuid: str,
@@ -426,7 +426,7 @@ class ClientSyncEngine:
                 if current_rec:
                     current_db_version = current_rec[0]
             except sqlite3.Error as e:
-                logger.error(f"Error fetching current version for {entity} {uuid}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Error fetching current version for {entity} {uuid}: {e}")
                 # Depending on strategy, either raise or default to 0 and proceed carefully
                 raise DatabaseError(f"Could not fetch current version for {entity} {uuid}") from e
 
@@ -618,14 +618,14 @@ class ClientSyncEngine:
 
 
             except sqlite3.IntegrityError as ie:
-                logger.error(f"Integrity error applying change for {entity} {uuid}: {ie}", exc_info=True)
+                logger.opt(exception=True).error(f"Integrity error applying change for {entity} {uuid}: {ie}")
                 # Check specifically for the version trigger error during force_apply (though trigger is disabled now)
                 if force_apply and "Version must increment by exactly 1" in str(ie):
                     logger.error(
                         f"DISABLED Validation Trigger Error DURING FORCE_APPLY? THIS SHOULD NOT HAPPEN. CurrentDBVer:{current_db_version}, TargetSQLVer:{target_sql_version}. SQL: {main_sql} PARAMS: {main_params_tuple}")
                 raise DatabaseError(f"Integrity error applying change: {ie}") from ie
             except sqlite3.Error as e:
-                logger.error(f"SQLite error applying change or FTS for {entity} {uuid}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"SQLite error applying change or FTS for {entity} {uuid}: {e}")
                 raise  # Re-raise original SQLite error
 
         elif not main_sql:
@@ -756,7 +756,7 @@ if __name__ == "__main__":
         # if engine: engine.run_sync_cycle()
 
     except Exception as main_err:
-        logger.error(f"Critical error during client sync setup or execution: {main_err}", exc_info=True)
+        logger.opt(exception=True).error(f"Critical error during client sync setup or execution: {main_err}")
 
     finally:
         # Clean up DB connection if necessary

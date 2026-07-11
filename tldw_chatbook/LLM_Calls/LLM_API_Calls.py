@@ -262,7 +262,7 @@ def _responses_stream_to_chat_sse(response, *, model: str):
             elif event_type == "error":
                 yield f"data: {payload_text}\n\n"
     except requests.exceptions.RequestException as exc:
-        logger.error("OpenAI Responses: stream connection error: %s", exc, exc_info=True)
+        logger.opt(exception=True).error("OpenAI Responses: stream connection error: %s", exc)
         yield (
             "data: "
             + json.dumps({"error": {"message": f"Stream connection error: {exc}"}})
@@ -365,10 +365,10 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
             # Fallback if raise_for_status doesn't cover it (it should)
             raise ValueError(f"OpenAI Embeddings: Failed to retrieve. Status code: {response.status_code}")
     except requests.RequestException as e:
-        logger.error(f"OpenAI Embeddings: Error making API request: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"OpenAI Embeddings: Error making API request: {str(e)}")
         raise ValueError(f"OpenAI Embeddings: Error making API request: {str(e)}")
     except Exception as e:
-        logger.error(f"OpenAI Embeddings: Unexpected error: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"OpenAI Embeddings: Unexpected error: {str(e)}")
         raise ValueError(f"OpenAI Embeddings: Unexpected error occurred: {str(e)}")
 
 
@@ -560,12 +560,12 @@ def chat_with_openai(
                             # OpenAI's SSE usually includes double newlines.
                             yield line if line.endswith("\n") else line + "\n"
                 except requests.exceptions.RequestException as e_request:
-                    logger.error(f"OpenAI: RequestException during stream: {e_request}", exc_info=True)
+                    logger.opt(exception=True).error(f"OpenAI: RequestException during stream: {e_request}")
                     error_content = json.dumps({"error": {"message": f"Stream connection error: {str(e_request)}",
                                                           "type": "openai_stream_error"}})
                     yield f"data: {error_content}\n\n" # Yield as SSE error
                 except Exception as e_stream:
-                    logger.error(f"OpenAI: Error during stream iteration: {e_stream}", exc_info=True)
+                    logger.opt(exception=True).error(f"OpenAI: Error during stream iteration: {e_stream}")
                     error_content = json.dumps({"error": {"message": f"Stream iteration error: {str(e_stream)}",
                                                           "type": "openai_stream_error"}})
                     yield f"data: {error_content}\n\n" # Yield as SSE error
@@ -665,7 +665,7 @@ def chat_with_openai(
             "model": final_model,
             "error_type": "network"
         })
-        logger.error(f"OpenAI RequestException: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"OpenAI RequestException: {e}")
         raise
     except Exception as e: # Catch any other unexpected error
         # Log unexpected error metrics
@@ -674,7 +674,7 @@ def chat_with_openai(
             "model": final_model,
             "error_type": "unexpected"
         })
-        logger.error(f"OpenAI: Unexpected error in chat_with_openai: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"OpenAI: Unexpected error in chat_with_openai: {e}")
         raise ChatProviderError(provider="openai", message=f"Unexpected error: {e}")
 
 
@@ -873,10 +873,10 @@ def chat_with_anthropic(
                             except json.JSONDecodeError:
                                 logger.warning(f"Anthropic Stream: Could not decode JSON: {event_data_str}")
                 except requests.exceptions.ChunkedEncodingError as e: # ... error handling ...
-                    logger.error(f"Anthropic: ChunkedEncodingError during stream: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"Anthropic: ChunkedEncodingError during stream: {e}")
                     yield f"data: {json.dumps({'error': {'message': f'Stream connection error: {str(e)}', 'type': 'anthropic_stream_error'}})}\n\n"
                 except Exception as e: # ... error handling ...
-                    logger.error(f"Anthropic: Error during stream iteration: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"Anthropic: Error during stream iteration: {e}")
                     yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e)}', 'type': 'anthropic_stream_error'}})}\n\n"
                 finally:
                     yield "data: [DONE]\n\n"
@@ -968,7 +968,7 @@ def chat_with_anthropic(
             "model": current_model,
             "error_type": "unexpected_error"
         })
-        logger.error(f"Anthropic: Unexpected error: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Anthropic: Unexpected error: {e}")
         raise ChatProviderError(provider="anthropic", message=f"Unexpected error: {e}")
 
 
@@ -1210,7 +1210,7 @@ def chat_with_cohere(
                 except requests.exceptions.ChunkedEncodingError as e:
                     logger.warning(f"Cohere stream: ChunkedEncodingError: {e}. Stream may have been interrupted.")
                 except Exception as e_stream:
-                    logger.error(f"Cohere stream: Error during streaming: {e_stream}", exc_info=True)
+                    logger.opt(exception=True).error(f"Cohere stream: Error during streaming: {e_stream}")
                 finally:  # Ensure [DONE] is sent if loop terminates unexpectedly
                     if not stream_properly_closed:
                         logger.warning("Cohere stream generator loop finished without explicit 'stream-end'.")
@@ -1306,7 +1306,7 @@ def chat_with_cohere(
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, 'status_code', 500)
         error_text = getattr(e.response, 'text', str(e))
-        logger.error(f"Cohere API call HTTPError to {COHERE_CHAT_URL} status {status_code}. Details: {error_text[:500]}", exc_info=False)
+        logger.opt(exception=False).error(f"Cohere API call HTTPError to {COHERE_CHAT_URL} status {status_code}. Details: {error_text[:500]}")
         
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -1328,7 +1328,7 @@ def chat_with_cohere(
         else: # 5xx
             raise ChatProviderError(provider="cohere", message=f"Server error (Status {status_code}). Detail: {error_text[:200]}", status_code=status_code)
     except requests.exceptions.RequestException as e: # Includes ReadTimeout, ConnectionError etc.
-        logger.error(f"Cohere API request failed (network error) for {COHERE_CHAT_URL}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Cohere API request failed (network error) for {COHERE_CHAT_URL}: {e}")
         
         # Log network error metrics
         duration = time.time() - start_time
@@ -1343,7 +1343,7 @@ def chat_with_cohere(
         # This will catch the ReadTimeout after retries are exhausted
         raise ChatProviderError(provider="cohere", message=f"Network error after retries: {e}", status_code=504) # 504 for gateway timeout like
     except Exception as e:
-        logger.error(f"Cohere API call: Unexpected error: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Cohere API call: Unexpected error: {e}")
         
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -1460,7 +1460,7 @@ def chat_with_deepseek(
                             if line and line.strip():  # DeepSeek provides OpenAI-compatible SSE
                                 yield line if line.endswith("\n") else line + "\n"
                     except Exception as e_stream:
-                        logger.error(f"DeepSeek: Error during stream iteration: {e_stream}", exc_info=True)
+                        logger.opt(exception=True).error(f"DeepSeek: Error during stream iteration: {e_stream}")
                         yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e_stream)}', 'type': 'deepseek_stream_error'}})}\n\n"
                     finally:
                         yield "data: [DONE]\n\n"
@@ -1665,10 +1665,10 @@ def chat_with_google(
                             except json.JSONDecodeError:
                                 logger.warning(f"Google Gemini: Could not decode JSON line: {json_str}")
                 except requests.exceptions.ChunkedEncodingError as e:
-                    logger.error(f"Google Gemini: ChunkedEncodingError during stream: {e}", exc_info=True)
+                    logger.opt(exception=True).error(f"Google Gemini: ChunkedEncodingError during stream: {e}")
                     yield f"data: {json.dumps({'error': {'message': f'Stream connection error: {str(e)}', 'type': 'gemini_stream_error'}})}\n\n"
                 except Exception as e_stream:
-                    logger.error(f"Google Gemini: Error during stream iteration: {e_stream}", exc_info=True)
+                    logger.opt(exception=True).error(f"Google Gemini: Error during stream iteration: {e_stream}")
                     yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e_stream)}', 'type': 'gemini_stream_error'}})}\n\n"
                 finally:
                     yield "data: [DONE]\n\n"
@@ -1752,7 +1752,7 @@ def chat_with_google(
     except requests.exceptions.HTTPError as e:
         status_code = e.response.status_code if e.response is not None else 500
         error_text = e.response.text if e.response is not None else "No response text"
-        logger.error(f"Google Gemini API call HTTPError {status_code}. Details: {error_text[:500]}", exc_info=False)
+        logger.opt(exception=False).error(f"Google Gemini API call HTTPError {status_code}. Details: {error_text[:500]}")
         
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -1790,7 +1790,7 @@ def chat_with_google(
         })
         raise ChatProviderError(provider="google", message=f"Network error: {str(e)}", status_code=504) from e
     except Exception as e:
-        logger.error(f"Google Gemini: Unexpected error: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Google Gemini: Unexpected error: {e}")
         
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -1921,10 +1921,10 @@ def chat_with_groq(
                             if line and line.strip():  # Groq provides OpenAI-compatible SSE
                                 yield line if line.endswith("\n") else line + "\n"
                     except requests.exceptions.ChunkedEncodingError as e:  # ... error handling ...
-                        logger.error(f"Groq: ChunkedEncodingError: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Groq: ChunkedEncodingError: {e}")
                         yield f"data: {json.dumps({'error': {'message': f'Stream error: {str(e)}', 'type': 'groq_stream_error'}})}\n\n"
                     except Exception as e:  # ... error handling ...
-                        logger.error(f"Groq: Stream iteration error: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Groq: Stream iteration error: {e}")
                         yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e)}', 'type': 'groq_stream_error'}})}\n\n"
                     finally:
                         yield "data: [DONE]\n\n"
@@ -2203,7 +2203,7 @@ def chat_with_huggingface(
                 except requests.exceptions.ChunkedEncodingError as e_chunked:
                     logger.error(f"HuggingFace stream: ChunkedEncodingError during streaming: {e_chunked}")
                 except Exception as e_stream:
-                    logger.error(f"HuggingFace stream: Unexpected error during streaming: {e_stream}", exc_info=True)
+                    logger.opt(exception=True).error(f"HuggingFace stream: Unexpected error during streaming: {e_stream}")
                 finally:
                     if response:
                         response.close() # Ensure response is closed
@@ -2247,7 +2247,7 @@ def chat_with_huggingface(
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, 'status_code', 500)
         error_text = getattr(e.response, 'text', str(e))
-        logger.error(f"HuggingFace API call failed to {api_url} with status {status_code}. Details: {error_text[:500]}", exc_info=False)
+        logger.opt(exception=False).error(f"HuggingFace API call failed to {api_url} with status {status_code}. Details: {error_text[:500]}")
         
         # Log HTTP error metrics
         duration = time.time() - start_time
@@ -2271,7 +2271,7 @@ def chat_with_huggingface(
         else: # 5xx
             raise ChatProviderError(provider="huggingface", message=f"Server error (Status {status_code}) from {api_url}. Detail: {error_text[:200]}", status_code=status_code)
     except requests.exceptions.RequestException as e: # Covers DNS, Connection, Timeout errors
-        logger.error(f"HuggingFace API request failed to {api_url} (network error): {e}", exc_info=True)
+        logger.opt(exception=True).error(f"HuggingFace API request failed to {api_url} (network error): {e}")
         
         # Log network error metrics
         duration = time.time() - start_time
@@ -2285,7 +2285,7 @@ def chat_with_huggingface(
         })
         raise ChatProviderError(provider="huggingface", message=f"Network error connecting to {api_url}: {e}", status_code=504) # 504 for timeout/gateway like
     except Exception as e:
-        logger.error(f"HuggingFace API call to {api_url}: Unexpected error: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"HuggingFace API call to {api_url}: Unexpected error: {e}")
         
         # Log unexpected error metrics
         duration = time.time() - start_time
@@ -2851,12 +2851,12 @@ def chat_with_moonshot(
                                 # Pass through Moonshot's SSE lines directly (OpenAI compatible)
                                 yield line if line.endswith("\n") else line + "\n"
                     except requests.exceptions.ChunkedEncodingError as e_chunk:
-                        logger.error(f"Moonshot: ChunkedEncodingError during stream: {e_chunk}", exc_info=True)
+                        logger.opt(exception=True).error(f"Moonshot: ChunkedEncodingError during stream: {e_chunk}")
                         error_content = json.dumps({"error": {"message": f"Stream connection error: {str(e_chunk)}",
                                                               "type": "moonshot_stream_error"}})
                         yield f"data: {error_content}\n\n"
                     except Exception as e_stream:
-                        logger.error(f"Moonshot: Error during stream iteration: {e_stream}", exc_info=True)
+                        logger.opt(exception=True).error(f"Moonshot: Error during stream iteration: {e_stream}")
                         error_content = json.dumps({"error": {"message": f"Stream iteration error: {str(e_stream)}",
                                                               "type": "moonshot_stream_error"}})
                         yield f"data: {error_content}\n\n"
@@ -2939,7 +2939,7 @@ def chat_with_moonshot(
             "model": final_model,
             "error_type": "network"
         })
-        logger.error(f"Moonshot RequestException: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Moonshot RequestException: {e}")
         raise
     except Exception as e:
         # Log unexpected error metrics
@@ -2948,7 +2948,7 @@ def chat_with_moonshot(
             "model": final_model,
             "error_type": "unexpected"
         })
-        logger.error(f"Moonshot: Unexpected error in chat_with_moonshot: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Moonshot: Unexpected error in chat_with_moonshot: {e}")
         raise ChatProviderError(provider="moonshot", message=f"Unexpected error: {e}")
 
 def chat_with_zai(
@@ -3076,10 +3076,10 @@ def chat_with_zai(
                                 # Z.AI provides OpenAI-compatible SSE
                                 yield line if line.endswith("\n") else line + "\n"
                     except requests.exceptions.ChunkedEncodingError as e:
-                        logger.error(f"Z.AI: ChunkedEncodingError: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Z.AI: ChunkedEncodingError: {e}")
                         yield f"data: {json.dumps({'error': {'message': f'Stream error: {str(e)}', 'type': 'zai_stream_error'}})}\n\n"
                     except Exception as e:
-                        logger.error(f"Z.AI: Stream iteration error: {e}", exc_info=True)
+                        logger.opt(exception=True).error(f"Z.AI: Stream iteration error: {e}")
                         yield f"data: {json.dumps({'error': {'message': f'Stream iteration error: {str(e)}', 'type': 'zai_stream_error'}})}\n\n"
                     finally:
                         yield "data: [DONE]\n\n"
@@ -3165,7 +3165,7 @@ def chat_with_zai(
             "model": current_model,
             "error_type": "network"
         })
-        logger.error(f"Z.AI RequestException: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Z.AI RequestException: {e}")
         raise ChatProviderError(provider="zai", message=f"Network error: {str(e)}")
     
     except Exception as e:
@@ -3175,7 +3175,7 @@ def chat_with_zai(
             "model": current_model,
             "error_type": "unexpected"
         })
-        logger.error(f"Z.AI: Unexpected error in chat_with_zai: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Z.AI: Unexpected error in chat_with_zai: {e}")
         raise ChatProviderError(provider="zai", message=f"Unexpected error: {e}")
 
 

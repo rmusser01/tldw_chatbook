@@ -345,7 +345,7 @@ class MediaIngestionSourcePanel(ScrollableContainer):
                 )
             )
         except Exception as exc:
-            logger.error(f"Failed to load ingestion source items: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to load ingestion source items: {exc}")
             await items_view.append(ListItem(Static("Failed to load source items")))
             return
 
@@ -365,7 +365,7 @@ class MediaIngestionSourcePanel(ScrollableContainer):
         try:
             await self.select_source(self._source_index_from_widget(event.item))
         except Exception as exc:
-            logger.error(f"Error selecting ingestion source: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Error selecting ingestion source: {exc}")
 
     @on(Button.Pressed, "#refresh-sources-btn")
     def handle_refresh_sources(self) -> None:

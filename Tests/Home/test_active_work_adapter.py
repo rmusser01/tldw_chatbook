@@ -1,5 +1,8 @@
+from pathlib import Path
 from typing import get_type_hints
 from types import SimpleNamespace
+
+from rich.markup import escape
 
 from tldw_chatbook.Home.active_work_adapter import (
     HomeConsoleLaunch,
@@ -10,6 +13,7 @@ from tldw_chatbook.Home.active_work_adapter import (
     UnavailableHomeActiveWorkAdapter,
 )
 from tldw_chatbook.Home.dashboard_state import HomeActiveWorkItem, summarize_home_dashboard
+from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.Notifications.notifications_scope_service import ServerEventScopeRequiredError
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
@@ -212,6 +216,49 @@ def test_local_notification_adapter_maps_local_watchlist_runs_to_active_work():
     assert dashboard_input.active_work_items[0].status == "failed"
     assert dashboard_input.active_work_items[0].detail_route == "subscriptions"
     assert dashboard_input.active_work_items[0].console_available is True
+
+
+def test_local_notification_adapter_escapes_markup_hostile_watchlist_run_title():
+    """(whole-branch review fix wave -- the c9ba88dc watchlist title escape
+    shipped without direct coverage) A watchlist run's ``source_title`` is a
+    user-typed subscription name (stored verbatim from
+    ``subscriptions.name`` by ``local_watchlists_service``, not
+    system-generated text), and flows straight into a Textual ``Button``
+    label in ``HomeRail.compose()`` -- Button labels parse Rich markup, so
+    an unescaped title containing bracket syntax raises ``MarkupError`` and
+    crashes Home's mount for as long as the run stays in
+    ``_HOME_WATCHLIST_RUN_STATUSES``. Mirrors
+    ``test_local_notification_adapter_escapes_markup_hostile_ingest_job_title``.
+    """
+
+    class FakeWatchlistsService:
+        def list_home_run_snapshot(self, *, limit=20):
+            return [
+                {
+                    "id": "local:watchlist_run:9",
+                    "run_id": 9,
+                    "source_id": 3,
+                    "status": "failed",
+                    "source_title": 'a [b="c] watch',
+                    "backend": "local",
+                },
+            ]
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(
+        watchlist_service=FakeWatchlistsService()
+    )
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = dashboard_input.active_work_items[0]
+    # Escaped form: rich.markup.escape backslash-prefixes the opening
+    # bracket so Textual renders it as a literal character instead of
+    # trying to parse a tag (mirrors the ingest-title escape test).
+    assert item.title == 'a \\[b="c] watch'
+    assert item.title == escape('a [b="c] watch')
 
 
 def test_local_notification_adapter_opens_local_watchlist_run_details():
@@ -1052,3 +1099,435 @@ def test_unavailable_adapter_recent_items_empty():
         has_recent_work=False,
     )
     assert dashboard_input.recent_work_items == ()
+
+
+def test_flashcards_due_provider_snapshot_flows_into_dashboard_input():
+    adapter = LocalNotificationHomeActiveWorkAdapter(flashcards_due_provider=lambda: 7)
+
+    adapter.refresh_flashcards_due_snapshot()
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.flashcards_due_count == 7
+
+
+def test_flashcards_due_provider_raising_degrades_to_zero():
+    def _broken_provider():
+        raise RuntimeError("flashcards backend unavailable")
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(flashcards_due_provider=_broken_provider)
+
+    adapter.refresh_flashcards_due_snapshot()
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.flashcards_due_count == 0
+
+
+def test_flashcards_due_provider_returning_none_degrades_to_zero():
+    adapter = LocalNotificationHomeActiveWorkAdapter(flashcards_due_provider=lambda: None)
+
+    adapter.refresh_flashcards_due_snapshot()
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.flashcards_due_count == 0
+
+
+def test_flashcards_due_count_defaults_to_zero_without_provider():
+    adapter = LocalNotificationHomeActiveWorkAdapter()
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.flashcards_due_count == 0
+
+
+def test_flashcards_due_provider_returning_noncoercible_object_degrades_to_zero():
+    """F1 (PR #590 review): a provider returning a value whose ``__int__``
+    raises must degrade to 0 like any other provider failure, not crash the
+    Home refresh worker thread. The old implementation caught exceptions
+    from calling the provider but coerced ``int(count)`` outside the try.
+    """
+    adapter = LocalNotificationHomeActiveWorkAdapter(flashcards_due_provider=lambda: object())
+
+    adapter.refresh_flashcards_due_snapshot()
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.flashcards_due_count == 0
+
+
+# --- Library ingest jobs -> Home Running / Needs Attention (L3b Task 6) ---
+
+
+def test_local_notification_adapter_maps_ingest_jobs_to_active_work():
+    """(F3 re-anchor) Parsing/writing/queued/failed ingest jobs mirror into
+    active work; done jobs are excluded (v1 -- see ``_local_ingest_job_items``
+    docstring). PARSING and WRITING (which replaced the old single RUNNING
+    state) must BOTH surface here."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/reports/quarterly.txt",
+            state=IngestJobState.PARSING,
+        ),
+        LibraryIngestJob(
+            job_id="ingest-job-2",
+            source_path="/tmp/notes/todo.md",
+            state=IngestJobState.QUEUED,
+        ),
+        LibraryIngestJob(
+            job_id="ingest-job-3",
+            source_path="/tmp/broken.pdf",
+            state=IngestJobState.FAILED,
+            error="unsupported format",
+        ),
+        LibraryIngestJob(
+            job_id="ingest-job-4",
+            source_path="/tmp/done.txt",
+            state=IngestJobState.DONE,
+            media_id=42,
+        ),
+        LibraryIngestJob(
+            job_id="ingest-job-5",
+            source_path="/tmp/archive.zip",
+            state=IngestJobState.WRITING,
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    items = {item.item_id: item for item in dashboard_input.active_work_items}
+    assert set(items) == {
+        "local:ingest:ingest-job-1",
+        "local:ingest:ingest-job-2",
+        "local:ingest:ingest-job-3",
+        "local:ingest:ingest-job-5",
+    }
+
+    parsing = items["local:ingest:ingest-job-1"]
+    assert parsing.title == "quarterly.txt"
+    assert parsing.source == "Library"
+    assert parsing.status == "parsing"
+    assert parsing.detail_route == "library"
+    assert parsing.console_available is False
+    assert parsing.updated_at == ""
+
+    queued = items["local:ingest:ingest-job-2"]
+    assert queued.title == "todo.md"
+    assert queued.status == "queued"
+
+    failed = items["local:ingest:ingest-job-3"]
+    assert failed.title == "broken.pdf"
+    assert failed.status == "failed"
+
+    writing = items["local:ingest:ingest-job-5"]
+    assert writing.title == "archive.zip"
+    assert writing.source == "Library"
+    assert writing.status == "writing"
+    assert writing.detail_route == "library"
+    assert writing.console_available is False
+    assert writing.updated_at == ""
+
+
+def test_local_notification_adapter_marks_permanent_failed_ingest_job_retry_unavailable():
+    """(M4, fix batch F1b) A validation-class (permanent) ingest failure
+    must not offer Retry on Home -- the adapter mirrors the registry's
+    ``permanent`` flag into ``retry_available``."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/broken.xyz",
+            state=IngestJobState.FAILED,
+            error="Unsupported file type: .xyz.",
+            permanent=True,
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = dashboard_input.active_work_items[0]
+    assert item.status == "failed"
+    assert item.retry_available is False
+
+
+def test_local_notification_adapter_marks_ordinary_failed_ingest_job_retry_available():
+    """(M4) A non-permanent failure keeps Retry available."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/broken.txt",
+            state=IngestJobState.FAILED,
+            error="boom",
+            permanent=False,
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = dashboard_input.active_work_items[0]
+    assert item.retry_available is True
+
+
+def test_local_notification_adapter_promotes_done_ingest_jobs_to_recent_work():
+    """H1 (fix batch F1b): a DONE ingest job has nothing actionable left in
+    Needs Attention/Running, but it must not vanish from Home entirely --
+    it belongs in Recent, like every other terminal local work item, sorted
+    by the wall-clock ``finished_at_wall`` timestamp (not the ``time.
+    monotonic()`` ``finished_at``, which has no fixed epoch to sort by)."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-4",
+            source_path="/tmp/done.txt",
+            state=IngestJobState.DONE,
+            media_id=42,
+            finished_at_wall="2026-07-04T09:00:00+00:00",
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    recent = {item.item_id: item for item in dashboard_input.recent_work_items}
+    assert "local:ingest:ingest-job-4" in recent
+    item = recent["local:ingest:ingest-job-4"]
+    assert item.title == "done.txt"
+    assert item.source == "Library"
+    assert item.status == "done"
+    assert item.detail_route == "library"
+    assert item.console_available is False
+    assert item.updated_at == "2026-07-04T09:00:00+00:00"
+    # Still excluded from active work -- Recent, not Needs Attention/Running.
+    active_ids = {i.item_id for i in dashboard_input.active_work_items}
+    assert "local:ingest:ingest-job-4" not in active_ids
+
+
+def test_local_notification_adapter_status_detail_matches_queue_short_reason():
+    """(F1b whole-wave review) Home's failure-reason line must show the same
+    short reason as the Library ingest queue row. W2 introduced
+    ``short_ingest_error`` there (drops the ``" Supported types: ..."`` tail
+    from ``job.error`` -- that list lives on the ingest form now), so the
+    adapter must apply the identical split rather than passing the raw error
+    through to be truncated mid-list at 140 chars on the Home canvas."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-5",
+            source_path="/tmp/report.xyz",
+            state=IngestJobState.FAILED,
+            error="Unsupported file type: .xyz. Supported types: PDF, TXT",
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = next(
+        i for i in dashboard_input.active_work_items
+        if i.item_id == "local:ingest:ingest-job-5"
+    )
+    assert item.status_detail == "Unsupported file type: .xyz."
+
+
+def test_local_notification_adapter_status_detail_is_not_markup_escaped():
+    """(F1b whole-wave review) The Home canvas renders its lines via
+    ``Static(..., markup=False)`` (``Widgets/Home/home_canvas.py``), so
+    Rich-markup-escaping ``status_detail`` is not only unnecessary, it is
+    visibly harmful: an error containing brackets would show literal
+    backslashes to the user. Only titles stay escaped -- those DO reach a
+    markup-parsing Button label in the rail."""
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-6",
+            source_path="/tmp/broken.pdf",
+            state=IngestJobState.FAILED,
+            error="failed near [bold]tag[/bold] marker",
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = next(
+        i for i in dashboard_input.active_work_items
+        if i.item_id == "local:ingest:ingest-job-6"
+    )
+    assert "\\" not in item.status_detail
+    assert item.status_detail == "failed near [bold]tag[/bold] marker"
+
+
+def test_local_notification_adapter_sorts_done_ingest_jobs_into_recent_by_finished_at_wall():
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-old",
+            source_path="/tmp/old.txt",
+            state=IngestJobState.DONE,
+            media_id=1,
+            finished_at_wall="2026-07-04T08:00:00+00:00",
+        ),
+        LibraryIngestJob(
+            job_id="ingest-job-new",
+            source_path="/tmp/new.txt",
+            state=IngestJobState.DONE,
+            media_id=2,
+            finished_at_wall="2026-07-04T10:00:00+00:00",
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    recent_ids = [item.item_id for item in dashboard_input.recent_work_items]
+    assert recent_ids.index("local:ingest:ingest-job-new") < recent_ids.index(
+        "local:ingest:ingest-job-old"
+    )
+
+
+def test_local_notification_adapter_escapes_markup_hostile_ingest_job_title():
+    """(Critical, L3b Task 6 fix wave) A source filename containing
+    Rich-markup-like bracket syntax must reach ``HomeActiveWorkItem.title``
+    already escaped -- the raw basename flows straight into a Textual
+    ``Button`` label in ``HomeRail.compose()`` (Button labels parse Rich
+    markup), so an unescaped title crashes Home's mount with
+    ``MarkupError`` for as long as the job stays queued/parsing/writing/failed.
+
+    Note: ``title`` is derived via ``Path(job.source_path).name``, and a
+    literal ``/`` cannot appear inside a real file's basename (POSIX
+    reserves it as the path separator, and ``Path.name`` would just strip
+    everything before it) -- so this uses a bracket sequence containing an
+    unterminated quoted value (``[b="c]``) rather than a ``[/tag]``-shaped
+    one. It is a different concrete string than the reviewer's
+    illustrative ``weird [/bracket].txt``, but the same hazard class and
+    same ``MarkupError`` failure mode, confirmed to still raise pre-fix
+    via Textual's own ``textual.markup.to_content``.
+    """
+    jobs = (
+        LibraryIngestJob(
+            job_id="ingest-job-hostile",
+            source_path='/tmp/a [b="c].txt',
+            state=IngestJobState.PARSING,
+        ),
+    )
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=lambda: jobs)
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    item = dashboard_input.active_work_items[0]
+    # Escaped form: rich.markup.escape backslash-prefixes the opening
+    # bracket (the character the markup parser actually keys off of) so
+    # Textual renders it as a literal character instead of trying to parse
+    # a tag.
+    assert item.title == 'a \\[b="c].txt'
+    assert item.title == escape(Path('/tmp/a [b="c].txt').name)
+
+
+def test_local_notification_adapter_ingest_items_absent_without_provider():
+    adapter = LocalNotificationHomeActiveWorkAdapter()
+
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.active_work_items == ()
+
+
+def test_local_notification_adapter_opens_local_ingest_job_details():
+    adapter = LocalNotificationHomeActiveWorkAdapter()
+
+    result = adapter.handle_control(
+        HomeControlAction.OPEN_DETAILS,
+        target_id="local:ingest:ingest-job-1",
+        target_route="library",
+    )
+
+    assert result.status is HomeControlResultStatus.HANDLED
+    assert result.target_route == "library"
+    assert result.target_id == "local:ingest:ingest-job-1"
+
+
+def test_local_notification_adapter_excludes_superseded_ingest_job_after_retry():
+    """(L3b AB wave, B1 ripple) Retrying a failed Library ingest job through
+    the real registry supersedes the original -- ``jobs()`` no longer
+    includes it, so it must vanish from Home's Needs Attention too, with
+    only the fresh requeued copy taking its place."""
+    from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
+
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/broken.pdf")
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
+    registry.mark_failed(job.job_id, error="unsupported format")
+    requeued = registry.requeue(job.job_id)
+    assert requeued is not None
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=registry.jobs)
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    items = {item.item_id: item for item in dashboard_input.active_work_items}
+    assert f"local:ingest:{job.job_id}" not in items
+    assert set(items) == {f"local:ingest:{requeued.job_id}"}
+    assert items[f"local:ingest:{requeued.job_id}"].status == "queued"
+
+
+def test_local_notification_adapter_excludes_dismissed_ingest_job():
+    """(L3b AB wave, B2 ripple) Dismissing a failed Library ingest job
+    through the real registry hides it from ``jobs()`` -- it must vanish
+    from Home's Needs Attention too."""
+    from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
+
+    registry = LibraryIngestJobRegistry()
+    job = registry.submit(source_path="/tmp/broken.pdf")
+    registry.mark_parsing(job.job_id)
+    registry.mark_writing(job.job_id)
+    registry.mark_failed(job.job_id, error="unsupported format")
+    dismissed = registry.dismiss(job.job_id)
+    assert dismissed is not None
+
+    adapter = LocalNotificationHomeActiveWorkAdapter(ingest_jobs_provider=registry.jobs)
+    dashboard_input = adapter.build_dashboard_input(
+        providers_models={"OpenAI": ["gpt-4.1"]},
+        has_recent_work=False,
+    )
+
+    assert dashboard_input.active_work_items == ()

@@ -32,9 +32,13 @@ except ImportError:
 # Local imports
 from ..config import get_media_ingestion_defaults, get_cli_setting
 from ..Chat.Chat_Functions import chat_api_call
-from ..RAG_Search.chunking_service import ChunkingService
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Utils.text import sanitize_filename
+# NOTE: `ChunkingService` (RAG_Search.chunking_service) is intentionally NOT
+# imported at module level -- it transitively pulls in nltk (via
+# Chunking.Chunk_Lib) and should only load when a LocalAudioProcessor is
+# actually constructed, not just from importing this module. See
+# LocalAudioProcessor.__init__ for the deferred import.
 #
 # Optional imports
 try:
@@ -69,6 +73,7 @@ class LocalAudioProcessor:
         Args:
             media_db: Optional MediaDatabase instance for storage
         """
+        from ..RAG_Search.chunking_service import ChunkingService
         self.media_db = media_db
         self.config = get_media_ingestion_defaults("audio")
         self.chunking_service = ChunkingService()
@@ -434,7 +439,7 @@ class LocalAudioProcessor:
                 )
                 logger.info("[AUDIO] _transcribe_audio() returned successfully")
             except Exception as e:
-                logger.error(f"[AUDIO] Transcription failed: {type(e).__name__}: {str(e)}", exc_info=True)
+                logger.opt(exception=True).error(f"[AUDIO] Transcription failed: {type(e).__name__}: {str(e)}")
                 raise
             
             transcription_time = time.time() - transcription_start
@@ -529,7 +534,7 @@ class LocalAudioProcessor:
                     result["warnings"].append(f"Could not save audio file: {str(e)}")
             
         except Exception as e:
-            logger.error(f"Error processing audio: {str(e)}", exc_info=True)
+            logger.opt(exception=True).error(f"Error processing audio: {str(e)}")
             result["status"] = "Error"
             result["error"] = str(e)
         

@@ -1227,7 +1227,7 @@ async def test_watchlists_collections_preserves_safe_comparison_titles_and_rejec
 
 
 @pytest.mark.asyncio
-async def test_library_exposes_source_sections_and_import_export_boundary():
+async def test_library_exposes_source_sections_and_ingest_media_canvas():
     app = _build_test_app()
     host = DestinationHarness(app, "library")
 
@@ -1237,26 +1237,26 @@ async def test_library_exposes_source_sections_and_import_export_boundary():
 
         # The retired hub's per-source open buttons and mode-search chip are
         # dead; the rail rows are the surviving reachable surface for the
-        # same source sections and Search/RAG mode.
+        # same source sections and Search/RAG mode. The placeholder
+        # Import/Export row is gone outright (see the inventory verdict);
+        # Import media is now a first-class canvas row.
         for selector in [
             "#library-row-browse-notes",
             "#library-row-browse-media",
             "#library-row-browse-conversations",
-            "#library-row-ingest-import-export",
+            "#library-row-ingest-import-media",
             "#library-row-browse-search",
         ]:
             assert screen.query_one(selector)
+        assert not screen.query("#library-row-ingest-import-export")
 
-        # The Import/Export ownership-boundary copy survives on the mode
-        # canvas reached from the Ingest ▸ Import/Export row.
-        screen.query_one("#library-row-ingest-import-export", Button).press()
+        # Pressing Ingest ▸ Import media mounts the real ingest canvas
+        # (L3b Task 4) in place.
+        screen.query_one("#library-row-ingest-import-media", Button).press()
         await pilot.pause()
         await pilot.pause()
 
-        assert (
-            "Library owns source acquisition framing; Ingest and Media own deeper file handling."
-            in _visible_text(screen)
-        )
+        assert screen.query_one("#library-ingest-canvas")
 
 
 @pytest.mark.asyncio
@@ -1591,7 +1591,7 @@ async def test_library_media_action_switches_to_native_mode_without_route_handof
         screen.query_one("#library-row-browse-media", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-canvas")
 
-        assert getattr(screen, "_active_mode") == "media"
+        assert getattr(screen, "_library_selected_row_id") == "browse-media"
         assert screen.query_one("#library-media-canvas")
 
     assert seen_routes == []
@@ -1619,7 +1619,6 @@ async def test_library_notes_action_switches_to_canvas_without_route_handoff():
         await _wait_for_selector(screen, pilot, "#library-notes-canvas")
 
         assert getattr(screen, "_library_selected_row_id") == "browse-notes"
-        assert getattr(screen, "_active_mode") == "notes"
         assert screen.query_one("#library-notes-canvas")
 
     assert seen_routes == []
@@ -1645,14 +1644,22 @@ async def test_library_conversations_action_switches_to_native_mode_without_rout
         screen.query_one("#library-row-browse-conversations", Button).press()
         await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
 
-        assert getattr(screen, "_active_mode") == "conversations"
+        assert getattr(screen, "_library_selected_row_id") == "browse-conversations"
         assert screen.query_one("#library-conversations-canvas")
 
     assert seen_routes == []
 
 
 @pytest.mark.asyncio
-async def test_library_import_export_action_switches_to_native_mode_without_route_handoff():
+async def test_library_ingest_import_media_row_mounts_ingest_canvas():
+    """The Ingest ▸ Import/Export row (and its native "import-export" mode
+    switch) is retired outright -- the row is deleted, not merely re-routed.
+    Ingest ▸ Import media is now a first-class canvas row: pressing it
+    mounts the real ingest canvas (L3b Task 4) in place rather than either
+    switching to a retired mode or deep-linking to the standalone Ingest
+    screen (the prior ``NavigateToScreen("ingest")`` behavior covered by
+    the retired
+    ``test_library_import_export_dedicated_import_action_emits_ingest_route``)."""
     app = _build_test_app()
     app.notes_scope_service = StaticLibraryNotesScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
@@ -1663,39 +1670,13 @@ async def test_library_import_export_action_switches_to_native_mode_without_rout
     async with host.run_test(size=(160, 40)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_library_snapshot(screen, pilot)
-        # The retired #library-open-import-export button is dead; the
-        # Ingest ▸ Import/Export rail row is the surviving trigger for the
-        # same native mode switch.
-        screen.query_one("#library-row-ingest-import-export", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-import-export-workflow-title")
+        assert not screen.query("#library-row-ingest-import-export")
+        screen.query_one("#library-row-ingest-import-media", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-ingest-canvas")
 
-        assert getattr(screen, "_active_mode") == "import-export"
-        assert "Import/Export mode" in _visible_text(screen)
+        assert getattr(screen, "_library_selected_row_id") == "ingest-import-media"
 
     assert seen_routes == []
-
-
-@pytest.mark.asyncio
-async def test_library_import_export_dedicated_import_action_emits_ingest_route():
-    app = _build_test_app()
-    app.notes_scope_service = StaticLibraryNotesScopeService([])
-    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
-    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
-    seen_routes = []
-    host = DestinationHarness(app, "library", seen_routes)
-
-    async with host.run_test(size=(160, 40)) as pilot:
-        screen = _active_destination_screen(host)
-        await _wait_for_library_snapshot(screen, pilot)
-        # The in-canvas #library-import-export-open-ingest button lived only
-        # in the never-mounted #library-action-region and is dead; the
-        # always-reachable Ingest ▸ Import media rail row is the surviving
-        # trigger for the same Ingest route (no Import/Export mode entry
-        # required first -- the rail row is visible regardless of mode).
-        screen.query_one("#library-row-ingest-import-media", Button).press()
-        await _wait_for_route(seen_routes, "ingest", pilot)
-
-    assert seen_routes[-1] == "ingest"
 
 
 @pytest.mark.asyncio
@@ -1715,7 +1696,7 @@ async def test_library_search_action_switches_to_search_mode_without_route_hando
         screen.query_one("#library-row-browse-search", Button).press()
         await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
 
-        assert getattr(screen, "_active_mode") == "search"
+        assert getattr(screen, "_library_selected_row_id") == "browse-search"
 
     assert seen_routes == []
 

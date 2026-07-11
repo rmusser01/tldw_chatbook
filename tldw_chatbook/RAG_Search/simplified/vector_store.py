@@ -314,7 +314,7 @@ class ChromaVectorStore:
             
         except Exception as e:
             log_counter("vector_store_add_error", labels={"error": type(e).__name__})
-            logger.error(f"Failed to add to ChromaDB: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to add to ChromaDB: {e}")
             raise
     
     @timeit("vector_store_search")
@@ -374,7 +374,7 @@ class ChromaVectorStore:
             
         except Exception as e:
             log_counter("vector_store_search_error", labels={"error": type(e).__name__})
-            logger.error(f"Search failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Search failed: {e}")
             return []
     
     def search_with_citations(self, 

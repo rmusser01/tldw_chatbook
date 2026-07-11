@@ -113,7 +113,7 @@ def initialize_interop(db_path: Union[str, Path], client_id: str) -> None:
         _client_id_global = client_id
         logger.info("Prompts Interop Library initialized successfully.")
     except (DatabaseError, SchemaError, ValueError) as e:
-        logger.critical(f"Failed to initialize PromptsDatabase for interop: {e}", exc_info=True)
+        logger.opt(exception=True).critical(f"Failed to initialize PromptsDatabase for interop: {e}")
         _db_instance = None # Ensure it's None if init fails
         raise
 
@@ -151,7 +151,7 @@ def shutdown_interop() -> None:
             # This will close the connection for the current thread
             _db_instance.close_connection()
         except Exception as e:
-            logger.error(f"Error during Prompts Interop Library shutdown (closing current thread's connection): {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error during Prompts Interop Library shutdown (closing current thread's connection): {e}")
         _db_instance = None
         _db_path_global = None
         _client_id_global = None
@@ -688,7 +688,7 @@ def import_prompts_from_files(
             results.append({"file_path": file_path_str, "status": "failure", "message": f"Parsing error: {e}"})
             continue
         except Exception as e:
-            logger.error(f"Unexpected error reading or parsing {file_path_str}: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Unexpected error reading or parsing {file_path_str}: {e}")
             results.append({"file_path": file_path_str, "status": "failure", "message": f"Read/Parse error: {e}"})
             continue
 
@@ -742,7 +742,7 @@ def import_prompts_from_files(
                     "message": f"Database error: {type(e).__name__} - {e}"
                 })
             except Exception as e:
-                logger.error(f"Unexpected error importing prompt '{prompt_name}' from {file_path_str}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Unexpected error importing prompt '{prompt_name}' from {file_path_str}: {e}")
                 results.append({
                     "file_path": file_path_str,
                     "prompt_name": prompt_name,
@@ -1096,9 +1096,9 @@ User for no name.
 
 
     except (DatabaseError, SchemaError, InputError, ConflictError, RuntimeError, ValueError) as e:
-        logger.error(f"An error occurred during interop example: {type(e).__name__} - {e}", exc_info=True)
+        logger.opt(exception=True).error(f"An error occurred during interop example: {type(e).__name__} - {e}")
     except Exception as e:
-        logger.error(f"An unexpected error occurred: {type(e).__name__} - {e}", exc_info=True)
+        logger.opt(exception=True).error(f"An unexpected error occurred: {type(e).__name__} - {e}")
     finally:
         logger.info("\n--- Shutting Down Interop Library ---")
         shutdown_interop()

@@ -13,6 +13,7 @@
 #
 ####################
 # Import necessary libraries
+import importlib.util
 import os
 import re
 import gc
@@ -21,16 +22,12 @@ from typing import Dict, Any, Optional, List, Union, Tuple
 from pathlib import Path
 #
 # Import External Libs
-try:
-    from docling.document_converter import DocumentConverter
-    from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions, PaginatedPipelineOptions
-    from docling.datamodel.document import WordFormatOption
-    from docling.backend.md_backend import MarkdownDocumentBackend
-    DOCLING_AVAILABLE = True
-except ImportError:
-    DOCLING_AVAILABLE = False
-    
+# Docling is a heavy optional dependency (pulls in torch/transformers/
+# torchvision). Probe its availability cheaply via find_spec instead of
+# importing it -- the actual `import` is deferred to process_with_docling(),
+# which is only reached when docling is actually selected/needed.
+DOCLING_AVAILABLE = importlib.util.find_spec("docling") is not None
+
 try:
     import docx
     PYTHON_DOCX_AVAILABLE = True
@@ -64,10 +61,13 @@ except ImportError:
 #
 # Import Local
 from ..config import get_cli_setting
-from ..LLM_Calls.Summarization_General_Lib import analyze
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..Utils.optional_deps import get_safe_import
 from loguru import logger
+# NOTE: `analyze` (LLM_Calls.Summarization_General_Lib) is intentionally NOT
+# imported at module level -- it pulls in nltk (via Chunk_Lib) and should
+# only load when LLM analysis is actually invoked, not just from parsing a
+# document. See process_document() below for the deferred import.
 #
 # Constants
 # Get media processing config from CLI settings
@@ -206,13 +206,14 @@ def process_document(
         
         # Add summarization if requested
         if auto_summarize and api_name and result.get('extraction_successful'):
+            from ..LLM_Calls.Summarization_General_Lib import analyze
             content = result.get('content', '')
             if content:
                 if custom_prompt:
                     summary_prompt = custom_prompt
                 else:
                     summary_prompt = f"Please provide a comprehensive summary of this {SUPPORTED_FORMATS.get(file_ext, 'document')}."
-                
+
                 summary = analyze(
                     input_data=content,
                     custom_prompt_arg=summary_prompt,
@@ -231,7 +232,7 @@ def process_document(
         return result
         
     except Exception as e:
-        logger.error(f"Error processing document {file_path}: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing document {file_path}: {str(e)}")
         log_counter("document_processing_error", labels={"error": str(e), "format": file_ext})
         return {
             'content': '',
@@ -265,11 +266,17 @@ def process_with_docling(
         ocr_language: Language code for OCR (e.g., 'en', 'de', 'fr')
     """
     logger.info(f"Processing document with Docling: {file_path}, OCR enabled: {enable_ocr}")
-    
+
     try:
+        from docling.document_converter import DocumentConverter
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import PdfPipelineOptions, PaginatedPipelineOptions
+        from docling.datamodel.document import WordFormatOption
+        from docling.backend.md_backend import MarkdownDocumentBackend
+
         # Determine file type
         file_extension = Path(file_path).suffix.lower()
-        
+
         # Configure pipeline options based on file type
         if file_extension == '.pdf':
             # Use PDF-specific options
@@ -331,7 +338,7 @@ def process_with_docling(
         }
         
     except Exception as e:
-        logger.error(f"Error processing with Docling: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing with Docling: {str(e)}")
         raise
 
 
@@ -391,7 +398,7 @@ def process_docx(
         }
         
     except Exception as e:
-        logger.error(f"Error processing DOCX: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing DOCX: {str(e)}")
         raise
 
 
@@ -433,7 +440,7 @@ def process_odt(
         }
         
     except Exception as e:
-        logger.error(f"Error processing ODT: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing ODT: {str(e)}")
         raise
 
 
@@ -463,7 +470,7 @@ def process_rtf(
         }
         
     except Exception as e:
-        logger.error(f"Error processing RTF: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing RTF: {str(e)}")
         raise
 
 
@@ -529,7 +536,7 @@ def process_pptx(
         }
         
     except Exception as e:
-        logger.error(f"Error processing PPTX: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing PPTX: {str(e)}")
         raise
 
 
@@ -592,7 +599,7 @@ def process_xlsx(
         }
         
     except Exception as e:
-        logger.error(f"Error processing XLSX: {str(e)}", exc_info=True)
+        logger.opt(exception=True).error(f"Error processing XLSX: {str(e)}")
         raise
 
 

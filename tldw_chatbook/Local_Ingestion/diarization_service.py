@@ -258,7 +258,7 @@ def _lazy_import_silero_vad():
         
     except Exception as e:
         logger.error(f"Failed to load Silero VAD: {type(e).__name__}: {e}")
-        logger.debug("Full error:", exc_info=True)
+        logger.opt(exception=True).debug("Full error:")
         
         # Reset globals on failure
         _silero_vad_model = None
@@ -762,7 +762,7 @@ class DiarizationService:
             return result
             
         except Exception as e:
-            logger.error(f"Diarization failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Diarization failed: {e}")
             raise DiarizationError(f"Diarization failed: {str(e)}") from e
     
     def _load_audio(self, audio_path: str):

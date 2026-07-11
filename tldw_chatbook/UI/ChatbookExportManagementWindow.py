@@ -727,7 +727,7 @@ class ChatbookExportManagementWindow(ModalScreen):
             self.app_instance.notify(f"Cancelled server {job_type} job {job_id}", severity="success")
             await self.refresh_server_job_list()
         except Exception as exc:
-            logger.error(f"Failed to cancel server chatbook job {job_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to cancel server chatbook job {job_id}: {exc}")
             self.app_instance.notify(f"Failed to cancel server job: {exc}", severity="error")
 
     async def _remove_selected_server_job(self) -> None:
@@ -752,7 +752,7 @@ class ChatbookExportManagementWindow(ModalScreen):
             self.app_instance.notify(f"Removed server {job_type} job {job_id}", severity="success")
             await self.refresh_server_job_list()
         except Exception as exc:
-            logger.error(f"Failed to remove server chatbook job {job_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to remove server chatbook job {job_id}: {exc}")
             self.app_instance.notify(f"Failed to remove server job: {exc}", severity="error")
 
     def _server_download_filename(self, record: Dict[str, Any]) -> str:
@@ -804,7 +804,7 @@ class ChatbookExportManagementWindow(ModalScreen):
             self.app_instance.notify(f"Downloaded server export to {downloaded_path}", severity="success")
             await self.refresh_chatbook_list()
         except Exception as exc:
-            logger.error(f"Failed to download server chatbook export {job_id}: {exc}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to download server chatbook export {job_id}: {exc}")
             self.app_instance.notify(f"Failed to download server export: {exc}", severity="error")
     
     def _format_relative_time(self, dt: datetime) -> str:

@@ -400,7 +400,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
             logger.error("❌ HIGGS AUDIO INITIALIZATION FAILED")
             logger.error(f"🚨 Error: {str(e)}")
             logger.error("═" * 80)
-            logger.error(f"Failed to load Higgs Audio model: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Failed to load Higgs Audio model: {e}")
             raise RuntimeError(f"Failed to load Higgs Audio model: {str(e)}")
     
     async def generate_speech_stream(
@@ -478,7 +478,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                 logger.error("❌ GENERATION FAILED")
                 logger.error(f"🚨 Error: {str(e)}")
                 logger.error("═" * 60)
-                logger.error(f"HiggsAudioTTSBackend: Error during generation: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"HiggsAudioTTSBackend: Error during generation: {e}")
                 yield f"ERROR: Higgs Audio generation failed - {str(e)}".encode('utf-8')
     
     async def _generate_single_speaker_stream(
@@ -648,7 +648,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                 yield b""
                 
         except Exception as e:
-            logger.error(f"HiggsAudioTTSBackend: Single speaker generation failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"HiggsAudioTTSBackend: Single speaker generation failed: {e}")
             raise
     
     async def _generate_multi_speaker_stream(
@@ -771,7 +771,7 @@ class HiggsAudioTTSBackend(LocalTTSBackend):
                 )
             
         except Exception as e:
-            logger.error(f"HiggsAudioTTSBackend: Multi-speaker generation failed: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"HiggsAudioTTSBackend: Multi-speaker generation failed: {e}")
             raise
     
     def _parse_multi_speaker_text(self, text: str) -> List[Tuple[str, str]]:

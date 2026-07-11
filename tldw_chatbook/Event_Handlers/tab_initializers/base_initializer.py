@@ -141,19 +141,15 @@ class TabInitializerRegistry:
             try:
                 await self.initializers[old_tab].on_tab_hidden()
             except Exception as e:
-                self.logger.error(
-                    f"Error handling tab hidden for {old_tab}: {e}",
-                    exc_info=True
-                )
+                self.logger.opt(exception=True).error(
+                    f"Error handling tab hidden for {old_tab}: {e}")
         
         # Handle new tab initialization
         if new_tab in self.initializers:
             try:
                 await self.initializers[new_tab].on_tab_shown()
             except Exception as e:
-                self.logger.error(
-                    f"Error handling tab shown for {new_tab}: {e}",
-                    exc_info=True
-                )
+                self.logger.opt(exception=True).error(
+                    f"Error handling tab shown for {new_tab}: {e}")
         else:
             self.logger.debug(f"No initializer registered for tab: {new_tab}")

@@ -23,6 +23,14 @@ class FakeLocalStudyService:
         self.calls.append(("list_decks", limit, offset))
         return [{"id": "deck-local-1", "name": "Biology", "description": "Cell review"}]
 
+    def count_decks(self):
+        self.calls.append(("count_decks",))
+        return 3
+
+    def count_due_flashcards(self):
+        self.calls.append(("count_due_flashcards",))
+        return 5
+
     def create_deck(self, *, name, description=None):
         self.calls.append(("create_deck", name, description))
         return {"id": "deck-local-1", "name": name, "description": description}
@@ -1179,6 +1187,35 @@ async def test_scope_service_routes_deck_list_by_backend():
     assert local_decks[0]["record_id"] == "local:study_deck:deck-local-1"
     assert server_decks[0]["record_id"] == "server:study_deck:7"
     assert server_decks[0]["scheduler_type"] == "fsrs"
+
+
+@pytest.mark.asyncio
+async def test_scope_service_routes_local_deck_and_due_flashcard_counts_to_local_service():
+    local = FakeLocalStudyService()
+    scope = StudyScopeService(
+        local_service=local,
+        server_service=FakeServerStudyService(),
+    )
+
+    deck_count = await scope.count_decks(mode="local")
+    due_count = await scope.count_due_flashcards(mode="local")
+
+    assert deck_count == 3
+    assert due_count == 5
+    assert local.calls == [("count_decks",), ("count_due_flashcards",)]
+
+
+@pytest.mark.asyncio
+async def test_scope_service_count_decks_and_due_flashcards_reject_server_mode():
+    scope = StudyScopeService(
+        local_service=FakeLocalStudyService(),
+        server_service=FakeServerStudyService(),
+    )
+
+    with pytest.raises(ValueError, match="not supported"):
+        await scope.count_decks(mode="server")
+    with pytest.raises(ValueError, match="not supported"):
+        await scope.count_due_flashcards(mode="server")
 
 
 @pytest.mark.asyncio

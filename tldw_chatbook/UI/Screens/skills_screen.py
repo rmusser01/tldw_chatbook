@@ -230,9 +230,8 @@ class SkillsScreen(BaseAppScreen):
             )
             return (), recovery_state.visible_copy, recovery_state
         except Exception:
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "Failed to load local Agent Skills for Skills destination.",
-                exc_info=True,
             )
             return (), SKILLS_SERVICE_ERROR_COPY, None
 

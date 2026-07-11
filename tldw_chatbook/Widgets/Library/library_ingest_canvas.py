@@ -1,0 +1,254 @@
+"""Library ingest canvas: local-file ingest form + job queue (render-from-state)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from rich.markup import escape as escape_markup
+from textual.app import ComposeResult
+from textual.containers import Horizontal, VerticalScroll
+from textual.widgets import Button, Collapsible, Input, Static
+
+from tldw_chatbook.Library.library_ingest_state import (
+    QUEUE_EMPTY_COPY,
+    LibraryIngestCanvasState,
+)
+
+
+def _toggle_label(*, enabled: bool, text: str) -> str:
+    """Return a toggle Button's visible label, ``✓``/``○`` convention."""
+    marker = "✓" if enabled else "○"
+    return f"{marker} {text}"
+
+
+class LibraryIngestCanvas(VerticalScroll):
+    """Render the Library ingest canvas: the local-file ingest form and its job queue.
+
+    ``VerticalScroll`` root (the L3a clipping lesson -- a plain ``Vertical``
+    canvas clips content past the fold); every child is a stacked,
+    full-width Button/Input/Static, mirroring ``LibraryNotesCanvas``'s sync
+    panel. No ``Select``, and no ``Horizontal`` mixing a 1fr sibling with
+    fixed-width action buttons (the known non-rendering failure mode for
+    this canvas family).
+
+    Attributes:
+        state: The canvas's full display state (built by
+            ``build_library_ingest_state``): the form echo, the Start
+            gate, and the queue rows to render.
+    """
+
+    def __init__(self, state: LibraryIngestCanvasState, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.state = state
+        self.styles.width = "1fr"
+        self.styles.min_width = 40
+
+    def compose(self) -> ComposeResult:
+        state = self.state
+        yield Static(
+            state.header,
+            id="library-ingest-header",
+            classes="destination-section",
+            markup=False,
+        )
+        if state.server_quiet_line:
+            yield Static(
+                state.server_quiet_line,
+                id="library-ingest-server-line",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+        if state.unavailable_line:
+            yield Static(
+                state.unavailable_line,
+                id="library-ingest-unavailable-line",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+        yield Input(
+            value=state.form.path,
+            placeholder="Path to a local file…",
+            id="library-ingest-path",
+            classes="library-ingest-field",
+        )
+        yield Button(
+            "Browse…",
+            id="library-ingest-browse",
+            classes="library-canvas-action",
+            compact=True,
+        )
+        # L4 (fix batch F1b): the supported-extensions list lives here,
+        # always visible, instead of being repeated on every failed queue
+        # row (see the row's own short_error) -- reuses the same quiet-line
+        # class as the other muted informational lines on this canvas.
+        yield Static(
+            state.supported_types_line,
+            id="library-ingest-supported-types",
+            classes="library-ingest-quiet-line",
+            markup=False,
+        )
+        yield Input(
+            value=state.form.title,
+            placeholder="Title (optional)",
+            id="library-ingest-title",
+            classes="library-ingest-field",
+        )
+        yield Input(
+            value=state.form.author,
+            placeholder="Author (optional)",
+            id="library-ingest-author",
+            classes="library-ingest-field",
+        )
+        yield Input(
+            value=state.form.keywords,
+            placeholder="Keywords, comma-separated (optional)",
+            id="library-ingest-keywords",
+            classes="library-ingest-field",
+        )
+        with Collapsible(
+            title="Advanced options",
+            # Renders from the form echo's `advanced_open` field (not a
+            # hardcoded True) so a recompose while the panel is expanded --
+            # the analyze/chunk toggle handlers' own, or a registry-listener
+            # -driven one -- never re-collapses it out from under the user.
+            # The screen's `Collapsible.Toggled` handler keeps this field in
+            # sync with the live widget's `collapsed` reactive (mirrors the
+            # `#library-rag-history` collapsible's own state-sync pattern).
+            collapsed=not state.form.advanced_open,
+            id="library-ingest-advanced",
+        ):
+            yield Button(
+                _toggle_label(enabled=state.form.analyze, text="Analyze after ingest"),
+                id="library-ingest-analyze-toggle",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                _toggle_label(enabled=state.form.chunk, text="Chunk content"),
+                id="library-ingest-chunk-toggle",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Input(
+                value=state.form.chunk_size,
+                placeholder="Chunk size (words)",
+                id="library-ingest-chunk-size",
+                classes="library-ingest-field",
+                disabled=not state.form.chunk,
+            )
+        if state.start_quiet_line:
+            yield Static(
+                state.start_quiet_line,
+                id="library-ingest-start-quiet-line",
+                classes="library-ingest-quiet-line",
+                markup=False,
+            )
+        yield Button(
+            "Start ingest",
+            id="library-ingest-start",
+            classes="library-canvas-action",
+            compact=True,
+            disabled=not state.start_enabled,
+        )
+        yield Static(
+            state.queue_heading,
+            id="library-ingest-queue-heading",
+            classes="destination-section",
+            markup=False,
+        )
+        if state.queue_counts_line:
+            yield Static(
+                state.queue_counts_line,
+                id="library-ingest-queue-counts",
+                markup=False,
+            )
+        if not state.queue_rows:
+            yield Static(
+                QUEUE_EMPTY_COPY,
+                id="library-ingest-queue-empty",
+                markup=False,
+            )
+            return
+        for index, row in enumerate(state.queue_rows):
+            # A source filename can contain Rich markup syntax (e.g. a
+            # literal "[/bracket]" in the name) -- escape_markup here is
+            # what keeps a hostile filename from raising MarkupError at
+            # mount time (the L3a lesson; mirrors
+            # ``library_rag_history_children``'s escaped Button labels).
+            row_classes = "library-ingest-row"
+            has_actions = row.can_open or row.can_retry or row.can_dismiss
+            if has_actions:
+                # A row with action buttons below it gets its own
+                # bottom-margin trimmed to 0 (A3) -- the actions row's own
+                # ``.library-ingest-row-actions`` margin supplies the "tight
+                # gap above, blank line below" spacing instead, so the
+                # button(s) read as belonging to THIS row rather than the
+                # one below it. Plain rows (queued/running, or a done row
+                # with no action) keep their own margin for row-to-row
+                # spacing.
+                row_classes += " library-ingest-row-with-actions"
+            yield Static(
+                escape_markup(row.line),
+                id=f"library-ingest-row-{index}",
+                classes=row_classes,
+            )
+            # Row-action buttons are keyed by the job's registry-assigned
+            # ``job_id`` (e.g. ``"library-ingest-open-ingest-job-3"``), NOT
+            # by ``index`` -- unlike the row Static above, these ARE click
+            # targets, and the registry mutates asynchronously (runner
+            # completions, retry-supersede, new submissions) between a
+            # render and a click. An index-keyed id can silently point at a
+            # different job by the time it's pressed; a job_id-keyed one
+            # can't, because the screen's handlers resolve the job by id
+            # from the live registry rather than by re-indexing a rebuilt
+            # snapshot (see the PR #591 review's F1 finding).
+            #
+            # (L5, fix batch F1b) A row's action buttons (Open in Library /
+            # Retry / Dismiss -- never more than one of "Open in Library"
+            # or the Retry+Dismiss pair applies to the same row, since
+            # can_open is DONE-only and can_retry/can_dismiss are
+            # FAILED-only) are wrapped in one ``Horizontal`` so a failed
+            # row's Retry and Dismiss sit on one line instead of stacking
+            # vertically. Both children here are fixed-width compact
+            # Buttons -- never a 1fr sibling mixed with a fixed-width one,
+            # the known non-rendering failure mode for this canvas family
+            # (see the class docstring).
+            if has_actions:
+                with Horizontal(classes="library-ingest-row-actions"):
+                    if row.can_open:
+                        yield Button(
+                            "Open in Library",
+                            id=f"library-ingest-open-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-open "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_retry:
+                        yield Button(
+                            "Retry",
+                            id=f"library-ingest-retry-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-retry "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+                    if row.can_dismiss:
+                        yield Button(
+                            "Dismiss",
+                            id=f"library-ingest-dismiss-{row.job_id}",
+                            classes=(
+                                "library-canvas-action library-ingest-dismiss "
+                                "library-ingest-row-action"
+                            ),
+                            compact=True,
+                        )
+        if state.queue_show_clear_finished:
+            yield Button(
+                "Clear finished",
+                id="library-ingest-clear-finished",
+                classes="library-canvas-action",
+                compact=True,
+            )

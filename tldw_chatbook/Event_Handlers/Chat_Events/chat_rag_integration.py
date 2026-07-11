@@ -181,7 +181,7 @@ async def perform_modular_rag_search(
         return formatted_results, context_string
         
     except Exception as e:
-        logger.error(f"Error in modular RAG search: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error in modular RAG search: {e}")
         # Fallback to existing implementation
         from .chat_rag_events import perform_plain_rag_search
         return await perform_plain_rag_search(
@@ -283,7 +283,7 @@ async def perform_modular_rag_pipeline(
         }
         
     except Exception as e:
-        logger.error(f"Error in modular RAG pipeline: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error in modular RAG pipeline: {e}")
         # Fallback to search-only
         results, context = await perform_modular_rag_search(
             app, query, sources, top_k, max_context_length,
@@ -326,7 +326,7 @@ async def index_documents_modular(
         logger.info(f"Successfully indexed {len(documents)} documents for {source_type}")
         return True
     except Exception as e:
-        logger.error(f"Error indexing documents: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error indexing documents: {e}")
         return False
 
 

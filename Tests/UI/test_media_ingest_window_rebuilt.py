@@ -6,9 +6,33 @@ from textual.app import App
 from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
 from tldw_chatbook.UI.MediaIngestWindowRebuilt import MediaIngestWindowRebuilt, RemoteIngestionPanel
 from tldw_chatbook.UI.Screens.media_ingest_screen import MediaIngestScreen
 from tldw_chatbook.UI.Screens.media_runtime_state import MediaRuntimeState
+
+
+def test_remote_ingestion_panel_server_job_method_names_exist_on_scope_service():
+    """(A1) ``RemoteIngestionPanel`` calls five server-jobs methods on
+    ``self.scope_service`` by exact name (submit/stream/list/cancel-batch/
+    cancel-job). It previously called a ``*_media_ingest_*`` naming variant
+    that does not exist on the real ``MediaReadingScopeService`` -- every
+    server-mode ingest control silently no-op'd, masked in tests only
+    because the one fake scope service exercised used the same wrong name.
+    Pin the real (correct) names here so that mismatch can never again pass
+    silently, independent of any single call-path's test coverage.
+    """
+    for name in (
+        "submit_ingest_jobs",
+        "stream_ingest_job_events",
+        "list_ingest_jobs",
+        "cancel_ingest_batch",
+        "cancel_ingest_job",
+    ):
+        assert getattr(MediaReadingScopeService, name, None) is not None, (
+            f"MediaReadingScopeService is missing {name!r}, which "
+            "RemoteIngestionPanel calls by this exact name."
+        )
 
 
 @pytest.mark.asyncio
@@ -23,7 +47,11 @@ async def test_ingest_window_does_not_construct_api_client_for_server_mode(monke
     submit_calls = []
 
     class FakeScopeService:
-        async def submit_media_ingest_jobs(self, **kwargs):
+        # Real MediaReadingScopeService method name (see A1: the panel used
+        # to call the wrong ``submit_media_ingest_jobs`` name, and this fake
+        # matching that wrong name masked the bug -- a contract test below
+        # now pins the real names against MediaReadingScopeService itself).
+        async def submit_ingest_jobs(self, **kwargs):
             submit_calls.append(kwargs)
             return {"batch_id": "batch-1", "jobs": []}
 
@@ -133,7 +161,6 @@ async def test_app_level_runtime_backend_change_refreshes_media_ingest_screen_wi
         runtime_backend="server",
         media_runtime_state=MediaRuntimeState(runtime_backend="server"),
         screen=None,
-        invalidate_screen_cache=Mock(),
     )
     screen = MediaIngestScreen(app_instance=app_like)
     screen.media_ingest_window = SimpleNamespace(

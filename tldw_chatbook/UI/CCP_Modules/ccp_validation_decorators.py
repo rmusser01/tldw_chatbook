@@ -81,7 +81,7 @@ def validate_input(model_class: Type[BaseModel], extract_fields: Optional[list] 
                 return await func(self, validated_data, *args, **kwargs)
                 
             except Exception as e:
-                logger.error(f"Error in validation decorator for {func.__name__}: {e}", exc_info=True)
+                logger.opt(exception=True).error(f"Error in validation decorator for {func.__name__}: {e}")
                 # Call original function without validation as fallback
                 return await func(self, *args, **kwargs)
         
@@ -129,7 +129,7 @@ def validate_search(func: Callable) -> Callable:
                             validated_data, *args[2:], **kwargs)
             
         except Exception as e:
-            logger.error(f"Error in search validation: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error in search validation: {e}")
             return await func(self, *args, **kwargs)
     
     return wrapper
@@ -180,7 +180,7 @@ def validate_file_import(func: Callable) -> Callable:
                             *args, **kwargs)
             
         except Exception as e:
-            logger.error(f"Error in file import validation: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error in file import validation: {e}")
             return await func(self, file_path, file_type, *args, **kwargs)
     
     return wrapper
@@ -214,7 +214,7 @@ def sanitize_output(func: Callable) -> Callable:
             return result
             
         except Exception as e:
-            logger.error(f"Error in output sanitization: {e}", exc_info=True)
+            logger.opt(exception=True).error(f"Error in output sanitization: {e}")
             return await func(self, *args, **kwargs)
     
     return wrapper

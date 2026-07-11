@@ -249,7 +249,7 @@ def parse_user_dict_markdown_file(file_path: str, base_directory: Optional[str] 
         logger.error(f"Chat dictionary file not found: {file_path}")
         return {}
     except Exception as e:  # ...
-        logger.error(f"Error parsing chat dictionary file {file_path}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error parsing chat dictionary file {file_path}: {e}")
         return {}
 
     logger.debug(f"Finished parsing chat dictionary. Keys: {list(replacement_dict.keys())}")
@@ -731,7 +731,7 @@ def save_chat_dictionary(
                               entity="chat_dictionaries", entity_id=name)
         raise
     except Exception as e:
-        logger.error(f"Error saving chat dictionary: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error saving chat dictionary: {e}")
         db.get_connection().rollback()
         return None
 
@@ -788,7 +788,7 @@ def load_chat_dictionary(db: CharactersRAGDB, dict_id: int) -> Optional[Dict[str
         return dict_data
         
     except Exception as e:
-        logger.error(f"Error loading chat dictionary {dict_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error loading chat dictionary {dict_id}: {e}")
         return None
 
 
@@ -845,7 +845,7 @@ def list_chat_dictionaries(
         return dictionaries
         
     except Exception as e:
-        logger.error(f"Error listing chat dictionaries: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error listing chat dictionaries: {e}")
         return []
 
 
@@ -936,7 +936,7 @@ def update_chat_dictionary(
         return True
         
     except Exception as e:
-        logger.error(f"Error updating chat dictionary {dict_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error updating chat dictionary {dict_id}: {e}")
         db.get_connection().rollback()
         return False
 
@@ -983,7 +983,7 @@ def delete_chat_dictionary(
         return True
         
     except Exception as e:
-        logger.error(f"Error deleting chat dictionary {dict_id}: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error deleting chat dictionary {dict_id}: {e}")
         db.get_connection().rollback()
         return False
 
@@ -1019,7 +1019,7 @@ def associate_dictionary_with_conversation(
         return True
         
     except Exception as e:
-        logger.error(f"Error associating dictionary with conversation: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error associating dictionary with conversation: {e}")
         db.get_connection().rollback()
         return False
 
@@ -1072,7 +1072,7 @@ def get_conversation_dictionaries(
         return dictionaries
         
     except Exception as e:
-        logger.error(f"Error getting conversation dictionaries: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error getting conversation dictionaries: {e}")
         return []
 
 
@@ -1152,7 +1152,7 @@ def import_dictionary_from_file(
         )
         
     except Exception as e:
-        logger.error(f"Error importing dictionary from file: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error importing dictionary from file: {e}")
         return None
 
 
@@ -1214,7 +1214,7 @@ def export_dictionary_to_file(
         return export_path
         
     except Exception as e:
-        logger.error(f"Error exporting dictionary: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error exporting dictionary: {e}")
         return None
 
 
@@ -1245,7 +1245,7 @@ def list_available_dictionary_files() -> List[Dict[str, str]]:
         return sorted(files, key=lambda x: x['name'])
         
     except Exception as e:
-        logger.error(f"Error listing dictionary files: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error listing dictionary files: {e}")
         return []
 
 

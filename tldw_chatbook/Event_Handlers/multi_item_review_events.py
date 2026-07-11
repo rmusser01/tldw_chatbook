@@ -108,7 +108,7 @@ async def handle_batch_analysis_start(app: 'TldwCli', event: BatchAnalysisStartE
         ))
         
     except Exception as e:
-        logger.error(f"Error in batch analysis: {e}", exc_info=True)
+        logger.opt(exception=True).error(f"Error in batch analysis: {e}")
         app.notify(f"Error during batch analysis: {str(e)[:100]}", severity="error")
 
 
