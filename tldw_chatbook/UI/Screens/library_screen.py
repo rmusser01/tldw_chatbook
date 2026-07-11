@@ -2950,9 +2950,9 @@ class LibraryScreen(BaseAppScreen):
     def _arm_library_notes_auto_sync_timer(self) -> None:
         """Start the 300s auto-sync repeating timer if not already running.
 
-        Scoped to this Library screen instance's lifetime (like the
-        standalone ``NotesSyncPane``'s timer) -- it is never persisted or
-        resumed across screen instances; only the ``auto_sync`` boolean
+        Scoped to this Library screen instance's lifetime (like the retired
+        standalone Notes screen's sync-pane timer) -- it is never persisted
+        or resumed across screen instances; only the ``auto_sync`` boolean
         preference is persisted, and is re-armed on the next sync-mode
         entry via ``_ensure_library_notes_sync_config_loaded``.
         """
@@ -4411,8 +4411,9 @@ class LibraryScreen(BaseAppScreen):
         """Toggle auto-sync, persist it, and arm/cancel the repeating timer.
 
         The timer is scoped to this Library screen instance's lifetime --
-        the same scope the standalone ``NotesSyncPane``'s timer had -- not
-        persisted/resumed across screen instances; only the boolean
+        the same scope the retired standalone Notes screen's sync-pane
+        timer had -- not persisted/resumed across screen instances; only
+        the boolean
         preference persists, and is re-armed the next time sync mode is
         entered (``_ensure_library_notes_sync_config_loaded``).
 
@@ -4474,8 +4475,9 @@ class LibraryScreen(BaseAppScreen):
     async def _run_library_notes_sync(self, folder: Path) -> None:
         """Run one notes sync pass against ``folder`` and report the outcome.
 
-        Builds a fresh ``NotesSyncService`` per run (mirroring
-        ``NotesSyncPane.on_mount`` -- see ``_resolve_library_notes_sync_db``)
+        Builds a fresh ``NotesSyncService`` per run (mirroring the retired
+        standalone Notes screen's sync-pane setup -- see
+        ``_resolve_library_notes_sync_db``)
         and calls ``sync_folder`` offloaded onto a worker thread via
         ``_run_library_service_call(..., isolate_in_worker=True)``, since
         the sync engine walks the filesystem and touches the DB
