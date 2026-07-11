@@ -125,7 +125,8 @@ class LibraryIngestJob:
             fail the exact same way every time, so offering Retry for it is
             dead bait. Set only by ``mark_failed``'s ``permanent`` kwarg
             (the queue-runner classifies the exception; see
-            ``_classify_library_ingest_failure`` in ``app.py``), never
+            ``classify_parse_failure`` in
+            ``Local_Ingestion/ingest_parse_worker.py``), never
             flipped afterward. ``False`` for every other job, including
             every non-``FAILED`` state. ``requeue`` refuses a permanent job
             (returns ``None``) as defense in depth, matching the queue

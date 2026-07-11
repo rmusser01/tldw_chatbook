@@ -114,6 +114,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
 )
 from tldw_chatbook.Library.library_local_rag_search_service import LibraryLocalRagSearchService
 from tldw_chatbook.Local_Ingestion import detect_file_type, ingest_local_file
+from tldw_chatbook.Local_Ingestion.ingest_parse_worker import classify_parse_failure
 from tldw_chatbook.Home.active_work_adapter import (
     HomeControlAction,
     HomeControlResult,
@@ -1153,34 +1154,6 @@ def _sanitize_library_ingest_error(exc: Exception) -> str:
     return first_line[:200]
 
 
-def _classify_library_ingest_failure(exc: Exception) -> bool:
-    """Return whether a queue-runner exception is a *permanent* failure.
-
-    (M4, fix batch F1b) A permanent (validation-class) failure -- a missing
-    source file or an unsupported file type -- fails the exact same way on
-    every retry, since the file at that path never changes shape on its
-    own; offering Retry for one is dead bait. Every other exception (a
-    transient I/O hiccup, a DB error, ...) stays retryable, since the same
-    job genuinely might succeed on a later attempt.
-
-    Args:
-        exc: The exception raised by the per-job ingest attempt (before
-            ``_sanitize_library_ingest_error`` reduces it to display text).
-
-    Returns:
-        ``True`` for a missing-file failure (``FileNotFoundError``, raised
-        by ``ingest_local_file`` when the source path doesn't exist) or an
-        unsupported-file-type failure (``detect_file_type`` raises
-        ``FileIngestionError`` with a message starting "Unsupported file
-        type" -- matched by message prefix rather than exception type, so a
-        differently-raised validation error carrying the same copy still
-        classifies consistently). ``False`` for everything else.
-    """
-    if isinstance(exc, FileNotFoundError):
-        return True
-    return str(exc).strip().startswith("Unsupported file type")
-
-
 class LibraryIngestQueueMixin:
     """Library ingest job submission seam + serial queue-runner.
 
@@ -1464,7 +1437,7 @@ class LibraryIngestQueueMixin:
                         self.library_ingest_jobs.mark_failed,
                         job.job_id,
                         error=_sanitize_library_ingest_error(exc),
-                        permanent=_classify_library_ingest_failure(exc),
+                        permanent=classify_parse_failure(exc),
                     )
         finally:
             if not clean_exit:
