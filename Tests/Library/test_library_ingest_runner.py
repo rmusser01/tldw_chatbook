@@ -162,6 +162,9 @@ class _IngestRunnerHarness(LibraryIngestQueueMixin, App):
         self.library_ingest_jobs = LibraryIngestJobRegistry()
         self.media_db = media_db
         self._ingest_parse_pool = None
+        self._ingest_parse_pool_generation = 0
+        self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
+        self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
         self._ingest_parsed_payloads: dict[str, dict] = {}
         self._ingest_shutdown = False
         self._pool_factory = pool_factory or (lambda: _FakeIngestParsePool())
@@ -186,6 +189,11 @@ def _write_text_file(tmp_path: Path, name: str, content: str) -> Path:
     path = tmp_path / name
     path.write_text(content, encoding="utf-8")
     return path
+
+
+def _exit_ingest_worker_abruptly() -> None:
+    """Picklable spawn-pool target that simulates a hard worker crash."""
+    os._exit(17)
 
 
 async def _wait_for_job_state(
@@ -505,6 +513,166 @@ async def test_broken_pool_fails_all_parsing_jobs_and_rebuilds_on_next_submit(
 
 
 @pytest.mark.asyncio
+async def test_stale_pool_generation_error_does_not_fail_replacement_job(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "stale-error.txt", "Generation isolation.")
+    pools: list[_FakeIngestParsePool] = []
+
+    def _pool_factory() -> _FakeIngestParsePool:
+        pool = _FakeIngestParsePool(auto_run=False)
+        pools.append(pool)
+        return pool
+
+    app = _IngestRunnerHarness(db, pool_factory=_pool_factory, worker_count=1)
+
+    async with app.run_test() as pilot:
+        original = app.submit_library_ingest_job(source_path=str(source))
+        await pilot.pause()
+        generation_a = pools[0]
+        generation_a.trigger_error(0, RuntimeError("generation A died"))
+        await _wait_for_job_state(app, pilot, original.job_id, IngestJobState.FAILED)
+
+        replacement = app.retry_library_ingest_job(original.job_id)
+        assert replacement is not None
+        await _wait_for_job_state(app, pilot, replacement.job_id, IngestJobState.PARSING)
+        assert len(pools) == 2
+
+        generation_a.trigger_error(0, RuntimeError("late generation A error"))
+        await pilot.pause(_POLL_INTERVAL)
+        current = next(
+            job
+            for job in app.library_ingest_jobs.jobs()
+            if job.job_id == replacement.job_id
+        )
+        assert current.state == IngestJobState.PARSING
+        assert app._ingest_parse_pool is pools[1]
+
+
+@pytest.mark.asyncio
+async def test_stale_pool_generation_success_does_not_store_payload(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "stale-success.txt", "Generation isolation.")
+    pools: list[_FakeIngestParsePool] = []
+
+    def _pool_factory() -> _FakeIngestParsePool:
+        pool = _FakeIngestParsePool(auto_run=False)
+        pools.append(pool)
+        return pool
+
+    app = _IngestRunnerHarness(db, pool_factory=_pool_factory, worker_count=1)
+
+    async with app.run_test() as pilot:
+        original = app.submit_library_ingest_job(source_path=str(source))
+        await pilot.pause()
+        generation_a = pools[0]
+        generation_a.trigger_error(0, RuntimeError("generation A died"))
+        await _wait_for_job_state(app, pilot, original.job_id, IngestJobState.FAILED)
+
+        replacement = app.retry_library_ingest_job(original.job_id)
+        assert replacement is not None
+        await _wait_for_job_state(app, pilot, replacement.job_id, IngestJobState.PARSING)
+
+        generation_a.trigger_success(
+            0,
+            {"ok": True, "payload": {"file_type": "plaintext", "content": "stale"}},
+        )
+        await pilot.pause(_POLL_INTERVAL)
+
+        assert original.job_id not in app._ingest_parsed_payloads
+        assert replacement.job_id not in app._ingest_parsed_payloads
+        assert app.library_ingest_jobs.runner_active is False
+        current = next(
+            job
+            for job in app.library_ingest_jobs.jobs()
+            if job.job_id == replacement.job_id
+        )
+        assert current.state == IngestJobState.PARSING
+
+
+@pytest.mark.asyncio
+async def test_real_pool_worker_exit_is_reported_for_owning_generation(
+    tmp_path: Path,
+) -> None:
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "hard-exit.txt", "Worker sentinel coverage.")
+    app: _IngestRunnerHarness
+    app = _IngestRunnerHarness(
+        db,
+        pool_factory=lambda: LibraryIngestQueueMixin._create_ingest_parse_pool(app),
+        worker_count=1,
+    )
+    pool = None
+    teardown_threads: list[threading.Thread] = []
+    real_terminate = app._terminate_ingest_parse_pool_off_thread
+
+    def _capture_production_teardown(target_pool: Any) -> threading.Thread:
+        thread = real_terminate(target_pool)
+        teardown_threads.append(thread)
+        return thread
+
+    app._terminate_ingest_parse_pool_off_thread = _capture_production_teardown
+
+    try:
+        async with app.run_test() as pilot:
+            job = app.library_ingest_jobs.submit(source_path=str(source))
+            claimed = app.library_ingest_jobs.mark_parsing(job.job_id)
+            assert claimed is not None
+
+            pool = app._ensure_ingest_parse_pool()
+            generation = app._ingest_parse_pool_generation
+            app._ingest_parse_jobs_by_generation[generation].add(job.job_id)
+            pool.apply_async(_exit_ingest_worker_abruptly)
+
+            failed = await _wait_for_job_state(
+                app,
+                pilot,
+                job.job_id,
+                IngestJobState.FAILED,
+                attempts=500,
+            )
+            assert failed.permanent is False
+            assert app._ingest_parse_pool is None
+            assert generation not in app._ingest_parse_jobs_by_generation
+    finally:
+        if pool is not None:
+            if teardown_threads:
+                cleanup = teardown_threads[0]
+            else:
+                pool.terminate()
+                cleanup = threading.Thread(target=pool.join, daemon=True)
+                cleanup.start()
+            cleanup.join(timeout=10.0)
+            assert not cleanup.is_alive(), "real Pool cleanup exceeded 10 seconds"
+
+
+def test_current_generation_sentinel_failure_retires_idle_pool(tmp_path: Path) -> None:
+    db = _make_db(tmp_path)
+    pool = _FakeIngestParsePool(auto_run=False)
+    app = _IngestRunnerHarness(db, pool_factory=lambda: pool, worker_count=1)
+    app._ensure_ingest_parse_pool()
+    generation = app._ingest_parse_pool_generation
+    assert app._ingest_parse_jobs_by_generation[generation] == set()
+
+    app._handle_broken_ingest_parse_pool(
+        generation,
+        None,
+        RuntimeError("idle worker exited"),
+    )
+
+    assert app._ingest_parse_pool is None
+    assert generation not in app._ingest_parse_jobs_by_generation
+    for _ in range(100):
+        if pool.terminated:
+            break
+        threading.Event().wait(0.01)
+    assert pool.terminated is True
+
+
+@pytest.mark.asyncio
 async def test_submit_cap_backpressure_second_job_stays_queued_until_first_completes(
     tmp_path: Path,
 ) -> None:
@@ -584,7 +752,9 @@ async def test_shutdown_flag_stops_late_parse_completion_callbacks(tmp_path: Pat
 
         # Late success completion: must be a no-op.
         app._on_ingest_parse_complete(
-            job.job_id, {"ok": True, "payload": {"file_type": "plaintext"}}
+            app._ingest_parse_pool_generation,
+            job.job_id,
+            {"ok": True, "payload": {"file_type": "plaintext"}},
         )
         current = next(j for j in app.library_ingest_jobs.jobs() if j.job_id == job.job_id)
         assert current.state == IngestJobState.PARSING
@@ -592,7 +762,11 @@ async def test_shutdown_flag_stops_late_parse_completion_callbacks(tmp_path: Pat
         assert app.library_ingest_jobs.runner_active is False
 
         # Late pool-level error: also a no-op -- the pool is not dropped.
-        app._handle_broken_ingest_parse_pool(RuntimeError("late failure"))
+        app._handle_broken_ingest_parse_pool(
+            app._ingest_parse_pool_generation,
+            job.job_id,
+            RuntimeError("late failure"),
+        )
         current = next(j for j in app.library_ingest_jobs.jobs() if j.job_id == job.job_id)
         assert current.state == IngestJobState.PARSING
         assert app._ingest_parse_pool is not None
@@ -635,14 +809,14 @@ def test_pool_callbacks_short_circuit_without_marshaling_when_shutdown(
     )
 
     app._ingest_shutdown = True
-    app._ingest_pool_callback("ingest-job-1", {"ok": True, "payload": {}})
-    app._ingest_pool_error_callback(RuntimeError("late pool failure"))
+    app._ingest_pool_callback(1, "ingest-job-1", {"ok": True, "payload": {}})
+    app._ingest_pool_error_callback(1, "ingest-job-1", RuntimeError("late pool failure"))
     assert marshaled == []
 
     # Positive control: with the flag down, both callbacks marshal.
     app._ingest_shutdown = False
-    app._ingest_pool_callback("ingest-job-1", {"ok": True, "payload": {}})
-    app._ingest_pool_error_callback(RuntimeError("pool failure"))
+    app._ingest_pool_callback(1, "ingest-job-1", {"ok": True, "payload": {}})
+    app._ingest_pool_error_callback(1, "ingest-job-1", RuntimeError("pool failure"))
     assert len(marshaled) == 2
 
 
@@ -1100,6 +1274,35 @@ async def test_claim_next_job_returns_none_and_clears_runner_active_when_empty(
 
         assert claimed is None
         assert app.library_ingest_jobs.runner_active is False
+
+
+@pytest.mark.asyncio
+async def test_shutdown_refuses_to_claim_ready_payload(tmp_path: Path) -> None:
+    db = _make_db(tmp_path)
+    source = _write_text_file(tmp_path, "shutdown-claim.txt", "Do not persist me.")
+    app = _IngestRunnerHarness(db)
+
+    async with app.run_test():
+        app.library_ingest_jobs.runner_active = True
+        job = app.library_ingest_jobs.submit(source_path=str(source))
+        app.library_ingest_jobs.mark_parsing(job.job_id)
+        app._ingest_parsed_payloads[job.job_id] = {
+            "file_type": "plaintext",
+            "content": "ready before shutdown",
+        }
+        app._ingest_shutdown = True
+
+        claimed = app._claim_next_ingest_job_or_release()
+
+        assert claimed is None
+        assert app.library_ingest_jobs.runner_active is False
+        assert job.job_id in app._ingest_parsed_payloads
+        current = next(
+            current
+            for current in app.library_ingest_jobs.jobs()
+            if current.job_id == job.job_id
+        )
+        assert current.state == IngestJobState.PARSING
 
 
 @pytest.mark.asyncio

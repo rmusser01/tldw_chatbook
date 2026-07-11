@@ -23,6 +23,7 @@ import inspect
 import logging
 import logging.handlers
 import multiprocessing
+import multiprocessing.connection
 import random
 import subprocess
 import sys
@@ -1240,9 +1241,10 @@ class LibraryIngestQueueMixin:
       constructed once (e.g. in ``__init__``/app wiring).
     - ``self.media_db``: an ``Optional[MediaDatabase]``.
     - ``self._ingest_parse_pool``, ``self._ingest_parsed_payloads``,
+      ``self._ingest_parse_pool_generation``,
+      ``self._ingest_parse_jobs_by_generation``, and
       ``self._ingest_shutdown``: the coordinator's own state, initialized
-      once (e.g. ``None``, ``{}``, ``False`` respectively) alongside
-      ``library_ingest_jobs`` -- see ``TldwCli.__init__``.
+      once alongside ``library_ingest_jobs`` -- see ``TldwCli.__init__``.
     - Textual's ``App``/``Widget`` worker machinery (``@work`` and
       ``call_from_thread``), since this mixin is always combined with one
       of those base classes.
@@ -1436,8 +1438,77 @@ class LibraryIngestQueueMixin:
         UI-thread only.
         """
         if self._ingest_parse_pool is None:
-            self._ingest_parse_pool = self._create_ingest_parse_pool()
+            pool = self._create_ingest_parse_pool()
+            try:
+                sentinels = self._ingest_parse_pool_worker_sentinels(pool)
+            except Exception:
+                self._terminate_ingest_parse_pool_off_thread(pool)
+                raise
+
+            generation = self._ingest_parse_pool_generation + 1
+            stop_event = threading.Event()
+            self._ingest_parse_pool_generation = generation
+            self._ingest_parse_jobs_by_generation[generation] = set()
+            self._ingest_parse_pool_stop_event = stop_event
+            self._ingest_parse_pool = pool
+            if sentinels:
+                self._start_ingest_parse_pool_monitor(
+                    generation, sentinels, stop_event
+                )
         return self._ingest_parse_pool
+
+    @staticmethod
+    def _ingest_parse_pool_worker_sentinels(pool: Any) -> Optional[tuple[Any, ...]]:
+        """Snapshot real Pool worker sentinels; injected fakes may opt out."""
+        workers = getattr(pool, "_pool", None)
+        if workers is None:
+            return None
+        try:
+            sentinels = tuple(worker.sentinel for worker in workers)
+        except Exception as exc:
+            raise RuntimeError("Could not inspect parse-pool worker sentinels.") from exc
+        if not sentinels:
+            raise RuntimeError("Parse pool started without worker sentinels.")
+        return sentinels
+
+    def _start_ingest_parse_pool_monitor(
+        self,
+        generation: int,
+        sentinels: tuple[Any, ...],
+        stop_event: threading.Event,
+    ) -> threading.Thread:
+        """Watch one real Pool generation for an unexpected worker exit."""
+
+        def _monitor() -> None:
+            try:
+                ready = multiprocessing.connection.wait(sentinels)
+            except Exception as exc:
+                if stop_event.is_set() or self._ingest_shutdown:
+                    return
+                failure = RuntimeError(f"Parse-pool sentinel monitor failed: {exc}")
+            else:
+                if not ready or stop_event.is_set() or self._ingest_shutdown:
+                    return
+                failure = RuntimeError(
+                    f"Library ingest parse-pool worker exited unexpectedly "
+                    f"(generation {generation})."
+                )
+            if stop_event.is_set() or self._ingest_shutdown:
+                return
+            self.call_from_thread(
+                self._handle_broken_ingest_parse_pool,
+                generation,
+                None,
+                failure,
+            )
+
+        thread = threading.Thread(
+            target=_monitor,
+            name=f"library-ingest-pool-monitor-{generation}",
+            daemon=True,
+        )
+        thread.start()
+        return thread
 
     @staticmethod
     def _ingest_job_options(job: LibraryIngestJob) -> Dict[str, Any]:
@@ -1557,22 +1628,31 @@ class LibraryIngestQueueMixin:
                     permanent=False,
                 )
                 return
+            generation = self._ingest_parse_pool_generation
+            generation_jobs = self._ingest_parse_jobs_by_generation[generation]
+            generation_jobs.add(job_id)
             try:
                 pool.apply_async(
                     run_parse_job,
                     (source_path, options),
-                    callback=functools.partial(self._ingest_pool_callback, job_id),
-                    error_callback=self._ingest_pool_error_callback,
+                    callback=functools.partial(
+                        self._ingest_pool_callback, generation, job_id
+                    ),
+                    error_callback=functools.partial(
+                        self._ingest_pool_error_callback, generation, job_id
+                    ),
                 )
             except Exception as exc:
                 # The pool itself rejected the submission synchronously
                 # (e.g. it was already terminated/closed) -- every job
                 # currently PARSING was submitted to this same broken pool
                 # and can't be trusted to ever complete either.
-                self._handle_broken_ingest_parse_pool(exc)
+                self._handle_broken_ingest_parse_pool(generation, job_id, exc)
                 return
 
-    def _ingest_pool_callback(self, job_id: str, result: Dict[str, Any]) -> None:
+    def _ingest_pool_callback(
+        self, generation: int, job_id: str, result: Dict[str, Any]
+    ) -> None:
         """``apply_async`` ``callback``: runs on the pool's result-handler thread.
 
         Checks ``_ingest_shutdown`` BEFORE marshaling (quit-deadlock
@@ -1600,16 +1680,24 @@ class LibraryIngestQueueMixin:
         """
         if self._ingest_shutdown:
             return
-        self.call_from_thread(self._on_ingest_parse_complete, job_id, result)
+        self.call_from_thread(
+            self._on_ingest_parse_complete, generation, job_id, result
+        )
 
-    def _ingest_pool_error_callback(self, exc: BaseException) -> None:
+    def _ingest_pool_error_callback(
+        self, generation: int, job_id: str, exc: BaseException
+    ) -> None:
         """``apply_async`` ``error_callback``: same thread + shutdown
         contract as ``_ingest_pool_callback`` (see its docstring)."""
         if self._ingest_shutdown:
             return
-        self.call_from_thread(self._handle_broken_ingest_parse_pool, exc)
+        self.call_from_thread(
+            self._handle_broken_ingest_parse_pool, generation, job_id, exc
+        )
 
-    def _on_ingest_parse_complete(self, job_id: str, result: Dict[str, Any]) -> None:
+    def _on_ingest_parse_complete(
+        self, generation: int, job_id: str, result: Dict[str, Any]
+    ) -> None:
         """Handle one pool completion (success or structured parse failure).
 
         UI-thread only; invoked via ``call_from_thread`` from the pool's
@@ -1629,6 +1717,14 @@ class LibraryIngestQueueMixin:
         """
         if self._ingest_shutdown:
             return
+        generation_jobs = self._ingest_parse_jobs_by_generation.get(generation)
+        if (
+            generation != self._ingest_parse_pool_generation
+            or generation_jobs is None
+            or job_id not in generation_jobs
+        ):
+            return
+        generation_jobs.remove(job_id)
         if result.get("ok"):
             self._ingest_parsed_payloads[job_id] = result["payload"]
             self._start_library_ingest_queue_if_idle()
@@ -1643,7 +1739,12 @@ class LibraryIngestQueueMixin:
             )
         self._top_up_ingest_parse_pool()
 
-    def _handle_broken_ingest_parse_pool(self, exc: BaseException) -> None:
+    def _handle_broken_ingest_parse_pool(
+        self,
+        generation: int,
+        job_id: Optional[str],
+        exc: BaseException,
+    ) -> None:
         """Fail every still-mid-parse ``PARSING`` job and drop the broken pool.
 
         UI-thread only. Shared by the pool's ``error_callback`` (an async,
@@ -1672,9 +1773,31 @@ class LibraryIngestQueueMixin:
         """
         if self._ingest_shutdown:
             return
+        generation_jobs = self._ingest_parse_jobs_by_generation.get(generation)
+        if (
+            generation != self._ingest_parse_pool_generation
+            or generation_jobs is None
+            or (job_id is not None and job_id not in generation_jobs)
+        ):
+            return
+
+        affected_jobs = set(generation_jobs)
+        self._ingest_parse_jobs_by_generation.pop(generation, None)
+        pool = self._ingest_parse_pool
+        stop_event = self._ingest_parse_pool_stop_event
+        if stop_event is not None:
+            stop_event.set()
+        self._ingest_parse_pool_stop_event = None
+        self._ingest_parse_pool = None
+        if pool is not None:
+            self._terminate_ingest_parse_pool_off_thread(pool)
+
         logger.opt(exception=exc).error(f"Library ingest parse pool failed: {exc}")
         for job in self.library_ingest_jobs.jobs():
-            if job.state != IngestJobState.PARSING:
+            if (
+                job.job_id not in affected_jobs
+                or job.state != IngestJobState.PARSING
+            ):
                 continue
             if job.job_id in self._ingest_parsed_payloads:
                 # Parse already finished -- the payload is waiting for the
@@ -1685,9 +1808,29 @@ class LibraryIngestQueueMixin:
                 error="Library ingest parse pool failed unexpectedly; retry to resume.",
                 permanent=False,
             )
-        self._ingest_parse_pool = None
         if self._ingest_parsed_payloads:
             self._start_library_ingest_queue_if_idle()
+
+    @staticmethod
+    def _terminate_ingest_parse_pool_off_thread(pool: Any) -> threading.Thread:
+        """Terminate and join one detached Pool without blocking the UI thread."""
+
+        def _terminate_pool() -> None:
+            try:
+                pool.terminate()
+                pool.join()
+            except Exception:
+                logger.opt(exception=True).error(
+                    "Error terminating the Library ingest parse pool."
+                )
+
+        thread = threading.Thread(
+            target=_terminate_pool,
+            name="library-ingest-pool-terminate",
+            daemon=True,
+        )
+        thread.start()
+        return thread
 
     def _shutdown_ingest_parse_pool(self) -> Optional[threading.Thread]:
         """Quit-path teardown: flag up, pool detached, terminate off-loop.
@@ -1718,26 +1861,14 @@ class LibraryIngestQueueMixin:
         """
         self._ingest_shutdown = True
         pool = getattr(self, "_ingest_parse_pool", None)
+        stop_event = getattr(self, "_ingest_parse_pool_stop_event", None)
+        if stop_event is not None:
+            stop_event.set()
+        self._ingest_parse_pool_stop_event = None
         self._ingest_parse_pool = None
         if pool is None:
             return None
-
-        def _terminate_pool() -> None:
-            try:
-                pool.terminate()
-                pool.join()
-            except Exception:
-                logger.opt(exception=True).error(
-                    "Error terminating the Library ingest parse pool."
-                )
-
-        thread = threading.Thread(
-            target=_terminate_pool,
-            name="library-ingest-pool-terminate",
-            daemon=True,
-        )
-        thread.start()
-        return thread
+        return self._terminate_ingest_parse_pool_off_thread(pool)
 
     # -- Writer (claim-or-release loop, narrowed to the write stage) -------
 
@@ -1811,6 +1942,9 @@ class LibraryIngestQueueMixin:
             payload-ready -- ``runner_active`` is cleared before returning,
             and the writer must exit.
         """
+        if self._ingest_shutdown:
+            self.library_ingest_jobs.runner_active = False
+            return None
         for job in reversed(self.library_ingest_jobs.jobs()):
             payload = self._ingest_parsed_payloads.get(job.job_id)
             if payload is None:
@@ -2996,6 +3130,9 @@ class TldwCli(LibraryIngestQueueMixin, App[None]):  # Specify return type for ru
         # drained by the writer's claim), and the shutdown flag pool
         # callbacks check before touching a closing app.
         self._ingest_parse_pool = None
+        self._ingest_parse_pool_generation: int = 0
+        self._ingest_parse_jobs_by_generation: dict[int, set[str]] = {}
+        self._ingest_parse_pool_stop_event: Optional[threading.Event] = None
         self._ingest_parsed_payloads: dict[str, dict] = {}
         self._ingest_shutdown: bool = False
 
